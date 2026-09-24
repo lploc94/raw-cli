@@ -93,7 +93,7 @@ test("T-07 review: pending MCP startup cannot delay cancellation of an existing 
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) =>
     request.messages.at(-1)?.role === "tool" ? { text: "done", toolCalls: [], finishReason: "stop" }
-      : { text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { command: "sleep 0.3; printf late > marker" } }], finishReason: "tool_calls" } }) });
+      : { text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { commands: [{ command: "sleep 0.3; printf late > marker" }] } }], finishReason: "tool_calls" } }) });
   let started!: () => void;
   const ready = new Promise<void>((resolve) => { started = resolve; });
   const peer = client({ name: "close-race" });
@@ -445,7 +445,7 @@ test("T-07d: peer disconnect aborts active Bash before delayed filesystem side e
   const root = await mkdtemp(join(tmpdir(), "raw-acp-disconnect-"));
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({
-    text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { command: "sleep 0.5; printf late > sentinel.txt" } }], finishReason: "tool_calls",
+    text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { commands: [{ command: "sleep 0.5; printf late > sentinel.txt" }] } }], finishReason: "tool_calls",
   }) }) });
   let started!: () => void;
   const ready = new Promise<void>((resolve) => { started = resolve; });

@@ -28,13 +28,13 @@ test("deny hides schema and blocks direct dispatch while ordered last match wins
 
 test("explicit ask cannot be bypassed by autoApprove and headless request fails closed", async () => {
   const registry = createToolRegistry([{ match: "bash", effect: "ask" }]);
-  const input = { command: "printf should-not-run" };
+  const input = { commands: [{ command: "printf should-not-run" }] };
   const missing = await registry.dispatch("bash", input, ctx);
   assert.equal(missing.code, "approval_required");
   const denied = await registry.dispatch("bash", input, { ...ctx, approve: async () => false });
   assert.equal(denied.code, "approval_denied");
   const calls: string[] = [];
-  const allowed = await registry.dispatch("bash", { command: "printf yes" }, { ...ctx,
+  const allowed = await registry.dispatch("bash", { commands: [{ command: "printf yes" }] }, { ...ctx,
     approve: async (name) => { calls.push(name); return true; } });
   assert.equal(allowed.isError, false);
   assert.deepEqual(calls, ["bash"]);

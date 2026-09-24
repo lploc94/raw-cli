@@ -11,8 +11,8 @@ const request = { system: "sys", messages: [{ role: "user" as const, content: "h
 
 test("OpenAI assembles interleaved fragmented calls, Unicode, usage and finish reason", async () => {
   const fixture = await startMockProvider([{ frames: [
-    openAiFrame({ content: "hé", tool_calls: [{ index: 1, id: "two", type: "function", function: { name: "bash", arguments: '{"command":' } }] }),
-    openAiFrame({ content: "😀", tool_calls: [{ index: 0, id: "one", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":' } }, { index: 1, function: { arguments: '"pwd"}' } }] }),
+    openAiFrame({ content: "hé", tool_calls: [{ index: 1, id: "two", type: "function", function: { name: "bash", arguments: '{"commands":[{"command":' } }] }),
+    openAiFrame({ content: "😀", tool_calls: [{ index: 0, id: "one", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":' } }, { index: 1, function: { arguments: '"pwd"}]}' } }] }),
     openAiFrame({ tool_calls: [{ index: 0, function: { arguments: '"a"}]}' } }] }, "tool_calls"),
     `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [], usage: { prompt_tokens: 10, completion_tokens: 3 } })}\n\n`,
     openAiDone,
@@ -22,7 +22,7 @@ test("OpenAI assembles interleaved fragmented calls, Unicode, usage and finish r
     const result = await createProvider(profile("openai", fixture.url)).generate({ ...request, onTextDelta: (delta) => deltas.push(delta) });
     assert.deepEqual(deltas, ["hé", "😀"]);
     assert.equal(result.text, "hé😀");
-    assert.deepEqual(result.toolCalls.map((call) => [call.id, call.name, call.arguments]), [["one", "read_file", { files: [{ path: "a" }] }], ["two", "bash", { command: "pwd" }]]);
+    assert.deepEqual(result.toolCalls.map((call) => [call.id, call.name, call.arguments]), [["one", "read_file", { files: [{ path: "a" }] }], ["two", "bash", { commands: [{ command: "pwd" }] }]]);
     assert.equal(result.finishReason, "tool_calls");
     assert.equal((result.usage as { prompt_tokens: number }).prompt_tokens, 10);
   } finally { await fixture.close(); }
@@ -37,13 +37,13 @@ test("Anthropic thinking/signature and Google thought signatures survive replay 
       anthropicFrame("content_block_delta", { index: 0, delta: { type: "signature_delta", signature: "signed" } }),
       anthropicFrame("content_block_stop", { index: 0 }),
       anthropicFrame("content_block_start", { index: 1, content_block: { type: "tool_use", id: "c", name: "bash", input: {} } }),
-      anthropicFrame("content_block_delta", { index: 1, delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' } }),
+      anthropicFrame("content_block_delta", { index: 1, delta: { type: "input_json_delta", partial_json: '{"commands":[{"command":"pwd"}]}' } }),
       anthropicFrame("content_block_stop", { index: 1 }),
       anthropicFrame("message_delta", { delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 3 } }),
       anthropicFrame("message_stop", {}),
     ] : [googleFrame({ candidates: [{ content: { role: "model", parts: [
       { text: "secret", thought: true, thoughtSignature: "signed" },
-      { functionCall: { id: "c", name: "bash", args: { command: "pwd" } }, thoughtSignature: "signed-call" },
+      { functionCall: { id: "c", name: "bash", args: { commands: [{ command: "pwd" }] } }, thoughtSignature: "signed-call" },
     ] }, finishReason: "STOP" }] })];
     const second = provider === "anthropic" ? [
       anthropicFrame("message_start", { message: { id: "m2", type: "message", role: "assistant", content: [], model: "fixture-model", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } }),

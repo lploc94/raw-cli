@@ -15,7 +15,7 @@ test("registry has only three built-ins and rejects invalid/hidden calls before 
   for (const [name, args] of [
     ["write_file", { operations: [{ path: marker, mode: "overwrite", content: "bad", extra: 1 }] }],
     ["write_file", { operations: [{ path: marker, mode: "overwrite", content: 1 }] }],
-    ["bash", { command: "true", timeout_ms: 0 }],
+    ["bash", { commands: [{ command: "true", timeout_ms: 0 }] }],
     ["missing", {}],
   ] as const) {
     assert.equal((await registry.dispatch(name, args, ctx)).isError, true);
@@ -29,7 +29,7 @@ test("registry has only three built-ins and rejects invalid/hidden calls before 
   assert.throws(() => registry.register({ name: "bash", description: "duplicate", inputSchema: { type: "object", properties: {}, additionalProperties: false }, handler: async () => ({ isError: false, content: [] }) }));
   const prototypeArgs = JSON.parse('{"command":"true","__proto__":1}') as unknown;
   assert.equal((await registry.dispatch("bash", prototypeArgs, ctx)).code, "invalid_arguments");
-  assert.equal((await registry.dispatch("bash", { command: "true", timeout_ms: 2147483648 }, ctx)).code, "invalid_arguments");
+  assert.equal((await registry.dispatch("bash", { commands: [{ command: "true", timeout_ms: 2147483648 }] }, ctx)).code, "invalid_arguments");
   const capped = await registry.dispatch("x".repeat(100), {}, { cwd, maxOutputBytes: 5, autoApprove: true });
   assert.equal(capped.truncated, true);
   assert.ok((capped.retainedBytes ?? Infinity) <= 5);

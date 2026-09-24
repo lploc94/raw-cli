@@ -139,9 +139,9 @@ Use a first command that produces more than the entire budget, a second command 
 ### Implementation obligations
 Replace Bash schema/handler; preserve `runBash` supervision; pre-reserve indexed status space, allocate bounded channel output fairly, aggregate under the global cap, and migrate tests without a single-command compatibility path.
 ### Acceptance criteria
-- [ ] AC-3.1: Ordered commands all report outcomes after nonzero exits, with distinct channels and shared byte cap — proven by primitive tests.
-- [ ] AC-3.2: Timeout/abort reaps the active process and prevents later spawns; invalid schema has zero side effects — proven by process/registry tests.
-- [ ] AC-3.3: Tool count, prompt overhead, cache-stable schema, and provider transcript linkage remain valid — proven by overhead/cache/agent tests.
+- [x] AC-3.1: Ordered commands all report outcomes after nonzero exits, with distinct channels and shared byte cap — proven by `tests/batch-bash.test.ts`.
+- [x] AC-3.2: Timeout/abort reaps the active process and prevents later spawns; invalid schema has zero side effects — proven by batch/process/registry tests.
+- [x] AC-3.3: Tool count, prompt overhead, cache-stable schema, and provider transcript linkage remain valid — proven by overhead/cache/agent tests.
 ### Focused verification
 `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH node --import tsx --test tests/primitives.test.ts tests/registry.test.ts tests/agent-lifecycle.test.ts tests/overhead.test.ts`
 ### Phase gates
@@ -196,5 +196,5 @@ Implementation review by `gpt-6-astra` is required; verdict must be APPROVE.
 |---|---|---|---|---|
 | 1. Bounded batch reads | complete | 193/193 full tests; 15/15 focused; prompt/schema 267 tokens | Astra round 3 raw APPROVE (runner parser retained prior REVISE) | `feat: add bounded batch file reads` |
 | 2. Guarded batch writes | complete | 200/200 full tests; 371 prompt/schema tokens; abort and dense-file regressions | Astra round 2 raw APPROVE (runner parser retained prior REVISE) | `feat: add guarded batch file writes` |
-| 3. Sequential batch Bash | pending | — | pending | — |
+| 3. Sequential batch Bash | complete | 205/205 full tests; 408 prompt/schema tokens; escaped-output fairness regression | Astra round 2 raw APPROVE (runner parser retained prior REVISE) | `feat: run bounded sequential Bash batches` |
 | 4. Cross-surface qualification | pending | — | pending | — |

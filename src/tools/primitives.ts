@@ -2,7 +2,7 @@ import { open, mkdir, writeFile, readFile, appendFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { runBash } from "./process.js";
-import { errorResult, indexedResult, indexedResultFits, textResult, type IndexedResult } from "./results.js";
+import { errorResult, indexedResult, indexedResultFits, utf8Prefix, type IndexedResult } from "./results.js";
 import type { ToolResult } from "./types.js";
 
 export interface ToolContext {
@@ -240,13 +240,56 @@ export async function writeFileTool(args: { operations: WriteOperation[] }, cont
   return indexedResult(rows, context.maxOutputBytes, rows.some((row) => row.status !== "ok"));
 }
 
-export async function bashTool(args: { command: string; timeout_ms?: number }, context: ToolContext): Promise<ToolResult> {
-  return runBash({
-    command: args.command,
-    cwd: context.cwd,
-    maxOutputBytes: context.maxOutputBytes,
-    ...(args.timeout_ms !== undefined ? { timeoutMs: args.timeout_ms } : {}),
-    ...(context.signal ? { signal: context.signal } : {}),
-    ...(context.bashPath ? { bashPath: context.bashPath } : {}),
-  });
+export async function bashTool(args: { commands: Array<{ command: string; timeout_ms?: number }> }, context: ToolContext): Promise<ToolResult> {
+  const reserve = (index: number): IndexedResult => ({ index, status: "error", exit_code: 2147483647,
+    signal: "SIGKILL", timed_out: true, truncated: true, stdout: "", stderr: "", observed_bytes: 2147483647,
+    error: "x".repeat(80) });
+  const rows: IndexedResult[] = args.commands.map((_, index) => reserve(index));
+  if (!indexedResultFits(rows, context.maxOutputBytes)) {
+    return errorResult("output_budget_too_small", "bash batch outcomes exceed output budget");
+  }
+  let stopped = false;
+  for (const [index, command] of args.commands.entries()) {
+    if (stopped || context.signal?.aborted) {
+      rows[index] = { index, status: "skipped", error: context.signal?.aborted ? "aborted" : "prior_timeout" };
+      continue;
+    }
+    const serialized = Buffer.byteLength(JSON.stringify({ results: rows }), "utf8");
+    const share = Math.max(0, Math.floor((context.maxOutputBytes - serialized) / (args.commands.length - index)));
+    const reservedItemBytes = Buffer.byteLength(JSON.stringify(rows[index]), "utf8");
+    let result: ToolResult;
+    try {
+      result = await runBash({ command: command.command, cwd: context.cwd, maxOutputBytes: share,
+        ...(command.timeout_ms !== undefined ? { timeoutMs: command.timeout_ms } : {}),
+        ...(context.signal ? { signal: context.signal } : {}),
+        ...(context.bashPath ? { bashPath: context.bashPath } : {}),
+      });
+    } catch (error) {
+      result = errorResult("bash_error", (error as Error).message);
+    }
+    let stdout = result.content.flatMap((item) => item.type === "text" && item.channel === "stdout" ? [item.text] : []).join("");
+    let stderr = result.content.flatMap((item) => item.type === "text" && item.channel === "stderr" ? [item.text] : []).join("");
+    const status = result.code === "aborted" || context.signal?.aborted ? "aborted"
+      : result.code === "timeout" || result.timedOut ? "timeout" : result.isError ? "error" : "ok";
+    const candidate = (): IndexedResult => ({ index, status, exit_code: result.exitCode ?? null,
+      signal: result.signal ?? null, timed_out: result.timedOut ?? false,
+      truncated: Boolean(result.truncated || stdout !== originalStdout || stderr !== originalStderr),
+      stdout, stderr, observed_bytes: result.observedBytes ?? 0,
+      ...(status === "error" ? { error: result.code ?? "bash_error" } : {}) });
+    const originalStdout = stdout;
+    const originalStderr = stderr;
+    const fits = () => {
+      const check = [...rows];
+      check[index] = candidate();
+      const addedBytes = Buffer.byteLength(JSON.stringify(check[index]), "utf8") - reservedItemBytes;
+      return addedBytes <= share && indexedResultFits(check, context.maxOutputBytes);
+    };
+    while (!fits() && (stdout || stderr)) {
+      if (Buffer.byteLength(stdout) >= Buffer.byteLength(stderr) && stdout) stdout = utf8Prefix(stdout, Math.floor(Buffer.byteLength(stdout) / 2)).text;
+      else stderr = utf8Prefix(stderr, Math.floor(Buffer.byteLength(stderr) / 2)).text;
+    }
+    rows[index] = fits() ? candidate() : { index, status: "error", error: "result_budget_exhausted" };
+    if (status === "aborted" || status === "timeout") stopped = true;
+  }
+  return indexedResult(rows, context.maxOutputBytes, rows.some((row) => row.status !== "ok"));
 }

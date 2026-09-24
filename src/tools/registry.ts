@@ -83,6 +83,22 @@ function validateWriteBatch(value: unknown): string | undefined {
   return undefined;
 }
 
+function validateBashBatch(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
+  const args = value as Record<string, unknown>;
+  if (Object.keys(args).some((key) => key !== "commands")) return "unknown bash property";
+  if (!Array.isArray(args.commands) || args.commands.length < 1 || args.commands.length > 16) return "commands must contain 1 to 16 entries";
+  for (const [index, raw] of args.commands.entries()) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `commands[${index}] must be an object`;
+    const command = raw as Record<string, unknown>;
+    if (Object.keys(command).some((key) => !["command", "timeout_ms"].includes(key))) return `commands[${index}] has an unknown property`;
+    if (typeof command.command !== "string" || !command.command) return `commands[${index}].command must be a nonempty string`;
+    if (command.timeout_ms !== undefined && (!Number.isSafeInteger(command.timeout_ms) || (command.timeout_ms as number) < 1
+      || (command.timeout_ms as number) > 2147483647)) return `commands[${index}].timeout_ms must be a positive integer`;
+  }
+  return undefined;
+}
+
 const builtIns: readonly ToolRegistration[] = [
   {
     name: "read_file", description: "Read UTF-8 files; optional 1-based line ranges and counts.",
@@ -104,9 +120,12 @@ const builtIns: readonly ToolRegistration[] = [
     handler: (args, ctx) => writeFileTool(args as Parameters<typeof writeFileTool>[0], ctx),
   },
   {
-    name: "bash", description: "Run a Bash command.",
-    inputSchema: { type: "object", properties: { command: { type: "string" }, timeout_ms: { type: "integer", minimum: 1 } }, required: ["command"], additionalProperties: false },
-    handler: (args, ctx) => bashTool(args as { command: string; timeout_ms?: number }, ctx),
+    name: "bash", description: "Run Bash commands sequentially.",
+    inputSchema: { type: "object", properties: { commands: { type: "array", minItems: 1, maxItems: 16,
+      items: { type: "object", properties: { command: { type: "string" }, timeout_ms: { type: "integer", minimum: 1 } },
+        required: ["command"], additionalProperties: false } } }, required: ["commands"], additionalProperties: false },
+    validateArgs: validateBashBatch,
+    handler: (args, ctx) => bashTool(args as Parameters<typeof bashTool>[0], ctx),
   },
 ];
 
