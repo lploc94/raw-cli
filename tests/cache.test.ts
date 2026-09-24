@@ -16,11 +16,11 @@ const finalFrames = (provider: ProviderName) => provider === "anthropic" ? [
   : [openAiFrame({ content: "ok" }, "stop"), openAiDone];
 
 const makeProfile = (provider: ProviderName, baseUrl: string, cache?: ProviderProfile["cache"]): ProviderProfile => ({
-  name: provider, provider, model: "fixture", baseUrl, apiKey: "key", ...(cache ? { cache } : {}),
+  name: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture", baseUrl, apiKey: "key", ...(cache ? { cache } : {}),
 });
 
 test("OpenAI stable key, Anthropic cache_control, Google implicit and generic absence reach real SDK wire", async () => {
-  for (const provider of ["openai", "anthropic", "google", "openai-compatible", "openrouter", "ollama"] as const) {
+  for (const provider of ["openai", "anthropic", "google", "llamacpp", "openrouter", "ollama"] as const) {
     const fixture = await startMockProvider([{ frames: finalFrames(provider) }, { frames: finalFrames(provider) }]);
     try {
       const adapter = createProvider(makeProfile(provider, fixture.url));
@@ -58,13 +58,13 @@ test("explicit cache settings are validated, no-hints suppresses metadata, and l
     assert.equal((fixture.requests[1]?.body as Record<string, unknown>).prompt_cache_key, undefined);
     await createProvider(makeProfile("anthropic", fixture.url, { mode: "no-hints" })).generate(req).catch(() => {}); // fixture dialect differs; request still captured
     assert.equal((fixture.requests[2]?.body as Record<string, unknown>).cache_control, undefined);
-    await createProvider(makeProfile("openai-compatible", fixture.url, { mode: "auto", backend: "llama.cpp" })).generate(req);
+    await createProvider(makeProfile("llamacpp", fixture.url, { mode: "auto", backend: "llama.cpp" })).generate(req);
     assert.equal((fixture.requests[3]?.body as Record<string, unknown>).cache_prompt, true);
-    await createProvider(makeProfile("openai-compatible", fixture.url, { mode: "no-hints", backend: "llama.cpp" })).generate(req);
+    await createProvider(makeProfile("llamacpp", fixture.url, { mode: "no-hints", backend: "llama.cpp" })).generate(req);
     assert.equal((fixture.requests[4]?.body as Record<string, unknown>).cache_prompt, undefined);
     await assert.rejects(createProvider(makeProfile("openai", fixture.url, { retention: "bogus" })).generate(req));
     await assert.rejects(createProvider({ ...makeProfile("openai", fixture.url, { retention: "24h" }), model: "gpt-4o" }).generate(req));
-    await assert.rejects(createProvider(makeProfile("openai-compatible", fixture.url, { retention: "24h" })).generate(req));
+    await assert.rejects(createProvider(makeProfile("llamacpp", fixture.url, { retention: "24h" })).generate(req));
     assert.equal(fixture.requests.length, 5);
   } finally { await fixture.close(); }
 });

@@ -32,7 +32,8 @@ test("T-01d: config init creates valid local starter, refuses overwrite, list is
   const created = readFileSync(path, "utf8");
   const data = JSON.parse(created);
   assert.equal(data.default_profile, "local");
-  assert.equal(data.profiles.local.provider, "ollama");
+  assert.equal(data.models.local.provider, "ollama");
+  assert.equal(data.profiles.local.model, "local");
   const second = cli(["config", "init"], home);
   assert.notEqual(second.status, 0);
   assert.equal(readFileSync(path, "utf8"), created);
@@ -46,7 +47,8 @@ test("T-01d: config list redacts endpoint credentials and invalid flags fail bef
   const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
   mkdirSync(join(home, "raw"));
   writeFileSync(join(home, "raw", "config.json"), JSON.stringify({
-    profiles: { remote: { provider: "openai-compatible", model: "m", base_url: "https://alice:pw@example.com/v1?token=secret" } },
+    models: { remote: { provider: "custom", method: "openai-chat-completions", model_id: "m", base_url: "https://alice:pw@example.com/v1?token=secret" } },
+    profiles: { remote: { model: "remote" } },
   }));
   const listed = cli(["config", "list"], home);
   assert.equal(listed.status, 0, listed.stderr);
@@ -73,7 +75,8 @@ test("T-01b: config list redacts uppercase URL credentials", () => {
   const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
   mkdirSync(join(home, "raw"));
   writeFileSync(join(home, "raw", "config.json"), JSON.stringify({
-    profiles: { remote: { provider: "openai-compatible", model: "m", base_url: "HTTPS://alice:pw@example.com/v1?token=secret" } },
+    models: { remote: { provider: "custom", method: "openai-chat-completions", model_id: "m", base_url: "HTTPS://alice:pw@example.com/v1?token=secret" } },
+    profiles: { remote: { model: "remote" } },
   }));
   const listed = cli(["config", "list"], home);
   assert.equal(listed.status, 0, listed.stderr);
@@ -84,12 +87,12 @@ test("T-01d: config list rejects malformed profile and compact definitions witho
   const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
   mkdirSync(join(home, "raw"));
   const path = join(home, "raw", "config.json");
-  writeFileSync(path, JSON.stringify({ profiles: { bad: { provider: "not-a-provider", model: 42, api_key: "secret" } } }));
+  writeFileSync(path, JSON.stringify({ models: { bad: { provider: "custom", method: "openai-chat-completions", model_id: 42, api_key: "secret", base_url: "https://example.test" } }, profiles: { bad: { model: "bad" } } }));
   const bad = cli(["config", "list"], home);
   assert.equal(bad.status, 2);
   assert.doesNotMatch(bad.stdout + bad.stderr, /secret/);
   writeFileSync(path, JSON.stringify({ profiles: [] }));
   assert.equal(cli(["config", "list"], home).status, 2);
-  writeFileSync(path, JSON.stringify({ profiles: { local: { provider: "ollama", model: "m" } }, compact: { profile: "missing" } }));
+  writeFileSync(path, JSON.stringify({ models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "m" } }, profiles: { local: { model: "local", compact: { profile: "missing" } } } }));
   assert.equal(cli(["config", "list"], home).status, 2);
 });

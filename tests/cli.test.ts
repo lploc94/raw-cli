@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testConfig } from "./fixtures/config.js";
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -48,7 +49,7 @@ test("T-08a: one-shot streams once and a real write result reaches follow-up inf
     { frames: [openAiFrame({ content: "Changed sentinel" }, "stop"), openAiDone] },
   ]);
   try {
-    const result = await raw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "write sentinel"],
+    const result = await raw(["--config", testConfig("openai", "fixture", fixture.url), "write sentinel"],
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "Changed sentinel\n");
@@ -64,7 +65,7 @@ test("T-08a/b: non-TTY tool call executes without an approval flag", async () =>
   } }] }, "tool_calls"), openAiDone] };
   const fixture = await startMockProvider([response, { frames: [openAiFrame({ content: "completed" }, "stop"), openAiDone] }]);
   try {
-    const result = await raw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "write file"],
+    const result = await raw(["--config", testConfig("openai", "fixture", fixture.url), "write file"],
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "completed\n");
@@ -82,7 +83,7 @@ test("T-08 review: piped REPL executes a tool without approval", async () => {
     { frames: [openAiFrame({ content: "completed" }, "stop"), openAiDone] },
   ]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"),
-    "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive"],
+    "--config", testConfig("openai", "fixture", fixture.url), "--interactive"],
   { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
@@ -110,7 +111,7 @@ test("T-08 review: SIGINT during MCP startup reaps owned stdio child", async () 
     env: { MCP_PID_FILE: pidFile, MCP_LIST_STARTED_FILE: started, MCP_LIST_DELAY_MS: "1200" }, tools: [],
   } } }));
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"),
-    "--provider", "ollama", "--model", "fixture", "-y", "task"],
+    "--config", testConfig("ollama"), "-y", "task"],
   { cwd: root, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.end();
   child.stdout.resume(); child.stderr.resume();
@@ -141,7 +142,7 @@ test("T-08b: real PTY executes a write without a permission prompt", async () =>
     } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "handled" }, "stop"), openAiDone] },
   ]);
-  const { child, output } = ptyRaw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "write marker"],
+  const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "write marker"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
@@ -159,7 +160,7 @@ test("T-08 review: queued REPL command follows an automatic tool call", async ()
     } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "write handled" }, "stop"), openAiDone] },
   ]);
-  const { child, output } = ptyRaw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive"],
+  const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "--interactive"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
     await waitFor(output, "> ");
@@ -177,7 +178,7 @@ test("T-08b: Ctrl-C during an active PTY tool aborts it and exits 130", async ()
   const fixture = await startMockProvider([{ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "shell", type: "function", function: {
     name: "bash", arguments: JSON.stringify({ command: `sleep 0.5; printf late > ${join(root, "marker")}` }),
   } }] }, "tool_calls"), openAiDone] }]);
-  const { child, output } = ptyRaw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "-y", "run shell"],
+  const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "-y", "run shell"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
     await waitFor(output, "raw: bash");
@@ -194,7 +195,7 @@ test("T-08b: REPL Ctrl-C aborts active work, then Ctrl-C while idle exits", asyn
   const fixture = await startMockProvider([{ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "shell", type: "function", function: {
     name: "bash", arguments: JSON.stringify({ command: `sleep 0.5; printf late > ${join(root, "marker")}` }),
   } }] }, "tool_calls"), openAiDone] }]);
-  const { child, output } = ptyRaw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive", "-y"],
+  const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
     await waitFor(output, "> ");
@@ -222,7 +223,7 @@ test("T-08b: EOF during an active piped REPL turn aborts owned Bash", async () =
     name: "bash", arguments: JSON.stringify({ command: `sleep 0.5; printf late > ${join(root, "marker")}` }),
   } }] }, "tool_calls"), openAiDone] }]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"),
-    "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive", "-y"],
+    "--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
   { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
   child.stderr.setEncoding("utf8").on("data", (part: string) => { stderr += part; });
@@ -239,7 +240,7 @@ test("T-08b: EOF during an active piped REPL turn aborts owned Bash", async () =
 });
 
 test("T-08b: idle PTY EOF closes REPL cleanly", async () => {
-  const { child, output } = ptyRaw(["--provider", "ollama", "--model", "fixture", "--interactive"], process.env);
+  const { child, output } = ptyRaw(["--config", testConfig("ollama"), "--interactive"], process.env);
   try {
     await waitFor(output, "> ");
     child.stdin.write("\x04");
@@ -252,10 +253,10 @@ test("T-08a: profile selection and -- task delimiter reach the chosen model", as
   const root = await mkdtemp(join(tmpdir(), "raw-cli-profile-"));
   const fixture = await startMockProvider([{ frames: [openAiFrame({ content: "profile-answer" }, "stop"), openAiDone] }]);
   const config = join(root, "config.json");
-  await writeFile(config, JSON.stringify({ default_profile: "local", profiles: {
-    local: { provider: "ollama", model: "unused", base_url: "http://127.0.0.1:9/v1" },
-    selected: { provider: "openai", model: "fixture", base_url: fixture.url },
-  } }));
+  await writeFile(config, JSON.stringify({ default_profile: "local", models: {
+    local: { provider: "ollama", method: "openai-chat-completions", model_id: "unused", base_url: "http://127.0.0.1:9/v1" },
+    selected: { provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: fixture.url },
+  }, profiles: { local: { model: "local" }, selected: { model: "selected" } } }));
   try {
     const result = await raw(["--config", config, "--profile", "selected", "--", "-leading task"],
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
@@ -271,7 +272,7 @@ test("T-08a: max steps, provider error and invalid arguments use distinct exit c
     name: "write_file", arguments: '{"path":"never.txt","content":"no"}',
   } }] }, "tool_calls"), openAiDone] }]);
   try {
-    const max = await raw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url,
+    const max = await raw(["--config", testConfig("openai", "fixture", fixture.url),
       "--max-steps", "1", "-y", "write"], { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
     assert.equal(max.code, 3, max.stderr);
     await assert.rejects(access(join(root, "never.txt")));
@@ -279,7 +280,7 @@ test("T-08a: max steps, provider error and invalid arguments use distinct exit c
   const secret = "credential-sentinel";
   const failed = await startMockProvider([{ status: 401, body: { error: { message: `bad ${secret}` } } }]);
   try {
-    const error = await raw(["--provider", "openai", "--model", "fixture", "--base-url", failed.url, "hello"],
+    const error = await raw(["--config", testConfig("openai", "fixture", failed.url), "hello"],
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: secret } });
     assert.equal(error.code, 1);
     assert.doesNotMatch(error.stderr, new RegExp(secret));
@@ -298,12 +299,12 @@ test("T-08 review: malformed MCP config exits 2 while unreachable server exits 1
   const root = await mkdtemp(join(tmpdir(), "raw-cli-mcp-errors-"));
   const config = join(root, "raw-mcp.json");
   await writeFile(config, "{");
-  const malformed = await raw(["--provider", "ollama", "--model", "fixture", "-y", "task"], { cwd: root });
+  const malformed = await raw(["--config", testConfig("ollama"), "-y", "task"], { cwd: root });
   assert.equal(malformed.code, 2, malformed.stderr);
   await writeFile(config, JSON.stringify({ mcpServers: { bad: { command: "node", url: "http://127.0.0.1:1" } } }));
-  const invalid = await raw(["--provider", "ollama", "--model", "fixture", "-y", "task"], { cwd: root });
+  const invalid = await raw(["--config", testConfig("ollama"), "-y", "task"], { cwd: root });
   assert.equal(invalid.code, 2, invalid.stderr);
   await writeFile(config, JSON.stringify({ mcpServers: { unreachable: { command: "raw-missing-mcp-command", tools: [] } } }));
-  const connection = await raw(["--provider", "ollama", "--model", "fixture", "-y", "task"], { cwd: root });
+  const connection = await raw(["--config", testConfig("ollama"), "-y", "task"], { cwd: root });
   assert.equal(connection.code, 1, connection.stderr);
 });

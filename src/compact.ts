@@ -81,7 +81,7 @@ export async function performCompaction(
   if (options.signal.aborted) return { result: { status: "cancelled", beforeBytes, afterBytes: beforeBytes } };
   if (turn.toolCalls.length || !["stop", "end_turn", "STOP"].includes(turn.finishReason)) throw new Error("compaction did not return a final text answer");
   if (!turn.text.trim()) throw new Error("compaction returned an empty summary");
-  const reportedOutput = normalizeUsage(provider.profile.provider, turn.usage).outputTokens;
+  const reportedOutput = normalizeUsage(provider.profile.method, turn.usage).outputTokens;
   if (reportedOutput !== undefined && reportedOutput > options.maxOutputTokens) throw new Error("compaction exceeded output token budget");
   const replacement: ModelMessage[] = [
     ...(snapshot.originalTask !== undefined ? [{ role: "user" as const, content: snapshot.originalTask }] : []),

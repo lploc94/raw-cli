@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testConfig } from "./fixtures/config.js";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-prov
 
 test("T-07e: parent client helper can be constructed with a stdio child launch contract", async () => {
   const parent = await createAcpClient({ command: process.execPath, args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio",
-    "--provider", "ollama", "--model", "fixture", "-y"] });
+    "--config", testConfig("ollama"), "-y"] });
   try { assert.ok(parent.connection); }
   finally { await parent.close(); }
 });
@@ -22,7 +23,7 @@ test("T-07 review: closing only parent connection aborts active reverse callback
   const responses: Array<{ frames: string[] }> = [];
   const fixture = await startMockProvider(responses);
   const parent = await createAcpClient({ command: process.execPath,
-    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "-y"],
+    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("openai", "fixture", fixture.url), "-y"],
     env: { ...process.env, OPENAI_API_KEY: "key" } });
   let entered!: () => void;
   const ready = new Promise<void>((resolve) => { entered = resolve; });
@@ -49,7 +50,7 @@ test("T-07 review: parent close waits for daemon and owned MCP child to exit", a
   const root = await mkdtemp(join(tmpdir(), "raw-parent-mcp-close-"));
   const pidFile = join(root, "mcp.pid");
   const parent = await createAcpClient({ command: process.execPath,
-    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "ollama", "--model", "fixture", "-y"] });
+    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("ollama"), "-y"] });
   const daemonPid = parent.pid;
   let mcpPid = 0;
   try {
@@ -80,7 +81,7 @@ test("T-07a/e: parent library spawns daemon, runs tools without permission, stre
   let permissions = 0;
   const updates: string[] = [];
   const parent = await createAcpClient({ command: process.execPath,
-    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "openai", "--model", "fixture", "--base-url", fixture.url],
+    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("openai", "fixture", fixture.url)],
     env: { ...process.env, OPENAI_API_KEY: "key" },
     onPermission: () => { permissions++; return { outcome: { outcome: "selected", optionId: "allow" } }; },
     onUpdate: (update) => { updates.push(update.update.sessionUpdate); },
@@ -105,7 +106,7 @@ test("T-07c/e: parent client registers executable reverse tool and its result re
   const responses: Array<{ frames: string[] }> = [];
   const fixture = await startMockProvider(responses);
   const parent = await createAcpClient({ command: process.execPath,
-    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "-y"],
+    args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("openai", "fixture", fixture.url), "-y"],
     env: { ...process.env, OPENAI_API_KEY: "key" } });
   try {
     const sessionId = await parent.newSession(process.cwd());

@@ -33,7 +33,8 @@ export async function withProviderAbort(request: ProviderRequest, run: (signal: 
 }
 
 export function createProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
-  if (profile.provider === "anthropic") return createAnthropicProvider(profile);
-  if (profile.provider === "google") return createGoogleProvider(profile);
-  return createOpenAiProvider(profile);
+  if (profile.method === "anthropic-messages") return createAnthropicProvider(profile);
+  if (profile.method === "google-generate-content") return createGoogleProvider(profile);
+  if (profile.method === "openai-chat-completions") return createOpenAiProvider(profile);
+  throw new ProviderError("unsupported_method", `unsupported API method: ${String(profile.method)}`);
 }

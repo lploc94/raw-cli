@@ -5,7 +5,7 @@ import type { ProviderName, ProviderProfile } from "../src/llm/types.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { BUILTIN_TOOL_DEFINITIONS } from "../src/tools/registry.js";
 
-const profile = (provider: ProviderName, baseUrl: string): ProviderProfile => ({ name: provider, provider, model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
+const profile = (provider: ProviderName, baseUrl: string): ProviderProfile => ({ name: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
 const user = [{ role: "user" as const, content: "do it" }];
 
 function openAiToolFrames() {
@@ -31,7 +31,7 @@ function googleToolFrames() {
   return [googleFrame({ candidates: [{ content: { role: "model", parts: [{ functionCall: { id: "call_1", name: "read_file", args: { path: "a" } } }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3 } })];
 }
 
-for (const provider of ["openai", "openai-compatible", "openrouter", "ollama", "anthropic", "google"] as const) {
+for (const provider of ["openai", "llamacpp", "openrouter", "ollama", "anthropic", "google"] as const) {
   test(`${provider} SDK streams tool call and replays native tool result on next request`, async () => {
     const first = provider === "anthropic" ? anthropicToolFrames() : provider === "google" ? googleToolFrames() : openAiToolFrames();
     const second = provider === "anthropic"
@@ -66,7 +66,7 @@ for (const provider of ["openai", "openai-compatible", "openrouter", "ollama", "
       assert.match(JSON.stringify(body), /read_file/);
       assert.match(JSON.stringify(body), /128/);
       if (provider === "openai") assert.equal(body.max_completion_tokens, 128);
-      if (provider === "ollama" || provider === "openai-compatible" || provider === "openrouter") assert.equal(body.max_tokens, 128);
+      if (provider === "ollama" || provider === "llamacpp" || provider === "openrouter") assert.equal(body.max_tokens, 128);
       const replay = JSON.stringify(fixture.requests[1]?.body);
       assert.match(replay, /call_1|read_file/);
       assert.match(replay, /file content/);

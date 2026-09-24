@@ -28,9 +28,6 @@ Usage: raw [options] [task]
 
 Options:
   --profile NAME             Select a configured LLM profile
-  --provider NAME            Select provider directly
-  --model NAME               Select model directly
-  --base-url URL             Compatible API endpoint
   --config PATH              Use one alternate config file
   --system-prompt TEXT       Replace the system prompt literally
   --max-steps N              Maximum inference requests (default 25)
@@ -53,13 +50,15 @@ async function run(): Promise<void> {
     const path = input(() => configFilePath({ flags: parsed.flags }));
     const starter = {
       default_profile: "local",
-      profiles: {
+      models: {
         local: {
           provider: "ollama",
-          model: "YOUR_INSTALLED_MODEL",
+          method: "openai-chat-completions",
+          model_id: "YOUR_INSTALLED_MODEL",
           base_url: "http://127.0.0.1:11434/v1",
         },
       },
+      profiles: { local: { model: "local" } },
     };
     input(() => {
       mkdirSync(dirname(path), { recursive: true });
@@ -71,6 +70,7 @@ async function run(): Promise<void> {
   if (parsed.command === "config-list") {
     const document = input(() => readConfigDocument({ flags: parsed.flags }));
     const profiles = document.data.profiles;
+    const models = document.data.models;
     if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
       process.stdout.write("No configured profiles.\n");
       return;
@@ -78,8 +78,12 @@ async function run(): Promise<void> {
     for (const [name, raw] of Object.entries(profiles)) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
       const data = raw as Record<string, unknown>;
-      const endpoint = typeof data.base_url === "string" ? redact(data.base_url) : "default endpoint";
-      process.stdout.write(`${name}\t${String(data.provider ?? "?")}\t${String(data.model ?? "?")}\t${endpoint}\n`);
+      const alias = String(data.model ?? "?");
+      const model = models && typeof models === "object" && !Array.isArray(models)
+        ? (models as Record<string, unknown>)[alias] : undefined;
+      const spec = model && typeof model === "object" && !Array.isArray(model) ? model as Record<string, unknown> : {};
+      const endpoint = typeof spec.base_url === "string" ? redact(spec.base_url) : "default endpoint";
+      process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}\n`);
     }
     return;
   }

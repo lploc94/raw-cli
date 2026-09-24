@@ -6,7 +6,7 @@ import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider
 import type { ToolResult } from "../src/tools/types.js";
 import { nativeToolContent } from "../src/llm/content.js";
 
-const profile = (provider: ProviderName, baseUrl: string): ProviderProfile => ({ name: provider, provider, model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
+const profile = (provider: ProviderName, baseUrl: string): ProviderProfile => ({ name: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
 const request = { system: "sys", messages: [{ role: "user" as const, content: "hello" }], tools: [], timeoutMs: 1000 };
 
 test("OpenAI assembles interleaved fragmented calls, Unicode, usage and finish reason", async () => {

@@ -1,10 +1,5 @@
-export type ProviderName =
-  | "openai"
-  | "openai-compatible"
-  | "openrouter"
-  | "ollama"
-  | "anthropic"
-  | "google";
+export type ProviderName = string;
+export type ApiMethod = "openai-chat-completions" | "anthropic-messages" | "google-generate-content";
 
 export interface CacheOptions {
   mode?: "auto" | "no-hints";
@@ -16,7 +11,9 @@ export interface CacheOptions {
 export interface ProviderProfile {
   name: string;
   provider: ProviderName;
+  method: ApiMethod;
   model: string;
+  modelAlias?: string;
   baseUrl?: string;
   apiKey?: string;
   apiKeyEnv?: string;

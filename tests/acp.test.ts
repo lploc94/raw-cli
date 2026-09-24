@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { deflateSync } from "node:zlib";
 import { client, PROTOCOL_VERSION, type ContentBlock } from "@agentclientprotocol/sdk";
 import { loadConfig as loadConfigActual } from "../src/config.js";
+import { testConfig } from "./fixtures/config.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { createProvider } from "../src/llm/client.js";
 import { startMockProvider } from "./fixtures/mock-provider.js";
@@ -19,7 +20,7 @@ const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConf
 test("T-07 review: upstream SDK errors never expose credentials in ACP replies", async () => {
   const secret = "secret-api-key-sentinel";
   const fixture = await startMockProvider([{ status: 401, body: { error: { message: `bad credential ${secret}` } } }]);
-  const runtime = await loadConfig({ flags: { provider: "openai", model: "fixture", baseUrl: `${fixture.url}?token=${secret}` },
+  const runtime = await loadConfig({ flags: { configPath: testConfig("openai", "fixture", `${fixture.url}?token=${secret}`) },
     env: { OPENAI_API_KEY: secret }, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: createProvider });
   const connection = client({ name: "credential-client" }).connect(server.app);
@@ -34,7 +35,7 @@ test("T-07 review: upstream SDK errors never expose credentials in ACP replies",
 test("T-07 review: disconnect during MCP discovery reaps child and creates no provider", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-acp-mcp-disconnect-"));
   const pidFile = join(root, "mcp.pid");
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture" }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   let providers = 0;
   const server = createAcpServer({ runtime, mcpServers: { delayed: { command: process.execPath,
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"],
@@ -62,7 +63,7 @@ test("T-07 review: disconnect during MCP discovery reaps child and creates no pr
 test("T-07 review: pending MCP startup cannot delay cancellation of an existing Bash", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-acp-close-race-"));
   const discoveryStarted = join(root, "discovery-started");
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) =>
     request.messages.at(-1)?.role === "tool" ? { text: "done", toolCalls: [], finishReason: "stop" }
       : { text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { command: "sleep 0.3; printf late > marker" } }], finishReason: "tool_calls" } }) });
@@ -97,7 +98,7 @@ test("T-07 review: pending MCP startup cannot delay cancellation of an existing 
 });
 
 test("T-07 review: hidden MCP catalog can be selected while idle and appears on next inference", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   let requested: ProviderRequest | undefined;
   const server = createAcpServer({ runtime, mcpServers: { fixture: { command: process.execPath,
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], tools: [] } },
@@ -122,7 +123,7 @@ test("T-07 review: hidden MCP catalog can be selected while idle and appears on 
 });
 
 test("T-07 review: unsupported hidden MCP schema does not block selected valid tool", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture" }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: { fixture: { command: process.execPath,
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: { MCP_MODE: "unsupported-hidden" }, tools: ["selected"] } },
   providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
@@ -135,7 +136,7 @@ test("T-07 review: unsupported hidden MCP schema does not block selected valid t
 });
 
 test("T-07 review: failed calls announce tool_call before tool_call_update", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => request.messages.at(-1)?.role === "tool"
     ? { text: "done", toolCalls: [], finishReason: "stop" }
     : { text: "", toolCalls: [{ id: "bad", name: "read_file", arguments: { path: 5 }, argumentError: "invalid json" }], finishReason: "tool_calls" } }) });
@@ -152,7 +153,7 @@ test("T-07 review: failed calls announce tool_call before tool_call_update", asy
 });
 
 test("T-07 review: multi-megabyte reverse image validates without regex stack failure", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true, maxOutputBytes: 8 * 1024 * 1024 },
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true, maxOutputBytes: 8 * 1024 * 1024 },
     env: {}, requireModel: true });
   let alias = "";
   let imageSeen = false;
@@ -208,7 +209,7 @@ test("T-07 review: multi-megabyte reverse image validates without regex stack fa
 });
 
 test("T-07a/f: standard ACP works without raw negotiation and raw compact extension is capability gated", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture" }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!,
     generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const peer = client({ name: "test" });
@@ -223,7 +224,7 @@ test("T-07a/f: standard ACP works without raw negotiation and raw compact extens
 });
 
 test("T-07c/d: negotiated reverse tool executes through model history with typed image, error, validation and idle schema revision", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   let alias = "";
   let calls = 0;
   let reply: unknown = { isError: false, content: [{ type: "text", text: "peer-sentinel" },
@@ -278,7 +279,7 @@ test("T-07c/d: negotiated reverse tool executes through model history with typed
 });
 
 test("T-07c: reverse callback timeout becomes matching tool error and late answer cannot overwrite history", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true, requestTimeoutMs: 50 }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true, requestTimeoutMs: 50 }, env: {}, requireModel: true });
   let alias = "";
   let finish!: (value: unknown) => void;
   const late = new Promise<unknown>((resolve) => { finish = resolve; });
@@ -309,7 +310,7 @@ test("T-07c: reverse callback timeout becomes matching tool error and late answe
 });
 
 test("T-07c/d: cancelling pending reverse callback notifies peer and late reply cannot alter resumable history", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   let alias = "";
   let modelCalls = 0;
   let resumed: ProviderRequest["messages"] | undefined;
@@ -354,7 +355,7 @@ test("T-07d: independent session cwd/results and cross-peer ownership hold durin
   await Promise.all(dirs.map((dir) => mkdir(dir)));
   await writeFile(join(dirs[0]!, "sentinel.txt"), "session-one");
   await writeFile(join(dirs[1]!, "sentinel.txt"), "session-two");
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   const observed: string[] = [];
   const makeServer = () => createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
     const last = request.messages.at(-1);
@@ -386,7 +387,7 @@ test("T-07d: independent session cwd/results and cross-peer ownership hold durin
 
 test("T-07d: cancel services pending permission while prompt is blocked and prevents write side effect", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-acp-permission-"));
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: false }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: false }, env: {}, requireModel: true });
   let requests = 0;
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async () => {
     requests++;
@@ -415,7 +416,7 @@ test("T-07d: cancel services pending permission while prompt is blocked and prev
 
 test("T-07d: peer disconnect aborts active Bash before delayed filesystem side effect", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-acp-disconnect-"));
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({
     text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { command: "sleep 0.5; printf late > sentinel.txt" } }], finishReason: "tool_calls",
   }) }) });
@@ -436,7 +437,7 @@ test("T-07d: peer disconnect aborts active Bash before delayed filesystem side e
 });
 
 test("T-07f: compact extension delegates to atomic session compact and returns status/usage", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   let summaries = 0;
   let summaryText = "Task objective and chosen constraints remain.";
   let postCompactMessages: ProviderRequest["messages"] | undefined;

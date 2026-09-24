@@ -53,7 +53,7 @@ test("T-06d: real MCP PNG/JPEG tools become native OpenAI image payloads after l
       { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "image-call", type: "function", function: { name: alias, arguments: JSON.stringify({ value }) } }] }, "tool_calls"), openAiDone] },
       { frames: [openAiFrame({ content: "seen" }, "stop"), openAiDone] },
     ]);
-    const agent = createAgent({ provider: createProvider({ name: "model", provider: "openai", model: "fixture", baseUrl: fixture.url, apiKey: "key" }),
+    const agent = createAgent({ provider: createProvider({ name: "model", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "key" }),
       registry: connection.registry, cwd: process.cwd(), autoApprove: true });
     try {
       assert.equal((await agent.run("view image")).text, "seen");

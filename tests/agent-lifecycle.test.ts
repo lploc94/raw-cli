@@ -8,7 +8,7 @@ import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/
 import { createToolRegistry } from "../src/tools/registry.js";
 
 const fake = (generate: (request: ProviderRequest) => Promise<ProviderTurn>): ProviderAdapter => ({
-  profile: { name: "fake", provider: "ollama", model: "fixture" }, generate,
+  profile: { name: "fake", provider: "ollama", method: "openai-chat-completions", model: "fixture" }, generate,
 });
 const options = (cwd: string, provider: ProviderAdapter) => ({ cwd, provider, registry: createToolRegistry(), system: "tiny", maxSteps: 5, maxOutputBytes: 8192, requestTimeoutMs: 2000, autoApprove: true });
 

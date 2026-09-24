@@ -1,4 +1,4 @@
-import type { ProviderName, ProviderProfile } from "./types.js";
+import type { ApiMethod, ProviderProfile } from "./types.js";
 
 export interface NormalizedUsage {
   inputTokensTotal?: number;
@@ -8,7 +8,7 @@ export interface NormalizedUsage {
   cacheReadRatio?: number;
 }
 
-export interface UsageRecord { provider: ProviderName; raw: unknown }
+export interface UsageRecord { method: ApiMethod; raw: unknown }
 
 export interface UsageSummary {
   requests: number;
@@ -30,13 +30,13 @@ function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-export function normalizeUsage(provider: ProviderName, raw: unknown): NormalizedUsage {
+export function normalizeUsage(method: ApiMethod, raw: unknown): NormalizedUsage {
   const data = object(raw);
   let inputTokensTotal: number | undefined;
   let outputTokens: number | undefined;
   let cacheReadTokens: number | undefined;
   let cacheWriteTokens: number | undefined;
-  if (provider === "anthropic") {
+  if (method === "anthropic-messages") {
     const ordinary = count(data.input_tokens);
     cacheReadTokens = count(data.cache_read_input_tokens);
     cacheWriteTokens = count(data.cache_creation_input_tokens);
@@ -44,7 +44,7 @@ export function normalizeUsage(provider: ProviderName, raw: unknown): Normalized
       inputTokensTotal = ordinary + cacheReadTokens + cacheWriteTokens;
     }
     outputTokens = count(data.output_tokens);
-  } else if (provider === "google") {
+  } else if (method === "google-generate-content") {
     inputTokensTotal = count(data.promptTokenCount);
     const candidates = count(data.candidatesTokenCount);
     const thoughts = count(data.thoughtsTokenCount);
@@ -78,7 +78,7 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
   let ratioInputs = 0;
   let ratioReads = 0;
   for (const record of records) {
-    const usage = normalizeUsage(record.provider, record.raw);
+    const usage = normalizeUsage(record.method, record.raw);
     if (usage.inputTokensTotal !== undefined) { inputTokensKnown += usage.inputTokensTotal; inputCoverage++; }
     if (usage.outputTokens !== undefined) { outputTokensKnown += usage.outputTokens; outputCoverage++; }
     if (usage.cacheReadTokens !== undefined) cacheReadTokensKnown += usage.cacheReadTokens;
@@ -112,7 +112,7 @@ export function cacheSettings(profile: Readonly<ProviderProfile>, requestKey?: s
   const options = profile.cache;
   const mode = options?.mode ?? "auto";
   if (mode !== "auto" && mode !== "no-hints") throw new Error(`unsupported cache mode: ${mode}`);
-  if (options?.backend === "llama.cpp" && profile.provider !== "openai-compatible") throw new Error("llama.cpp backend requires openai-compatible provider");
+  if (options?.backend === "llama.cpp" && profile.method !== "openai-chat-completions") throw new Error("llama.cpp backend requires openai-chat-completions method");
   if (profile.provider === "openai") {
     const retention = options?.retention;
     if (retention !== undefined && !["in_memory", "24h", "30m"].includes(retention)) throw new Error(`unsupported OpenAI cache retention: ${retention}`);

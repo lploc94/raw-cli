@@ -3,19 +3,14 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
-import type { CacheOptions, ProviderName, ProviderProfile } from "./llm/types.js";
+import type { ApiMethod, CacheOptions, ProviderName, ProviderProfile } from "./llm/types.js";
 
 type JsonObject = Record<string, unknown>;
 
-const providerNames = new Set<ProviderName>([
-  "openai", "openai-compatible", "openrouter", "ollama", "anthropic", "google",
-]);
+const apiMethods = new Set<ApiMethod>(["openai-chat-completions", "anthropic-messages", "google-generate-content"]);
 
 export interface RawFlags {
   profile?: string;
-  provider?: string;
-  model?: string;
-  baseUrl?: string;
   configPath?: string;
   systemPrompt?: string;
   maxSteps?: number;
@@ -36,7 +31,6 @@ export interface CliArgs {
 }
 
 export interface CompactSettings {
-  profile?: string;
   keepRecentTurns: number;
   maxOutputTokens: number;
 }
@@ -151,12 +145,12 @@ export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocum
   if (!tree || errors.length) throw new Error(`invalid JSON config: ${path}`);
   checkDuplicates(tree);
   const data = object(getNodeValue(tree), "config root");
-  keys(data, ["default_profile", "profiles", "compact"], "config");
+  keys(data, ["default_profile", "models", "profiles"], "config");
   validateDocument(data);
   return { path, data, exists: true };
 }
 
-function cacheOptions(value: unknown, provider: ProviderName, context: string): CacheOptions {
+function cacheOptions(value: unknown, provider: ProviderName, method: ApiMethod, context: string): CacheOptions {
   const data = object(value, context);
   keys(data, ["mode", "key", "retention", "backend"], context);
   const result: CacheOptions = {};
@@ -168,7 +162,7 @@ function cacheOptions(value: unknown, provider: ProviderName, context: string): 
   }
   if (data.backend !== undefined) {
     result.backend = enumValue(data.backend, new Set(["generic", "llama.cpp"]), `${context}.backend`);
-    if (result.backend === "llama.cpp" && provider !== "openai-compatible") {
+    if (result.backend === "llama.cpp" && method !== "openai-chat-completions") {
       throw new Error(`${context}.backend is unsupported for ${provider}`);
     }
   }
@@ -176,58 +170,24 @@ function cacheOptions(value: unknown, provider: ProviderName, context: string): 
   return result;
 }
 
-function profileSpec(name: string, raw: unknown): Omit<ProviderProfile, "apiKey"> {
-  const value = object(raw, `profile ${name}`);
-  keys(value, ["provider", "model", "base_url", "api_key_env", "context_window", "max_output_tokens", "cache"], `profile ${name}`);
-  const provider = enumValue(value.provider, providerNames, `profile ${name}.provider`);
-  const result: Omit<ProviderProfile, "apiKey"> = {
-    name,
-    provider,
-    model: string(value.model, `profile ${name}.model`),
-  };
-  if (value.base_url !== undefined) result.baseUrl = endpoint(value.base_url, `profile ${name}.base_url`);
-  if (value.api_key_env !== undefined) {
-    const key = string(value.api_key_env, `profile ${name}.api_key_env`);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`profile ${name}.api_key_env is invalid`);
-    result.apiKeyEnv = key;
-  }
-  if (value.context_window !== undefined) result.contextWindow = positive(value.context_window, `profile ${name}.context_window`);
-  if (value.max_output_tokens !== undefined) result.maxOutputTokens = positive(value.max_output_tokens, `profile ${name}.max_output_tokens`);
-  if (result.contextWindow !== undefined && result.maxOutputTokens !== undefined && result.maxOutputTokens >= result.contextWindow) {
-    throw new Error(`profile ${name}.max_output_tokens must be smaller than context_window`);
-  }
-  if (value.cache !== undefined) result.cache = cacheOptions(value.cache, provider, `profile ${name}.cache`);
-  const fallbackUrl = defaultEndpoint(provider);
-  if (result.baseUrl === undefined && fallbackUrl !== undefined) result.baseUrl = fallbackUrl;
-  if (provider === "openai-compatible" && result.baseUrl === undefined) throw new Error(`profile ${name}.base_url is required`);
-  return result;
+interface ModelSpec {
+  provider: ProviderName;
+  method: ApiMethod;
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  apiKeyEnv?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
-function defaultEndpoint(provider: ProviderName): string | undefined {
-  if (provider === "ollama") return "http://127.0.0.1:11434/v1";
-  if (provider === "openrouter") return "https://openrouter.ai/api/v1";
-  return undefined;
-}
-
-function validateDocument(root: JsonObject): void {
-  const profilesData = root.profiles === undefined ? {} : object(root.profiles, "profiles");
-  for (const [name, raw] of Object.entries(profilesData)) profileSpec(name, raw);
-  if (root.default_profile !== undefined) {
-    const name = string(root.default_profile, "default_profile");
-    if (!Object.hasOwn(profilesData, name)) throw new Error(`unknown profile: ${name}`);
-  }
-  const compact = root.compact === undefined ? {} : object(root.compact, "compact");
-  keys(compact, ["profile", "keep_recent_turns", "max_output_tokens"], "compact");
-  if (compact.profile !== undefined && !Object.hasOwn(profilesData, string(compact.profile, "compact.profile"))) {
-    throw new Error(`unknown compact profile: ${String(compact.profile)}`);
-  }
-  if (compact.keep_recent_turns !== undefined) nonnegative(compact.keep_recent_turns, "compact.keep_recent_turns");
-  if (compact.max_output_tokens !== undefined) positive(compact.max_output_tokens, "compact.max_output_tokens");
-}
-
-function freezeProfile(profile: ProviderProfile): Readonly<ProviderProfile> {
-  if (profile.cache) Object.freeze(profile.cache);
-  return Object.freeze(profile);
+interface ProfileSpec {
+  modelAlias: string;
+  maxSteps?: number;
+  maxOutputBytes?: number;
+  requestTimeoutMs?: number;
+  cache?: CacheOptions;
+  compact: CompactSettings;
 }
 
 function endpoint(value: unknown, context: string): string {
@@ -236,12 +196,97 @@ function endpoint(value: unknown, context: string): string {
     const url = new URL(address);
     if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("protocol");
   } catch {
-    throw new Error(`${context} must be an HTTP(S) URL`);
+    throw new Error(context + " must be an HTTP(S) URL");
   }
   return address;
 }
 
-function resolveKey(profile: Omit<ProviderProfile, "apiKey">, env: NodeJS.ProcessEnv): ProviderProfile {
+function defaultEndpoint(provider: ProviderName, method: ApiMethod): string | undefined {
+  if (method !== "openai-chat-completions") return undefined;
+  if (provider === "ollama") return "http://127.0.0.1:11434/v1";
+  if (provider === "openrouter") return "https://openrouter.ai/api/v1";
+  return undefined;
+}
+
+function usesOfficialEndpoint(provider: ProviderName, method: ApiMethod): boolean {
+  return (provider === "openai" && method === "openai-chat-completions")
+    || (provider === "anthropic" && method === "anthropic-messages")
+    || (provider === "google" && method === "google-generate-content");
+}
+
+function modelSpec(name: string, raw: unknown): ModelSpec {
+  const where = "model " + name;
+  const value = object(raw, where);
+  keys(value, ["provider", "method", "model_id", "base_url", "api_key", "api_key_env", "context_window_tokens", "max_output_tokens"], where);
+  const provider = string(value.provider, where + ".provider");
+  if (provider === "openai-compatible") throw new Error(where + ".provider must identify a service, not an API method");
+  const method = enumValue(value.method, apiMethods, where + ".method");
+  const result: ModelSpec = {
+    provider,
+    method,
+    model: string(value.model_id, where + ".model_id"),
+  };
+  if (value.base_url !== undefined) result.baseUrl = endpoint(value.base_url, where + ".base_url");
+  if (value.api_key !== undefined && value.api_key_env !== undefined) throw new Error(where + " must choose api_key or api_key_env");
+  if (value.api_key !== undefined) result.apiKey = string(value.api_key, where + ".api_key");
+  if (value.api_key_env !== undefined) {
+    const key = string(value.api_key_env, where + ".api_key_env");
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(where + ".api_key_env is invalid");
+    result.apiKeyEnv = key;
+  }
+  if (value.context_window_tokens !== undefined) result.contextWindow = positive(value.context_window_tokens, where + ".context_window_tokens");
+  if (value.max_output_tokens !== undefined) result.maxOutputTokens = positive(value.max_output_tokens, where + ".max_output_tokens");
+  if (result.contextWindow !== undefined && result.maxOutputTokens !== undefined && result.maxOutputTokens >= result.contextWindow) {
+    throw new Error(where + ".max_output_tokens must be smaller than context_window_tokens");
+  }
+  if (result.baseUrl === undefined) {
+    const fallback = defaultEndpoint(provider, method);
+    if (fallback !== undefined) result.baseUrl = fallback;
+  }
+  if (!result.baseUrl && !usesOfficialEndpoint(provider, method)) throw new Error(where + ".base_url is required for this provider/method combination");
+  return result;
+}
+
+function compactSpec(raw: unknown, where: string): CompactSettings {
+  const value = raw === undefined ? {} : object(raw, where);
+  keys(value, ["keep_recent_turns", "max_output_tokens"], where);
+  return {
+    keepRecentTurns: value.keep_recent_turns === undefined ? 2 : nonnegative(value.keep_recent_turns, where + ".keep_recent_turns"),
+    maxOutputTokens: value.max_output_tokens === undefined ? 512 : positive(value.max_output_tokens, where + ".max_output_tokens"),
+  };
+}
+
+function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): ProfileSpec {
+  const where = "profile " + name;
+  const value = object(raw, where);
+  keys(value, ["model", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact"], where);
+  const modelAlias = string(value.model, where + ".model");
+  const model = models.get(modelAlias);
+  if (!model) throw new Error(where + " references unknown model: " + modelAlias);
+  const result: ProfileSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact") };
+  if (value.max_steps !== undefined) result.maxSteps = positive(value.max_steps, where + ".max_steps");
+  if (value.max_output_bytes !== undefined) result.maxOutputBytes = positive(value.max_output_bytes, where + ".max_output_bytes");
+  if (value.request_timeout_ms !== undefined) result.requestTimeoutMs = positive(value.request_timeout_ms, where + ".request_timeout_ms");
+  if (value.cache !== undefined) result.cache = cacheOptions(value.cache, model.provider, model.method, where + ".cache");
+  return result;
+}
+
+function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; profiles: Map<string, ProfileSpec>; defaultName?: string } {
+  const modelsData = root.models === undefined ? {} : object(root.models, "models");
+  const models = new Map<string, ModelSpec>();
+  for (const [name, raw] of Object.entries(modelsData)) models.set(string(name, "model alias"), modelSpec(name, raw));
+  const profilesData = root.profiles === undefined ? {} : object(root.profiles, "profiles");
+  const profiles = new Map<string, ProfileSpec>();
+  for (const [name, raw] of Object.entries(profilesData)) profiles.set(string(name, "profile name"), profileSpec(name, raw, models));
+  const defaultName = root.default_profile === undefined ? undefined : string(root.default_profile, "default_profile");
+  if (defaultName !== undefined && !profiles.has(defaultName)) throw new Error("unknown profile: " + defaultName);
+  return { models, profiles, ...(defaultName !== undefined ? { defaultName } : {}) };
+}
+
+function validateDocument(root: JsonObject): void { parseDocument(root); }
+
+function resolveKey(profile: ProviderProfile, env: NodeJS.ProcessEnv): ProviderProfile {
+  if (profile.apiKey) return profile;
   let apiKeyEnv = profile.apiKeyEnv;
   if (!apiKeyEnv) {
     if (profile.provider === "openai") apiKeyEnv = "OPENAI_API_KEY";
@@ -251,78 +296,68 @@ function resolveKey(profile: Omit<ProviderProfile, "apiKey">, env: NodeJS.Proces
   }
   if (!apiKeyEnv) return profile;
   const key = env[apiKeyEnv];
-  if (!key) throw new Error(`missing credential environment variable ${apiKeyEnv}`);
+  if (!key) throw new Error("missing credential environment variable " + apiKeyEnv);
   return { ...profile, apiKey: key, apiKeyEnv };
 }
 
-function numberOption(flag: number | undefined, env: string | undefined, fallback: number, name: string): number {
+function numberOption(flag: number | undefined, env: string | undefined, profile: number | undefined, fallback: number, name: string): number {
   if (flag !== undefined) return positive(flag, name);
   if (env !== undefined) {
-    if (!/^[0-9]+$/.test(env)) throw new Error(`${name} must be a positive integer`);
+    if (!/^[0-9]+$/.test(env)) throw new Error(name + " must be a positive integer");
     return positive(Number(env), name);
   }
-  return fallback;
+  return profile ?? fallback;
+}
+
+function freezeProfile(profile: ProviderProfile): Readonly<ProviderProfile> {
+  if (profile.cache) Object.freeze(profile.cache);
+  return Object.freeze(profile);
 }
 
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<RuntimeConfig> {
   const env = options.env ?? process.env;
+  for (const removed of ["RAW_PROVIDER", "RAW_MODEL", "RAW_BASE_URL"]) {
+    if (env[removed] !== undefined) throw new Error(removed + " was removed; select a configured profile instead");
+  }
   const flags = options.flags ?? {};
   const document = readConfigDocument(options);
-  const root = document.data;
-  const profilesData = root.profiles === undefined ? {} : object(root.profiles, "profiles");
-  const profiles = new Map<string, Omit<ProviderProfile, "apiKey">>();
-  for (const [name, raw] of Object.entries(profilesData)) profiles.set(name, profileSpec(name, raw));
-  const defaultName = root.default_profile === undefined ? undefined : string(root.default_profile, "default_profile");
-  if (defaultName && !profiles.has(defaultName)) throw new Error(`unknown profile: ${defaultName}`);
-  const compactRaw = root.compact === undefined ? {} : object(root.compact, "compact");
-  keys(compactRaw, ["profile", "keep_recent_turns", "max_output_tokens"], "compact");
-  const compactName = compactRaw.profile === undefined ? undefined : string(compactRaw.profile, "compact.profile");
-  if (compactName && !profiles.has(compactName)) throw new Error(`unknown compact profile: ${compactName}`);
-  const compact: CompactSettings = {
-    keepRecentTurns: compactRaw.keep_recent_turns === undefined ? 2 : nonnegative(compactRaw.keep_recent_turns, "compact.keep_recent_turns"),
-    maxOutputTokens: compactRaw.max_output_tokens === undefined ? 512 : positive(compactRaw.max_output_tokens, "compact.max_output_tokens"),
-  };
-  if (compactName !== undefined) compact.profile = compactName;
-  const selectedName = flags.profile ?? env.RAW_PROFILE ?? defaultName;
-  if (selectedName !== undefined && !profiles.has(selectedName)) throw new Error(`unknown profile: ${selectedName}`);
-  const chosen = selectedName ? profiles.get(selectedName) : undefined;
-  const providerOverride = flags.provider ?? env.RAW_PROVIDER;
-  const baseUrlOverride = flags.baseUrl ?? env.RAW_BASE_URL;
-  if (chosen && providerOverride !== undefined && providerOverride !== chosen.provider) throw new Error("provider override conflicts with selected profile");
-  if (chosen && baseUrlOverride !== undefined && endpoint(baseUrlOverride, "base_url") !== chosen.baseUrl) throw new Error("base_url override conflicts with selected profile");
-  const provider = chosen?.provider ?? (providerOverride === undefined ? undefined : enumValue(providerOverride, providerNames, "provider"));
-  const model = flags.model ?? env.RAW_MODEL ?? chosen?.model;
+  const parsed = parseDocument(document.data);
+  const selectedName = flags.profile ?? env.RAW_PROFILE ?? parsed.defaultName;
+  if (selectedName !== undefined && !parsed.profiles.has(selectedName)) throw new Error("unknown profile: " + selectedName);
+  const selectedSpec = selectedName === undefined ? undefined : parsed.profiles.get(selectedName);
+  const model = selectedSpec === undefined ? undefined : parsed.models.get(selectedSpec.modelAlias);
   let selected: ProviderProfile | undefined;
-  if (provider !== undefined && model !== undefined) {
-    const spec: Omit<ProviderProfile, "apiKey"> = {
-      ...(chosen ?? { name: "direct", provider, model }),
-      model: string(model, "model"),
+  if (selectedName !== undefined && selectedSpec && model) {
+    const spec: ProviderProfile = {
+      name: selectedName,
+      modelAlias: selectedSpec.modelAlias,
+      provider: model.provider,
+      method: model.method,
+      model: model.model,
+      ...(model.baseUrl !== undefined ? { baseUrl: model.baseUrl } : {}),
+      ...(model.apiKey !== undefined ? { apiKey: model.apiKey } : {}),
+      ...(model.apiKeyEnv !== undefined ? { apiKeyEnv: model.apiKeyEnv } : {}),
+      ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+      ...(model.maxOutputTokens !== undefined ? { maxOutputTokens: model.maxOutputTokens } : {}),
+      ...(selectedSpec.cache !== undefined ? { cache: selectedSpec.cache } : {}),
     };
-    if (baseUrlOverride !== undefined) spec.baseUrl = endpoint(baseUrlOverride, "base_url");
-    const fallbackUrl = defaultEndpoint(provider);
-    if (spec.baseUrl === undefined && fallbackUrl !== undefined) spec.baseUrl = fallbackUrl;
-    if (!spec.baseUrl && provider === "openai-compatible") throw new Error("base_url is required for openai-compatible");
     selected = freezeProfile(options.requireModel === false ? spec : resolveKey(spec, env));
   } else if (options.requireModel !== false) {
-    throw new Error("provider and model are required");
+    throw new Error("profile is required");
   }
+  const compact = Object.freeze(selectedSpec?.compact ?? compactSpec(undefined, "compact"));
   return Object.freeze({
     ...(selected === undefined ? {} : { profile: selected }),
     systemPrompt: resolveSystemPrompt(flags.systemPrompt, env.RAW_SYSTEM_PROMPT),
-    maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, 25, "max-steps"),
-    maxOutputBytes: numberOption(flags.maxOutputBytes, env.RAW_MAX_OUTPUT_BYTES, 8192, "max-output-bytes"),
-    requestTimeoutMs: numberOption(flags.requestTimeoutMs, env.RAW_REQUEST_TIMEOUT_MS, 120000, "request-timeout-ms"),
+    maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, selectedSpec?.maxSteps, 25, "max-steps"),
+    maxOutputBytes: numberOption(flags.maxOutputBytes, env.RAW_MAX_OUTPUT_BYTES, selectedSpec?.maxOutputBytes, 8192, "max-output-bytes"),
+    requestTimeoutMs: numberOption(flags.requestTimeoutMs, env.RAW_REQUEST_TIMEOUT_MS, selectedSpec?.requestTimeoutMs, 120000, "request-timeout-ms"),
     autoApprove: flags.autoApprove ?? true,
-    compact: Object.freeze(compact),
+    compact,
     configPath: document.path,
     resolveCompactProfile() {
-      if (!compactName) {
-        if (!selected) throw new Error("provider and model are required for compact");
-        return options.requireModel === false ? freezeProfile(resolveKey(selected, env)) : selected;
-      }
-      const spec = profiles.get(compactName);
-      if (!spec) throw new Error(`unknown compact profile: ${compactName}`);
-      return freezeProfile(resolveKey(spec, env));
+      if (!selected) throw new Error("profile is required for compact");
+      return options.requireModel === false ? freezeProfile(resolveKey(selected, env)) : selected;
     },
   });
 }
@@ -355,8 +390,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   let afterDash = false;
   const seen = new Set<string>();
   const valueFlags: Record<string, keyof RawFlags> = {
-    "--profile": "profile", "--provider": "provider", "--model": "model",
-    "--base-url": "baseUrl", "--config": "configPath", "--system-prompt": "systemPrompt",
+    "--profile": "profile", "--config": "configPath", "--system-prompt": "systemPrompt",
     "--max-steps": "maxSteps", "--max-output-bytes": "maxOutputBytes",
     "--request-timeout-ms": "requestTimeoutMs", "--host": "host", "--port": "port",
   };
@@ -390,9 +424,6 @@ export function parseCliArgs(argv: string[]): CliArgs {
         if (key === "port") flags.port = numeric;
       } else {
         if (key === "profile") flags.profile = next;
-        if (key === "provider") flags.provider = next;
-        if (key === "model") flags.model = next;
-        if (key === "baseUrl") flags.baseUrl = next;
         if (key === "configPath") flags.configPath = next;
         if (key === "systemPrompt") flags.systemPrompt = next;
         if (key === "host") flags.host = next;

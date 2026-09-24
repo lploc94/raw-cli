@@ -136,7 +136,7 @@ export class AgentSession {
     const controller = new AbortController();
     this.controller = controller;
     const provider = options.provider ?? this.options.provider;
-    const compactUsage: UsageRecord = { provider: provider.profile.provider, raw: undefined };
+    const compactUsage: UsageRecord = { method: provider.profile.method, raw: undefined };
     let compactUsageIndex: number | undefined;
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
     const snapshot = { messages: structuredClone(this.messages), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
@@ -228,7 +228,7 @@ export class AgentSession {
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
         steps++;
-        const usageEntry: UsageRecord = { provider: this.options.provider.profile.provider, raw: undefined };
+        const usageEntry: UsageRecord = { method: this.options.provider.profile.method, raw: undefined };
         this.usageEntries.push(usageEntry);
         let usageIndex: number | undefined;
         const recordUsage = (raw: unknown) => {

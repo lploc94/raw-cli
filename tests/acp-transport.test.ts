@@ -14,6 +14,7 @@ import { serveAcpWebSocket } from "../src/acp/transport.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { createAcpClient } from "../src/acp/client.js";
 import { loadConfig as loadConfigActual } from "../src/config.js";
+import { testConfig } from "./fixtures/config.js";
 
 const configHome = mkdtempSync(join(tmpdir(), "raw-acp-transport-test-config-"));
 const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
@@ -21,7 +22,7 @@ const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConf
 test("T-07a: independent ACP SDK client talks to raw daemon with text, resource-only and mixed prompts", async () => {
   const fixture = await startMockProvider(Array.from({ length: 3 }, () => ({ frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] })));
   const cwd = await mkdtemp(join(tmpdir(), "raw-acp-standard-"));
-  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "-y"],
+  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("openai", "fixture", fixture.url), "-y"],
     { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   if (!child.stdin || !child.stdout || !child.stderr) throw new Error("stdio unavailable");
   let stderr = "";
@@ -67,7 +68,7 @@ test("T-07a: independent ACP SDK client talks to raw daemon with text, resource-
 });
 
 test("T-07b: malformed stdio JSON produces one parse error frame and no diagnostic stdout", () => {
-  const child = spawnSync(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "ollama", "--model", "fixture", "-y"],
+  const child = spawnSync(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("ollama"), "-y"],
     { cwd: process.cwd(), input: "{bad json}\n", encoding: "utf8", timeout: 3000 });
   assert.equal(child.status, 0);
   assert.equal(child.stderr, "");
@@ -76,7 +77,7 @@ test("T-07b: malformed stdio JSON produces one parse error frame and no diagnost
 });
 
 test("T-07e: local WebSocket supports parent client, rejects browser Origin/binary/oversize and reports parse errors", async () => {
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   await assert.rejects(serveAcpWebSocket({ host: "0.0.0.0", port: 0, serverFactory: () => createAcpServer({ runtime }) }), /loopback/);
   let entered!: () => void;
   const ready = new Promise<void>((resolve) => { entered = resolve; });
@@ -125,7 +126,7 @@ test("T-07e: local WebSocket supports parent client, rejects browser Origin/bina
 });
 
 test("T-07b: stdio handles split/coalesced JSON-RPC frames, notifications, invalid params and version negotiation", async () => {
-  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "ollama", "--model", "fixture", "-y"],
+  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("ollama"), "-y"],
     { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] });
   if (!child.stdin || !child.stdout || !child.stderr) throw new Error("stdio unavailable");
   let stderr = "";
@@ -170,7 +171,7 @@ test("T-07a: standard session/new MCP server uses local name selection and execu
   await writeFile(join(xdg, "raw", "mcp.json"), JSON.stringify({ mcpServers: { browser: {
     command: process.execPath, args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], tools: ["selected"],
   } } }));
-  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "-y"],
+  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("openai", "fixture", fixture.url), "-y"],
     { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key", XDG_CONFIG_HOME: xdg }, stdio: ["pipe", "pipe", "pipe"] });
   if (!child.stdin || !child.stdout || !child.stderr) throw new Error("stdio unavailable");
   let stderr = "";

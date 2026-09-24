@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testConfig } from "./fixtures/config.js";
 import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
@@ -19,7 +20,7 @@ test("T-08c: REPL retains turns, compact costs one request, stats/clear cost zer
     answer("Objective: continue this task."), answer("fourth-answer"), answer("after-clear"),
   ]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "bin/raw.ts",
-    "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive", "-y"],
+    "--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
   { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
@@ -56,7 +57,7 @@ test("T-08c: REPL retains turns, compact costs one request, stats/clear cost zer
 test("T-08 review: REPL preserves adjacent lines delivered in one stdin chunk", async () => {
   const fixture = await startMockProvider([answer("batched-answer")]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "bin/raw.ts",
-    "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive", "-y"],
+    "--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
   { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";

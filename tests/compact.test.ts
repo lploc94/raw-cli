@@ -10,7 +10,7 @@ import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 const fake = (generate: (request: ProviderRequest) => Promise<ProviderTurn>): ProviderAdapter => ({
-  profile: { name: "fake", provider: "ollama", model: "fixture" }, generate,
+  profile: { name: "fake", provider: "ollama", method: "openai-chat-completions", model: "fixture" }, generate,
 });
 const agentOptions = (provider: ProviderAdapter, cwd: string) => ({ provider, cwd, system: "tiny", maxSteps: 5, autoApprove: true });
 
@@ -77,7 +77,7 @@ test("next real SDK request after compact contains a valid retained parallel cal
     { frames: [openAiFrame({ content: "after compact" }, "stop"), openAiDone] },
   ]);
   try {
-    const agent = createAgent(agentOptions(createProvider({ name: "wire", provider: "openai", model: "fixture", baseUrl: fixture.url, apiKey: "key" }), cwd));
+    const agent = createAgent(agentOptions(createProvider({ name: "wire", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "key" }), cwd));
     await agent.run(`original ${long}`);
     await agent.run(`decision ${long}`);
     await agent.run("recent call batch");
@@ -231,7 +231,7 @@ test("real SDK truncated compaction keeps reported usage while rolling back tran
     const { agent } = await seededAgent();
     const before = JSON.stringify(agent.transcript);
     const prior = agent.stats();
-    const provider = createProvider({ name: "summary", provider: "openai", model: "fixture", baseUrl: fixture.url, apiKey: "key" });
+    const provider = createProvider({ name: "summary", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "key" });
     await assert.rejects(compactSession(agent, { provider }), /length/);
     assert.equal(JSON.stringify(agent.transcript), before);
     assert.equal(fixture.requests.length, 1);
@@ -247,7 +247,7 @@ test("Google thought tokens count toward measurable compact output budget", asyn
   const { agent } = await seededAgent();
   const before = JSON.stringify(agent.transcript);
   const google: ProviderAdapter = {
-    profile: { name: "google", provider: "google", model: "fixture" },
+    profile: { name: "google", provider: "google", method: "google-generate-content", model: "fixture" },
     generate: async () => ({ text: "summary", toolCalls: [], finishReason: "STOP", usage: {
       promptTokenCount: 100, candidatesTokenCount: 20, thoughtsTokenCount: 500, totalTokenCount: 620,
     } }),

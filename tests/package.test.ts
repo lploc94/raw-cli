@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testConfig } from "./fixtures/config.js";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -50,7 +51,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     { frames: [openAiFrame({ content: "installed-acp-done" }, "stop"), openAiDone] },
   ]);
   try {
-    const args = ["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "-y"];
+    const args = ["--config", testConfig("openai", "fixture", fixture.url), "-y"];
     const task = await run(bin, [...args, "write sentinel"], consumer, env);
     assert.equal(task.code, 0, task.stderr);
     assert.equal(task.stdout, "installed-task-done\n");
