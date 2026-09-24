@@ -20,25 +20,24 @@ test("files resolve per session, create parents, accept empty content and surfac
   const empty = await registry.dispatch("write_file", { path: join(a, "empty"), content: "" }, context(b));
   assert.equal(empty.isError, false);
   assert.equal(await readFile(join(a, "empty"), "utf8"), "");
-  const read = await registry.dispatch("read_file", { path: "nested/item" }, context(b));
-  assert.equal(read.content[0]?.type, "text");
-  assert.equal(read.content[0]?.type === "text" ? read.content[0].text : "", "beta");
-  assert.equal((await registry.dispatch("read_file", { path: "missing" }, context(a))).isError, true);
-  assert.equal((await registry.dispatch("read_file", { path: a }, context(a))).isError, true);
+  const read = await registry.dispatch("read_file", { files: [{ path: "nested/item" }] }, context(b));
+  assert.equal(read.content[0]?.type, "json");
+  assert.equal(read.content[0]?.type === "json"
+    ? (read.content[0].value as { results: Array<{ text: string }> }).results[0]?.text : "", "beta");
+  assert.equal((await registry.dispatch("read_file", { files: [{ path: "missing" }] }, context(a))).isError, true);
+  assert.equal((await registry.dispatch("read_file", { files: [{ path: a }] }, context(a))).isError, true);
   await writeFile(join(a, "utf8"), "😀😀");
-  const bounded = await registry.dispatch("read_file", { path: "utf8" }, context(a, 5));
-  assert.equal(bounded.content[0]?.type === "text" ? bounded.content[0].text : "", "😀");
-  assert.equal(bounded.truncated, true);
-  assert.equal(bounded.retainedBytes, 4);
+  const bounded = await registry.dispatch("read_file", { files: [{ path: "utf8", max_bytes: 4 }] }, context(a));
+  assert.equal(bounded.content[0]?.type === "json"
+    ? (bounded.content[0].value as { results: Array<{ status: string }> }).results[0]?.status : "", "line_too_large");
   await writeFile(join(a, "replacement"), "�x");
-  const replacement = await registry.dispatch("read_file", { path: "replacement" }, context(a, 3));
-  assert.equal(replacement.content[0]?.type === "text" ? replacement.content[0].text : "", "�");
+  const replacement = await registry.dispatch("read_file", { files: [{ path: "replacement" }] }, context(a));
+  assert.equal(replacement.content[0]?.type === "json"
+    ? (replacement.content[0].value as { results: Array<{ text: string }> }).results[0]?.text : "", "�x");
   await writeFile(join(a, "bom"), "\uFEFFabc");
-  const bom = await registry.dispatch("read_file", { path: "bom" }, context(a));
-  assert.equal(bom.content[0]?.type === "text" ? bom.content[0].text : "", "\uFEFFabc");
-  const bomCapped = await registry.dispatch("read_file", { path: "bom" }, context(a, 3));
-  assert.equal(bomCapped.content[0]?.type === "text" ? bomCapped.content[0].text : "", "\uFEFF");
-  assert.equal(bomCapped.truncated, true);
+  const bom = await registry.dispatch("read_file", { files: [{ path: "bom" }] }, context(a));
+  assert.equal(bom.content[0]?.type === "json"
+    ? (bom.content[0].value as { results: Array<{ text: string }> }).results[0]?.text : "", "\uFEFFabc");
 });
 
 test("bash preserves output channels, exit status and bounded UTF-8 while draining large pipes", async () => {

@@ -390,7 +390,7 @@ test("T-07d: independent session cwd/results and cross-peer ownership hold durin
       observed.push(JSON.stringify(last.result));
       return { text: "done", toolCalls: [], finishReason: "stop" };
     }
-    return { text: "", toolCalls: [{ id: "read", name: "read_file", arguments: { path: "sentinel.txt" } }], finishReason: "tool_calls" };
+    return { text: "", toolCalls: [{ id: "read", name: "read_file", arguments: { files: [{ path: "sentinel.txt" }] } }], finishReason: "tool_calls" };
   } }) });
   const server = makeServer();
   const peer = client({ name: "one-peer" });

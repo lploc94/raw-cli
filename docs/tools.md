@@ -4,7 +4,7 @@ The default registry exposes exactly three tools. Their JSON object inputs rejec
 
 | Tool | Required input | Optional input | Action |
 |---|---|---|---|
-| `read_file` | `path: string` | — | Read UTF-8 text from a file. |
+| `read_file` | `files: array` (1–16 entries with `path: string`) | Per entry: `start_line`, `end_line`, `max_lines`, `max_bytes` | Read several UTF-8 files with an independent selection per file. |
 | `write_file` | `path: string`, `content: string` | — | Create parent directories and create or overwrite a UTF-8 file. Empty content is valid. |
 | `bash` | `command: string` | `timeout_ms: positive integer` | Run a command using Bash. Default deadline: 120000 ms. |
 
@@ -12,7 +12,11 @@ When the selected model declares `vision: true`, Raw exposes one additional buil
 
 Relative paths resolve against the session's `cwd`; absolute paths are used as given. The working directory does not restrict filesystem access. The process uses the user's full OS permissions. File errors are returned as tool errors. `write_file` reports success only after the write finishes.
 
-Text and JSON results retain at most `maxOutputBytes` of content (8192 by default). Images use their separate 16 MiB decoded limit and remain typed. `read_file` reads a bounded prefix. Bash shares the text budget across stdout and stderr in observed arrival order and drains both pipes after the cap. UTF-8 characters are never split. Results carry `truncated`, `retainedBytes`, and, where known, `observedBytes` metadata. Bash also reports its actual exit code, signal, or deadline; a nonzero exit is returned for agent inspection. An over-limit JSON result is a labeled text preview, never malformed JSON presented as structured data. Tool-result events and logs show image metadata, not base64.
+Text and JSON results retain at most `maxOutputBytes` of content (8192 by default). Images use their separate 16 MiB decoded limit and remain typed. A `read_file` batch shares that one byte cap across **all** files and JSON framing. An entry with only `path` requests the complete file. If it does not fit, it returns a `partial` prefix made of complete lines plus `next_line` for the next call. `start_line` is 1-based; `end_line` is inclusive and cannot be combined with `max_lines`. Either may end past EOF: the returned text contains only available lines and reports `eof: true`. A `start_line` beyond EOF returns empty text and `eof: true`. An optional positive `max_bytes` caps the serialized success entry, including JSON framing, without increasing the batch cap; a budget smaller than an outcome envelope returns a compact status instead of content. Ranged reads that exhaust their budget stop at a complete line and return `next_line`; if the first selected line is too large, they return `line_too_large` without splitting it. Responses are indexed JSON results, including per-file status, actual range, selected-byte SHA-256 when text is complete, and an error for any failed entry. Invalid batch arguments reject the whole call before reading. The old single `{ "path": ... }` shape is unsupported.
+
+For example, `{"files":[{"path":"package.json"},{"path":"src/agent.ts","start_line":40,"max_lines":20},{"path":"src/config.ts","start_line":10,"end_line":30}]}` requests one full file and two independent slices. A count longer than the remaining file is a successful shorter read.
+
+Bash shares the text budget across stdout and stderr in observed arrival order and drains both pipes after the cap. UTF-8 characters are never split. Results carry `truncated`, `retainedBytes`, and, where known, `observedBytes` metadata. Bash also reports its actual exit code, signal, or deadline; a nonzero exit is returned for agent inspection. An over-limit JSON result is a labeled text preview, never malformed JSON presented as structured data. Tool-result events and logs show image metadata, not base64.
 
 Dispatch validates the tool name, schema, visibility and session whitelist before execution. CLI and ACP sessions execute exposed tools automatically, including headless runs. `-y` / `--auto-approve` is retained as a compatibility alias. Library callers can explicitly set `autoApprove: false` and supply an approval callback; denial has no side effect.
 

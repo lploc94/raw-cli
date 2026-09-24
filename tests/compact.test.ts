@@ -20,8 +20,8 @@ async function seededAgent() {
   const main = fake(async (request) => {
     mainCalls++;
     if (mainCalls === 3) return { text: "", finishReason: "tool_calls", opaque: { reasoning_details: [{ data: "signed" }] }, toolCalls: [
-      { id: "c", name: "read_file", arguments: { path: "missing" } },
-      { id: "d", name: "read_file", arguments: { path: "also-missing" } },
+      { id: "c", name: "read_file", arguments: { files: [{ path: "missing" }] } },
+      { id: "d", name: "read_file", arguments: { files: [{ path: "also-missing" }] } },
     ] };
     return { text: `answer ${mainCalls} ${"x".repeat(350)}`, finishReason: "stop", toolCalls: [], usage: { prompt_tokens: mainCalls, completion_tokens: 1 } };
   });
@@ -69,8 +69,8 @@ test("next real SDK request after compact contains a valid retained parallel cal
     { frames: [openAiFrame({ content: `old ${long}` }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: `old2 ${long}` }, "stop"), openAiDone] },
     { frames: [openAiFrame({ tool_calls: [
-      { index: 0, id: "a", type: "function", function: { name: "read_file", arguments: '{"path":"missing"}' } },
-      { index: 1, id: "b", type: "function", function: { name: "read_file", arguments: '{"path":"also-missing"}' } },
+      { index: 0, id: "a", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":"missing"}]}' } },
+      { index: 1, id: "b", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":"also-missing"}]}' } },
     ] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "recent answer" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "latest answer" }, "stop"), openAiDone] },

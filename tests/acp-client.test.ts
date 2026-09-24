@@ -75,7 +75,7 @@ test("T-07a/e: parent library spawns daemon, runs tools without permission, stre
   const root = await mkdtemp(join(tmpdir(), "raw-parent-"));
   await writeFile(join(root, "sentinel.txt"), "parent-sentinel");
   const fixture = await startMockProvider([
-    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "read", type: "function", function: { name: "read_file", arguments: '{"path":"sentinel.txt"}' } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "read", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":"sentinel.txt"}]}' } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "read completed" }, "stop"), openAiDone] },
   ]);
   let permissions = 0;

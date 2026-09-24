@@ -180,8 +180,8 @@ test("throwing observer cannot leave orphan calls or duplicate terminal events",
   const provider = fake(async (request) => {
     requests++;
     if (requests === 1) return { text: "", finishReason: "tool_calls", toolCalls: [
-      { id: "a", name: "read_file", arguments: { path: "missing" } },
-      { id: "b", name: "read_file", arguments: { path: "missing" } },
+      { id: "a", name: "read_file", arguments: { files: [{ path: "missing" }] } },
+      { id: "b", name: "read_file", arguments: { files: [{ path: "missing" }] } },
     ] };
     const ids = request.messages.filter((message) => message.role === "tool").map((message) => message.callId);
     assert.deepEqual(ids, ["a", "b"]);

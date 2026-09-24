@@ -28,11 +28,36 @@ function matcher(pattern: string): RegExp {
   return new RegExp(`^(?:${source})(?![\\s\\S])`, "su");
 }
 
+function validateReadBatch(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
+  const args = value as Record<string, unknown>;
+  if (Object.keys(args).some((key) => key !== "files")) return "unknown read_file property";
+  if (!Array.isArray(args.files) || args.files.length < 1 || args.files.length > 16) return "files must contain 1 to 16 entries";
+  for (const [index, raw] of args.files.entries()) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `files[${index}] must be an object`;
+    const file = raw as Record<string, unknown>;
+    if (Object.keys(file).some((key) => !["path", "start_line", "end_line", "max_lines", "max_bytes"].includes(key))) return `files[${index}] has an unknown property`;
+    if (typeof file.path !== "string" || !file.path) return `files[${index}].path must be a nonempty string`;
+    for (const key of ["start_line", "end_line", "max_lines", "max_bytes"] as const) {
+      if (file[key] !== undefined && (!Number.isSafeInteger(file[key]) || (file[key] as number) < 1 || (file[key] as number) > 2147483647)) {
+        return `files[${index}].${key} must be a positive integer`;
+      }
+    }
+    if (file.end_line !== undefined && file.max_lines !== undefined) return `files[${index}] cannot combine end_line and max_lines`;
+    if (file.end_line !== undefined && (file.end_line as number) < (file.start_line as number | undefined ?? 1)) return `files[${index}].end_line precedes start_line`;
+  }
+  return undefined;
+}
+
 const builtIns: readonly ToolRegistration[] = [
   {
-    name: "read_file", description: "Read a UTF-8 file.",
-    inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
-    handler: (args, ctx) => readFileTool(args as { path: string }, ctx),
+    name: "read_file", description: "Read UTF-8 files; optional 1-based line ranges and counts.",
+    inputSchema: { type: "object", properties: { files: { type: "array", minItems: 1, maxItems: 16,
+      items: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer", minimum: 1 },
+        end_line: { type: "integer", minimum: 1 }, max_lines: { type: "integer", minimum: 1 }, max_bytes: { type: "integer", minimum: 1 } },
+        required: ["path"], additionalProperties: false } } }, required: ["files"], additionalProperties: false },
+    validateArgs: validateReadBatch,
+    handler: (args, ctx) => readFileTool(args as Parameters<typeof readFileTool>[0], ctx),
   },
   {
     name: "write_file", description: "Create or overwrite a UTF-8 file.",
@@ -60,7 +85,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export const BUILTIN_TOOL_DEFINITIONS: readonly ToolDefinition[] = deepFreeze(builtIns.map(({ handler: _handler, ...definition }) => structuredClone(definition)));
+export const BUILTIN_TOOL_DEFINITIONS: readonly ToolDefinition[] = deepFreeze(builtIns.map(({ handler: _handler, validateArgs: _validateArgs, ...definition }) => structuredClone(definition)));
 
 function validate(definition: ToolDefinition, value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";

@@ -12,8 +12,8 @@ const request = { system: "sys", messages: [{ role: "user" as const, content: "h
 test("OpenAI assembles interleaved fragmented calls, Unicode, usage and finish reason", async () => {
   const fixture = await startMockProvider([{ frames: [
     openAiFrame({ content: "hé", tool_calls: [{ index: 1, id: "two", type: "function", function: { name: "bash", arguments: '{"command":' } }] }),
-    openAiFrame({ content: "😀", tool_calls: [{ index: 0, id: "one", type: "function", function: { name: "read_file", arguments: '{"path":' } }, { index: 1, function: { arguments: '"pwd"}' } }] }),
-    openAiFrame({ tool_calls: [{ index: 0, function: { arguments: '"a"}' } }] }, "tool_calls"),
+    openAiFrame({ content: "😀", tool_calls: [{ index: 0, id: "one", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":' } }, { index: 1, function: { arguments: '"pwd"}' } }] }),
+    openAiFrame({ tool_calls: [{ index: 0, function: { arguments: '"a"}]}' } }] }, "tool_calls"),
     `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [], usage: { prompt_tokens: 10, completion_tokens: 3 } })}\n\n`,
     openAiDone,
   ] }]);
@@ -22,7 +22,7 @@ test("OpenAI assembles interleaved fragmented calls, Unicode, usage and finish r
     const result = await createProvider(profile("openai", fixture.url)).generate({ ...request, onTextDelta: (delta) => deltas.push(delta) });
     assert.deepEqual(deltas, ["hé", "😀"]);
     assert.equal(result.text, "hé😀");
-    assert.deepEqual(result.toolCalls.map((call) => [call.id, call.name, call.arguments]), [["one", "read_file", { path: "a" }], ["two", "bash", { command: "pwd" }]]);
+    assert.deepEqual(result.toolCalls.map((call) => [call.id, call.name, call.arguments]), [["one", "read_file", { files: [{ path: "a" }] }], ["two", "bash", { command: "pwd" }]]);
     assert.equal(result.finishReason, "tool_calls");
     assert.equal((result.usage as { prompt_tokens: number }).prompt_tokens, 10);
   } finally { await fixture.close(); }

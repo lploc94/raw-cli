@@ -14,7 +14,7 @@ const response = (output: unknown[], usage = { input_tokens: 20, output_tokens: 
 
 test("Responses streams a function call, replays complete output items, and links its result", async () => {
   const reasoning = { id: "rs_1", type: "reasoning", summary: [], encrypted_content: "opaque-token", status: "completed" };
-  const call = { id: "fc_1", type: "function_call", call_id: "call_1", name: "read_file", arguments: '{"path":"a"}', status: "completed" };
+  const call = { id: "fc_1", type: "function_call", call_id: "call_1", name: "read_file", arguments: '{"files":[{"path":"a"}]}', status: "completed" };
   const message = { id: "msg_1", type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "done", annotations: [] }] };
   const fixture = await startMockProvider([
     { frames: [event("response.output_item.done", { output_index: 0, item: reasoning }), event("response.output_item.done", { output_index: 1, item: call }),
@@ -28,7 +28,7 @@ test("Responses streams a function call, replays complete output items, and link
     const first = await adapter.generate({ system: "tiny", messages: [{ role: "user", content: "inspect" }],
       tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 1000, cacheKey: "stable" });
     assert.equal(first.toolCalls[0]?.id, "call_1");
-    assert.deepEqual(first.toolCalls[0]?.arguments, { path: "a" });
+    assert.deepEqual(first.toolCalls[0]?.arguments, { files: [{ path: "a" }] });
     assert.equal(first.text, "");
     const deltas: string[] = [];
     const second = await adapter.generate({ system: "tiny", messages: [
@@ -54,7 +54,7 @@ test("Responses streams a function call, replays complete output items, and link
 test("DeepSeek reasoning_content is replayed from ordinary and tool-call assistant turns", async () => {
   const fixture = await startMockProvider([
     { frames: [openAiFrame({ reasoning_content: "reason one", content: "first" }, "stop"), openAiDone] },
-    { frames: [openAiFrame({ reasoning_content: "reason two", tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":"a"}' } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ reasoning_content: "reason two", tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":"a"}]}' } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
   ]);
   try {

@@ -21,7 +21,7 @@ test("real SDK fixture executes write/read/bash and carries exact history into t
   const cwd = await mkdtemp(join(tmpdir(), "raw-agent-"));
   const first = [openAiFrame({ tool_calls: [
     { index: 0, id: "write", type: "function", function: { name: "write_file", arguments: '{"path":"item","content":"hello"}' } },
-    { index: 1, id: "read", type: "function", function: { name: "read_file", arguments: '{"path":"item"}' } },
+    { index: 1, id: "read", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":"item"}]}' } },
     { index: 2, id: "shell", type: "function", function: { name: "bash", arguments: '{"command":"printf x >> count; cat item"}' } },
   ] }, "tool_calls"), openAiDone];
   const fixture = await startMockProvider([{ frames: first }, { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] }, { frames: [openAiFrame({ content: "again" }, "stop"), openAiDone] }]);

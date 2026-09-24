@@ -98,7 +98,7 @@ test("OpenAI supported dated model families accept 24h without admitting unsuppo
 
 test("three SDK requests keep exact tool/result and system/schema prefix while appending a new turn", async () => {
   const fixture = await startMockProvider([
-    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "c", type: "function", function: { name: "read_file", arguments: '{"path":"missing"}' } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "c", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":"missing"}]}' } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "first answer" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "second answer" }, "stop"), openAiDone] },
   ]);

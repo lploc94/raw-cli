@@ -29,6 +29,17 @@ export function errorResult(code: string, message: string): ToolResult {
   return { isError: true, code, content: [{ type: "text", text: message }] };
 }
 
+export type IndexedResult = Record<string, unknown> & { index: number; status: string };
+
+export function indexedResultFits(results: readonly IndexedResult[], maxOutputBytes: number): boolean {
+  return Buffer.byteLength(JSON.stringify({ results }), "utf8") <= maxOutputBytes;
+}
+
+export function indexedResult(results: readonly IndexedResult[], maxOutputBytes: number, isError: boolean): ToolResult {
+  if (!indexedResultFits(results, maxOutputBytes)) return errorResult("output_budget_too_small", "batch status exceeds output budget");
+  return { isError, content: [{ type: "json", value: { results } }] };
+}
+
 export function capResult(result: ToolResult, maxOutputBytes: number): ToolResult {
   let remaining = maxOutputBytes;
   let truncated = false;

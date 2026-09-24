@@ -10,8 +10,8 @@ const user = [{ role: "user" as const, content: "do it" }];
 
 function openAiToolFrames() {
   return [
-    openAiFrame({ tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":' } }] }),
-    openAiFrame({ tool_calls: [{ index: 0, function: { arguments: '"a"}' } }] }, "tool_calls"),
+    openAiFrame({ tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read_file", arguments: '{"files":[{"path":' } }] }),
+    openAiFrame({ tool_calls: [{ index: 0, function: { arguments: '"a"}]}' } }] }, "tool_calls"),
     openAiDone,
   ];
 }
@@ -20,7 +20,7 @@ function anthropicToolFrames() {
   return [
     anthropicFrame("message_start", { message: { id: "msg", type: "message", role: "assistant", content: [], model: "fixture-model", stop_reason: null, stop_sequence: null, usage: { input_tokens: 2, output_tokens: 0 } } }),
     anthropicFrame("content_block_start", { index: 0, content_block: { type: "tool_use", id: "call_1", name: "read_file", input: {} } }),
-    anthropicFrame("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: '{"path":"a"}' } }),
+    anthropicFrame("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: '{"files":[{"path":"a"}]}' } }),
     anthropicFrame("content_block_stop", { index: 0 }),
     anthropicFrame("message_delta", { delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 3 } }),
     anthropicFrame("message_stop", {}),
@@ -28,7 +28,7 @@ function anthropicToolFrames() {
 }
 
 function googleToolFrames() {
-  return [googleFrame({ candidates: [{ content: { role: "model", parts: [{ functionCall: { id: "call_1", name: "read_file", args: { path: "a" } } }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3 } })];
+  return [googleFrame({ candidates: [{ content: { role: "model", parts: [{ functionCall: { id: "call_1", name: "read_file", args: { files: [{ path: "a" }] } } }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3 } })];
 }
 
 for (const provider of ["openai", "llamacpp", "openrouter", "ollama", "anthropic", "google"] as const) {
@@ -50,7 +50,7 @@ for (const provider of ["openai", "llamacpp", "openrouter", "ollama", "anthropic
       const adapter = createProvider(profile(provider, fixture.url));
       const turn = await adapter.generate({ system: "tiny system", messages: user, tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 2000 });
       assert.equal(turn.toolCalls.length, 1);
-      assert.deepEqual(turn.toolCalls[0]?.arguments, { path: "a" });
+      assert.deepEqual(turn.toolCalls[0]?.arguments, { files: [{ path: "a" }] });
       assert.equal(turn.toolCalls[0]?.id, "call_1");
       const next = await adapter.generate({ system: "tiny system", messages: [
         ...user,
