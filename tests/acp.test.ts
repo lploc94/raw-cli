@@ -17,6 +17,33 @@ import type { ProviderRequest } from "../src/llm/types.js";
 const configHome = mkdtempSync(join(tmpdir(), "raw-acp-test-config-"));
 const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
 
+test("runtime info exposes selected model/method/vision/MCP/policy without credentials", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-acp-runtime-"));
+  const path = join(root, "config.json");
+  const secret = "acp-literal-key-sentinel";
+  await writeFile(path, JSON.stringify({ default_profile: "research",
+    models: { flash: { provider: "deepseek", method: "openai-chat-completions", model_id: "deepseek-flash",
+      base_url: "https://api.deepseek.com", api_key: secret, vision: true, context_window_tokens: 4096 } },
+    profiles: { research: { model: "flash", mcp: { search: ["web_search"] },
+      compact: { trigger_tokens: 1000, max_output_tokens: 100 },
+      tools: { rules: [{ match: "bash", effect: "deny" }] } } },
+    mcp: { servers: { search: { transport: "stdio", command: "unused", args: [] } } },
+  }));
+  const runtime = await loadConfig({ flags: { configPath: path }, env: {}, requireModel: true });
+  const server = createAcpServer({ runtime, mcpServers: runtime.mcpServers, providerFactory: () => ({ profile: runtime.profile!,
+    generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+  const connection = client({ name: "runtime-info-client" }).connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
+      _meta: { raw: { runtimeInfo: true } } });
+    const info = await connection.agent.request<Record<string, unknown>>("_raw/runtime/info", {});
+    for (const field of ["research", "flash", "deepseek-flash", "openai-chat-completions", "vision", "web_search", "deny", "triggerTokens"]) {
+      assert.ok(JSON.stringify(info).includes(field), `missing runtime field ${field}`);
+    }
+    assert.doesNotMatch(JSON.stringify(info), new RegExp(secret));
+  } finally { connection.close(); await server.close(); }
+});
+
 test("T-07 review: upstream SDK errors never expose credentials in ACP replies", async () => {
   const secret = "secret-api-key-sentinel";
   const fixture = await startMockProvider([{ status: 401, body: { error: { message: `bad credential ${secret}` } } }]);

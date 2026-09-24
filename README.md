@@ -1,88 +1,98 @@
 # raw-cli
 
-`raw` is a small local coding agent for models with limited context. Its default system prompt is 25 reference tokens and the model initially sees only `read_file`, `write_file`, and `bash`. It does not load repository instruction files, silently compact history, or add extra model tools. MCP adds explicitly selected external tools; ACP lets an IDE or parent agent control sessions.
+`raw` is a local coding agent for models with limited context. Its default system prompt is 25 reference tokens. A text-only model sees three built-in tools: `read_file`, `write_file`, and `bash`. A model configured with `vision: true` also sees `view_image`. Selected MCP servers can add external tools. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
 
 ## Install and run
 
-Requires Node.js 22 or newer and Bash for the `bash` tool. From this checkout:
+Requires Node.js 22+ and Bash for the `bash` tool. From this checkout:
 
 ```sh
 npm ci
 npm run build
-node dist/raw.js config init
+npm pack
+npm install -g ./raw-cli-0.1.0.tgz
+raw config init
 ```
 
-Edit the created `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) and replace the local model placeholder. For an installed `raw` command, run `npm pack` and install the resulting tarball with npm. The package is local/private in this repository; it is not published.
+The package is not published. `config init` creates `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) once; edit the local model ID or add your hosted model. `--config PATH` selects another strict JSON config file.
 
 ```sh
 raw --profile local "Explain the tests in this repository"
-raw --profile local "Fix the failing tests"
-raw --profile local                 # interactive: >
-raw --profile local --interactive   # same REPL
+raw --profile deepseek "Fix the failing tests"
+raw                         # in-memory REPL with > prompt
+raw --acp --stdio           # IDE/parent agent transport
 ```
 
-Tool calls run automatically in terminal, headless and ACP modes; `-y`/`--auto-approve` remains an optional compatibility alias. **Tools run with your OS account's full permissions.** `cwd` chooses the base for relative paths; it is not a sandbox.
+Tool calls run automatically in terminal, headless and ACP modes, using your OS account's full permissions. `cwd` resolves relative paths; it is not a sandbox. A profile can set `tools.rules` to `ask` or `deny` specific tools or patterns. Unmatched tools run without a permission prompt; `-y` cannot bypass an explicit `ask` rule.
 
-## Multiple model sources
+## Models and profiles
 
-The config supports named profiles, explicit model selection and environment-held credentials. `raw config list` prints sanitized profile details. The example below keeps a local Ollama model as the default and adds two hosted sources:
+`models` holds exact upstream model IDs, API methods, endpoint/auth settings, context metadata and vision capability. A `profiles` entry selects one model and configures a run. Multiple profiles may share a model.
 
 ```json
 {
   "default_profile": "local",
-  "profiles": {
+  "models": {
     "local": {
       "provider": "ollama",
-      "model": "YOUR_INSTALLED_MODEL",
+      "method": "openai-chat-completions",
+      "model_id": "YOUR_INSTALLED_MODEL",
       "base_url": "http://127.0.0.1:11434/v1"
     },
-    "openai": {
-      "provider": "openai",
-      "model": "YOUR_OPENAI_MODEL",
-      "api_key_env": "OPENAI_API_KEY"
-    },
-    "gemini": {
-      "provider": "google",
-      "model": "YOUR_GEMINI_MODEL",
-      "api_key_env": "GEMINI_API_KEY"
+    "flash": {
+      "provider": "deepseek",
+      "method": "openai-chat-completions",
+      "model_id": "deepseek-flash",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "context_window_tokens": 1048576
     }
   },
-  "compact": { "keep_recent_turns": 2, "max_output_tokens": 512 }
-}
-```
-
-Use `raw --profile openai "task"` or `raw --profile gemini "task"` to choose another source. Inactive profiles do not require credentials. Other supported provider names are `openai-compatible`, `openrouter`, and `anthropic`; official OpenAI, Anthropic and Google SDKs drive their respective API paths. Model names are never used to guess a provider. See [configuration](docs/configuration.md) and [provider/cache behavior](docs/providers.md).
-
-The system prompt can be replaced literally with `--system-prompt` or `RAW_SYSTEM_PROMPT`. `--max-steps` defaults to 25 inference requests, `--max-output-bytes` to 8192 retained bytes per tool result, and `--request-timeout-ms` to 120000 per provider/MCP request. A model must support tool calling. Use `raw --help` for all flags and exit codes.
-
-## Conversation and compact
-
-The REPL keeps turns in memory. Whole-line host commands are `/compact`, `/clear`, `/stats`, and `/exit`. `/compact` makes one explicit summary request when there are eligible old turns, preserving the original task and recent complete turns; it never runs automatically. `/clear` drops conversation history without erasing cumulative usage. `/stats` reports known token/cache fields and coverage without making a model request. Cache controls preserve stable multi-turn prefixes and use only supported provider hints; a cache hit is never guaranteed. See [context](docs/context.md) and [CLI behavior](docs/cli.md).
-
-## External tools and IDE integration
-
-MCP configuration lives in `~/.config/raw/mcp.json` (or `$XDG_CONFIG_HOME/raw/mcp.json`), overridden per server by `./raw-mcp.json`. A server is discovered at startup, but only names selected in `tools` enter the model schema:
-
-```json
-{
-  "mcpServers": {
-    "workspace": {
-      "command": "YOUR_MCP_SERVER_COMMAND",
-      "args": [],
-      "tools": ["selected_tool_name"]
+  "profiles": {
+    "local": { "model": "local" },
+    "deepseek": {
+      "model": "flash",
+      "request": { "thinking": "enabled", "reasoning_effort": "high", "max_output_tokens": 4096 },
+      "compact": { "trigger_tokens": 800000, "keep_recent_turns": 2, "max_output_tokens": 512 }
     }
   }
 }
 ```
 
-Stdio, SSE and Streamable HTTP transports are supported. Omit `tools` or set `[]` to expose none. See [MCP](docs/mcp.md).
+`provider` names the service; `method` selects its wire API (`openai-chat-completions`, `openai-responses`, `anthropic-messages`, or `google-generate-content`). `model_id` is sent upstream unchanged. Use `api_key_env` to read a selected credential from the environment or `api_key` for a literal value. `raw config list` reports model/access settings without printing credentials. No old flat-profile schema is accepted. See [configuration](docs/configuration.md), [config design](docs/config-design.md), and [providers](docs/providers.md).
 
-`raw --acp --stdio` serves standard Agent Client Protocol v1 methods for IDEs. `raw --acp --ws --host 127.0.0.1 --port 8765` serves a local WebSocket endpoint. Parent agents can import `createAcpClient` and register temporary reverse tools; [ACP](docs/acp.md) documents capabilities, ownership and wire methods, and [the parent example](examples/parent-agent.ts) shows the library flow. ACP and MCP do not add hidden built-in model tools.
+## Tools, images and MCP
 
-## Development and verification
+For a vision-capable model, set `models.<alias>.vision` to `true`, then ask `raw "Explain screenshot.png"`; the model can call `view_image` with the path. There is no image flag. A text-only model can instead call an external MCP vision-to-text server that returns a description. Search likewise comes from a selected MCP tool returning text.
+
+MCP lives in the same config file. Only servers selected by the active profile are started, and only selected tools enter its model schema:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "search": { "transport": "stdio", "command": "YOUR_SEARCH_SERVER", "args": [] }
+    }
+  },
+  "profiles": {
+    "research": { "model": "flash", "mcp": { "search": ["web_search"] } }
+  }
+}
+```
+
+Merge these fields into a complete config with `models` and `default_profile`. Local stdio and remote Streamable HTTP MCP transports are supported; see [MCP](docs/mcp.md). Profile `tools.rules` matches built-ins, MCP identities (`mcp:server/tool`) and ACP-injected identities (`acp:name`) with ordered `allow`, `ask`, and `deny` effects; see [tools](docs/tools.md).
+
+## Conversation, compact and cache
+
+The REPL keeps turns in memory. Host commands are `/compact`, `/clear`, `/stats`, and `/exit`. Without `compact.trigger_tokens`, compaction is manual. With it, Raw estimates the complete next request, emits visible compact progress, and sends bounded summary requests to the selected model when the threshold is reached. It excludes image base64 from summary prompts and retains a stable main cache key until a deliberate compact boundary. Cache reuse depends on the upstream service; a cache hit is only claimed when its usage counters report one. See [context and cache](docs/context.md).
+
+`--system-prompt` or `RAW_SYSTEM_PROMPT` replaces the minimal prompt literally. `--max-steps` defaults to 25 inference requests, `--max-output-bytes` to 8192 text bytes per tool result, and `--request-timeout-ms` to 120000. Use `raw --help` for flags and exit codes.
+
+## ACP and development
+
+`raw --acp --stdio` serves standard Agent Client Protocol v1. `raw --acp --ws --host 127.0.0.1 --port 8765` serves a local WebSocket endpoint. Parent agents can import `createAcpClient` and register temporary reverse tools; [ACP](docs/acp.md) and [the parent example](examples/parent-agent.ts) document the flow.
 
 ```sh
-npm ci
 npm run check
 npm run test:overhead
 npm run test:package
@@ -90,6 +100,4 @@ npm exec --yes --package=node@22 -- node scripts/verify-runtime.mjs
 npm exec --yes --package=node@24 -- node scripts/verify-runtime.mjs
 ```
 
-`npm run check` typechecks, builds the ESM executable/library/declarations and runs all tests. Package tests install a tarball outside the checkout and exercise an installed task, MCP, ACP and TypeScript import. Provider and protocol tests use local fixtures rather than paid APIs or downloaded models. [Verification](docs/verification.md) records exact tested runtimes, hashes, limits and review evidence. CI is configured for macOS/Linux with Node 22/24; see `.github/workflows/ci.yml`.
-
-The source layout is `bin/raw.ts` (entrypoint), `src/config.ts`, `src/cli.ts`, `src/agent.ts`, `src/compact.ts`, `src/llm/` (providers/cache), `src/tools/` (primitives/MCP), `src/acp/` (protocol/server/client), `src/index.ts` (library exports), `tests/` (fixture and public-path tests), and `docs/` (contracts/evidence). Runtime dependencies are the pinned official provider/ACP/MCP SDKs, JSON schema/config parsers, and the local WebSocket transport; TypeScript, tsx, tsup and tokenizer are development dependencies only.
+Tests use local provider/MCP/ACP fixtures. [Verification](docs/verification.md) records gates and limits. Source modules live in `bin/`, `src/config.ts`, `src/agent.ts`, `src/compact.ts`, `src/llm/`, `src/tools/`, and `src/acp/`.

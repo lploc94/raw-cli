@@ -257,6 +257,8 @@ codex-impl-review with gpt-6-astra; verdict must be APPROVE.
 feat: add profile-controlled automatic compaction
 
 ## Phase 6: Align public surfaces and qualify installed package
+### Status
+complete
 ### Goal
 Make documentation, CLI, ACP, package consumer and local installed configuration agree with the new contract.
 ### Current behavior and gap
@@ -282,9 +284,9 @@ Test installed packed bytes, not just source imports. Ensure ACP cannot bypass p
 ### Implementation obligations
 Keep protocol-standard ACP methods, update public types/examples, and preserve unrelated local files during the final one-time user setup. Test isolation from the old home config is a Phase 1 requirement, not deferred here.
 ### Acceptance criteria
-- [ ] AC-6.1: All public surfaces and packed consumer use only new schema with no secret leakage — proven by CLI/ACP/package tests and doc inspection.
-- [ ] AC-6.2: Global binary bytes match packed build and a live read-only multi-turn DeepSeek session works without -y; real cache-hit/miss counters are recorded and any zero-hit result is investigated and marked inconclusive — proven by installed hash, smoke output and usage report.
-- [ ] AC-6.3: Each phase review is APPROVE; all global gates pass — proven by review records and command results.
+- [x] AC-6.1: All public surfaces and packed consumer use only new schema with no secret leakage — proven by CLI/ACP/package tests and doc inspection.
+- [x] AC-6.2: Global binary bytes match packed build and a live read-only multi-turn DeepSeek session works without -y; real cache-hit/miss counters are recorded and any zero-hit result is investigated and marked inconclusive — proven by installed hash, smoke output and usage report.
+- [x] AC-6.3: Each phase review is APPROVE; all global gates pass — proven by review records and command results.
 ### Focused verification
 node --import tsx --test tests/cli.test.ts tests/acp.test.ts tests/package.test.ts
 ### Phase gates
@@ -311,3 +313,5 @@ docs: complete config redesign and installed qualification
 - 2026-09-24: Phase 4 complete. Docs-first reference and red tests preceded conditional `view_image` with real native payloads across four adapters, separate image cap, public event redaction and text-only MCP fallback. `npm run check` 168/168, typecheck, overhead 25 prompt tokens/three base tools, and diff check passed. GPT-6 Astra review found three defects (truncated image validation, FIFO hang, uncapped text errors), all fixed with regressions; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-013`.
 - 2026-09-24: Phase 5 in progress. Docs-first context/config contract and red tests preceded opt-in trigger validation, complete-request estimates, visible automatic compact, image-safe chronological summary chunks, usage accounting per summary request and stable main cache key. Focused tests 8/8, full `npm run check` 176/176, typecheck, overhead and diff check passed before review.
 - 2026-09-24: Phase 5 complete. `npm run check` 179/179, focused compact/ACP/cache/REPL tests, typecheck, overhead 25 prompt tokens/three base tools and diff check passed. GPT-6 Astra review found three defects (second compact after zero retention, absolute calibration, repeated chunk budget), all fixed with regressions; round 3 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-014`.
+- 2026-09-24: Phase 6 in progress. Docs-first README/config-design/public contract updates and red CLI/ACP tests preceded listing/runtime-info implementation. The packed consumer now exercises installed write, selected MCP, native vision and ACP without `-y`; `npm run test:package` passed on the host. Local installed config remains old shape until final gates.
+- 2026-09-24: Phase 6 complete. Node 22.23.3 and 24.21.0 each passed 181/181 tests, overhead and packed consumer on source hash `8d001cdd27480a364ff210d2f879583252a1c60687769ecf2123e281d8efd174`. Global installed binary SHA-256 matched packed `dist/raw.js` (`16a6088db34808cee1b639aaf426af736ed78b1626d5962e6a28fb7e37c643d2`). Installed config was backed up and rewritten to models/profiles, preserving local user key and DeepSeek env source. DeepSeek live two-turn read-only library session and installed CLI REPL passed without `-y`; per-request cache hits were 128/256/384/384 in the library run, 1024 total cache-read tokens in the REPL run. GPT-6 Astra review raw verdict APPROVE (no findings), explicitly finalized at `.codex-review/sessions/codex-impl-review-20260924-015`. The Vast local model endpoint still returned HTTP 503 while the user started it, so local inference is unqualified pending readiness.

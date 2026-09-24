@@ -48,11 +48,15 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
       arguments: '{"value":"probe"}',
     } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "installed-mcp-done" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "image", type: "function", function: {
+      name: "view_image", arguments: '{"path":"installed.jpg"}',
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "installed-image-done" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "installed-acp-done" }, "stop"), openAiDone] },
   ]);
   try {
     const configPath = testConfig("openai", "fixture", fixture.url);
-    const args = ["--config", configPath, "-y"];
+    const args = ["--config", configPath];
     const task = await run(bin, [...args, "write sentinel"], consumer, env);
     assert.equal(task.code, 0, task.stderr);
     assert.equal(task.stdout, "installed-task-done\n");
@@ -69,6 +73,17 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     assert.equal(mcp.stdout, "installed-mcp-done\n");
     assert.match(JSON.stringify(fixture.requests[3]?.body), /pkg:selected:probe/);
 
+    document.models.fixture.vision = true;
+    await writeFile(configPath, JSON.stringify(document));
+    const jpeg = await readFile(join(repo, "tests/fixtures/vision.jpg"));
+    await writeFile(join(consumer, "installed.jpg"), jpeg);
+    const vision = await run(bin, [...args, "inspect installed.jpg"], consumer, env);
+    assert.equal(vision.code, 0, vision.stderr);
+    assert.equal(vision.stdout, "installed-image-done\n");
+    assert.match(JSON.stringify(fixture.requests[4]?.body), /view_image/);
+    assert.ok(JSON.stringify(fixture.requests[5]?.body).includes(jpeg.toString("base64")));
+    assert.match(JSON.stringify(fixture.requests[5]?.body), /image_url/);
+
     const parentScript = `import { createAcpClient, createToolRegistry } from "raw-cli";
 const parent = await createAcpClient({ command: ${JSON.stringify(bin)}, args: ${JSON.stringify(["--acp", "--stdio", ...args])} });
 try { const id = await parent.newSession(process.cwd()); const answer = await parent.prompt(id, "ACP installed");
@@ -77,9 +92,9 @@ else process.stdout.write("installed-parent-ok\\n"); } finally { await parent.cl
     const parent = await run(process.execPath, ["--input-type=module", "--eval", parentScript], consumer, env);
     assert.equal(parent.code, 0, parent.stderr);
     assert.match(parent.stdout, /installed-parent-ok/);
-    assert.match(JSON.stringify(fixture.requests[4]?.body), /ACP installed/);
+    assert.match(JSON.stringify(fixture.requests[6]?.body), /ACP installed/);
 
-    await writeFile(join(consumer, "consumer.ts"), 'import { createToolRegistry, type AgentOptions } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst names: string[] = createToolRegistry().definitions().map(tool => tool.name);\nvoid options; void names;\n');
+    await writeFile(join(consumer, "consumer.ts"), 'import { createToolRegistry, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst names: string[] = createToolRegistry().definitions().map(tool => tool.name);\nvoid options; void compact; void input; void method; void names;\n');
     const tsc = spawnSync(process.execPath, [join(repo, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck",
       "--target", "esnext", "--module", "nodenext", "--moduleResolution", "nodenext",
       "--typeRoots", join(repo, "node_modules/@types"), "consumer.ts"], { cwd: consumer, encoding: "utf8" });

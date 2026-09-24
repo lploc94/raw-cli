@@ -83,6 +83,28 @@ test("T-01b: config list redacts uppercase URL credentials", () => {
   assert.doesNotMatch(listed.stdout + listed.stderr, /alice|pw|secret/);
 });
 
+test("config list reports model capability, selected MCP tools and policy without literal credentials", () => {
+  const home = mkdtempSync(join(tmpdir(), "raw-public-config-"));
+  mkdirSync(join(home, "raw"));
+  const secret = "literal-key-sentinel";
+  writeFileSync(join(home, "raw", "config.json"), JSON.stringify({
+    default_profile: "research",
+    models: { flash: { provider: "deepseek", method: "openai-chat-completions", model_id: "deepseek-flash",
+      base_url: "https://api.deepseek.com", api_key: secret, vision: true, context_window_tokens: 4096 } },
+    profiles: { research: { model: "flash", compact: { trigger_tokens: 1000, max_output_tokens: 100 },
+      mcp: { search: ["web_search"] }, tools: { rules: [{ match: "bash", effect: "deny" }] } } },
+    mcp: { servers: { search: { transport: "stdio", command: "unused", args: [] } } },
+  }));
+  const listed = cli(["config", "list"], home);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /research.*flash.*deepseek-flash.*openai-chat-completions/s);
+  assert.match(listed.stdout, /vision=true/);
+  assert.match(listed.stdout, /search:web_search/);
+  assert.match(listed.stdout, /deny:bash/);
+  assert.match(listed.stdout, /trigger=1000/);
+  assert.doesNotMatch(listed.stdout + listed.stderr, new RegExp(secret));
+});
+
 test("T-01d: config list rejects malformed profile and compact definitions without credentials", () => {
   const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
   mkdirSync(join(home, "raw"));

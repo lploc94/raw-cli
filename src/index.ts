@@ -5,9 +5,9 @@ export {
   readConfigDocument,
   redact,
 } from "./config.js";
-export type { CliArgs, CliCommand, LoadConfigOptions, RawFlags, RuntimeConfig } from "./config.js";
+export type { CliArgs, CliCommand, CompactSettings, ConfigDocument, LoadConfigOptions, RawFlags, RuntimeConfig } from "./config.js";
 export { DEFAULT_SYSTEM_PROMPT, resolveSystemPrompt } from "./llm/prompt.js";
-export type { ProviderName, ProviderProfile, CacheOptions } from "./llm/types.js";
+export type { ApiMethod, ProviderName, ProviderProfile, ProfileRequestOptions, CacheOptions, UserBlock, UserInput } from "./llm/types.js";
 export { createProvider, ProviderError } from "./llm/client.js";
 export type { ProviderAdapter, ProviderRequest, ProviderTurn, ModelMessage, ModelToolCall } from "./llm/types.js";
 export type { ToolContent, ToolResult } from "./tools/types.js";

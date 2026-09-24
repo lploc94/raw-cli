@@ -51,7 +51,7 @@ cache retains mode, key, retention and backend controls where the provider/metho
 
 For example, add `"trigger_tokens": 800000` to the DeepSeek profile's `compact` object above to enable automatic compaction for its declared 1048576-token context. Raw uses a conservative serialized-request estimate and checks the full request after compact; the exact context usage remains provider-specific.
 
-raw config init writes this schema once with mode 0600. raw config list displays profile name, model alias, upstream model_id, provider, method and sanitized endpoint. It never displays api_key or the resolved environment value.
+raw config init writes this schema once with mode 0600. raw config list displays profile name, model alias, upstream model_id, provider, method, sanitized endpoint, vision, selected MCP tools, tool rules and compact trigger. It never displays api_key or the resolved environment value.
 
 ## Runtime flags
 

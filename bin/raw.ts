@@ -37,6 +37,9 @@ Options:
   --help, --version          Show help or version
 
 REPL: /compact, /clear, /stats, /exit
+Config: models define access paths; profiles select a model, MCP tools and policy.
+Vision: a model with vision=true gets view_image; no image flag is needed.
+Compact: profile compact.trigger_tokens enables automatic compaction.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 `;
 }
@@ -82,7 +85,16 @@ async function run(): Promise<void> {
         ? (models as Record<string, unknown>)[alias] : undefined;
       const spec = model && typeof model === "object" && !Array.isArray(model) ? model as Record<string, unknown> : {};
       const endpoint = typeof spec.base_url === "string" ? redact(spec.base_url) : "default endpoint";
-      process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}\n`);
+      const selectedMcp = data.mcp && typeof data.mcp === "object" && !Array.isArray(data.mcp)
+        ? Object.entries(data.mcp).map(([server, tools]) => `${server}:${tools === "*" ? "*" : Array.isArray(tools) ? tools.join(",") : "?"}`).join(";") : "";
+      const policy = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
+        ? (data.tools as { rules?: Array<{ match: string; effect: string }> }).rules ?? [] : [];
+      const rules = policy.map((rule) => `${rule.effect}:${rule.match}`).join(",");
+      const compact = data.compact && typeof data.compact === "object" && !Array.isArray(data.compact)
+        ? data.compact as Record<string, unknown> : {};
+      process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`
+        + `\tvision=${spec.vision === true}\tmcp=${selectedMcp || "none"}\trules=${rules || "default-allow"}`
+        + `\ttrigger=${compact.trigger_tokens ?? "manual"}\n`);
     }
     return;
   }

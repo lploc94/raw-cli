@@ -254,9 +254,13 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     fields(params, ["sessionId"], "runtime info");
     const session = params.sessionId === undefined ? undefined : getSession(string(params.sessionId, "sessionId"));
     return { profile: options.runtime.profile ? { name: options.runtime.profile.name,
-      provider: options.runtime.profile.provider, model: options.runtime.profile.model } : undefined,
+      provider: options.runtime.profile.provider, modelAlias: options.runtime.profile.modelAlias,
+      model: options.runtime.profile.model, method: options.runtime.profile.method,
+      vision: options.runtime.profile.vision === true, contextWindowTokens: options.runtime.profile.contextWindow } : undefined,
       limits: { maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
-        requestTimeoutMs: options.runtime.requestTimeoutMs },
+        requestTimeoutMs: options.runtime.requestTimeoutMs, compact: options.runtime.compact },
+      mcpSelection: Object.fromEntries(Object.entries(options.runtime.mcpServers).map(([name, server]) => [name, server.tools ?? []])),
+      toolPolicy: options.runtime.toolRules.map((rule) => ({ ...rule })),
       tools: session?.agent.toolDefinitions.map((tool) => ({ alias: tool.name,
         origin: session.mcp.exposed.find((item) => item.alias === tool.name)?.server ?? (tool.name.startsWith("raw_") ? "peer" : "built-in") })) ?? [],
       mcpCatalog: session?.mcp.catalog.map((item) => ({ ...item, exposed: session.agent.toolDefinitions.some((visible) => visible.name === item.alias) })) ?? [] };

@@ -1,6 +1,19 @@
 # Verification matrix
 
-This record distinguishes local executable evidence from configured CI and unrun external integrations. The normative contract and phase reviews are in [the plan](../build-raw-cli-plan.md) and `docs/evidence/phase-*.md`.
+This record distinguishes local executable evidence from configured CI and unrun external integrations. The current configuration contract and six-phase review record are in [the redesign plan](../redesign-model-profile-configuration-plan.md). The original scaffold qualification remains in [the build plan](../build-raw-cli-plan.md) and `docs/evidence/phase-*.md`; its matrix below is historical baseline evidence.
+
+## Configuration redesign qualification
+
+| Phase | Evidence | GPT-6 Astra implementation review |
+|---|---|---|
+| 1: model/profile schema | Strict config, selected credential, removed direct override and 135 passing tests | `.codex-review/sessions/codex-impl-review-20260924-010` APPROVE |
+| 2: API methods and controls | Four SDK methods, typed request fields, DeepSeek replay/cache and 146 passing tests | `.codex-review/sessions/codex-impl-review-20260924-011` APPROVE |
+| 3: MCP and policy | Profile-selected tools, canonical allow/ask/deny and 161 passing tests | `.codex-review/sessions/codex-impl-review-20260924-012` APPROVE |
+| 4: conditional vision | Native PNG/JPEG across four methods, text-only MCP fallback, bounded errors and 168 passing tests | `.codex-review/sessions/codex-impl-review-20260924-013` APPROVE |
+| 5: automatic compact | Full-request estimate, image-safe chunking, rollback, calibration and 179 passing tests | `.codex-review/sessions/codex-impl-review-20260924-014` APPROVE |
+| 6: public/package/install | 181/181 tests on Node 22 and 24, packed consumer write/MCP/vision/ACP, exact installed bytes, live DeepSeek below | `.codex-review/sessions/codex-impl-review-20260924-015` APPROVE |
+
+The review runner sometimes failed to parse a verdict-only `APPROVE` response; the raw reviewer verdict was inspected and the session explicitly finalized as `APPROVE`. The base prompt remains 25 reference tokens with exactly three default built-ins. Phase 6 package qualification includes installed write, profile-selected MCP, native `view_image`, ACP and external TypeScript imports, without an approval flag.
 
 ## Acceptance criteria
 
@@ -68,10 +81,18 @@ This record distinguishes local executable evidence from configured CI and unrun
 | D-10 | T-07a..f plus T-08d installed ACP parent/child |
 | D-11 | T-08a..e CLI, package and runtime gates |
 
-## Local qualification
+## Original scaffold qualification
 
 The full local gate ran on macOS 26.6.2. Node 22.23.3 and 24.21.0 each ran `npm run check` (133/133), `npm run test:overhead` (25 prompt/175 combined reference tokens), and `npm run test:package` (1/1) through the exact executable recorded by `scripts/verify-runtime.mjs`. Both runners recorded source manifest SHA-256 `695198a3731fc751f8959d77afc8efbf6e9795db6140bae427d38736c30db87f`. The host's Node 26.0.0 also passed the same base checks; Node 26 is outside the supported qualification requirement. `npm ci` passed before the final gates. The package test uses an offline install after the lockfile install and resolves its executable/library from a temporary consumer outside the checkout.
 
 Final source and artifact hashes, artifact sizes, and the approved Phase 8 review are recorded in [Phase 8 evidence](evidence/phase-8.md). `package.json` has nine direct runtime dependencies: official provider SDKs, official ACP/MCP SDKs, Ajv/schema formats, JSON parser and WebSocket transport. TypeScript, tsx, tsup and the reference tokenizer are development-only.
 
-Local tests use mock provider HTTP endpoints and local MCP/ACP peers. No live hosted-model response, third-party IDE compatibility, actual cache hit, Linux CI job or Windows run is claimed. The workflow configures macOS/Linux Node 22/24 jobs, but no remote workflow run is recorded. Raw uses the host account's permissions without an OS sandbox; remote cancellation cannot reverse a completed external side effect.
+The original scaffold tests used mock provider HTTP endpoints and local MCP/ACP peers. They did not claim a live hosted-model response, third-party IDE compatibility, actual cache hit, Linux CI job or Windows run. The workflow configures macOS/Linux Node 22/24 jobs, but no remote workflow run is recorded. Raw uses the host account's permissions without an OS sandbox; remote cancellation cannot reverse a completed external side effect.
+
+## Final configuration redesign qualification
+
+On 2026-09-24, Node 22.23.3 and Node 24.21.0 each ran `scripts/verify-runtime.mjs` against identical source manifest SHA-256 `8d001cdd27480a364ff210d2f879583252a1c60687769ecf2123e281d8efd174`. Each run passed `npm run check` (181/181), `npm run test:overhead` (25 prompt and 175 combined reference tokens, exactly three base tools), and `npm run test:package` (1/1). The package test installed the tarball outside the checkout, ran write and selected MCP tool turns, sent a native JPEG through `view_image`, exercised standard ACP from a parent process, and typechecked the public imports. It did not pass `-y`.
+
+`npm pack` produced `raw-cli-0.1.0.tgz`, 79,098 bytes, SHA-256 `aa5b4899dcf56e46e1649d122f65f1d48580d732981889263333b5aac97f8b10`. Global `raw` resolves to `/opt/homebrew/bin/raw`. Installed `/opt/homebrew/lib/node_modules/raw-cli/dist/raw.js` and the packed build's `dist/raw.js` both have SHA-256 `16a6088db34808cee1b639aaf426af736ed78b1626d5962e6a28fb7e37c643d2`; the installed library and build `dist/index.js` both have SHA-256 `71a02ada5d2c118b5bc98593e94b5906a3b351314b1cd4bb0bd03c47c593b8a2`. The old user config was copied intact to `~/.config/raw/config.json.backup-2026-09-24T12-54-47-112Z` with mode 0600. The new strict `models`/`profiles` config at `~/.config/raw/config.json` also has mode 0600, preserves the local literal key and DeepSeek `api_key_env`, and passes installed `raw config list` without displaying credentials.
+
+An installed-library DeepSeek `deepseek-flash` session used only `read_file` on a temporary probe file, two turns and four requests. Per-request `prompt_cache_hit_tokens` were **128, 256, 384, 384**; `prompt_cache_miss_tokens` were **214, 176, 174, 260**. The total observed cache-read count was 1,152 of 1,976 input tokens. An independent installed `raw` REPL run used two `read_file` calls, four requests, no `-y` and no permission prompt; its `/stats` showed 1,024 cache-read tokens of 1,800 input tokens. These are reported provider counters, so the observed hit claim is grounded in actual usage rather than prefix similarity. The local Vast LLM profile has endpoint `http://127.0.0.1:8080/v1`, model `qwen-3.8` and the preserved user API key; `/v1/models` returned HTTP 503 while the user was starting that server, so local inference was not yet qualified.
