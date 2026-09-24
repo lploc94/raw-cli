@@ -92,7 +92,7 @@ function validateBashBatch(value: unknown): string | undefined {
   if (unexpected !== undefined) return `unknown bash property ${JSON.stringify(unexpected)}; use {"commands":[{"command":"..."}]}`;
   if (!Array.isArray(args.commands) || args.commands.length < 1 || args.commands.length > 16) return "commands must contain 1 to 16 entries";
   for (const [index, raw] of args.commands.entries()) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `commands[${index}] must be an object`;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `commands[${index}] must be an object with a command field, e.g. {"command":"pwd"}; strings are invalid`;
     const command = raw as Record<string, unknown>;
     if (Object.keys(command).some((key) => !["command", "timeout_ms"].includes(key))) return `commands[${index}] has an unknown property`;
     if (typeof command.command !== "string" || !command.command) return `commands[${index}].command must be a nonempty string`;
@@ -117,7 +117,7 @@ const WRITE_FILE_DESCRIPTION = [
 ].join(" ");
 
 const BASH_DESCRIPTION = [
-  "Run 1-16 Bash commands sequentially in array order. Call with {\"commands\":[{\"command\":\"pwd\"}]}; do not pass command at the top level. Results correspond to commands by zero-based index.",
+  "Run 1-16 Bash commands sequentially in array order. The commands array contains objects, never strings. Call with {\"commands\":[{\"command\":\"pwd\"},{\"command\":\"ls -la\"}]}; do not pass command at the top level. Results correspond to commands by zero-based index.",
   "Each command starts a separate Bash process in the session cwd. Filesystem changes persist; shell variables and cd do not carry to the next command. timeout_ms is an optional per-command deadline in milliseconds (default 120000).",
   "Each result reports status, exit_code, signal, timed_out, truncated, stdout, and stderr. Status ok means the command finished; inspect exit_code to determine success. A nonzero exit does not stop later commands. Timeout or abort stops the active process group and marks remaining commands skipped.",
   "All output shares one bounded result budget, so stdout or stderr may be truncated. Invalid arguments reject the entire batch before any command starts.",
@@ -127,7 +127,7 @@ const builtIns: readonly ToolRegistration[] = [
   {
     name: "read_file", description: READ_FILE_DESCRIPTION,
     inputSchema: { type: "object", properties: { files: { type: "array", minItems: 1, maxItems: 16,
-      description: "Independent file selections; return rows follow this order.",
+      description: "Array of file selection objects; return rows follow this order.",
       items: { type: "object", properties: {
         path: { type: "string", description: "File path, absolute or relative to the session cwd." },
         start_line: { type: "integer", minimum: 1, description: "First 1-based line; omit for a full read. Defaults to 1 for a range." },
@@ -142,7 +142,7 @@ const builtIns: readonly ToolRegistration[] = [
   {
     name: "write_file", description: WRITE_FILE_DESCRIPTION,
     inputSchema: { type: "object", properties: { operations: { type: "array", minItems: 1, maxItems: 16,
-      description: "Ordered writes; a runtime failure in one operation does not undo other successful operations.",
+      description: "Array of write operation objects; a runtime failure in one operation does not undo other successful operations.",
       items: { type: "object", properties: {
         path: { type: "string", description: "File path, absolute or relative to the session cwd." },
         mode: { type: "string", enum: ["overwrite", "append", "replace_text", "replace_lines"],
@@ -161,8 +161,8 @@ const builtIns: readonly ToolRegistration[] = [
   {
     name: "bash", description: BASH_DESCRIPTION,
     inputSchema: { type: "object", properties: { commands: { type: "array", minItems: 1, maxItems: 16,
-      description: "Bash commands run one at a time in this order.",
-      items: { type: "object", properties: {
+      description: "Array of command objects, not strings; Bash runs them one at a time in this order.",
+      items: { type: "object", description: "One command object with a required command string and optional timeout_ms.", properties: {
         command: { type: "string", description: "Nonempty Bash -c command to run in the session cwd." },
         timeout_ms: { type: "integer", minimum: 1, description: "Positive deadline for this command in milliseconds; defaults to 120000." },
       },

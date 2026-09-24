@@ -23,6 +23,9 @@ test("registry has only three built-ins and rejects invalid/hidden calls before 
   ] as const) {
     assert.equal((await registry.dispatch(name, args, ctx)).isError, true);
   }
+  const stringCommand = await registry.dispatch("bash", { commands: ["pwd"] }, ctx);
+  assert.equal(stringCommand.code, "invalid_arguments");
+  assert.match(JSON.stringify(stringCommand), /commands\[0\] must be an object.*command/);
   assert.equal(approvals, 0);
   assert.equal((await registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: marker, content: "bad" }] }, { ...ctx, whitelist: [] })).code, "tool_not_exposed");
   assert.equal(approvals, 0);
