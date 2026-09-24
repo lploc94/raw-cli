@@ -9,6 +9,7 @@ export interface ToolContext {
   maxOutputBytes: number;
   autoApprove?: boolean;
   approve?: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => boolean | Promise<boolean>;
+  onStart?: (name: string, args: Record<string, unknown>) => void;
   whitelist?: readonly string[];
   signal?: AbortSignal;
   bashPath?: string;

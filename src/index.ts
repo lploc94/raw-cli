@@ -14,3 +14,5 @@ export type { ToolContent, ToolResult } from "./tools/types.js";
 export { BUILTIN_TOOL_DEFINITIONS, ToolRegistry, createToolRegistry } from "./tools/registry.js";
 export type { ToolDefinition, ToolRegistration } from "./tools/registry.js";
 export type { ToolContext } from "./tools/primitives.js";
+export { AgentSession, createAgent } from "./agent.js";
+export type { AgentOptions, AgentState, RunEvent, RunResult, RunStatus } from "./agent.js";

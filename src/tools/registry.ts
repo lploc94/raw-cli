@@ -90,8 +90,8 @@ export class ToolRegistry {
       let allowed: boolean;
       try {
         allowed = await (cancelled
-          ? Promise.race([Promise.resolve(context.approve(name, args as Record<string, unknown>, context.signal)), cancelled])
-          : context.approve(name, args as Record<string, unknown>, context.signal));
+          ? Promise.race([Promise.resolve(context.approve(name, structuredClone(args as Record<string, unknown>), context.signal)), cancelled])
+          : context.approve(name, structuredClone(args as Record<string, unknown>), context.signal));
       } catch (error) {
         return finish(errorResult("approval_error", `approval failed: ${(error as Error).message}`));
       } finally {
@@ -101,6 +101,9 @@ export class ToolRegistry {
       if (!allowed) return finish(errorResult("approval_denied", `approval denied for ${name}`));
     }
     try {
+      if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
+      context.onStart?.(name, args as Record<string, unknown>);
+      if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
       return finish(await tool.handler(args as Record<string, unknown>, context));
     } catch (error) {
       return finish(errorResult("tool_error", `${name} failed: ${(error as Error).message}`));
