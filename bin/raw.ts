@@ -4,7 +4,6 @@ import { configFilePath, loadConfig, parseCliArgs, readConfigDocument, redact } 
 import { createAcpServer } from "../src/acp/methods.js";
 import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
 import { runCli } from "../src/cli.js";
-import { loadMcpConfig } from "../src/tools/mcp-client.js";
 
 const version = "0.1.0";
 class InputError extends Error {}
@@ -89,7 +88,7 @@ async function run(): Promise<void> {
   }
   if (parsed.command === "acp") {
     const runtime = await inputAsync(() => loadConfig({ flags: parsed.flags }));
-    const mcpServers = input(() => loadMcpConfig());
+    const mcpServers = runtime.mcpServers;
     if (parsed.acpTransport !== "ws") {
       await serveAcpStdio(createAcpServer({ runtime, mcpServers }));
       return;
@@ -105,7 +104,7 @@ async function run(): Promise<void> {
     return;
   }
   const runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true }));
-  const mcpServers = input(() => loadMcpConfig());
+  const mcpServers = runtime.mcpServers;
   process.exitCode = await runCli(runtime, parsed.command === "task" ? parsed.task : undefined, mcpServers);
 }
 

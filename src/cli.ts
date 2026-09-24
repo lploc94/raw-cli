@@ -3,6 +3,7 @@ import { createAgent, type AgentSession, type RunEvent, type RunResult } from ".
 import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { connectMcpServers, type McpServerConfig } from "./tools/mcp-client.js";
+import { createToolRegistry } from "./tools/registry.js";
 
 function textRun(session: AgentSession, task: string): Promise<RunResult> {
   let wrote = false;
@@ -85,7 +86,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   process.on("SIGTERM", cancelStartup);
   let mcp;
   try {
-    mcp = await connectMcpServers({ cwd, servers: mcpServers, timeoutMs: runtime.requestTimeoutMs, signal: startupController.signal });
+    mcp = await connectMcpServers({ cwd, servers: mcpServers, registry: createToolRegistry(runtime.toolRules),
+      timeoutMs: runtime.requestTimeoutMs, signal: startupController.signal });
   } catch (error) {
     if (startupCancelled) return 130;
     throw error;
@@ -103,7 +105,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   const session = createAgent({ provider, registry: mcp.registry,
     cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
     requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove,
-    ...(!runtime.autoApprove && process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal) } : {}) });
+    ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal) } : {}) });
   const interrupt = () => {
     if (session.abort()) { process.stderr.write("\nraw: cancelled\n"); return; }
     cancelledWhileIdle = true;

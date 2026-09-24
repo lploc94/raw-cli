@@ -51,17 +51,19 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     { frames: [openAiFrame({ content: "installed-acp-done" }, "stop"), openAiDone] },
   ]);
   try {
-    const args = ["--config", testConfig("openai", "fixture", fixture.url), "-y"];
+    const configPath = testConfig("openai", "fixture", fixture.url);
+    const args = ["--config", configPath, "-y"];
     const task = await run(bin, [...args, "write sentinel"], consumer, env);
     assert.equal(task.code, 0, task.stderr);
     assert.equal(task.stdout, "installed-task-done\n");
     assert.equal(await readFile(join(consumer, "installed-sentinel.txt"), "utf8"), "installed-write");
     assert.match(JSON.stringify(fixture.requests[1]?.body), /installed-write/);
 
-    await writeFile(join(consumer, "raw-mcp.json"), JSON.stringify({ mcpServers: { pkg: {
-      command: process.execPath, args: ["--import", import.meta.resolve("tsx"), join(repo, "tests/fixtures/mcp-stdio.ts")],
-      env: { MCP_LABEL: "pkg" }, tools: ["selected"],
-    } } }));
+    const document = JSON.parse(await readFile(configPath, "utf8"));
+    document.mcp = { servers: { pkg: { transport: "stdio", command: process.execPath,
+      args: ["--import", import.meta.resolve("tsx"), join(repo, "tests/fixtures/mcp-stdio.ts")], env: { MCP_LABEL: "pkg" } } } };
+    document.profiles.fixture.mcp = { pkg: ["selected"] };
+    await writeFile(configPath, JSON.stringify(document));
     const mcp = await run(bin, [...args, "call MCP"], consumer, env);
     assert.equal(mcp.code, 0, mcp.stderr);
     assert.equal(mcp.stdout, "installed-mcp-done\n");

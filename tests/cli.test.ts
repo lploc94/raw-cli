@@ -74,6 +74,46 @@ test("T-08a/b: non-TTY tool call executes without an approval flag", async () =>
   } finally { await fixture.close(); }
 });
 
+test("explicit profile ask fails closed in headless mode even with -y", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-ask-headless-"));
+  const fixture = await startMockProvider([{ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function",
+    function: { name: "write_file", arguments: '{"path":"blocked.txt","content":"no"}' } }] }, "tool_calls"), openAiDone] }]);
+  try {
+    const configPath = testConfig("openai", "fixture", fixture.url);
+    const document = JSON.parse(await readFile(configPath, "utf8"));
+    document.profiles.fixture.tools = { rules: [{ match: "write_file", effect: "ask" }] };
+    await writeFile(configPath, JSON.stringify(document));
+    const result = await raw(["--config", configPath, "-y", "write"], { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
+    assert.equal(result.code, 2, result.stderr);
+    assert.match(result.stderr, /approval required/);
+    await assert.rejects(access(join(root, "blocked.txt")));
+    assert.equal(fixture.requests.length, 1);
+  } finally { await fixture.close(); }
+});
+
+test("explicit profile ask prompts once in a TTY and -y does not bypass it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-ask-tty-"));
+  const fixture = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function",
+      function: { name: "write_file", arguments: JSON.stringify({ path: join(root, "allowed.txt"), content: "yes" }) } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
+  ]);
+  const configPath = testConfig("openai", "fixture", fixture.url);
+  const document = JSON.parse(await readFile(configPath, "utf8"));
+  document.profiles.fixture.tools = { rules: [{ match: "write_file", effect: "ask" }] };
+  await writeFile(configPath, JSON.stringify(document));
+  const { child, output } = ptyRaw(["--config", configPath, "-y", "write"], { ...process.env, OPENAI_API_KEY: "key" });
+  try {
+    await waitFor(output, "allow write_file");
+    await assert.rejects(access(join(root, "allowed.txt")));
+    child.stdin.write("y\n");
+    const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+    assert.equal(code, 0, output());
+    assert.equal(await readFile(join(root, "allowed.txt"), "utf8"), "yes");
+    assert.equal((output().match(/allow write_file/g) ?? []).length, 1);
+  } finally { child.kill("SIGTERM"); await fixture.close(); }
+});
+
 test("T-08 review: piped REPL executes a tool without approval", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-repl-auto-tool-"));
   const fixture = await startMockProvider([
@@ -105,13 +145,15 @@ test("T-08 review: SIGINT during MCP startup reaps owned stdio child", async () 
   const root = await mkdtemp(join(tmpdir(), "raw-cli-startup-cancel-"));
   const pidFile = join(root, "mcp.pid");
   const started = join(root, "mcp-started");
-  await writeFile(join(root, "raw-mcp.json"), JSON.stringify({ mcpServers: { delayed: {
-    command: process.execPath,
+  const configPath = testConfig("ollama");
+  const document = JSON.parse(await readFile(configPath, "utf8"));
+  document.mcp = { servers: { delayed: { transport: "stdio", command: process.execPath,
     args: ["--import", import.meta.resolve("tsx"), join(process.cwd(), "tests/fixtures/mcp-stdio.ts")],
-    env: { MCP_PID_FILE: pidFile, MCP_LIST_STARTED_FILE: started, MCP_LIST_DELAY_MS: "1200" }, tools: [],
-  } } }));
+    env: { MCP_PID_FILE: pidFile, MCP_LIST_STARTED_FILE: started, MCP_LIST_DELAY_MS: "1200" } } } };
+  document.profiles.fixture.mcp = { delayed: [] };
+  await writeFile(configPath, JSON.stringify(document));
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"),
-    "--config", testConfig("ollama"), "-y", "task"],
+    "--config", configPath, "-y", "task"],
   { cwd: root, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.end();
   child.stdout.resume(); child.stderr.resume();
@@ -297,14 +339,17 @@ test("T-08a: max steps, provider error and invalid arguments use distinct exit c
 
 test("T-08 review: malformed MCP config exits 2 while unreachable server exits 1", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-cli-mcp-errors-"));
-  const config = join(root, "raw-mcp.json");
+  const config = testConfig("ollama");
+  const base = JSON.parse(await readFile(config, "utf8"));
   await writeFile(config, "{");
-  const malformed = await raw(["--config", testConfig("ollama"), "-y", "task"], { cwd: root });
+  const malformed = await raw(["--config", config, "-y", "task"], { cwd: root });
   assert.equal(malformed.code, 2, malformed.stderr);
-  await writeFile(config, JSON.stringify({ mcpServers: { bad: { command: "node", url: "http://127.0.0.1:1" } } }));
-  const invalid = await raw(["--config", testConfig("ollama"), "-y", "task"], { cwd: root });
+  await writeFile(config, JSON.stringify({ ...base, mcp: { servers: { bad: { transport: "stdio", command: "node", url: "http://127.0.0.1:1" } } },
+    profiles: { fixture: { model: "fixture", mcp: { bad: [] } } } }));
+  const invalid = await raw(["--config", config, "-y", "task"], { cwd: root });
   assert.equal(invalid.code, 2, invalid.stderr);
-  await writeFile(config, JSON.stringify({ mcpServers: { unreachable: { command: "raw-missing-mcp-command", tools: [] } } }));
-  const connection = await raw(["--config", testConfig("ollama"), "-y", "task"], { cwd: root });
+  await writeFile(config, JSON.stringify({ ...base, mcp: { servers: { unreachable: { transport: "stdio", command: "raw-missing-mcp-command" } } },
+    profiles: { fixture: { model: "fixture", mcp: { unreachable: [] } } } }));
+  const connection = await raw(["--config", config, "-y", "task"], { cwd: root });
   assert.equal(connection.code, 1, connection.stderr);
 });

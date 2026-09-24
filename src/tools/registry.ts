@@ -15,8 +15,16 @@ export interface ToolDefinition {
 }
 
 export interface ToolRegistration extends ToolDefinition {
+  canonicalName?: string;
   handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
   validateArgs?: (args: unknown) => string | undefined;
+}
+
+export interface ToolPolicyRule { readonly match: string; readonly effect: "allow" | "ask" | "deny" }
+
+function matcher(pattern: string): RegExp {
+  const source = [...pattern].map((char) => char === "*" ? ".*" : char === "?" ? "." : char.replace(/[\\^$+?.()|{}\[\]]/g, "\\$&")).join("");
+  return new RegExp(`^(?:${source})(?![\\s\\S])`, "su");
 }
 
 const builtIns: readonly ToolRegistration[] = [
@@ -62,6 +70,18 @@ function validate(definition: ToolDefinition, value: unknown): string | undefine
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolRegistration>();
+  private readonly rules: readonly { match: RegExp; effect: ToolPolicyRule["effect"] }[];
+
+  constructor(rules: readonly ToolPolicyRule[] = []) {
+    this.rules = rules.map((rule) => ({ match: matcher(rule.match), effect: rule.effect }));
+  }
+
+  private effect(tool: ToolRegistration): ToolPolicyRule["effect"] {
+    const identity = tool.canonicalName ?? tool.name;
+    let effect: ToolPolicyRule["effect"] = "allow";
+    for (const rule of this.rules) if (rule.match.test(identity)) effect = rule.effect;
+    return effect;
+  }
 
   register(tool: ToolRegistration): void {
     if (this.tools.has(tool.name)) throw new Error(`duplicate tool: ${tool.name}`);
@@ -70,23 +90,25 @@ export class ToolRegistry {
 
   definitions(whitelist?: readonly string[]): readonly ToolDefinition[] {
     return [...this.tools.values()]
-      .filter((tool) => whitelist === undefined || whitelist.includes(tool.name))
+      .filter((tool) => this.effect(tool) !== "deny" && (whitelist === undefined || whitelist.includes(tool.name)))
       .sort((a, b) => {
         const first = ["read_file", "write_file", "bash"].indexOf(a.name);
         const second = ["read_file", "write_file", "bash"].indexOf(b.name);
         return first >= 0 && second >= 0 ? first - second : first >= 0 ? -1 : second >= 0 ? 1 : a.name.localeCompare(b.name);
       })
-      .map(({ handler: _handler, validateArgs: _validateArgs, ...definition }) => structuredClone(definition));
+      .map(({ handler: _handler, validateArgs: _validateArgs, canonicalName: _canonicalName, ...definition }) => structuredClone(definition));
   }
 
   async dispatch(name: string, args: unknown, context: ToolContext): Promise<ToolResult> {
     const finish = (result: ToolResult) => capResult(result, context.maxOutputBytes);
     const tool = this.tools.get(name);
     if (!tool || (context.whitelist !== undefined && !context.whitelist.includes(name))) return finish(errorResult("tool_not_exposed", `tool unavailable: ${name}`));
+    const effect = this.effect(tool);
+    if (effect === "deny") return finish(errorResult("tool_denied", `tool denied: ${tool.canonicalName ?? name}`));
     const invalid = tool.validateArgs ? tool.validateArgs(args) : validate(tool, args);
     if (invalid) return finish(errorResult("invalid_arguments", invalid));
     if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
-    if (context.autoApprove === false) {
+    if (effect === "ask" || context.autoApprove === false) {
       if (!context.approve) return finish(errorResult("approval_required", `approval required for ${name}`));
       let onAbort: (() => void) | undefined;
       const cancelled = context.signal ? new Promise<false>((resolve) => {
@@ -118,8 +140,8 @@ export class ToolRegistry {
   }
 }
 
-export function createToolRegistry(): ToolRegistry {
-  const registry = new ToolRegistry();
+export function createToolRegistry(rules: readonly ToolPolicyRule[] = []): ToolRegistry {
+  const registry = new ToolRegistry(rules);
   for (const tool of builtIns) registry.register(tool);
   return registry;
 }

@@ -1,7 +1,4 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -9,7 +6,6 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { ToolRegistry, createToolRegistry, type ToolRegistration } from "./registry.js";
 import { capResult, errorResult } from "./results.js";
 import type { ToolContent, ToolResult } from "./types.js";
@@ -21,13 +17,8 @@ export type McpServerConfig =
   | { command: string; args?: readonly string[]; env?: Readonly<Record<string, string>>; tools?: Selection }
   | { url: string; transport?: "sse" | "streamable-http"; headers?: Readonly<Record<string, string>>; tools?: Selection };
 
-export interface McpConfigOptions {
+export interface ConnectMcpOptions {
   cwd?: string;
-  env?: NodeJS.ProcessEnv;
-  home?: string;
-}
-
-export interface ConnectMcpOptions extends McpConfigOptions {
   servers?: Readonly<Record<string, McpServerConfig>>;
   registry?: ToolRegistry;
   timeoutMs?: number;
@@ -104,39 +95,6 @@ function validateServer(name: string, raw: unknown): McpServerConfig {
   return { url, transport,
     ...(data.headers !== undefined ? { headers: stringMap(data.headers, `MCP server ${name}.headers`) } : {}),
     ...(tools !== undefined ? { tools } : {}) };
-}
-
-function duplicateKeys(node: JsonNode): void {
-  if (node.type === "object") {
-    const seen = new Set<string>();
-    for (const property of node.children ?? []) {
-      const key = property.children?.[0] && getNodeValue(property.children[0]);
-      if (typeof key !== "string" || seen.has(key)) throw new Error("duplicate or invalid MCP config key");
-      seen.add(key);
-    }
-  }
-  for (const child of node.children ?? []) duplicateKeys(child);
-}
-
-function readMcpFile(path: string): Record<string, McpServerConfig> {
-  let source: string;
-  try { source = readFileSync(path, "utf8"); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return {}; throw new Error(`cannot read MCP config: ${path}`); }
-  const errors: ParseError[] = [];
-  const tree = parseTree(source, errors, { allowTrailingComma: false, disallowComments: true });
-  if (!tree || errors.length) throw new Error(`invalid MCP JSON config: ${path}`);
-  duplicateKeys(tree);
-  const root = record(getNodeValue(tree), "MCP config");
-  checkKeys(root, ["mcpServers"], "MCP config");
-  const servers = root.mcpServers === undefined ? {} : record(root.mcpServers, "mcpServers");
-  return Object.fromEntries(Object.entries(servers).map(([name, value]) => [string(name, "MCP server name"), validateServer(name, value)]));
-}
-
-export function loadMcpConfig(options: McpConfigOptions = {}): Record<string, McpServerConfig> {
-  const cwd = options.cwd ?? process.cwd();
-  const env = options.env ?? process.env;
-  const base = env.XDG_CONFIG_HOME ? resolve(cwd, env.XDG_CONFIG_HOME) : join(options.home ?? homedir(), ".config");
-  return { ...readMcpFile(join(base, "raw", "mcp.json")), ...readMcpFile(join(cwd, "raw-mcp.json")) };
 }
 
 function canonical(value: unknown): unknown {
@@ -268,7 +226,7 @@ async function deadline<T>(work: Promise<T>, timeoutMs: number, signal?: AbortSi
 export async function connectMcpServers(options: ConnectMcpOptions = {}): Promise<McpConnection> {
   const timeoutMs = options.timeoutMs ?? 120000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) throw new Error("MCP timeout must be a positive integer");
-  const configs = options.servers ?? loadMcpConfig(options);
+  const configs = options.servers ?? {};
   const specs = Object.entries(configs).map(([name, raw]) => [string(name, "MCP server name"), validateServer(name, raw)] as const).sort(([a], [b]) => a.localeCompare(b));
   const registry = options.registry ?? createToolRegistry();
   const owners: Client[] = [];
@@ -341,7 +299,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
           try { validate = ajv.compile(schema); }
           catch { throw new Error(`unsupported MCP tool schema for ${name}/${originalName}`); }
           if ((validate as typeof validate & { $async?: boolean }).$async) throw new Error(`unsupported async MCP tool schema for ${name}/${originalName}`);
-          return { name: alias, description: tool.description, inputSchema: schema,
+          return { name: alias, canonicalName: `mcp:${name}/${originalName}`, description: tool.description, inputSchema: schema,
           validateArgs: (args) => validate(args) ? undefined : ajv.errorsText(validate.errors),
           handler: async (args, context) => {
             if (closed) return errorResult("mcp_closed", `MCP server ${name} is closed`);
@@ -370,7 +328,10 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
       }
       const registrations = unique.filter((alias) => available.has(alias) && !activated.has(alias)).map((alias) => available.get(alias)!());
       for (const registration of registrations) { registry.register(registration); activated.add(registration.name); }
-      for (const registration of registrations) exposed.push(catalogInfo.find((item) => item.alias === registration.name)!);
+      const visible = new Set(registry.definitions().map((item) => item.name));
+      for (const registration of registrations) if (visible.has(registration.name)) {
+        exposed.push(catalogInfo.find((item) => item.alias === registration.name)!);
+      }
       exposed.sort((a, b) => a.alias.localeCompare(b.alias));
     };
     activate(selectedAliases);

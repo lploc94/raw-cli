@@ -45,9 +45,9 @@ Official SDK endpoint defaults apply only when provider and method are the match
 
 ## Profile fields
 
-Profiles support model, request, max_steps, max_output_bytes, request_timeout_ms, cache and compact. Numeric CLI flags override RAW_* environment values, which override profile values, which override built-in defaults. Default max_steps is 25, max_output_bytes is 8192 and request_timeout_ms is 120000. The strictly typed request fields and provider/method matrix are in [providers.md](providers.md).
+Profiles support model, request, max_steps, max_output_bytes, request_timeout_ms, cache, compact, mcp and tools. Numeric CLI flags override RAW_* environment values, which override profile values, which override built-in defaults. Default max_steps is 25, max_output_bytes is 8192 and request_timeout_ms is 120000. The strictly typed request fields and provider/method matrix are in [providers.md](providers.md).
 
-cache retains mode, key, retention and backend controls where the provider/method actually supports them. compact.keep_recent_turns and compact.max_output_tokens configure manual compact using the selected session model. Automatic compact, per-profile MCP/tool policy and optional native vision are added in later phases, only when runtime support exists.
+cache retains mode, key, retention and backend controls where the provider/method actually supports them. compact.keep_recent_turns and compact.max_output_tokens configure manual compact using the selected session model. `mcp` selects tools from top-level `mcp.servers`; `tools.rules` applies ordered allow/ask/deny matching, with unmatched calls allowed automatically. See [MCP](mcp.md) and [tools](tools.md). Automatic compact and optional native vision are added in later phases, only when runtime support exists.
 
 raw config init writes this schema once with mode 0600. raw config list displays profile name, model alias, upstream model_id, provider, method and sanitized endpoint. It never displays api_key or the resolved environment value.
 

@@ -136,6 +136,8 @@ codex-impl-review with gpt-6-astra; verdict must be APPROVE.
 feat: route configured methods through verified SDK adapters
 
 ## Phase 3: Select MCP tools and enforce profile tool policy
+### Status
+complete
 ### Goal
 Start only profile-selected MCP servers and apply allow/ask/deny to all model-visible and dispatched tools.
 ### Current behavior and gap
@@ -161,9 +163,9 @@ Call a denied tool directly through registry and ACP extension even after hiding
 ### Implementation obligations
 Compile policy once per session, apply at both view and dispatch, keep approval abortable, preserve MCP shutdown and permission event handling.
 ### Acceptance criteria
-- [ ] AC-3.1: Only selected MCP servers/tools are connected and exposed in stable order — proven by MCP fixtures.
-- [ ] AC-3.2: allow/ask/deny applies consistently to built-ins, MCP and ACP injections — proven by registry/CLI/ACP tests.
-- [ ] AC-3.3: Unmatched tools auto-run, explicit ask cannot be bypassed by -y, and no approval channel fails closed — proven by CLI/ACP tests.
+- [x] AC-3.1: Only selected MCP servers/tools are connected and exposed in stable order — proven by MCP fixtures.
+- [x] AC-3.2: allow/ask/deny applies consistently to built-ins, MCP and ACP injections — proven by registry/CLI/ACP tests.
+- [x] AC-3.3: Unmatched tools auto-run, explicit ask cannot be bypassed by -y, and no approval channel fails closed — proven by CLI/ACP tests.
 ### Focused verification
 node --import tsx --test tests/mcp.test.ts tests/registry.test.ts tests/cli.test.ts tests/acp.test.ts
 ### Phase gates
@@ -301,3 +303,4 @@ docs: complete config redesign and installed qualification
 - 2026-09-24: User invoked loop-implement and approved execution of the reviewed plan. Phase 1 in_progress; preflight found only the two untracked design documents and HEAD 0ed50b0.
 - 2026-09-24: Phase 1 complete. Docs-first config reference and red tests preceded implementation. `npm run check` 135/135, `npm run typecheck`, focused tests, `npm run test:overhead` (25 prompt tokens, three built-ins), and `git diff --check` passed. GPT-6 Astra implementation review round 1 found three defects; all fixed and round 2 raw verdict APPROVE. Runner verdict-only parser required explicit APPROVE finalization; record `.codex-review/sessions/codex-impl-review-20260924-010`.
 - 2026-09-24: Phase 2 complete. Official API docs informed four SDK methods and typed controls. Red fixture tests proved missing Responses, DeepSeek reasoning replay and request options before implementation. `npm run check` 146/146, typecheck, focused tests, overhead and diff check passed. GPT-6 Astra review found three cap/budget defects, all fixed; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-011`.
+- 2026-09-24: Phase 3 complete. Docs-first reference and red tests preceded single-file MCP selection and canonical allow/ask/deny policy. `npm run check` 161/161, typecheck, focused tests, overhead and diff check passed. GPT-6 Astra review found two defects (newline glob bypass, empty stdio argument rejection), both fixed; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-012`.

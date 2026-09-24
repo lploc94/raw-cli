@@ -1,18 +1,34 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
-import { connectMcpServers, loadMcpConfig } from "../src/tools/mcp-client.js";
+import { connectMcpServers } from "../src/tools/mcp-client.js";
+import { loadConfig } from "../src/config.js";
 import { createToolRegistry } from "../src/tools/registry.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { startMcpHttp } from "./fixtures/mcp-http.js";
 
 const stdio = (label: string, count = 2) => ({ command: process.execPath, args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"],
   env: { MCP_LABEL: label, MCP_COUNT: String(count) }, tools: ["selected"] });
+
+test("profile deny removes selected MCP tool from exposed set and direct dispatch", async () => {
+  const registry = createToolRegistry([{ match: "mcp:fixture/selected", effect: "deny" }]);
+  const connection = await connectMcpServers({ servers: { fixture: stdio("fixture") }, registry,
+    cwd: process.cwd(), timeoutMs: 3000 });
+  try {
+    assert.equal(connection.exposed.length, 0);
+    assert.equal(connection.catalog.length, 2);
+    assert.deepEqual(registry.definitions().map((item) => item.name), ["read_file", "write_file", "bash"]);
+    const alias = connection.catalog.find((item) => item.originalName === "selected")?.alias;
+    assert.ok(alias);
+    const denied = await registry.dispatch(alias, { value: "attempt" }, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });
+    assert.equal(denied.code, "tool_denied");
+  } finally { await connection.close(); }
+});
 
 test("T-07 review: selected MCP alias collision with pre-registered tool fails startup", async () => {
   const alias = `mcp_fixture_selected_${createHash("sha256").update("fixture\0selected").digest("hex").slice(0, 12)}`;
@@ -92,19 +108,23 @@ test("T-06b: all-selection, long-prefix collisions and shuffled discovery remain
   } finally { await connection.close(); }
 });
 
-test("T-06b/c: omitted selection exposes none, config overlay is whole-entry, and failed startup closes owned clients", async () => {
+test("T-06b/c: unselected config starts nothing, explicit empty selection discovers without exposure, and failed startup closes clients", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-mcp-config-"));
-  const home = join(root, "home");
-  const project = join(root, "project");
-  await mkdir(join(home, "raw"), { recursive: true });
-  await mkdir(project);
-  await writeFile(join(home, "raw", "mcp.json"), JSON.stringify({ mcpServers: { shared: stdio("user"), onlyUser: { ...stdio("u"), tools: [] } } }));
-  await writeFile(join(project, "raw-mcp.json"), JSON.stringify({ mcpServers: { shared: { ...stdio("project"), tools: [] } } }));
-  const config = loadMcpConfig({ cwd: project, env: { XDG_CONFIG_HOME: home } });
-  assert.deepEqual(config.shared?.tools, []);
-  if (!config.shared || !("command" in config.shared)) throw new Error("expected stdio config");
-  assert.equal(config.shared?.env?.MCP_LABEL, "project");
-  const connection = await connectMcpServers({ servers: config, cwd: process.cwd(), timeoutMs: 3000 });
+  const configPath = join(root, "config.json");
+  const stdioSpec = (label: string) => ({ transport: "stdio", command: process.execPath,
+    args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: { MCP_LABEL: label, MCP_COUNT: "2" } });
+  await writeFile(configPath, JSON.stringify({ default_profile: "plain",
+    models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
+    profiles: { plain: { model: "local" }, selected: { model: "local", mcp: { shared: [], onlyUser: [] } } },
+    mcp: { servers: { shared: stdioSpec("project"), onlyUser: stdioSpec("u") } },
+  }));
+  const plain = await loadConfig({ configPath, env: {}, requireModel: true });
+  assert.equal(Object.keys(plain.mcpServers).length, 0);
+  const config = await loadConfig({ configPath, env: {}, flags: { profile: "selected" }, requireModel: true });
+  assert.deepEqual(config.mcpServers.shared?.tools, []);
+  if (!config.mcpServers.shared || !("command" in config.mcpServers.shared)) throw new Error("expected stdio config");
+  assert.equal(config.mcpServers.shared?.env?.MCP_LABEL, "project");
+  const connection = await connectMcpServers({ servers: config.mcpServers, cwd: process.cwd(), timeoutMs: 3000 });
   try { assert.equal(connection.discovered.length, 4); assert.equal(connection.exposed.length, 0); assert.equal(connection.registry.definitions().length, 3); }
   finally { await connection.close(); }
   const pidFile = join(root, "good.pid");

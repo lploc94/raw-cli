@@ -9,7 +9,7 @@ import { createAgent, type AgentSession, type RunEvent } from "../agent.js";
 import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter, ProviderProfile, UserBlock } from "../llm/types.js";
-import { connectMcpServers, loadMcpConfig, type McpConnection, type McpServerConfig } from "../tools/mcp-client.js";
+import { connectMcpServers, type McpConnection, type McpServerConfig } from "../tools/mcp-client.js";
 import { createToolRegistry, type ToolRegistry } from "../tools/registry.js";
 import { capResult, errorResult } from "../tools/results.js";
 import type { ToolContent, ToolResult } from "../tools/types.js";
@@ -36,9 +36,9 @@ export interface AcpServer {
 }
 
 function sessionMcpServers(requestServers: readonly McpServer[], configured: Readonly<Record<string, McpServerConfig>>): Record<string, McpServerConfig> {
-  const merged: Record<string, McpServerConfig> = { ...configured };
+  const merged: Record<string, McpServerConfig> = Object.assign(Object.create(null), configured);
   for (const server of requestServers) {
-    const selection = configured[server.name]?.tools ?? [];
+    const selection = configured[server.name]?.tools ?? "*";
     if ("command" in server) {
       merged[server.name] = { command: server.command, args: server.args,
         env: Object.fromEntries(server.env.map((item) => [item.name, item.value])), tools: selection };
@@ -140,7 +140,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   const app = agent({ name: "raw-cli" });
   const sessions = new Map<string, SessionRecord>();
   const providerFactory = options.providerFactory ?? createProvider;
-  const configuredMcp = options.mcpServers ?? loadMcpConfig();
+  const configuredMcp = options.mcpServers ?? options.runtime.mcpServers;
   let connection: AgentConnection | undefined;
   let peer: AgentContext | undefined;
   let initialized = false;
@@ -196,7 +196,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
     const creation = (async () => {
       const id = randomUUID();
-      const registry = createToolRegistry();
+      const registry = createToolRegistry(options.runtime.toolRules);
       const mcp = await connectMcpServers({ servers: sessionMcpServers(params.mcpServers, configuredMcp), registry,
         cwd: params.cwd, timeoutMs: options.runtime.requestTimeoutMs, signal: startupController.signal });
       try {
@@ -279,7 +279,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     const alias = reverseAlias(name, toolId);
     if (session.registry.definitions().some((item) => item.name === alias)) throw rawError(rawErrors.duplicate, "duplicate tool alias");
     const visible = session.agent.toolDefinitions.map((item) => item.name);
-    session.registry.register({ name: alias, description, inputSchema: schema, validateArgs: validate,
+    session.registry.register({ name: alias, canonicalName: `acp:${name}`, description, inputSchema: schema, validateArgs: validate,
       handler: async (args, context) => {
         if (!peer) return errorResult("peer_disconnected", "ACP client disconnected");
         const invocationId = randomUUID();
@@ -305,7 +305,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         } finally { if (timer) clearTimeout(timer); context.signal?.removeEventListener("abort", onAbort); }
       } });
     session.registered.set(name, toolId);
-    const schemaRevision = session.agent.setToolView([...visible, alias]);
+    const permitted = session.registry.definitions().some((tool) => tool.name === alias);
+    const schemaRevision = permitted ? session.agent.setToolView([...visible, alias]) : session.agent.toolSchemaRevision;
     return { toolId, alias, schemaRevision };
   });
   app.onRequest("_raw/session/compact", (params: unknown) => object(params, "session compact"), async ({ params }) => {

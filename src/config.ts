@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
 import type { ApiMethod, CacheOptions, ProfileRequestOptions, ProviderName, ProviderProfile } from "./llm/types.js";
+import type { McpServerConfig } from "./tools/mcp-client.js";
+import type { ToolPolicyRule } from "./tools/registry.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -44,6 +46,8 @@ export interface RuntimeConfig {
   readonly autoApprove: boolean;
   readonly compact: Readonly<CompactSettings>;
   readonly configPath: string;
+  readonly mcpServers: Readonly<Record<string, McpServerConfig>>;
+  readonly toolRules: readonly ToolPolicyRule[];
   resolveCompactProfile(): Readonly<ProviderProfile>;
 }
 
@@ -145,7 +149,7 @@ export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocum
   if (!tree || errors.length) throw new Error(`invalid JSON config: ${path}`);
   checkDuplicates(tree);
   const data = object(getNodeValue(tree), "config root");
-  keys(data, ["default_profile", "models", "profiles"], "config");
+  keys(data, ["default_profile", "models", "profiles", "mcp"], "config");
   validateDocument(data);
   return { path, data, exists: true };
 }
@@ -183,12 +187,86 @@ interface ModelSpec {
 
 interface ProfileSpec {
   modelAlias: string;
+  mcp: Readonly<Record<string, "*" | readonly string[]>>;
+  toolRules: readonly ToolPolicyRule[];
   request?: ProfileRequestOptions;
   maxSteps?: number;
   maxOutputBytes?: number;
   requestTimeoutMs?: number;
   cache?: CacheOptions;
   compact: CompactSettings;
+}
+
+function strings(value: unknown, where: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) throw new Error(where + " must be a nonempty string array");
+  return value as string[];
+}
+
+function argumentStrings(value: unknown, where: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(where + " must be a string array");
+  return value as string[];
+}
+
+function stringMap(value: unknown, where: string): Record<string, string> {
+  const data = object(value, where);
+  for (const [key, item] of Object.entries(data)) if (!key || typeof item !== "string") throw new Error(where + " must contain string values");
+  return data as Record<string, string>;
+}
+
+function mcpServersSpec(raw: unknown): Map<string, McpServerConfig> {
+  if (raw === undefined) return new Map();
+  const mcp = object(raw, "mcp");
+  keys(mcp, ["servers"], "mcp");
+  const servers = mcp.servers === undefined ? {} : object(mcp.servers, "mcp.servers");
+  const result = new Map<string, McpServerConfig>();
+  for (const [name, entry] of Object.entries(servers)) {
+    string(name, "MCP server name");
+    const where = "mcp.servers." + name;
+    const spec = object(entry, where);
+    const transport = enumValue(spec.transport, new Set<"stdio" | "streamable-http">(["stdio", "streamable-http"]), where + ".transport");
+    if (transport === "stdio") {
+      keys(spec, ["transport", "command", "args", "env"], where);
+      result.set(name, { command: string(spec.command, where + ".command"),
+        ...(spec.args !== undefined ? { args: argumentStrings(spec.args, where + ".args") } : {}),
+        ...(spec.env !== undefined ? { env: stringMap(spec.env, where + ".env") } : {}) });
+    } else {
+      keys(spec, ["transport", "url", "headers"], where);
+      result.set(name, { transport: "streamable-http", url: endpoint(spec.url, where + ".url"),
+        ...(spec.headers !== undefined ? { headers: stringMap(spec.headers, where + ".headers") } : {}) });
+    }
+  }
+  return result;
+}
+
+function profileMcpSpec(raw: unknown, known: ReadonlyMap<string, McpServerConfig>, where: string): Record<string, "*" | readonly string[]> {
+  if (raw === undefined) return {};
+  const selected = object(raw, where);
+  const result: Record<string, "*" | readonly string[]> = Object.create(null);
+  for (const [name, selection] of Object.entries(selected)) {
+    if (!known.has(name)) throw new Error(where + " references unknown MCP server: " + name);
+    if (selection === "*") result[name] = "*";
+    else {
+      const names = strings(selection, where + "." + name);
+      if (new Set(names).size !== names.length) throw new Error(where + "." + name + " contains duplicate tools");
+      result[name] = names;
+    }
+  }
+  return result;
+}
+
+function toolRulesSpec(raw: unknown, where: string): readonly ToolPolicyRule[] {
+  if (raw === undefined) return [];
+  const value = object(raw, where);
+  keys(value, ["rules"], where);
+  if (value.rules === undefined) return [];
+  if (!Array.isArray(value.rules)) throw new Error(where + ".rules must be an array");
+  return value.rules.map((rawRule, index) => {
+    const ruleWhere = `${where}.rules[${index}]`;
+    const rule = object(rawRule, ruleWhere);
+    keys(rule, ["match", "effect"], ruleWhere);
+    return { match: string(rule.match, ruleWhere + ".match"),
+      effect: enumValue(rule.effect, new Set<"allow" | "ask" | "deny">(["allow", "ask", "deny"]), ruleWhere + ".effect") };
+  });
 }
 
 function endpoint(value: unknown, context: string): string {
@@ -319,14 +397,15 @@ function compactSpec(raw: unknown, where: string): CompactSettings {
   };
 }
 
-function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): ProfileSpec {
+function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>, servers: ReadonlyMap<string, McpServerConfig>): ProfileSpec {
   const where = "profile " + name;
   const value = object(raw, where);
-  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact"], where);
+  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "mcp", "tools"], where);
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
-  const result: ProfileSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact") };
+  const result: ProfileSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact"),
+    mcp: profileMcpSpec(value.mcp, servers, where + ".mcp"), toolRules: toolRulesSpec(value.tools, where + ".tools") };
   if (value.request !== undefined) result.request = requestSpec(value.request, model, where + ".request");
   const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
   if (requestedCap !== undefined && model.contextWindow !== undefined) {
@@ -344,16 +423,17 @@ function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, Mod
   return result;
 }
 
-function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; profiles: Map<string, ProfileSpec>; defaultName?: string } {
+function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; profiles: Map<string, ProfileSpec>; servers: Map<string, McpServerConfig>; defaultName?: string } {
+  const servers = mcpServersSpec(root.mcp);
   const modelsData = root.models === undefined ? {} : object(root.models, "models");
   const models = new Map<string, ModelSpec>();
   for (const [name, raw] of Object.entries(modelsData)) models.set(string(name, "model alias"), modelSpec(name, raw));
   const profilesData = root.profiles === undefined ? {} : object(root.profiles, "profiles");
   const profiles = new Map<string, ProfileSpec>();
-  for (const [name, raw] of Object.entries(profilesData)) profiles.set(string(name, "profile name"), profileSpec(name, raw, models));
+  for (const [name, raw] of Object.entries(profilesData)) profiles.set(string(name, "profile name"), profileSpec(name, raw, models, servers));
   const defaultName = root.default_profile === undefined ? undefined : string(root.default_profile, "default_profile");
   if (defaultName !== undefined && !profiles.has(defaultName)) throw new Error("unknown profile: " + defaultName);
-  return { models, profiles, ...(defaultName !== undefined ? { defaultName } : {}) };
+  return { models, profiles, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
 }
 
 function validateDocument(root: JsonObject): void { parseDocument(root); }
@@ -424,6 +504,18 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     throw new Error("profile is required");
   }
   const compact = Object.freeze(selectedSpec?.compact ?? compactSpec(undefined, "compact"));
+  const mcpServers: Record<string, McpServerConfig> = Object.create(null);
+  for (const [name, selection] of Object.entries(selectedSpec?.mcp ?? {})) {
+    const server = parsed.servers.get(name);
+    if (!server) throw new Error("unknown MCP server: " + name);
+    mcpServers[name] = Object.freeze({ ...server,
+      ...("args" in server && server.args ? { args: Object.freeze([...server.args]) } : {}),
+      ...("env" in server && server.env ? { env: Object.freeze({ ...server.env }) } : {}),
+      ...("headers" in server && server.headers ? { headers: Object.freeze({ ...server.headers }) } : {}),
+      tools: selection === "*" ? "*" : Object.freeze([...selection]),
+    });
+  }
+  const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule })));
   return Object.freeze({
     ...(selected === undefined ? {} : { profile: selected }),
     systemPrompt: resolveSystemPrompt(flags.systemPrompt, env.RAW_SYSTEM_PROMPT),
@@ -433,6 +525,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     autoApprove: flags.autoApprove ?? true,
     compact,
     configPath: document.path,
+    mcpServers: Object.freeze(mcpServers),
+    toolRules,
     resolveCompactProfile() {
       if (!selected) throw new Error("profile is required for compact");
       return options.requireModel === false ? freezeProfile(resolveKey(selected, env)) : selected;
