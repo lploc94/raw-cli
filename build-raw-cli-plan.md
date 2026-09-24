@@ -565,10 +565,10 @@ Normal request captures must contain no summarizer instruction. A constant "cach
 3. Normalize usage without double-counting or inventing metrics; expose host stats/clear operations for CLI/ACP later.
 4. Include no per-turn prompt scaffolding, speculative runtime tokenization, hidden warm-ups or cost-increasing padding.
 ### Acceptance criteria
-- [ ] **AC-5.1**: Compact shrinks eligible history while preserving specified retained context — T-05a.
-- [ ] **AC-5.2**: Every failed/cancelled/noop compact leaves history intact and makes only allowed requests — T-05b.
-- [ ] **AC-5.3**: Multi-turn visible prefixes remain stable and correct native caching options are sent — T-05c/d.
-- [ ] **AC-5.4**: Usage/cache stats reflect real reported categories and unknown coverage — T-05e.
+- [x] **AC-5.1**: Compact shrinks eligible history while preserving specified retained context — T-05a.
+- [x] **AC-5.2**: Every failed/cancelled/noop compact leaves history intact and makes only allowed requests — T-05b.
+- [x] **AC-5.3**: Multi-turn visible prefixes remain stable and correct native caching options are sent — T-05c/d.
+- [x] **AC-5.4**: Usage/cache stats reflect real reported categories and unknown coverage — T-05e.
 ### Focused verification
 `npm run test:phase -- context` — compact, cache and usage suites.
 ### Phase gates
@@ -749,8 +749,8 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 | 2 Primitives | tools | complete | `docs/evidence/phase-2.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: implement primitive tools and owned process cleanup` |
 | 3 Providers | providers | complete | `docs/evidence/phase-3.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: add official streaming provider adapters` |
 | 4 Agent loop | agent | complete | `docs/evidence/phase-4.md` | `gpt-6-astra` APPROVE (2 rounds) | `feat: implement bounded agent loop and resumable turn state` |
-| 5 Compact/cache | context | pending | — | — | — |
-| 6 MCP | mcp | pending | — | — | — |
+| 5 Compact/cache | context | complete | `docs/evidence/phase-5.md` | `gpt-6-astra` APPROVE (reopened session, 2 rounds) | `feat: add explicit compaction and multi-turn cache reuse` |
+| 6 MCP | mcp | in_progress | — | — | — |
 | 7 ACP/client | acp | pending | — | — | — |
 | 8 CLI/package | cli | pending | — | — | — |
 
@@ -767,3 +767,4 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 - 2026-09-24: Phase 2 docs/test-first work completed; focused 7/7, cumulative 25/25, overhead 25 prompt/175 combined. `gpt-6-astra` review found ten defects in two rounds, all fixed with RED/GREEN regressions; round 3 returned APPROVE. See `docs/evidence/phase-2.md`. Phase 3 is next.
 - 2026-09-24: Phase 3 official SDK adapters completed; focused 17/17, cumulative 42/42, overhead 25/175. `gpt-6-astra` review found eleven defects in two rounds, all fixed with RED/GREEN regressions; round 3 returned APPROVE. See `docs/evidence/phase-3.md`. Phase 4 is next.
 - 2026-09-24: Phase 4 agent loop completed; focused 13/13, cumulative 55/55, overhead 25/175. `gpt-6-astra` review found three event-boundary defects, all fixed with RED/GREEN regressions; round 2 returned APPROVE. See `docs/evidence/phase-4.md`. Phase 5 is next.
+- 2026-09-24: Phase 5 context/caching completed; focused 17/17, cumulative 72/72, overhead 25/175. `gpt-6-astra` found six initial defects; the dated-snapshot fix required a reopened review after an automatic stalemate, and that review found one further SDK error-usage defect. All were fixed with RED/GREEN regressions. Reopened round 2 returned raw APPROVE. See `docs/evidence/phase-5.md`. Phase 6 is next.

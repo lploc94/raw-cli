@@ -17,6 +17,8 @@ The chosen model must support tool calls. No model is selected or replaced autom
 
 Cache details must be recorded against actual pinned SDK request types during Phase 3/5. OpenAI Chat Completions must not receive Responses-only options. Anthropic requires its documented `cache_control` to activate caching. Google uses supported implicit caching. Generic compatible endpoints do not receive guessed provider-specific fields. A user-selected `llama.cpp` backend may use its documented `cache_prompt` option. Actual cache hit metrics are reported only when the provider returns them.
 
+The Phase 5 [context and cache reference](./context.md) lists the exact request fields, supported retention values, stable-key rules and usage formulas. Production request tests inspect each SDK's outgoing body, including absence of unsupported fields.
+
 Image results from MCP and delegated tools must reach a provider's native image input, or return an explicit unsupported-content error. Returning base64 as ordinary text is not a vision input. The Phase 3 and Phase 6 tests inspect real outgoing SDK requests to prove this.
 
 ## Phase 3 wire contract

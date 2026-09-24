@@ -2,6 +2,7 @@ import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import type { ProviderAdapter, ProviderProfile, ProviderRequest, ProviderTurn, ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
+import { cacheSettings } from "./cache.js";
 
 function inputContents(request: ProviderRequest): Content[] {
   const contents: Content[] = [];
@@ -44,6 +45,7 @@ export function createGoogleProvider(profile: Readonly<ProviderProfile>): Provid
     profile,
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
+        cacheSettings(profile, request.cacheKey);
         const stream = await client.models.generateContentStream({
           model: profile.model,
           contents: inputContents(request),
@@ -62,6 +64,7 @@ export function createGoogleProvider(profile: Readonly<ProviderProfile>): Provid
         let usage: unknown;
         const parts: Part[] = [];
         const rawCalls: { id?: string; name: string; arguments: Record<string, unknown> }[] = [];
+        try {
         for await (const chunk of stream) {
           if (signal.aborted) throw new ProviderError("aborted", "provider stream aborted");
           if (chunk.usageMetadata) usage = chunk.usageMetadata;
@@ -98,6 +101,9 @@ export function createGoogleProvider(profile: Readonly<ProviderProfile>): Provid
           return { id, name: call.name, arguments: call.arguments, syntheticId: true };
         });
         return { text, toolCalls, finishReason, opaque: parts, ...(usage !== undefined ? { usage } : {}) };
+        } finally {
+          if (!signal.aborted && usage !== undefined) request.onUsage?.(usage);
+        }
       });
     },
   };

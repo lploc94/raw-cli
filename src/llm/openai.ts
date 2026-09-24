@@ -1,8 +1,10 @@
 import OpenAI from "openai";
+import { randomUUID } from "node:crypto";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import type { ProviderAdapter, ProviderProfile, ProviderRequest, ProviderTurn, ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
+import { cacheSettings } from "./cache.js";
 
 function inputMessages(request: ProviderRequest, provider: ProviderProfile["provider"]): ChatCompletionMessageParam[] {
   const messages: ChatCompletionMessageParam[] = [{ role: "system", content: request.system }];
@@ -41,6 +43,7 @@ function inputMessages(request: ProviderRequest, provider: ProviderProfile["prov
 }
 
 export function createOpenAiProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
+  const fallbackCacheKey = randomUUID();
   const client = new OpenAI({
     apiKey: profile.apiKey ?? (profile.provider === "ollama" ? "ollama" : "unused"),
     ...(profile.baseUrl ? { baseURL: profile.baseUrl } : {}),
@@ -50,6 +53,7 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
     profile,
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
+        const cache = cacheSettings(profile, request.cacheKey, fallbackCacheKey);
         const messages = inputMessages(request, profile.provider);
         const tools: ChatCompletionTool[] = request.tools.map((tool) => ({
           type: "function",
@@ -60,6 +64,8 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
           model: profile.model,
           messages,
           stream: true,
+          ...cache.openai,
+          ...(cache.llamaPrompt ? { cache_prompt: true } : {}),
           ...(profile.provider === "openai" ? { stream_options: { include_usage: true } } : {}),
           ...(tools.length ? { tools } : {}),
           ...(outputLimit !== undefined ? (profile.provider === "openai"
@@ -71,6 +77,7 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
         let usage: unknown;
         const reasoningDetails: unknown[] = [];
         const calls = new Map<number, { id: string; name: string; arguments: string }>();
+        try {
         for await (const chunk of stream) {
           if (signal.aborted) throw new ProviderError("aborted", "provider stream aborted");
           if (chunk.usage) usage = chunk.usage;
@@ -128,6 +135,9 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
         if (finishReason === "tool_calls" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool finish without calls");
         if (finishReason === "stop" && toolCalls.length) throw new ProviderError("invalid_stream", "calls without tool finish");
         return { text, toolCalls, finishReason, ...(reasoningDetails.length ? { opaque: { reasoning_details: reasoningDetails } } : {}), ...(usage !== undefined ? { usage } : {}) };
+        } finally {
+          if (!signal.aborted && usage !== undefined) request.onUsage?.(usage);
+        }
       });
     },
   };

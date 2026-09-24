@@ -16,3 +16,7 @@ export type { ToolDefinition, ToolRegistration } from "./tools/registry.js";
 export type { ToolContext } from "./tools/primitives.js";
 export { AgentSession, createAgent } from "./agent.js";
 export type { AgentOptions, AgentState, RunEvent, RunResult, RunStatus } from "./agent.js";
+export { compactSession } from "./compact.js";
+export type { CompactOptions, CompactResult } from "./compact.js";
+export { normalizeUsage, summarizeUsage } from "./llm/cache.js";
+export type { NormalizedUsage, UsageRecord, UsageSummary } from "./llm/cache.js";

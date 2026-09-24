@@ -1,6 +1,9 @@
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
+import { randomUUID } from "node:crypto";
+import { performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
+import { summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import type { ModelMessage, ModelToolCall, ProviderAdapter } from "./llm/types.js";
-import { createToolRegistry, type ToolRegistry } from "./tools/registry.js";
+import { createToolRegistry, type ToolDefinition, type ToolRegistry } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import type { ToolResult } from "./tools/types.js";
@@ -42,7 +45,13 @@ export class AgentSession {
   private currentState: AgentState = "idle";
   private controller: AbortController | undefined;
   private activeRun: Promise<RunResult> | undefined;
+  private activeCompact: Promise<CompactResult> | undefined;
   private rawUsage: unknown[] = [];
+  private usageEntries: UsageRecord[] = [];
+  private originalTask: string | undefined;
+  private summaryText: string | undefined;
+  private readonly cacheKey = randomUUID();
+  private readonly schemaView: readonly ToolDefinition[];
 
   constructor(options: AgentOptions) {
     const maxSteps = options.maxSteps ?? 25;
@@ -61,15 +70,30 @@ export class AgentSession {
       ...(options.approve ? { approve: options.approve } : {}),
       ...(options.whitelist !== undefined ? { whitelist: [...options.whitelist] } : {}),
     };
+    this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
   }
 
   get state(): AgentState { return this.currentState; }
   get transcript(): readonly ModelMessage[] { return structuredClone(this.messages); }
   get usageRecords(): readonly unknown[] { return structuredClone(this.rawUsage); }
   get cwd(): string { return this.options.cwd; }
+  stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
+
+  clear(): void {
+    if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
+    this.messages = [];
+    this.originalTask = undefined;
+    this.summaryText = undefined;
+  }
+
+  setMaxOutputBytes(value: number): void {
+    if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error("maxOutputBytes must be a positive integer");
+    this.options.maxOutputBytes = value;
+  }
 
   abort(): boolean {
-    if (this.currentState !== "running" && this.currentState !== "cancelling") return false;
+    if (this.currentState !== "running" && this.currentState !== "compacting" && this.currentState !== "cancelling") return false;
     this.currentState = "cancelling";
     this.controller?.abort();
     return true;
@@ -79,8 +103,66 @@ export class AgentSession {
     if (this.currentState === "closed") return;
     this.currentState = "closing";
     this.controller?.abort();
-    try { if (this.activeRun) await this.activeRun; }
+    try {
+      if (this.activeRun) await this.activeRun;
+      if (this.activeCompact) await this.activeCompact;
+    }
     finally { this.currentState = "closed"; }
+  }
+
+  compact(options: CompactOptions = {}): Promise<CompactResult> {
+    if (this.currentState === "closed" || this.currentState === "closing") return Promise.reject(new Error("agent session is closed"));
+    if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
+    const keepRecentTurns = options.keepRecentTurns ?? 2;
+    const maxOutputTokens = options.maxOutputTokens ?? 512;
+    if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0 || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+      return Promise.reject(new Error("invalid compaction settings"));
+    }
+    this.currentState = "compacting";
+    const controller = new AbortController();
+    this.controller = controller;
+    const provider = options.provider ?? this.options.provider;
+    const compactUsage: UsageRecord = { provider: provider.profile.provider, raw: undefined };
+    let compactUsageIndex: number | undefined;
+    const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
+    const snapshot = { messages: structuredClone(this.messages), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
+      ...(this.summaryText !== undefined ? { previousSummary: this.summaryText } : {}) };
+    const task = (async (): Promise<CompactResult> => {
+      let onAbort!: () => void;
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(new Error("compaction aborted"));
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        if (controller.signal.aborted) onAbort();
+      });
+      try {
+        const work = await Promise.race([performCompaction(snapshot, provider, {
+          keepRecentTurns, maxOutputTokens, timeoutMs: this.options.requestTimeoutMs,
+          signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
+          onRequestStart: () => this.usageEntries.push(compactUsage),
+          onUsage: (raw) => {
+            compactUsage.raw = structuredClone(raw);
+            if (compactUsageIndex === undefined) {
+              compactUsageIndex = this.rawUsage.push(structuredClone(raw)) - 1;
+            } else this.rawUsage[compactUsageIndex] = structuredClone(raw);
+          },
+        }), aborted]);
+        if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
+        if (work.replacement && work.summary !== undefined) {
+          this.messages = structuredClone(work.replacement);
+          this.summaryText = work.summary;
+        }
+        return work.result;
+      } catch (error) {
+        if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
+        throw error;
+      } finally { controller.signal.removeEventListener("abort", onAbort); }
+    })().finally(() => {
+      this.controller = undefined;
+      this.activeCompact = undefined;
+      if (this.currentState !== "closing" && this.currentState !== "closed") this.currentState = "idle";
+    });
+    this.activeCompact = task;
+    return task;
   }
 
   run(input: string, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
@@ -126,11 +208,22 @@ export class AgentSession {
       this.messages.push({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) });
       emit({ type: "tool_result", id: call.id, name: call.name, result });
     };
+    if (this.originalTask === undefined) this.originalTask = input;
     this.messages.push({ role: "user", content: input });
     try {
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
         steps++;
+        const usageEntry: UsageRecord = { provider: this.options.provider.profile.provider, raw: undefined };
+        this.usageEntries.push(usageEntry);
+        let usageIndex: number | undefined;
+        const recordUsage = (raw: unknown) => {
+          if (controller.signal.aborted) return;
+          usageEntry.raw = structuredClone(raw);
+          if (usageIndex === undefined) usageIndex = this.rawUsage.push(structuredClone(raw)) - 1;
+          else this.rawUsage[usageIndex] = structuredClone(raw);
+          emit({ type: "usage", raw });
+        };
         let onAbort!: () => void;
         const aborted = new Promise<never>((_resolve, reject) => {
           onAbort = () => reject(new Error("provider request aborted"));
@@ -142,14 +235,16 @@ export class AgentSession {
           turn = await Promise.race([this.options.provider.generate({
             system: this.options.system,
             messages: this.messages,
-            tools: this.options.registry.definitions(this.options.whitelist),
+            tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
+            cacheKey: this.cacheKey,
             signal: controller.signal,
             onTextDelta: (text) => { if (!controller.signal.aborted) emit({ type: "text_delta", text }); },
+            onUsage: recordUsage,
           }), aborted]);
         } finally { controller.signal.removeEventListener("abort", onAbort); }
         if (controller.signal.aborted) return finish(interrupted());
-        if (turn.usage !== undefined) { this.rawUsage.push(structuredClone(turn.usage)); emit({ type: "usage", raw: turn.usage }); }
+        if (turn.usage !== undefined && usageIndex === undefined) recordUsage(turn.usage);
         if (controller.signal.aborted) return finish(interrupted());
         if (new Set(turn.toolCalls.map((call) => call.id)).size !== turn.toolCalls.length || turn.toolCalls.some((call) => !call.id || !call.name)) {
           throw new Error("provider returned invalid tool call linkage");

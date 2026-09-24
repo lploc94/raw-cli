@@ -3,6 +3,7 @@ import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
 import type { ProviderAdapter, ProviderProfile, ProviderRequest, ProviderTurn, ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
+import { cacheSettings } from "./cache.js";
 
 function inputMessages(request: ProviderRequest): MessageParam[] {
   const messages: MessageParam[] = [];
@@ -35,6 +36,7 @@ export function createAnthropicProvider(profile: Readonly<ProviderProfile>): Pro
     profile,
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
+        const cache = cacheSettings(profile, request.cacheKey);
         const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
         const stream = await client.messages.create({
           model: profile.model,
@@ -42,6 +44,7 @@ export function createAnthropicProvider(profile: Readonly<ProviderProfile>): Pro
           system: request.system,
           messages: inputMessages(request),
           stream: true,
+          ...cache.anthropic,
           ...(tools.length ? { tools } : {}),
         }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
         const blocks = new Map<number, Record<string, unknown>>();
@@ -53,6 +56,7 @@ export function createAnthropicProvider(profile: Readonly<ProviderProfile>): Pro
         let stopped = false;
         let started = false;
         let usage: Record<string, unknown> = {};
+        try {
         for await (const event of stream) {
           if (signal.aborted) throw new ProviderError("aborted", "provider stream aborted");
           if (stopped) throw new ProviderError("invalid_stream", "Anthropic event after message stop");
@@ -127,6 +131,9 @@ export function createAnthropicProvider(profile: Readonly<ProviderProfile>): Pro
         if (stopReason === "tool_use" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool stop without calls");
         if (stopReason === "end_turn" && toolCalls.length) throw new ProviderError("invalid_stream", "tool calls with end_turn stop");
         return { text, toolCalls, finishReason: stopReason, opaque, usage };
+        } finally {
+          if (!signal.aborted && Object.keys(usage).length) request.onUsage?.(usage);
+        }
       });
     },
   };
