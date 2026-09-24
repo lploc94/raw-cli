@@ -418,7 +418,7 @@ test("T-07d: cancel services pending permission while prompt is blocked and prev
   let requests = 0;
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async () => {
     requests++;
-    return { text: "", toolCalls: [{ id: "write", name: "write_file", arguments: { path: "created.txt", content: "should-not-exist" } }], finishReason: "tool_calls" };
+    return { text: "", toolCalls: [{ id: "write", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "created.txt", content: "should-not-exist" }] } }], finishReason: "tool_calls" };
   } }) });
   let entered!: () => void;
   const ready = new Promise<void>((resolve) => { entered = resolve; });

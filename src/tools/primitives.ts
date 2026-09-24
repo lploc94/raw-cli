@@ -1,4 +1,4 @@
-import { open, mkdir, writeFile } from "node:fs/promises";
+import { open, mkdir, writeFile, readFile, appendFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { runBash } from "./process.js";
@@ -165,15 +165,79 @@ export async function readFileTool(args: { files: ReadFileSpec[] }, context: Too
   return indexedResult(rows, context.maxOutputBytes, rows.some((row) => !["ok", "partial"].includes(row.status)));
 }
 
-export async function writeFileTool(args: { path: string; content: string }, context: ToolContext): Promise<ToolResult> {
-  const path = resolve(context.cwd, args.path);
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, args.content, "utf8");
-    return textResult(`wrote ${path}`, context.maxOutputBytes);
-  } catch (error) {
-    return errorResult("write_error", `cannot write ${path}: ${(error as Error).message}`);
+export type WriteOperation =
+  | { path: string; mode: "overwrite"; content: string }
+  | { path: string; mode: "append"; content: string }
+  | { path: string; mode: "replace_text"; old_text: string; new_text: string }
+  | { path: string; mode: "replace_lines"; start_line: number; end_line: number; content: string; expected_sha256: string };
+
+function selectedLineSpan(bytes: Buffer, startLine: number, endLine: number): { start: number; end: number } | undefined {
+  let start = 0;
+  let line = 1;
+  let selectedStart = 0;
+  while (start < bytes.length) {
+    const newline = bytes.indexOf(10, start);
+    const end = newline < 0 ? bytes.length : newline + 1;
+    if (line === startLine) selectedStart = start;
+    if (line === endLine) return { start: selectedStart, end };
+    start = end;
+    line++;
   }
+  return undefined;
+}
+
+export async function writeFileTool(args: { operations: WriteOperation[] }, context: ToolContext): Promise<ToolResult> {
+  const rows: IndexedResult[] = args.operations.map((op, index) => ({ index, path: op.path, mode: op.mode, status: "error", error: "x".repeat(120) }));
+  if (!indexedResultFits(rows, context.maxOutputBytes)) {
+    return errorResult("output_budget_too_small", "write batch outcomes exceed output budget");
+  }
+  for (const [index, op] of args.operations.entries()) {
+    if (context.signal?.aborted) {
+      rows[index] = { index, path: op.path, mode: op.mode, status: "skipped", error: "aborted" };
+      continue;
+    }
+    const path = resolve(context.cwd, op.path);
+    try {
+      let bytesWritten = 0;
+      if (op.mode === "overwrite" || op.mode === "append") {
+        await mkdir(dirname(path), { recursive: true });
+        if (op.mode === "overwrite") await writeFile(path, op.content, "utf8");
+        else await appendFile(path, op.content, "utf8");
+        bytesWritten = Buffer.byteLength(op.content);
+      } else if (op.mode === "replace_text") {
+        const source = await readFile(path);
+        const oldBytes = Buffer.from(op.old_text, "utf8");
+        const first = source.indexOf(oldBytes);
+        if (first < 0) throw new Error("text_not_found");
+        if (source.indexOf(oldBytes, first + 1) >= 0) throw new Error("text_not_unique");
+        const replacement = Buffer.from(op.new_text, "utf8");
+        await writeFile(path, Buffer.concat([source.subarray(0, first), replacement, source.subarray(first + oldBytes.length)]));
+        bytesWritten = replacement.length;
+      } else {
+        const source = await readFile(path);
+        const span = selectedLineSpan(source, op.start_line, op.end_line);
+        if (!span) throw new Error("line_out_of_range");
+        const { start, end } = span;
+        if (selectedHash(source.subarray(start, end)) !== op.expected_sha256) throw new Error("guard_mismatch");
+        let replacement = Buffer.from(op.content, "utf8");
+        if (start === 0 && source.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))
+          && !replacement.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
+          replacement = Buffer.concat([source.subarray(0, 3), replacement]);
+        }
+        if (op.content.length && end < source.length && replacement[replacement.length - 1] !== 10) {
+          const boundary = source[end - 1] === 10 ? (source[end - 2] === 13 ? Buffer.from("\r\n") : Buffer.from("\n")) : Buffer.from("\n");
+          replacement = Buffer.concat([replacement, boundary]);
+        }
+        await writeFile(path, Buffer.concat([source.subarray(0, start), replacement, source.subarray(end)]));
+        bytesWritten = replacement.length;
+      }
+      rows[index] = { index, path: op.path, mode: op.mode, status: "ok", bytes_written: bytesWritten };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
+      rows[index] = { index, path: op.path, mode: op.mode, status: "error", error: /^[A-Za-z0-9_]+$/.test(code) ? code : "write_error" };
+    }
+  }
+  return indexedResult(rows, context.maxOutputBytes, rows.some((row) => row.status !== "ok"));
 }
 
 export async function bashTool(args: { command: string; timeout_ms?: number }, context: ToolContext): Promise<ToolResult> {

@@ -12,12 +12,12 @@ test("files resolve per session, create parents, accept empty content and surfac
   const [a, b] = await Promise.all([mkdtemp(join(tmpdir(), "raw-a-")), mkdtemp(join(tmpdir(), "raw-b-"))]);
   const registry = createToolRegistry();
   await Promise.all([
-    registry.dispatch("write_file", { path: "nested/item", content: "alpha" }, context(a)),
-    registry.dispatch("write_file", { path: "nested/item", content: "beta" }, context(b)),
+    registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: "nested/item", content: "alpha" }] }, context(a)),
+    registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: "nested/item", content: "beta" }] }, context(b)),
   ]);
   assert.equal(await readFile(join(a, "nested/item"), "utf8"), "alpha");
   assert.equal(await readFile(join(b, "nested/item"), "utf8"), "beta");
-  const empty = await registry.dispatch("write_file", { path: join(a, "empty"), content: "" }, context(b));
+  const empty = await registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: join(a, "empty"), content: "" }] }, context(b));
   assert.equal(empty.isError, false);
   assert.equal(await readFile(join(a, "empty"), "utf8"), "");
   const read = await registry.dispatch("read_file", { files: [{ path: "nested/item" }] }, context(b));

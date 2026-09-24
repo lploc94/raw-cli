@@ -13,18 +13,18 @@ test("registry has only three built-ins and rejects invalid/hidden calls before 
   let approvals = 0;
   const ctx = { cwd, maxOutputBytes: 8192, autoApprove: false, approve: async () => { approvals++; return true; } };
   for (const [name, args] of [
-    ["write_file", { path: marker, content: "bad", extra: 1 }],
-    ["write_file", { path: marker, content: 1 }],
+    ["write_file", { operations: [{ path: marker, mode: "overwrite", content: "bad", extra: 1 }] }],
+    ["write_file", { operations: [{ path: marker, mode: "overwrite", content: 1 }] }],
     ["bash", { command: "true", timeout_ms: 0 }],
     ["missing", {}],
   ] as const) {
     assert.equal((await registry.dispatch(name, args, ctx)).isError, true);
   }
   assert.equal(approvals, 0);
-  assert.equal((await registry.dispatch("write_file", { path: marker, content: "bad" }, { ...ctx, whitelist: [] })).code, "tool_not_exposed");
+  assert.equal((await registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: marker, content: "bad" }] }, { ...ctx, whitelist: [] })).code, "tool_not_exposed");
   assert.equal(approvals, 0);
-  assert.equal((await registry.dispatch("write_file", { path: marker, content: "bad" }, { ...ctx, approve: async () => false })).code, "approval_denied");
-  assert.equal((await registry.dispatch("write_file", { path: marker, content: "bad" }, { cwd, maxOutputBytes: 8192, autoApprove: false })).code, "approval_required");
+  assert.equal((await registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: marker, content: "bad" }] }, { ...ctx, approve: async () => false })).code, "approval_denied");
+  assert.equal((await registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: marker, content: "bad" }] }, { cwd, maxOutputBytes: 8192, autoApprove: false })).code, "approval_required");
   await assert.rejects(access(marker));
   assert.throws(() => registry.register({ name: "bash", description: "duplicate", inputSchema: { type: "object", properties: {}, additionalProperties: false }, handler: async () => ({ isError: false, content: [] }) }));
   const prototypeArgs = JSON.parse('{"command":"true","__proto__":1}') as unknown;
@@ -44,7 +44,7 @@ test("abort settles an unresolved approval and late approval cannot execute", as
   const abort = new AbortController();
   let allow!: (value: boolean) => void;
   const pending = new Promise<boolean>((resolve) => { allow = resolve; });
-  const run = createToolRegistry().dispatch("write_file", { path: marker, content: "bad" }, {
+  const run = createToolRegistry().dispatch("write_file", { operations: [{ path: marker, mode: "overwrite", content: "bad" }] }, {
     cwd, maxOutputBytes: 8192, autoApprove: false, signal: abort.signal, approve: () => pending,
   });
   abort.abort();

@@ -49,6 +49,40 @@ function validateReadBatch(value: unknown): string | undefined {
   return undefined;
 }
 
+function validateWriteBatch(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
+  const args = value as Record<string, unknown>;
+  if (Object.keys(args).some((key) => key !== "operations")) return "unknown write_file property";
+  if (!Array.isArray(args.operations) || args.operations.length < 1 || args.operations.length > 16) return "operations must contain 1 to 16 entries";
+  const fields: Record<string, readonly string[]> = {
+    overwrite: ["path", "mode", "content"], append: ["path", "mode", "content"],
+    replace_text: ["path", "mode", "old_text", "new_text"],
+    replace_lines: ["path", "mode", "start_line", "end_line", "content", "expected_sha256"],
+  };
+  for (const [index, raw] of args.operations.entries()) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `operations[${index}] must be an object`;
+    const op = raw as Record<string, unknown>;
+    if (typeof op.path !== "string" || !op.path) return `operations[${index}].path must be a nonempty string`;
+    if (typeof op.mode !== "string" || !Object.hasOwn(fields, op.mode)) return `operations[${index}].mode is invalid`;
+    const allowed = fields[op.mode]!;
+    if (Object.keys(op).some((key) => !allowed.includes(key))) return `operations[${index}] has an invalid field for ${op.mode}`;
+    for (const key of allowed) if (!Object.hasOwn(op, key)) return `operations[${index}] missing ${key}`;
+    if (allowed.includes("content") && typeof op.content !== "string") return `operations[${index}].content must be a string`;
+    if (op.mode === "replace_text" && (typeof op.old_text !== "string" || !op.old_text || typeof op.new_text !== "string")) {
+      return `operations[${index}] requires nonempty old_text and string new_text`;
+    }
+    if (op.mode === "replace_lines") {
+      if (!Number.isSafeInteger(op.start_line) || !Number.isSafeInteger(op.end_line)
+        || (op.start_line as number) < 1 || (op.end_line as number) < (op.start_line as number)
+        || (op.end_line as number) > 2147483647) return `operations[${index}] has invalid line range`;
+      if (typeof op.expected_sha256 !== "string" || !/^[0-9a-f]{64}$/.test(op.expected_sha256)) {
+        return `operations[${index}].expected_sha256 must be lowercase SHA-256`;
+      }
+    }
+  }
+  return undefined;
+}
+
 const builtIns: readonly ToolRegistration[] = [
   {
     name: "read_file", description: "Read UTF-8 files; optional 1-based line ranges and counts.",
@@ -60,9 +94,14 @@ const builtIns: readonly ToolRegistration[] = [
     handler: (args, ctx) => readFileTool(args as Parameters<typeof readFileTool>[0], ctx),
   },
   {
-    name: "write_file", description: "Create or overwrite a UTF-8 file.",
-    inputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"], additionalProperties: false },
-    handler: (args, ctx) => writeFileTool(args as { path: string; content: string }, ctx),
+    name: "write_file", description: "Batch overwrite, append or guarded edits.",
+    inputSchema: { type: "object", properties: { operations: { type: "array", minItems: 1, maxItems: 16,
+      items: { type: "object", properties: { path: { type: "string" }, mode: { type: "string", enum: ["overwrite", "append", "replace_text", "replace_lines"] },
+        content: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" },
+        start_line: { type: "integer", minimum: 1 }, end_line: { type: "integer", minimum: 1 }, expected_sha256: { type: "string" } },
+        required: ["path", "mode"], additionalProperties: false } } }, required: ["operations"], additionalProperties: false },
+    validateArgs: validateWriteBatch,
+    handler: (args, ctx) => writeFileTool(args as Parameters<typeof writeFileTool>[0], ctx),
   },
   {
     name: "bash", description: "Run a Bash command.",

@@ -40,7 +40,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
 
   const fixture = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function", function: {
-      name: "write_file", arguments: '{"path":"installed-sentinel.txt","content":"installed-write"}',
+      name: "write_file", arguments: '{"operations":[{"mode":"overwrite","path":"installed-sentinel.txt","content":"installed-write"}]}',
     } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "installed-task-done" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "mcp", type: "function", function: {

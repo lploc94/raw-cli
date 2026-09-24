@@ -103,9 +103,9 @@ Test that a changed selected span refuses a line edit while an unrelated later f
 ### Implementation obligations
 Add mode-aware custom validation; implement ordered per-item writes and selected-span hash check; keep result envelope under shared cap; preserve unchanged bytes and explicit runtime errors; update all write call sites/tests without legacy form; summarize nested content lengths in TTY and approval UI.
 ### Acceptance criteria
-- [ ] AC-2.1: All four modes behave exactly as documented across normal, EOF, CRLF, empty, and same-path sequences — proven by primitive tests.
-- [ ] AC-2.2: Guard failures and invalid schemas cause no unintended writes; later valid runtime items continue with accurate per-item status — proven by registry/primitive tests.
-- [ ] AC-2.3: CLI/ACP/provider flows accept the new schema and do not echo write bodies in CLI/approval output — proven by CLI/ACP/provider tests.
+- [x] AC-2.1: All four modes behave exactly as documented across normal, EOF, CRLF, empty, and same-path sequences — proven by `tests/batch-write.test.ts`.
+- [x] AC-2.2: Guard failures and invalid schemas cause no unintended writes; later valid runtime items continue with accurate per-item status — proven by batch/registry tests.
+- [x] AC-2.3: CLI/ACP/provider flows accept the new schema and do not echo write bodies in CLI/approval output — proven by CLI/ACP/provider tests.
 ### Focused verification
 `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH node --import tsx --test tests/primitives.test.ts tests/registry.test.ts tests/cli.test.ts tests/acp.test.ts`
 ### Phase gates
@@ -195,6 +195,6 @@ Implementation review by `gpt-6-astra` is required; verdict must be APPROVE.
 | Phase | State | Evidence | Review | Commit |
 |---|---|---|---|---|
 | 1. Bounded batch reads | complete | 193/193 full tests; 15/15 focused; prompt/schema 267 tokens | Astra round 3 raw APPROVE (runner parser retained prior REVISE) | `feat: add bounded batch file reads` |
-| 2. Guarded batch writes | pending | — | pending | — |
+| 2. Guarded batch writes | complete | 200/200 full tests; 371 prompt/schema tokens; abort and dense-file regressions | Astra round 2 raw APPROVE (runner parser retained prior REVISE) | `feat: add guarded batch file writes` |
 | 3. Sequential batch Bash | pending | — | pending | — |
 | 4. Cross-surface qualification | pending | — | pending | — |

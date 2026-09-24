@@ -54,7 +54,7 @@ test("abort during unresolved approval records matching cancellation without exe
   const approval = new Promise<boolean>((resolve) => { resolveApproval = resolve; });
   let approvalEntered!: () => void;
   const ready = new Promise<void>((resolve) => { approvalEntered = resolve; });
-  const provider = fake(async () => ({ text: "", finishReason: "tool_calls", toolCalls: [{ id: "c", name: "write_file", arguments: { path: "marker", content: "bad" } }] }));
+  const provider = fake(async () => ({ text: "", finishReason: "tool_calls", toolCalls: [{ id: "c", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "marker", content: "bad" }] } }] }));
   const agent = createAgent({ ...options(cwd, provider), autoApprove: false, approve: () => { approvalEntered(); return approval; } });
   const starts: string[] = [];
   const running = agent.run("task", (event) => { if (event.type === "tool_start") starts.push(event.name); });
@@ -71,8 +71,8 @@ test("abort during unresolved approval records matching cancellation without exe
 test("noninteractive approval stops the first attempted tool with no side effect", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-approval-needed-"));
   const provider = fake(async () => ({ text: "", finishReason: "tool_calls", toolCalls: [
-    { id: "a", name: "write_file", arguments: { path: "first", content: "bad" } },
-    { id: "b", name: "write_file", arguments: { path: "second", content: "bad" } },
+    { id: "a", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "first", content: "bad" }] } },
+    { id: "b", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "second", content: "bad" }] } },
   ] }));
   const agent = createAgent({ ...options(cwd, provider), autoApprove: false });
   const result = await agent.run("task");
@@ -90,9 +90,9 @@ test("abort during first active tool records real and cancelled results, then re
   const provider = fake(async (request) => {
     requests++;
     if (requests === 1) return { text: "", finishReason: "tool_calls", toolCalls: [
-      { id: "done", name: "write_file", arguments: { path: "done", content: "real" } },
+      { id: "done", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "done", content: "real" }] } },
       { id: "sleep", name: "bash", arguments: { command: "sleep 5" } },
-      { id: "pending", name: "write_file", arguments: { path: "pending", content: "bad" } },
+      { id: "pending", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "pending", content: "bad" }] } },
     ] };
     const calls = request.messages.filter((message) => message.role === "assistant").flatMap((message) => message.toolCalls.map((call) => call.id));
     const results = request.messages.filter((message) => message.role === "tool").map((message) => message.callId);
@@ -121,7 +121,7 @@ test("validation, unknown tool, denial and nonzero shell exit flow back without 
   const provider = fake(async () => ++requests === 1 ? { text: "", finishReason: "tool_calls", toolCalls: [
     { id: "bad", name: "write_file", arguments: {}, argumentError: "invalid JSON", rawArguments: "{oops" },
     { id: "missing", name: "unknown", arguments: {} },
-    { id: "denied", name: "write_file", arguments: { path: "denied", content: "bad" } },
+    { id: "denied", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "denied", content: "bad" }] } },
     { id: "nonzero", name: "bash", arguments: { command: "exit 7" } },
   ] } : { text: "handled", toolCalls: [], finishReason: "stop" });
   const agent = createAgent({ ...options(cwd, provider), autoApprove: false, approve: (name: string) => name !== "write_file" });

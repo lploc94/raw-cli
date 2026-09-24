@@ -29,11 +29,20 @@ function resultPreview(result: ToolResult): string {
     + characters.slice(-Math.floor(remaining / 2)).join("");
 }
 
-function toolArguments(name: string, args: Record<string, unknown>): string {
-  const display = name === "write_file" && typeof args.content === "string"
-    ? { ...args, content: `[${Buffer.byteLength(args.content, "utf8")} bytes]` } : args;
+function toolArguments(name: string, args: Record<string, unknown>, full = false): string {
+  const display = name === "write_file" && Array.isArray(args.operations)
+    ? { operations: args.operations.map((value: unknown) => {
+      const op = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+      return { path: op.path, mode: op.mode,
+        ...(typeof op.content === "string" ? { content_bytes: Buffer.byteLength(op.content, "utf8") } : {}),
+        ...(typeof op.old_text === "string" ? { old_text_bytes: Buffer.byteLength(op.old_text, "utf8") } : {}),
+        ...(typeof op.new_text === "string" ? { new_text_bytes: Buffer.byteLength(op.new_text, "utf8") } : {}),
+        ...(op.start_line !== undefined ? { start_line: op.start_line } : {}),
+        ...(op.end_line !== undefined ? { end_line: op.end_line } : {}),
+      };
+    }) } : args;
   const json = JSON.stringify(display);
-  return name === "bash" || json.length <= 240 ? json : `${json.slice(0, 239)}…`;
+  return full || name === "bash" || json.length <= 240 ? json : `${json.slice(0, 239)}…`;
 }
 
 function textRun(session: AgentSession, task: string): Promise<RunResult> {
@@ -149,7 +158,7 @@ function lineQueue(rl: ReadlineInterface): {
 async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return false;
   const mark = lines.mark();
-  process.stderr.write(`raw: allow ${name} ${JSON.stringify(args)}? [y/N] `);
+  process.stderr.write(`raw: allow ${name} ${toolArguments(name, args, true)}? [y/N] `);
   const answer = await lines.nextAfter(mark, signal);
   return answer !== undefined && /^(?:y|yes)$/i.test(answer.trim());
 }
