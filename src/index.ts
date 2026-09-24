@@ -14,6 +14,8 @@ export type { ToolContent, ToolResult } from "./tools/types.js";
 export { BUILTIN_TOOL_DEFINITIONS, ToolRegistry, createToolRegistry } from "./tools/registry.js";
 export type { ToolDefinition, ToolRegistration } from "./tools/registry.js";
 export type { ToolContext } from "./tools/primitives.js";
+export { loadMcpConfig, connectMcpServers, mcpResultToToolResult } from "./tools/mcp-client.js";
+export type { McpServerConfig, McpConfigOptions, ConnectMcpOptions, McpConnection, McpToolInfo } from "./tools/mcp-client.js";
 export { AgentSession, createAgent } from "./agent.js";
 export type { AgentOptions, AgentState, RunEvent, RunResult, RunStatus } from "./agent.js";
 export { compactSession } from "./compact.js";

@@ -7,14 +7,16 @@ export interface ToolDefinition {
   readonly description: string;
   readonly inputSchema: {
     readonly type: "object";
-    readonly properties: Readonly<Record<string, { readonly type: "string" | "integer"; readonly minimum?: number }>>;
+    readonly properties?: Readonly<Record<string, unknown>>;
     readonly required?: readonly string[];
-    readonly additionalProperties: false;
+    readonly additionalProperties?: boolean | Readonly<Record<string, unknown>>;
+    readonly [key: string]: unknown;
   };
 }
 
 export interface ToolRegistration extends ToolDefinition {
   handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
+  validateArgs?: (args: unknown) => string | undefined;
 }
 
 const builtIns: readonly ToolRegistration[] = [
@@ -50,8 +52,8 @@ function validate(definition: ToolDefinition, value: unknown): string | undefine
   const args = value as Record<string, unknown>;
   for (const required of definition.inputSchema.required ?? []) if (!Object.hasOwn(args, required)) return `missing ${required}`;
   for (const [key, item] of Object.entries(args)) {
-    if (!Object.hasOwn(definition.inputSchema.properties, key)) return `unknown property ${key}`;
-    const property = definition.inputSchema.properties[key]!;
+    if (!Object.hasOwn(definition.inputSchema.properties ?? {}, key)) return `unknown property ${key}`;
+    const property = definition.inputSchema.properties![key] as { type: string; minimum?: number };
     if (property.type === "string" && typeof item !== "string") return `${key} must be a string`;
     if (property.type === "integer" && (!Number.isSafeInteger(item) || (item as number) < (property.minimum ?? 0) || (item as number) > 2147483647)) return `${key} must be a positive integer within the timer range`;
   }
@@ -69,14 +71,19 @@ export class ToolRegistry {
   definitions(whitelist?: readonly string[]): readonly ToolDefinition[] {
     return [...this.tools.values()]
       .filter((tool) => whitelist === undefined || whitelist.includes(tool.name))
-      .map(({ handler: _handler, ...definition }) => structuredClone(definition));
+      .sort((a, b) => {
+        const first = ["read_file", "write_file", "bash"].indexOf(a.name);
+        const second = ["read_file", "write_file", "bash"].indexOf(b.name);
+        return first >= 0 && second >= 0 ? first - second : first >= 0 ? -1 : second >= 0 ? 1 : a.name.localeCompare(b.name);
+      })
+      .map(({ handler: _handler, validateArgs: _validateArgs, ...definition }) => structuredClone(definition));
   }
 
   async dispatch(name: string, args: unknown, context: ToolContext): Promise<ToolResult> {
     const finish = (result: ToolResult) => capResult(result, context.maxOutputBytes);
     const tool = this.tools.get(name);
     if (!tool || (context.whitelist !== undefined && !context.whitelist.includes(name))) return finish(errorResult("tool_not_exposed", `tool unavailable: ${name}`));
-    const invalid = validate(tool, args);
+    const invalid = tool.validateArgs ? tool.validateArgs(args) : validate(tool, args);
     if (invalid) return finish(errorResult("invalid_arguments", invalid));
     if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
     if (!context.autoApprove) {

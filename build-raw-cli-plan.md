@@ -610,10 +610,10 @@ Two identical original tool names return different sentinel values; captured mod
 3. Integrate typed results and image mapping into the same agent loop; apply caps without duplicating content.
 4. Abort requests promptly, account for best-effort remote side effects, and release owned transport resources.
 ### Acceptance criteria
-- [ ] **AC-6.1**: All three real fixture transports discover and execute through the agent — T-06a.
-- [ ] **AC-6.2**: Selection/routing/collision/order invariants hold without schema flooding — T-06b.
-- [ ] **AC-6.3**: Failures/abort clean up connections and child processes — T-06c.
-- [ ] **AC-6.4**: Text/JSON/image/error results follow caps and native provider mapping — T-06d.
+- [x] **AC-6.1**: All three real fixture transports discover and execute through the agent — T-06a.
+- [x] **AC-6.2**: Selection/routing/collision/order invariants hold without schema flooding — T-06b.
+- [x] **AC-6.3**: Failures/abort clean up connections and child processes — T-06c.
+- [x] **AC-6.4**: Text/JSON/image/error results follow caps and native provider mapping — T-06d.
 ### Focused verification
 `npm run test:phase -- mcp` — MCP and content suites.
 ### Phase gates
@@ -750,8 +750,8 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 | 3 Providers | providers | complete | `docs/evidence/phase-3.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: add official streaming provider adapters` |
 | 4 Agent loop | agent | complete | `docs/evidence/phase-4.md` | `gpt-6-astra` APPROVE (2 rounds) | `feat: implement bounded agent loop and resumable turn state` |
 | 5 Compact/cache | context | complete | `docs/evidence/phase-5.md` | `gpt-6-astra` APPROVE (reopened session, 2 rounds) | `feat: add explicit compaction and multi-turn cache reuse` |
-| 6 MCP | mcp | in_progress | — | — | — |
-| 7 ACP/client | acp | pending | — | — | — |
+| 6 MCP | mcp | complete | `docs/evidence/phase-6.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: integrate selected MCP tools and multimodal results` |
+| 7 ACP/client | acp | in_progress | — | — | — |
 | 8 CLI/package | cli | pending | — | — | — |
 
 ### Decision and planning history
@@ -768,3 +768,4 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 - 2026-09-24: Phase 3 official SDK adapters completed; focused 17/17, cumulative 42/42, overhead 25/175. `gpt-6-astra` review found eleven defects in two rounds, all fixed with RED/GREEN regressions; round 3 returned APPROVE. See `docs/evidence/phase-3.md`. Phase 4 is next.
 - 2026-09-24: Phase 4 agent loop completed; focused 13/13, cumulative 55/55, overhead 25/175. `gpt-6-astra` review found three event-boundary defects, all fixed with RED/GREEN regressions; round 2 returned APPROVE. See `docs/evidence/phase-4.md`. Phase 5 is next.
 - 2026-09-24: Phase 5 context/caching completed; focused 17/17, cumulative 72/72, overhead 25/175. `gpt-6-astra` found six initial defects; the dated-snapshot fix required a reopened review after an automatic stalemate, and that review found one further SDK error-usage defect. All were fixed with RED/GREEN regressions. Reopened round 2 returned raw APPROVE. See `docs/evidence/phase-5.md`. Phase 6 is next.
+- 2026-09-24: Phase 6 MCP completed; focused 18/18, cumulative 90/90, overhead 25/175. `gpt-6-astra` found seven concrete transport, schema, content and lifecycle defects in two rounds; all received RED/GREEN regressions, and round 3 returned raw APPROVE. See `docs/evidence/phase-6.md`. Phase 7 is next.
