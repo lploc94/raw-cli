@@ -216,6 +216,8 @@ codex-impl-review with gpt-6-astra; verdict must be APPROVE.
 feat: add opt-in vision tool without base prompt growth
 
 ## Phase 5: Automate compact without losing cache or image safety
+### Status
+complete
 ### Goal
 Trigger visible, budget-safe compaction from profile settings while preserving multi-turn cache reuse.
 ### Current behavior and gap
@@ -241,10 +243,10 @@ A naive check based only on last provider usage must fail when a large tool resu
 ### Implementation obligations
 Keep compaction transactional, account usage once, and keep stable prefix/tool ordering after compact.
 ### Acceptance criteria
-- [ ] AC-5.1: Opt-in threshold triggers once before a would-be over-budget request using full upcoming context, and absent threshold stays manual — proven by compact tests with image/reasoning additions.
-- [ ] AC-5.2: Compaction is visible, abortable and does not leak image base64 or lose usage accounting — proven by event/usage tests.
-- [ ] AC-5.3: Summary requests are budgeted/chunked before submission and the post-compact main request is rechecked — proven by oversized-history and insufficient-capacity tests.
-- [ ] AC-5.4: Multi-turn cache hints/prefix remain stable until a deliberate compact boundary — proven by request fixture tests.
+- [x] AC-5.1: Opt-in threshold triggers once before a would-be over-budget request using full upcoming context, and absent threshold stays manual — proven by compact tests with image/reasoning additions.
+- [x] AC-5.2: Compaction is visible, abortable and does not leak image base64 or lose usage accounting — proven by event/usage tests.
+- [x] AC-5.3: Summary requests are budgeted/chunked before submission and the post-compact main request is rechecked — proven by oversized-history and insufficient-capacity tests.
+- [x] AC-5.4: Multi-turn cache hints/prefix remain stable until a deliberate compact boundary — proven by request fixture tests.
 ### Focused verification
 node --import tsx --test tests/compact.test.ts tests/cache.test.ts tests/repl.test.ts tests/acp.test.ts
 ### Phase gates
@@ -307,3 +309,5 @@ docs: complete config redesign and installed qualification
 - 2026-09-24: Phase 2 complete. Official API docs informed four SDK methods and typed controls. Red fixture tests proved missing Responses, DeepSeek reasoning replay and request options before implementation. `npm run check` 146/146, typecheck, focused tests, overhead and diff check passed. GPT-6 Astra review found three cap/budget defects, all fixed; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-011`.
 - 2026-09-24: Phase 3 complete. Docs-first reference and red tests preceded single-file MCP selection and canonical allow/ask/deny policy. `npm run check` 161/161, typecheck, focused tests, overhead and diff check passed. GPT-6 Astra review found two defects (newline glob bypass, empty stdio argument rejection), both fixed; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-012`.
 - 2026-09-24: Phase 4 complete. Docs-first reference and red tests preceded conditional `view_image` with real native payloads across four adapters, separate image cap, public event redaction and text-only MCP fallback. `npm run check` 168/168, typecheck, overhead 25 prompt tokens/three base tools, and diff check passed. GPT-6 Astra review found three defects (truncated image validation, FIFO hang, uncapped text errors), all fixed with regressions; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-013`.
+- 2026-09-24: Phase 5 in progress. Docs-first context/config contract and red tests preceded opt-in trigger validation, complete-request estimates, visible automatic compact, image-safe chronological summary chunks, usage accounting per summary request and stable main cache key. Focused tests 8/8, full `npm run check` 176/176, typecheck, overhead and diff check passed before review.
+- 2026-09-24: Phase 5 complete. `npm run check` 179/179, focused compact/ACP/cache/REPL tests, typecheck, overhead 25 prompt tokens/three base tools and diff check passed. GPT-6 Astra review found three defects (second compact after zero retention, absolute calibration, repeated chunk budget), all fixed with regressions; round 3 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-014`.

@@ -35,6 +35,7 @@ export interface CliArgs {
 export interface CompactSettings {
   keepRecentTurns: number;
   maxOutputTokens: number;
+  triggerTokens?: number;
 }
 
 export interface RuntimeConfig {
@@ -397,10 +398,11 @@ function modelSpec(name: string, raw: unknown): ModelSpec {
 
 function compactSpec(raw: unknown, where: string): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
-  keys(value, ["keep_recent_turns", "max_output_tokens"], where);
+  keys(value, ["keep_recent_turns", "max_output_tokens", "trigger_tokens"], where);
   return {
     keepRecentTurns: value.keep_recent_turns === undefined ? 2 : nonnegative(value.keep_recent_turns, where + ".keep_recent_turns"),
     maxOutputTokens: value.max_output_tokens === undefined ? 512 : positive(value.max_output_tokens, where + ".max_output_tokens"),
+    ...(value.trigger_tokens === undefined ? {} : { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }),
   };
 }
 
@@ -415,6 +417,17 @@ function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, Mod
     mcp: profileMcpSpec(value.mcp, servers, where + ".mcp"), toolRules: toolRulesSpec(value.tools, where + ".tools") };
   if (value.request !== undefined) result.request = requestSpec(value.request, model, where + ".request");
   const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
+  if (result.compact.triggerTokens !== undefined) {
+    if (model.contextWindow === undefined) throw new Error(where + ".compact.trigger_tokens requires model.context_window_tokens");
+    const reserve = requestedCap ?? 1024;
+    const margin = Math.max(64, Math.ceil(model.contextWindow * 0.05));
+    if (result.compact.triggerTokens >= model.contextWindow - reserve - margin) {
+      throw new Error(where + ".compact.trigger_tokens must leave output reserve and safety margin");
+    }
+    if (result.compact.maxOutputTokens >= model.contextWindow - margin) {
+      throw new Error(where + ".compact.max_output_tokens exceeds context budget");
+    }
+  }
   if (requestedCap !== undefined && model.contextWindow !== undefined) {
     const reserve = Math.max(64, Math.ceil(model.contextWindow * 0.05));
     if (requestedCap > model.contextWindow - reserve) throw new Error(where + " output cap exceeds context budget after reserve");

@@ -15,6 +15,8 @@ function textRun(session: AgentSession, task: string): Promise<RunResult> {
       if (event.text.length) endedWithNewline = event.text.endsWith("\n");
     } else if (event.type === "tool_start") process.stderr.write(`raw: ${event.name}\n`);
     else if (event.type === "tool_result" && event.result.isError) process.stderr.write(`raw: ${event.name}: ${event.result.code ?? "tool_error"}\n`);
+    else if (event.type === "compact_start") process.stderr.write(`raw: compacting context (${event.estimatedTokens} estimated input tokens)\n`);
+    else if (event.type === "compact_end") process.stderr.write(`raw: compact ${event.result.status}\n`);
   };
   return session.run(task, show).then((result) => {
     if (!wrote && result.text) {
@@ -104,7 +106,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   let cancelledWhileIdle = false;
   const session = createAgent({ provider, registry: mcp.registry,
     cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
-    requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove,
+    requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
     ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal) } : {}) });
   const interrupt = () => {
     if (session.abort()) { process.stderr.write("\nraw: cancelled\n"); return; }

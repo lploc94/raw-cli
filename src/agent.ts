@@ -1,7 +1,8 @@
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { randomUUID } from "node:crypto";
-import { performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
-import { summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
+import { estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
+import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
+import type { CompactSettings } from "./config.js";
 import type { ModelMessage, ModelToolCall, ProviderAdapter, UserInput } from "./llm/types.js";
 import { createToolRegistry, type ToolDefinition, type ToolRegistry } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
@@ -25,6 +26,8 @@ export type RunEvent =
   | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
   | { type: "usage"; raw: unknown }
+  | { type: "compact_start"; estimatedTokens: number }
+  | { type: "compact_end"; result: CompactResult }
   | { type: "run_end"; result: RunResult };
 
 export interface AgentOptions {
@@ -38,10 +41,11 @@ export interface AgentOptions {
   autoApprove?: boolean;
   approve?: ToolContext["approve"];
   whitelist?: readonly string[];
+  compact?: Readonly<CompactSettings>;
 }
 
 export class AgentSession {
-  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist">;
+  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact">;
   private messages: ModelMessage[] = [];
   private currentState: AgentState = "idle";
   private controller: AbortController | undefined;
@@ -54,6 +58,7 @@ export class AgentSession {
   private readonly cacheKey = randomUUID();
   private schemaView: readonly ToolDefinition[];
   private schemaRevision = 1;
+  private tokenCalibration = 1;
 
   constructor(options: AgentOptions) {
     const maxSteps = options.maxSteps ?? 25;
@@ -61,6 +66,17 @@ export class AgentSession {
     const requestTimeoutMs = options.requestTimeoutMs ?? 120000;
     for (const [name, value] of [["maxSteps", maxSteps], ["maxOutputBytes", maxOutputBytes], ["requestTimeoutMs", requestTimeoutMs]] as const) {
       if (!Number.isSafeInteger(value) || value < 1 || (name === "requestTimeoutMs" && value > 2147483647)) throw new Error(`${name} must be a positive integer within the supported range`);
+    }
+    if (options.compact !== undefined && (!Number.isSafeInteger(options.compact.keepRecentTurns)
+      || options.compact.keepRecentTurns < 0 || !Number.isSafeInteger(options.compact.maxOutputTokens)
+      || options.compact.maxOutputTokens < 1)) throw new Error("invalid compaction settings");
+    if (options.compact?.triggerTokens !== undefined) {
+      const context = options.provider.profile.contextWindow;
+      const output = options.provider.profile.request?.maxOutputTokens ?? options.provider.profile.maxOutputTokens ?? 1024;
+      if (!Number.isSafeInteger(context) || context! < 1 || !Number.isSafeInteger(options.compact.triggerTokens)
+        || options.compact.triggerTokens < 1 || options.compact.triggerTokens >= context! - output - Math.max(64, Math.ceil(context! * 0.05))) {
+        throw new Error("auto compact trigger requires a valid context window and output reserve");
+      }
     }
     this.options = {
       provider: options.provider,
@@ -71,6 +87,7 @@ export class AgentSession {
       autoApprove: options.autoApprove ?? true,
       ...(options.approve ? { approve: options.approve } : {}),
       ...(options.whitelist !== undefined ? { whitelist: [...options.whitelist] } : {}),
+      ...(options.compact !== undefined ? { compact: { ...options.compact } } : {}),
     };
     this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
   }
@@ -113,6 +130,49 @@ export class AgentSession {
     return true;
   }
 
+  private async compactWork(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number,
+    controller: AbortController, onUsage?: (raw: unknown) => void): Promise<CompactResult> {
+    const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
+    const snapshot = { messages: structuredClone(this.messages), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
+      ...(this.summaryText !== undefined ? { previousSummary: this.summaryText } : {}) };
+    const entries = new Map<number, { entry: UsageRecord; rawIndex?: number }>();
+    let onAbort!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(new Error("compaction aborted"));
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      if (controller.signal.aborted) onAbort();
+    });
+    try {
+      const work = await Promise.race([performCompaction(snapshot, provider, {
+        keepRecentTurns, maxOutputTokens, timeoutMs: this.options.requestTimeoutMs,
+        signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
+        onRequestStart: (index) => {
+          const entry: UsageRecord = { method: provider.profile.method, provider: provider.profile.provider, raw: undefined };
+          entries.set(index, { entry });
+          this.usageEntries.push(entry);
+        },
+        onUsage: (index, raw) => {
+          if (controller.signal.aborted) return;
+          const current = entries.get(index);
+          if (!current) return;
+          current.entry.raw = structuredClone(raw);
+          if (current.rawIndex === undefined) current.rawIndex = this.rawUsage.push(structuredClone(raw)) - 1;
+          else this.rawUsage[current.rawIndex] = structuredClone(raw);
+          onUsage?.(raw);
+        },
+      }), aborted]);
+      if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
+      if (work.replacement && work.summary !== undefined) {
+        this.messages = structuredClone(work.replacement);
+        this.summaryText = work.summary;
+      }
+      return work.result;
+    } catch (error) {
+      if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
+      throw error;
+    } finally { controller.signal.removeEventListener("abort", onAbort); }
+  }
+
   async close(): Promise<void> {
     if (this.currentState === "closed") return;
     this.currentState = "closing";
@@ -135,42 +195,7 @@ export class AgentSession {
     this.currentState = "compacting";
     const controller = new AbortController();
     this.controller = controller;
-    const provider = options.provider ?? this.options.provider;
-    const compactUsage: UsageRecord = { method: provider.profile.method, provider: provider.profile.provider, raw: undefined };
-    let compactUsageIndex: number | undefined;
-    const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
-    const snapshot = { messages: structuredClone(this.messages), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
-      ...(this.summaryText !== undefined ? { previousSummary: this.summaryText } : {}) };
-    const task = (async (): Promise<CompactResult> => {
-      let onAbort!: () => void;
-      const aborted = new Promise<never>((_resolve, reject) => {
-        onAbort = () => reject(new Error("compaction aborted"));
-        controller.signal.addEventListener("abort", onAbort, { once: true });
-        if (controller.signal.aborted) onAbort();
-      });
-      try {
-        const work = await Promise.race([performCompaction(snapshot, provider, {
-          keepRecentTurns, maxOutputTokens, timeoutMs: this.options.requestTimeoutMs,
-          signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
-          onRequestStart: () => this.usageEntries.push(compactUsage),
-          onUsage: (raw) => {
-            compactUsage.raw = structuredClone(raw);
-            if (compactUsageIndex === undefined) {
-              compactUsageIndex = this.rawUsage.push(structuredClone(raw)) - 1;
-            } else this.rawUsage[compactUsageIndex] = structuredClone(raw);
-          },
-        }), aborted]);
-        if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
-        if (work.replacement && work.summary !== undefined) {
-          this.messages = structuredClone(work.replacement);
-          this.summaryText = work.summary;
-        }
-        return work.result;
-      } catch (error) {
-        if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
-        throw error;
-      } finally { controller.signal.removeEventListener("abort", onAbort); }
-    })().finally(() => {
+    const task = this.compactWork(options.provider ?? this.options.provider, keepRecentTurns, maxOutputTokens, controller).finally(() => {
       this.controller = undefined;
       this.activeCompact = undefined;
       if (this.currentState !== "closing" && this.currentState !== "closed") this.currentState = "idle";
@@ -227,9 +252,52 @@ export class AgentSession {
     };
     if (this.originalTask === undefined) this.originalTask = structuredClone(input);
     this.messages.push({ role: "user", content: structuredClone(input) });
+    let autoCompacted = false;
     try {
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
+        let requestEstimate = 0;
+        let baseEstimate = 0;
+        const compact = this.options.compact;
+        if (compact?.triggerTokens !== undefined) {
+          const profile = this.options.provider.profile;
+          const context = profile.contextWindow!;
+          const outputReserve = profile.request?.maxOutputTokens ?? profile.maxOutputTokens ?? 1024;
+          const inputBudget = context - outputReserve - Math.max(64, Math.ceil(context * 0.05));
+          const estimate = () => {
+            baseEstimate = estimateRequestTokens(this.options.system, this.messages, this.schemaView);
+            return Math.ceil(baseEstimate * this.tokenCalibration);
+          };
+          requestEstimate = estimate();
+          if (requestEstimate >= compact.triggerTokens && !autoCompacted) {
+            emit({ type: "compact_start", estimatedTokens: requestEstimate });
+            if (controller.signal.aborted) return finish(interrupted());
+            let compactResult: CompactResult;
+            const history = this.summaryText ? this.messages.slice(1) : this.messages;
+            const starts = history.flatMap((message, index) => message.role === "user" ? [index] : []);
+            let keep = Math.min(compact.keepRecentTurns, starts.length);
+            if (keep === starts.length && history.length > starts.length) keep = Math.max(0, keep - 1);
+            const summaryPlaceholder = "x".repeat(Math.min(4 * compact.maxOutputTokens, 16384));
+            while (keep > 0) {
+              const tail = history.slice(starts[starts.length - keep]!);
+              const candidate: ModelMessage[] = [
+                ...(this.originalTask === undefined ? [] : [{ role: "user" as const, content: this.originalTask }]),
+                { role: "user", content: `[Conversation summary]\n${summaryPlaceholder}` }, ...tail,
+              ];
+              if (Math.ceil(estimateRequestTokens(this.options.system, candidate, this.schemaView) * this.tokenCalibration) <= inputBudget) break;
+              keep--;
+            }
+            try { compactResult = await this.compactWork(this.options.provider, keep, compact.maxOutputTokens,
+              controller, (raw) => emit({ type: "usage", raw })); }
+            catch (error) { return finish({ status: "error", steps, code: "compact_error", message: (error as Error).message }); }
+            autoCompacted = compactResult.status !== "noop";
+            emit({ type: "compact_end", result: compactResult });
+            if (controller.signal.aborted || compactResult.status === "cancelled") return finish(interrupted());
+            requestEstimate = estimate();
+          }
+          if (requestEstimate > inputBudget) return finish({ status: "error", steps, code: "context_budget_exceeded",
+            message: `estimated input ${requestEstimate} exceeds budget ${inputBudget}` });
+        }
         steps++;
         const usageEntry: UsageRecord = { method: this.options.provider.profile.method, provider: this.options.provider.profile.provider, raw: undefined };
         this.usageEntries.push(usageEntry);
@@ -237,6 +305,10 @@ export class AgentSession {
         const recordUsage = (raw: unknown) => {
           if (controller.signal.aborted) return;
           usageEntry.raw = structuredClone(raw);
+          if (baseEstimate > 0) {
+            const actual = normalizeUsage(this.options.provider.profile.method, raw, this.options.provider.profile.provider).inputTokensTotal;
+            if (actual !== undefined) this.tokenCalibration = Math.max(this.tokenCalibration, actual / baseEstimate * 1.1);
+          }
           if (usageIndex === undefined) usageIndex = this.rawUsage.push(structuredClone(raw)) - 1;
           else this.rawUsage[usageIndex] = structuredClone(raw);
           emit({ type: "usage", raw });
@@ -255,6 +327,8 @@ export class AgentSession {
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
             cacheKey: this.cacheKey,
+            ...(compact?.triggerTokens !== undefined ? { maxOutputTokens: this.options.provider.profile.request?.maxOutputTokens
+              ?? this.options.provider.profile.maxOutputTokens ?? 1024 } : {}),
             signal: controller.signal,
             onTextDelta: (text) => { if (!controller.signal.aborted) emit({ type: "text_delta", text }); },
             onUsage: recordUsage,

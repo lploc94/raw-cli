@@ -75,6 +75,10 @@ function toolUpdate(event: RunEvent): SessionUpdate | undefined {
   if (event.type === "tool_start") return { sessionUpdate: "tool_call_update", toolCallId: event.id, status: "in_progress" };
   if (event.type === "tool_result") return { sessionUpdate: "tool_call_update", toolCallId: event.id,
     status: event.result.isError ? "failed" : "completed", rawOutput: event.result };
+  if (event.type === "compact_start") return { sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: `Compacting context (${event.estimatedTokens} estimated input tokens).` } };
+  if (event.type === "compact_end") return { sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: `Context compact ${event.result.status}.` } };
   return undefined;
 }
 
@@ -204,7 +208,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       const agentSession = createAgent({ provider: providerFactory(profile), registry,
         cwd: params.cwd, system: options.runtime.systemPrompt,
         maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
-        requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove,
+        requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
         approve: async (name, args, signal, toolCallId) => {
           if (!peer) throw rawError(rawErrors.upstream, "ACP client disconnected");
           const response = await withAbort(peer.request("session/request_permission", {
