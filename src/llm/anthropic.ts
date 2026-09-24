@@ -37,14 +37,24 @@ export function createAnthropicProvider(profile: Readonly<ProviderProfile>): Pro
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
         const cache = cacheSettings(profile, request.cacheKey);
+        const configured = profile.request?.kind === "anthropic" ? profile.request : undefined;
+        const outputLimit = request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens ?? 1024;
+        if (configured?.thinking?.type === "enabled" && configured.thinking.budgetTokens >= outputLimit) {
+          throw new ProviderError("invalid_request", "Anthropic thinking budget must be smaller than max output tokens");
+        }
         const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
         const stream = await client.messages.create({
           model: profile.model,
-          max_tokens: request.maxOutputTokens ?? profile.maxOutputTokens ?? 1024,
+          max_tokens: outputLimit,
           system: request.system,
           messages: inputMessages(request),
           stream: true,
           ...cache.anthropic,
+          ...(configured?.thinking ? { thinking: configured.thinking.type === "enabled"
+            ? { type: "enabled" as const, budget_tokens: configured.thinking.budgetTokens }
+            : { type: configured.thinking.type } } : {}),
+          ...(configured?.effort ? { output_config: { effort: configured.effort } } : {}),
+          ...(configured?.serviceTier ? { service_tier: configured.serviceTier } : {}),
           ...(tools.length ? { tools } : {}),
         }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
         const blocks = new Map<number, Record<string, unknown>>();

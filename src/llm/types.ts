@@ -1,5 +1,16 @@
 export type ProviderName = string;
-export type ApiMethod = "openai-chat-completions" | "anthropic-messages" | "google-generate-content";
+export type ApiMethod = "openai-chat-completions" | "openai-responses" | "anthropic-messages" | "google-generate-content";
+
+interface RequestBase { maxOutputTokens?: number }
+export type ProfileRequestOptions =
+  | (RequestBase & { kind: "openai"; serviceTier?: "auto" | "default" | "flex" | "fast" | "priority";
+      reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+      reasoningMode?: "standard" | "pro" })
+  | (RequestBase & { kind: "deepseek"; thinking?: "enabled" | "disabled"; reasoningEffort?: "low" | "high" | "max" })
+  | (RequestBase & { kind: "anthropic"; thinking?: { type: "adaptive" | "disabled" } | { type: "enabled"; budgetTokens: number };
+      effort?: "low" | "medium" | "high" | "xhigh" | "max"; serviceTier?: "auto" | "standard_only" })
+  | (RequestBase & { kind: "google"; thinkingLevel?: "minimal" | "low" | "medium" | "high"; thinkingBudget?: number })
+  | (RequestBase & { kind: "generic" });
 
 export interface CacheOptions {
   mode?: "auto" | "no-hints";
@@ -20,6 +31,7 @@ export interface ProviderProfile {
   contextWindow?: number;
   maxOutputTokens?: number;
   cache?: Readonly<CacheOptions>;
+  request?: Readonly<ProfileRequestOptions>;
 }
 
 import type { ToolDefinition } from "../tools/registry.js";

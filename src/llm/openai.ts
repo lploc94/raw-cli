@@ -20,7 +20,7 @@ function inputMessages(request: ProviderRequest, provider: ProviderProfile["prov
     if (message.role !== "tool") flushImages();
     if (message.role === "user") messages.push({ role: "user", content: renderUserInput(message.content) });
     else if (message.role === "assistant") {
-      const opaque = provider === "openrouter" && message.opaque && typeof message.opaque === "object" && !Array.isArray(message.opaque)
+      const opaque = (provider === "openrouter" || provider === "deepseek") && message.opaque && typeof message.opaque === "object" && !Array.isArray(message.opaque)
         ? message.opaque as Record<string, unknown> : {};
       messages.push({
         role: "assistant",
@@ -59,13 +59,20 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
           type: "function",
           function: { name: tool.name, description: tool.description, parameters: tool.inputSchema as unknown as Record<string, unknown> },
         }));
-        const outputLimit = request.maxOutputTokens ?? profile.maxOutputTokens;
+        const configured = profile.request;
+        const openAiOptions = configured?.kind === "openai" ? configured : undefined;
+        const deepSeekOptions = configured?.kind === "deepseek" ? configured : undefined;
+        const outputLimit = request.maxOutputTokens ?? configured?.maxOutputTokens ?? profile.maxOutputTokens;
         const stream = await client.chat.completions.create({
           model: profile.model,
           messages,
           stream: true,
           ...cache.openai,
           ...(cache.llamaPrompt ? { cache_prompt: true } : {}),
+          ...(openAiOptions?.serviceTier ? { service_tier: openAiOptions.serviceTier } : {}),
+          ...(openAiOptions?.reasoningEffort ? { reasoning_effort: openAiOptions.reasoningEffort } : {}),
+          ...(deepSeekOptions?.thinking ? { thinking: { type: deepSeekOptions.thinking } } : {}),
+          ...(deepSeekOptions?.reasoningEffort ? { reasoning_effort: deepSeekOptions.reasoningEffort } : {}),
           ...(profile.provider === "openai" ? { stream_options: { include_usage: true } } : {}),
           ...(tools.length ? { tools } : {}),
           ...(outputLimit !== undefined ? (profile.provider === "openai"
@@ -76,6 +83,7 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
         let finishReason: string | undefined;
         let usage: unknown;
         const reasoningDetails: unknown[] = [];
+        let reasoningContent = "";
         const calls = new Map<number, { id: string; name: string; arguments: string }>();
         try {
         for await (const chunk of stream) {
@@ -88,6 +96,10 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
             if (profile.provider === "openrouter") {
               const details = (delta as unknown as { reasoning_details?: unknown[] }).reasoning_details;
               if (Array.isArray(details)) reasoningDetails.push(...details);
+            }
+            if (profile.provider === "deepseek") {
+              const part = (delta as unknown as { reasoning_content?: unknown }).reasoning_content;
+              if (typeof part === "string") reasoningContent += part;
             }
             if (delta.content) { text += delta.content; request.onTextDelta?.(delta.content); }
             for (const part of delta.tool_calls ?? []) {
@@ -134,7 +146,10 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
         }
         if (finishReason === "tool_calls" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool finish without calls");
         if (finishReason === "stop" && toolCalls.length) throw new ProviderError("invalid_stream", "calls without tool finish");
-        return { text, toolCalls, finishReason, ...(reasoningDetails.length ? { opaque: { reasoning_details: reasoningDetails } } : {}), ...(usage !== undefined ? { usage } : {}) };
+        return { text, toolCalls, finishReason,
+          ...(reasoningDetails.length ? { opaque: { reasoning_details: reasoningDetails } } : {}),
+          ...(reasoningContent ? { opaque: { reasoning_content: reasoningContent } } : {}),
+          ...(usage !== undefined ? { usage } : {}) };
         } finally {
           if (!signal.aborted && usage !== undefined) request.onUsage?.(usage);
         }

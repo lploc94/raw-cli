@@ -1,4 +1,4 @@
-import { GoogleGenAI, type Content, type Part } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel, type Content, type Part } from "@google/genai";
 import { renderUserInput, type ProviderAdapter, type ProviderProfile, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
@@ -46,6 +46,7 @@ export function createGoogleProvider(profile: Readonly<ProviderProfile>): Provid
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
         cacheSettings(profile, request.cacheKey);
+        const configured = profile.request?.kind === "google" ? profile.request : undefined;
         const stream = await client.models.generateContentStream({
           model: profile.model,
           contents: inputContents(request),
@@ -53,7 +54,12 @@ export function createGoogleProvider(profile: Readonly<ProviderProfile>): Provid
             systemInstruction: request.system,
             abortSignal: signal,
             httpOptions: { timeout: request.timeoutMs, retryOptions: { attempts: 1 } },
-            ...(request.maxOutputTokens ?? profile.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens ?? profile.maxOutputTokens } : {}),
+            ...(request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens
+              ? { maxOutputTokens: request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens } : {}),
+            ...(configured?.thinkingLevel ? { thinkingConfig: { thinkingLevel: {
+              minimal: ThinkingLevel.MINIMAL, low: ThinkingLevel.LOW, medium: ThinkingLevel.MEDIUM, high: ThinkingLevel.HIGH,
+            }[configured.thinkingLevel] } } : {}),
+            ...(configured?.thinkingBudget !== undefined ? { thinkingConfig: { thinkingBudget: configured.thinkingBudget } } : {}),
             ...(request.tools.length ? { tools: [{ functionDeclarations: request.tools.map((tool) => ({
               name: tool.name, description: tool.description, parametersJsonSchema: tool.inputSchema,
             })) }] } : {}),

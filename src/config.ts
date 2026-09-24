@@ -3,11 +3,11 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
-import type { ApiMethod, CacheOptions, ProviderName, ProviderProfile } from "./llm/types.js";
+import type { ApiMethod, CacheOptions, ProfileRequestOptions, ProviderName, ProviderProfile } from "./llm/types.js";
 
 type JsonObject = Record<string, unknown>;
 
-const apiMethods = new Set<ApiMethod>(["openai-chat-completions", "anthropic-messages", "google-generate-content"]);
+const apiMethods = new Set<ApiMethod>(["openai-chat-completions", "openai-responses", "anthropic-messages", "google-generate-content"]);
 
 export interface RawFlags {
   profile?: string;
@@ -183,6 +183,7 @@ interface ModelSpec {
 
 interface ProfileSpec {
   modelAlias: string;
+  request?: ProfileRequestOptions;
   maxSteps?: number;
   maxOutputBytes?: number;
   requestTimeoutMs?: number;
@@ -209,9 +210,71 @@ function defaultEndpoint(provider: ProviderName, method: ApiMethod): string | un
 }
 
 function usesOfficialEndpoint(provider: ProviderName, method: ApiMethod): boolean {
-  return (provider === "openai" && method === "openai-chat-completions")
+  return (provider === "openai" && (method === "openai-chat-completions" || method === "openai-responses"))
     || (provider === "anthropic" && method === "anthropic-messages")
     || (provider === "google" && method === "google-generate-content");
+}
+
+function requestSpec(raw: unknown, model: ModelSpec, where: string): ProfileRequestOptions {
+  const value = object(raw, where);
+  const common = ["max_output_tokens"];
+  const isOpenAi = model.provider === "openai" && (model.method === "openai-chat-completions" || model.method === "openai-responses");
+  const isDeepSeek = model.provider === "deepseek" && model.method === "openai-chat-completions";
+  const isAnthropic = model.provider === "anthropic" && model.method === "anthropic-messages";
+  const isGoogle = model.provider === "google" && model.method === "google-generate-content";
+  const allowed = isOpenAi ? [...common, "service_tier", "reasoning_effort", ...(model.method === "openai-responses" ? ["reasoning_mode"] : [])]
+    : isDeepSeek ? [...common, "thinking", "reasoning_effort"]
+    : isAnthropic ? [...common, "thinking", "effort", "service_tier"]
+    : isGoogle ? [...common, "thinking_level", "thinking_budget"] : common;
+  keys(value, allowed, where);
+  const base: { maxOutputTokens?: number } = {};
+  if (value.max_output_tokens !== undefined) {
+    const limit = positive(value.max_output_tokens, where + ".max_output_tokens");
+    if (model.maxOutputTokens !== undefined && limit > model.maxOutputTokens) throw new Error(where + ".max_output_tokens exceeds model capability");
+    if (model.contextWindow !== undefined) {
+      const reserve = Math.max(64, Math.ceil(model.contextWindow * 0.05));
+      if (limit > model.contextWindow - reserve) throw new Error(where + ".max_output_tokens exceeds context budget after reserve");
+    }
+    base.maxOutputTokens = limit;
+  }
+  if (isOpenAi) return { kind: "openai", ...base,
+    ...(value.service_tier !== undefined ? { serviceTier: enumValue(value.service_tier, new Set(["auto", "default", "flex", "fast", "priority"]), where + ".service_tier") } : {}),
+    ...(value.reasoning_effort !== undefined ? { reasoningEffort: enumValue(value.reasoning_effort, new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]), where + ".reasoning_effort") } : {}),
+    ...(value.reasoning_mode !== undefined ? { reasoningMode: enumValue(value.reasoning_mode, new Set(["standard", "pro"]), where + ".reasoning_mode") } : {}),
+  };
+  if (isDeepSeek) {
+    const thinking = value.thinking === undefined ? undefined : enumValue(value.thinking, new Set<"enabled" | "disabled">(["enabled", "disabled"]), where + ".thinking");
+    if (thinking === "disabled" && value.reasoning_effort !== undefined) throw new Error(where + ".reasoning_effort requires thinking enabled");
+    return { kind: "deepseek", ...base,
+      ...(thinking !== undefined ? { thinking } : {}),
+      ...(value.reasoning_effort !== undefined ? { reasoningEffort: enumValue(value.reasoning_effort, new Set(["low", "high", "max"]), where + ".reasoning_effort") } : {}),
+    };
+  }
+  if (isAnthropic) {
+    let thinking: Extract<ProfileRequestOptions, { kind: "anthropic" }>["thinking"];
+    if (value.thinking !== undefined) {
+      const spec = object(value.thinking, where + ".thinking");
+      const type = enumValue(spec.type, new Set<"adaptive" | "disabled" | "enabled">(["adaptive", "disabled", "enabled"]), where + ".thinking.type");
+      keys(spec, type === "enabled" ? ["type", "budget_tokens"] : ["type"], where + ".thinking");
+      thinking = type === "enabled" ? { type, budgetTokens: positive(spec.budget_tokens, where + ".thinking.budget_tokens") } : { type };
+      if (thinking.type === "enabled" && thinking.budgetTokens < 1024) throw new Error(where + ".thinking.budget_tokens must be at least 1024");
+      if (thinking.type === "enabled" && thinking.budgetTokens >= (base.maxOutputTokens ?? model.maxOutputTokens ?? 1024)) {
+        throw new Error(where + ".thinking.budget_tokens must be smaller than the requested output cap");
+      }
+    }
+    return { kind: "anthropic", ...base, ...(thinking ? { thinking } : {}),
+      ...(value.effort !== undefined ? { effort: enumValue(value.effort, new Set(["low", "medium", "high", "xhigh", "max"]), where + ".effort") } : {}),
+      ...(value.service_tier !== undefined ? { serviceTier: enumValue(value.service_tier, new Set(["auto", "standard_only"]), where + ".service_tier") } : {}),
+    };
+  }
+  if (isGoogle) {
+    if (value.thinking_level !== undefined && value.thinking_budget !== undefined) throw new Error(where + " must choose thinking_level or thinking_budget");
+    return { kind: "google", ...base,
+      ...(value.thinking_level !== undefined ? { thinkingLevel: enumValue(value.thinking_level, new Set(["minimal", "low", "medium", "high"]), where + ".thinking_level") } : {}),
+      ...(value.thinking_budget !== undefined ? { thinkingBudget: nonnegative(value.thinking_budget, where + ".thinking_budget") } : {}),
+    };
+  }
+  return { kind: "generic", ...base };
 }
 
 function modelSpec(name: string, raw: unknown): ModelSpec {
@@ -259,11 +322,21 @@ function compactSpec(raw: unknown, where: string): CompactSettings {
 function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): ProfileSpec {
   const where = "profile " + name;
   const value = object(raw, where);
-  keys(value, ["model", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact"], where);
+  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact"], where);
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
   const result: ProfileSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact") };
+  if (value.request !== undefined) result.request = requestSpec(value.request, model, where + ".request");
+  const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
+  if (requestedCap !== undefined && model.contextWindow !== undefined) {
+    const reserve = Math.max(64, Math.ceil(model.contextWindow * 0.05));
+    if (requestedCap > model.contextWindow - reserve) throw new Error(where + " output cap exceeds context budget after reserve");
+  }
+  if (result.request?.kind === "anthropic" && result.request.thinking?.type === "enabled"
+    && result.compact.maxOutputTokens <= result.request.thinking.budgetTokens) {
+    throw new Error(where + ".compact.max_output_tokens must exceed the thinking budget");
+  }
   if (value.max_steps !== undefined) result.maxSteps = positive(value.max_steps, where + ".max_steps");
   if (value.max_output_bytes !== undefined) result.maxOutputBytes = positive(value.max_output_bytes, where + ".max_output_bytes");
   if (value.request_timeout_ms !== undefined) result.requestTimeoutMs = positive(value.request_timeout_ms, where + ".request_timeout_ms");
@@ -311,6 +384,10 @@ function numberOption(flag: number | undefined, env: string | undefined, profile
 
 function freezeProfile(profile: ProviderProfile): Readonly<ProviderProfile> {
   if (profile.cache) Object.freeze(profile.cache);
+  if (profile.request) {
+    if (profile.request.kind === "anthropic" && profile.request.thinking) Object.freeze(profile.request.thinking);
+    Object.freeze(profile.request);
+  }
   return Object.freeze(profile);
 }
 
@@ -340,6 +417,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
       ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
       ...(model.maxOutputTokens !== undefined ? { maxOutputTokens: model.maxOutputTokens } : {}),
       ...(selectedSpec.cache !== undefined ? { cache: selectedSpec.cache } : {}),
+      ...(selectedSpec.request !== undefined ? { request: selectedSpec.request } : {}),
     };
     selected = freezeProfile(options.requireModel === false ? spec : resolveKey(spec, env));
   } else if (options.requireModel !== false) {

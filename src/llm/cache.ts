@@ -8,7 +8,7 @@ export interface NormalizedUsage {
   cacheReadRatio?: number;
 }
 
-export interface UsageRecord { method: ApiMethod; raw: unknown }
+export interface UsageRecord { method: ApiMethod; provider: string; raw: unknown }
 
 export interface UsageSummary {
   requests: number;
@@ -30,7 +30,7 @@ function count(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-export function normalizeUsage(method: ApiMethod, raw: unknown): NormalizedUsage {
+export function normalizeUsage(method: ApiMethod, raw: unknown, provider?: string): NormalizedUsage {
   const data = object(raw);
   let inputTokensTotal: number | undefined;
   let outputTokens: number | undefined;
@@ -50,11 +50,17 @@ export function normalizeUsage(method: ApiMethod, raw: unknown): NormalizedUsage
     const thoughts = count(data.thoughtsTokenCount);
     outputTokens = candidates !== undefined ? candidates + (thoughts ?? 0) : undefined;
     cacheReadTokens = count(data.cachedContentTokenCount);
+  } else if (method === "openai-responses") {
+    inputTokensTotal = count(data.input_tokens);
+    outputTokens = count(data.output_tokens);
+    const details = object(data.input_tokens_details);
+    cacheReadTokens = count(details.cached_tokens);
+    cacheWriteTokens = count(details.cache_write_tokens);
   } else {
     inputTokensTotal = count(data.prompt_tokens);
     outputTokens = count(data.completion_tokens);
     const details = object(data.prompt_tokens_details);
-    cacheReadTokens = count(details.cached_tokens);
+    cacheReadTokens = count(details.cached_tokens) ?? (provider === "deepseek" ? count(data.prompt_cache_hit_tokens) : undefined);
     cacheWriteTokens = count(details.cache_write_tokens);
   }
   return {
@@ -78,7 +84,7 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
   let ratioInputs = 0;
   let ratioReads = 0;
   for (const record of records) {
-    const usage = normalizeUsage(record.method, record.raw);
+    const usage = normalizeUsage(record.method, record.raw, record.provider);
     if (usage.inputTokensTotal !== undefined) { inputTokensKnown += usage.inputTokensTotal; inputCoverage++; }
     if (usage.outputTokens !== undefined) { outputTokensKnown += usage.outputTokens; outputCoverage++; }
     if (usage.cacheReadTokens !== undefined) cacheReadTokensKnown += usage.cacheReadTokens;

@@ -29,14 +29,20 @@ test("absent metrics remain unknown; explicit zeros and mixed-known coverage are
   });
   assert.deepEqual(normalizeUsage("openai-chat-completions", {}), {});
   const report = summarizeUsage([
-    { method: "openai-chat-completions", raw: { prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 70 }, completion_tokens: 8 } },
-    { method: "openai-chat-completions", raw: { prompt_tokens: 50, completion_tokens: 3 } },
-    { method: "anthropic-messages", raw: { input_tokens: 10, cache_creation_input_tokens: 20, cache_read_input_tokens: 20, output_tokens: 5 } },
+    { method: "openai-chat-completions", provider: "openai", raw: { prompt_tokens: 100, prompt_tokens_details: { cached_tokens: 70 }, completion_tokens: 8 } },
+    { method: "openai-chat-completions", provider: "llamacpp", raw: { prompt_tokens: 50, completion_tokens: 3 } },
+    { method: "anthropic-messages", provider: "anthropic", raw: { input_tokens: 10, cache_creation_input_tokens: 20, cache_read_input_tokens: 20, output_tokens: 5 } },
   ]);
   assert.equal(report.requests, 3);
   assert.equal(report.cacheRatioCoverage, 2);
   assert.equal(report.cacheReadRatio, 90 / 150);
   assert.equal(report.outputTokensKnown, 16);
+});
+
+test("DeepSeek cache-hit counters are reported without guessing for other gateways", () => {
+  const raw = { prompt_tokens: 80, completion_tokens: 10, prompt_cache_hit_tokens: 60, prompt_cache_miss_tokens: 20 };
+  assert.equal(normalizeUsage("openai-chat-completions", raw, "deepseek").cacheReadTokens, 60);
+  assert.equal(normalizeUsage("openai-chat-completions", raw, "unknown").cacheReadTokens, undefined);
 });
 
 test("a custom service uses its selected method for agent usage", async () => {

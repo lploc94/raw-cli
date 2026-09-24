@@ -1,30 +1,32 @@
-# Provider adapter contract
+# API adapters and request controls
 
-Runtime SDKs are pinned in `package-lock.json` during Phase 1 and imported under Node 22 before provider behavior is declared complete. Phase 3 uses their real clients against local HTTP/SSE fixtures and records the tested SDK API/options here.
+`models.<alias>.provider` names the upstream service or deployment. `models.<alias>.method` chooses the wire API; it never follows from the provider name. `model_id` is sent verbatim as the upstream model. The supported methods are `openai-chat-completions`, `openai-responses`, `anthropic-messages`, and `google-generate-content`. The selected profile is fixed for a session.
 
-Phase 1 dependency candidates verified by installed imports under Node 22.23.3: `openai` 7.23.0, `@anthropic-ai/sdk` 0.128.0, `@google/genai` 2.24.0, `@modelcontextprotocol/sdk` 1.30.1, and `@agentclientprotocol/sdk` 1.5.0. These imports establish availability only; Phase 3 and Phase 7 still require real protocol fixtures.
+| Method | SDK call | Typical service | Output cap field |
+|---|---|---|---|
+| `openai-chat-completions` | `openai.chat.completions.create` | OpenAI, DeepSeek, OpenRouter, Ollama, compatible gateways | OpenAI `max_completion_tokens`; other services `max_tokens` |
+| `openai-responses` | `openai.responses.create` | OpenAI | `max_output_tokens` |
+| `anthropic-messages` | `anthropic.messages.create` | Anthropic or compatible gateway | `max_tokens` |
+| `google-generate-content` | `google.models.generateContentStream` | Gemini or compatible gateway | `config.maxOutputTokens` |
 
-| Profile provider | SDK family | Planned stream API | Credential source | Endpoint |
-|---|---|---|---|---|
-| `openai` | Official `openai` | Chat Completions | `OPENAI_API_KEY` | SDK default |
-| `openai-compatible` | Official `openai` | Chat Completions | Optional named env | Required `base_url` |
-| `openrouter` | Official `openai` | Chat Completions | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
-| `ollama` | Official `openai` | Chat Completions | No real key | `http://127.0.0.1:11434/v1` |
-| `anthropic` | Official `@anthropic-ai/sdk` | Messages | `ANTHROPIC_API_KEY` | SDK default |
-| `google` | Official `@google/genai` | generateContentStream | `GEMINI_API_KEY`, then `GOOGLE_API_KEY` | Gemini Developer API |
+A service and method without a known matching endpoint must set `base_url`. Credential defaults apply only to the selected model, and unknown services have no guessed authentication or cache hints. SDK retries are disabled. Abort and timeout cover the full stream.
 
-The chosen model must support tool calls. No model is selected or replaced automatically. Adapter errors include unsupported tool capability, refusal, invalid stream, and network failure without treating partial output as completion. Automatic SDK retries are disabled for inference requests.
+## Profile request object
 
-Cache details must be recorded against actual pinned SDK request types during Phase 3/5. OpenAI Chat Completions must not receive Responses-only options. Anthropic requires its documented `cache_control` to activate caching. Google uses supported implicit caching. Generic compatible endpoints do not receive guessed provider-specific fields. A user-selected `llama.cpp` backend may use its documented `cache_prompt` option. Actual cache hit metrics are reported only when the provider returns them.
+`profiles.<name>.request` is strictly validated. It cannot override `model`, `messages`, `tools`, endpoint, or credentials. All methods accept `max_output_tokens` as a positive integer no larger than the model's configured output capability and smaller than its context window when those limits are supplied.
 
-The Phase 5 [context and cache reference](./context.md) lists the exact request fields, supported retention values, stable-key rules and usage formulas. Production request tests inspect each SDK's outgoing body, including absence of unsupported fields.
+- OpenAI Chat Completions: `service_tier` (`auto`, `default`, `flex`, `fast`, `priority`) and `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). These fields are accepted only for `provider: "openai"`; custom compatible services do not receive them by assumption.
+- OpenAI Responses: the same `service_tier` and `reasoning_effort`, plus `reasoning_mode` (`standard`, `pro`), only for `provider: "openai"`. The adapter uses `store:false`, replays full response output items including opaque reasoning and function calls, and appends linked `function_call_output` items. GPT-6 Astra tool use requires this method. [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning), [Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Fast mode](https://developers.openai.com/api/docs/guides/fast-mode).
+- DeepSeek Chat Completions: `thinking` (`enabled` or `disabled`) and `reasoning_effort` (`low`, `high`, `max`) are accepted only for `provider: "deepseek"`. The adapter sends `thinking.type` and preserves every assistant `reasoning_content` in later requests containing tools, including ordinary assistant turns. [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/).
+- Anthropic Messages: `thinking` is `{ "type": "adaptive" }`, `{ "type": "disabled" }`, or `{ "type": "enabled", "budget_tokens": N }`; `effort` is `low`, `medium`, `high`, `xhigh`, or `max`. `service_tier` is `auto` or `standard_only`. These are accepted only for `provider: "anthropic"`; the API validates snapshot-specific support. Manual `budget_tokens` must be at least 1024 and smaller than the effective output cap. Set `compact.max_output_tokens` above that budget if manual thinking is enabled; a smaller per-call override fails before network. [Anthropic effort](https://platform.claude.com/docs/en/build-with-claude/effort), [thinking budget rules](https://platform.claude.com/docs/en/build-with-claude/extended-thinking).
+- Gemini Generate Content: `thinking_level` or `thinking_budget`, never both. Level accepts `minimal`, `low`, `medium`, `high`; budget is a nonnegative integer. Both are accepted only for `provider: "google"`; the API validates model-family support. [Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking).
 
-Image results from MCP and delegated tools must reach a provider's native image input, or return an explicit unsupported-content error. Returning base64 as ordinary text is not a vision input. The Phase 3 and Phase 6 tests inspect real outgoing SDK requests to prove this.
+No request field is silently translated between services. A provider's 400 for unsupported model-specific combinations is returned as an error. Output caps include reasoning/thinking tokens where the provider reports them.
 
-## Phase 3 wire contract
+## Cache and continuation
 
-The pinned SDK paths are `openai.chat.completions.create({stream:true})`, `anthropic.messages.create({stream:true})`, and `google.models.generateContentStream()`. The OpenAI SDK handles OpenAI, compatible HTTP, OpenRouter and Ollama profiles with distinct endpoint/auth configuration. Anthropic uses top-level `system` and `messages`; Google uses `config.systemInstruction` and `contents`. `max_output_tokens` maps to Chat Completions `max_completion_tokens` for OpenAI, `max_tokens` for compatible/OpenRouter/Ollama, Messages `max_tokens`, and Gemini `config.maxOutputTokens`. Only OpenAI receives `stream_options.include_usage`; generic endpoints are not assumed to support it. Adapters disable SDK retries and apply one linked abort/deadline to the full stream.
+The system prompt, tool definitions and committed message history keep stable order across turns. OpenAI receives a stable session `prompt_cache_key`; Anthropic receives `cache_control` in auto mode; Google relies on implicit caching; other services get no guessed hint. A selected `llama.cpp` Chat backend can opt into `cache_prompt`. Cache availability and hits remain provider decisions. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching), [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
 
-Stream adapters emit visible text deltas, then one assembled assistant response with tool IDs/names/arguments and provider finish reason. Malformed arguments with usable call linkage carry `argumentError` for a matching nonexecuting tool result in the agent loop; duplicate or unusable call IDs, a truncated stream, refusal, unsupported finish, and malformed event lifecycle remain terminal errors. Opaque Anthropic thinking/signature blocks, Google thought signatures and OpenRouter reasoning details remain in the assistant turn for subsequent requests but are never shown as visible text. Usage fields remain raw provider data until the stats layer normalizes them in Phase 5.
+Function calls and tool results remain linked by call ID. Responses output items, Anthropic thinking/signature blocks, Gemini thought signatures, OpenRouter reasoning details and DeepSeek `reasoning_content` are kept as opaque continuation data and never displayed as assistant text. Tool images are passed as native image content where the method accepts them; base64 is never presented as an ordinary text description.
 
-Tool text and structured JSON map to native tool results. PNG/JPEG data maps to Anthropic `image` blocks and Gemini `inlineData`; Chat Completions emits all pending `tool` responses before a separate `user` image attachment with a data URL. Gemini groups parallel function responses into one user content. Unsupported MIME or malformed base64 returns an explicit error before inference. No URL or resource is fetched automatically. Local HTTP/SSE fixtures exercise SDK request bodies and follow-up calls; live hosted-model qualification requires credentials and is not claimed here.
+Usage reports include observed input, output, cache read and cache write counters. Missing fields remain unknown. This is not a tokenizer-based estimate of the model's remaining context.

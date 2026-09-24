@@ -31,23 +31,23 @@ The unreleased schema is breaking. It has no old flat-profile parser or migratio
 }
 ~~~
 
-provider identifies the upstream service or named deployment. method selects the API adapter. Phase 1 supports openai-chat-completions, anthropic-messages and google-generate-content; openai-responses is added only with a working adapter in Phase 2. No method is inferred from a model name or a provider string.
+provider identifies the upstream service or named deployment. method selects one of openai-chat-completions, openai-responses, anthropic-messages and google-generate-content. No method is inferred from a model name or provider string.
 
 Select with --profile, then RAW_PROFILE, then default_profile. There is no direct --provider, --model or --base-url override. A profile selection binds the model, endpoint and credentials for the session.
 The removed RAW_PROVIDER, RAW_MODEL and RAW_BASE_URL environment variables cause an error if present, including when empty.
 
 ## Model fields
 
-Required: provider, method, model_id. Optional: base_url, api_key or api_key_env (mutually exclusive), context_window_tokens and max_output_tokens. Both token limits are positive integers; max_output_tokens must be smaller than context_window_tokens when both are set. They are metadata and do not imply exact token counting or automatic compaction.
+Required: provider, method, model_id. Optional: base_url, api_key or api_key_env (mutually exclusive), context_window_tokens and max_output_tokens. Both token limits are positive integers; max_output_tokens must be smaller than context_window_tokens when both are set. A profile request output cap also leaves at least max(64, 5% of context_window_tokens) as a static headroom reserve. These limits are metadata and do not imply exact token counting or automatic compaction.
 
 api_key is a literal key. api_key_env is the name of an environment variable. Only the selected model resolves its credential. Known service defaults are OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY, OPENROUTER_API_KEY and a local Ollama endpoint. A custom service requires an explicit base_url and key source if the endpoint requires authentication. Config list validates all entries without resolving inactive credentials or printing secrets.
 Official SDK endpoint defaults apply only when provider and method are the matching service pair. Any other combination requires an explicit base_url so credentials never go to an adapter default for a different service.
 
 ## Profile fields
 
-Phase 1 supports model, max_steps, max_output_bytes, request_timeout_ms, cache and compact. Numeric CLI flags override RAW_* environment values, which override profile values, which override built-in defaults. Default max_steps is 25, max_output_bytes is 8192 and request_timeout_ms is 120000.
+Profiles support model, request, max_steps, max_output_bytes, request_timeout_ms, cache and compact. Numeric CLI flags override RAW_* environment values, which override profile values, which override built-in defaults. Default max_steps is 25, max_output_bytes is 8192 and request_timeout_ms is 120000. The strictly typed request fields and provider/method matrix are in [providers.md](providers.md).
 
-cache retains the existing mode, key, retention and backend controls where the provider/method actually supports them. compact.keep_recent_turns and compact.max_output_tokens configure manual compact using the selected session model. Automatic compact, typed frontier request controls, per-profile MCP/tool policy and optional native vision are added in their later phases, only when runtime support exists.
+cache retains mode, key, retention and backend controls where the provider/method actually supports them. compact.keep_recent_turns and compact.max_output_tokens configure manual compact using the selected session model. Automatic compact, per-profile MCP/tool policy and optional native vision are added in later phases, only when runtime support exists.
 
 raw config init writes this schema once with mode 0600. raw config list displays profile name, model alias, upstream model_id, provider, method and sanitized endpoint. It never displays api_key or the resolved environment value.
 

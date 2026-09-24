@@ -96,6 +96,8 @@ codex-impl-review with gpt-6-astra; verdict must be APPROVE.
 feat: split model access paths from runnable profiles
 
 ## Phase 2: Dispatch API methods and typed frontier controls
+### Status
+complete
 ### Goal
 Add a working OpenAI Responses adapter and typed per-profile request/cache controls on top of Phase 1 method dispatch.
 ### Current behavior and gap
@@ -121,9 +123,9 @@ A custom provider using Anthropic Messages must not hit Chat Completions; GPT-6 
 ### Implementation obligations
 Audit every branch on profile.provider, moving method selection to method and retaining only verified service-specific conditions. Preserve streaming/cancellation and no automatic retries.
 ### Acceptance criteria
-- [ ] AC-2.1: Four methods complete a streamed tool call and continuation with correct request bodies — proven by local provider fixtures.
-- [ ] AC-2.2: Frontier options reject unsupported combinations and arrive at the intended wire field — proven by request fixture tests.
-- [ ] AC-2.3: Cache/usage metrics remain correct and session prefix stays stable — proven by cache/usage tests.
+- [x] AC-2.1: Four methods complete a streamed tool call and continuation with correct request bodies — proven by local provider fixtures.
+- [x] AC-2.2: Frontier options reject unsupported combinations and arrive at the intended wire field — proven by request fixture tests.
+- [x] AC-2.3: Cache/usage metrics remain correct and session prefix stays stable — proven by cache/usage tests.
 ### Focused verification
 node --import tsx --test tests/providers.test.ts tests/provider-content.test.ts tests/cache.test.ts tests/usage.test.ts
 ### Phase gates
@@ -298,3 +300,4 @@ docs: complete config redesign and installed qualification
 - 2026-09-24: Rounds 2 and 3 raw output explicitly returned APPROVE and no remaining issues. Runner zero-issue parser defect required explicit verdict override at finalization; plan review complete. No production code changed.
 - 2026-09-24: User invoked loop-implement and approved execution of the reviewed plan. Phase 1 in_progress; preflight found only the two untracked design documents and HEAD 0ed50b0.
 - 2026-09-24: Phase 1 complete. Docs-first config reference and red tests preceded implementation. `npm run check` 135/135, `npm run typecheck`, focused tests, `npm run test:overhead` (25 prompt tokens, three built-ins), and `git diff --check` passed. GPT-6 Astra implementation review round 1 found three defects; all fixed and round 2 raw verdict APPROVE. Runner verdict-only parser required explicit APPROVE finalization; record `.codex-review/sessions/codex-impl-review-20260924-010`.
+- 2026-09-24: Phase 2 complete. Official API docs informed four SDK methods and typed controls. Red fixture tests proved missing Responses, DeepSeek reasoning replay and request options before implementation. `npm run check` 146/146, typecheck, focused tests, overhead and diff check passed. GPT-6 Astra review found three cap/budget defects, all fixed; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-011`.
