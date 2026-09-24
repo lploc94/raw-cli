@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,10 @@ import WebSocket from "ws";
 import { serveAcpWebSocket } from "../src/acp/transport.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { createAcpClient } from "../src/acp/client.js";
-import { loadConfig } from "../src/config.js";
+import { loadConfig as loadConfigActual } from "../src/config.js";
+
+const configHome = mkdtempSync(join(tmpdir(), "raw-acp-transport-test-config-"));
+const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
 
 test("T-07a: independent ACP SDK client talks to raw daemon with text, resource-only and mixed prompts", async () => {
   const fixture = await startMockProvider(Array.from({ length: 3 }, () => ({ frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] })));

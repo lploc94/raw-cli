@@ -86,7 +86,7 @@ export class ToolRegistry {
     const invalid = tool.validateArgs ? tool.validateArgs(args) : validate(tool, args);
     if (invalid) return finish(errorResult("invalid_arguments", invalid));
     if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
-    if (!context.autoApprove) {
+    if (context.autoApprove === false) {
       if (!context.approve) return finish(errorResult("approval_required", `approval required for ${name}`));
       let onAbort: (() => void) | undefined;
       const cancelled = context.signal ? new Promise<false>((resolve) => {

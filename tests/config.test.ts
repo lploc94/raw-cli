@@ -24,6 +24,7 @@ test("T-01a: named profiles select distinct endpoints and obey explicit preceden
   });
   const baseline = await loadConfig({ home, env: {}, requireModel: true });
   assert.equal(baseline.profile?.name, "local-a");
+  assert.equal(baseline.autoApprove, true);
   assert.equal(baseline.profile?.baseUrl, "http://127.0.0.1:9001/v1");
   const selected = await loadConfig({ home, env: { RAW_PROFILE: "local-b", RAW_MODEL: "env-model" }, requireModel: true });
   assert.equal(selected.profile?.baseUrl, "http://127.0.0.1:9002/v1");

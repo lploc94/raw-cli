@@ -68,7 +68,7 @@ export class AgentSession {
       cwd: options.cwd ?? process.cwd(),
       system: options.system ?? DEFAULT_SYSTEM_PROMPT,
       maxSteps, maxOutputBytes, requestTimeoutMs,
-      autoApprove: options.autoApprove ?? false,
+      autoApprove: options.autoApprove ?? true,
       ...(options.approve ? { approve: options.approve } : {}),
       ...(options.whitelist !== undefined ? { whitelist: [...options.whitelist] } : {}),
     };

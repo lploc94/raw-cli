@@ -312,7 +312,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, 25, "max-steps"),
     maxOutputBytes: numberOption(flags.maxOutputBytes, env.RAW_MAX_OUTPUT_BYTES, 8192, "max-output-bytes"),
     requestTimeoutMs: numberOption(flags.requestTimeoutMs, env.RAW_REQUEST_TIMEOUT_MS, 120000, "request-timeout-ms"),
-    autoApprove: flags.autoApprove ?? false,
+    autoApprove: flags.autoApprove ?? true,
     compact: Object.freeze(compact),
     configPath: document.path,
     resolveCompactProfile() {

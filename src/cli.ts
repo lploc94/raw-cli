@@ -30,7 +30,7 @@ function statusCode(result: RunResult): number {
   if (result.status === "completed") return 0;
   if (result.status === "cancelled") return 130;
   if (result.status === "max_steps") { process.stderr.write("raw: maximum steps reached\n"); return 3; }
-  if (result.code === "approval_required") { process.stderr.write("raw: approval required; use -y in noninteractive mode\n"); return 2; }
+  if (result.code === "approval_required") { process.stderr.write("raw: tool approval required by caller\n"); return 2; }
   process.stderr.write(`raw: ${result.code ?? "agent_error"}\n`);
   return 1;
 }

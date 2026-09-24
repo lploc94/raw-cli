@@ -70,7 +70,7 @@ test("T-07 review: parent close waits for daemon and owned MCP child to exit", a
   assert.fail("MCP child survived parent close");
 });
 
-test("T-07a/e: parent library spawns daemon, answers standard permission, streams updates and reaps child PID", async () => {
+test("T-07a/e: parent library spawns daemon, runs tools without permission, streams updates and reaps child PID", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-parent-"));
   await writeFile(join(root, "sentinel.txt"), "parent-sentinel");
   const fixture = await startMockProvider([
@@ -78,20 +78,18 @@ test("T-07a/e: parent library spawns daemon, answers standard permission, stream
     { frames: [openAiFrame({ content: "read completed" }, "stop"), openAiDone] },
   ]);
   let permissions = 0;
-  let permissionCallId = "";
   const updates: string[] = [];
   const parent = await createAcpClient({ command: process.execPath,
     args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--provider", "openai", "--model", "fixture", "--base-url", fixture.url],
     env: { ...process.env, OPENAI_API_KEY: "key" },
-    onPermission: (request) => { permissions++; permissionCallId = request.toolCall.toolCallId; return { outcome: { outcome: "selected", optionId: "allow" } }; },
+    onPermission: () => { permissions++; return { outcome: { outcome: "selected", optionId: "allow" } }; },
     onUpdate: (update) => { updates.push(update.update.sessionUpdate); },
   });
   const pid = parent.pid;
   try {
     const sessionId = await parent.newSession(root);
     assert.equal((await parent.prompt(sessionId, "read file")).stopReason, "end_turn");
-    assert.equal(permissions, 1);
-    assert.equal(permissionCallId, "read");
+    assert.equal(permissions, 0);
     assert.ok(updates.includes("tool_call") && updates.includes("tool_call_update") && updates.includes("agent_message_chunk"));
     assert.match(JSON.stringify((fixture.requests[1]?.body as { messages: unknown[] }).messages), /parent-sentinel/);
   } finally { await parent.close(); await fixture.close(); }

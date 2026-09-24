@@ -16,12 +16,12 @@ Edit the created `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.js
 
 ```sh
 raw --profile local "Explain the tests in this repository"
-raw --profile local -y "Fix the failing tests"
+raw --profile local "Fix the failing tests"
 raw --profile local                 # interactive: >
 raw --profile local --interactive   # same REPL
 ```
 
-By default, a TTY asks before each validated tool call. `-y`/`--auto-approve` skips those questions. A noninteractive task that needs a tool exits 2 unless `-y` is supplied. **Tools run with your OS account's full permissions.** `cwd` chooses the base for relative paths; it is not a sandbox.
+Tool calls run automatically in terminal, headless and ACP modes; `-y`/`--auto-approve` remains an optional compatibility alias. **Tools run with your OS account's full permissions.** `cwd` chooses the base for relative paths; it is not a sandbox.
 
 ## Multiple model sources
 

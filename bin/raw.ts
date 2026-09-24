@@ -37,11 +37,11 @@ Options:
   --max-output-bytes N       Model-facing tool result cap (default 8192)
   --request-timeout-ms N     Inference/MCP deadline (default 120000)
   --interactive              Start a terminal REPL
-  -y, --auto-approve         Skip tool confirmation
+  -y, --auto-approve         Compatibility alias (tools run automatically)
   --help, --version          Show help or version
 
 REPL: /compact, /clear, /stats, /exit
-Exit: 0 complete, 1 runtime error, 2 invalid input/approval, 3 max steps, 130 cancelled
+Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 `;
 }
 

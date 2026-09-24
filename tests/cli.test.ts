@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+
+process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "raw-cli-test-config-"));
 
 async function raw(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {}) {
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"), ...args], {
@@ -45,7 +48,7 @@ test("T-08a: one-shot streams once and a real write result reaches follow-up inf
     { frames: [openAiFrame({ content: "Changed sentinel" }, "stop"), openAiDone] },
   ]);
   try {
-    const result = await raw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "-y", "write sentinel"],
+    const result = await raw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "write sentinel"],
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "Changed sentinel\n");
@@ -54,39 +57,46 @@ test("T-08a: one-shot streams once and a real write result reaches follow-up inf
   } finally { await fixture.close(); }
 });
 
-test("T-08a/b: non-TTY approval fails before side effect; -y executes it", async () => {
-  const root = await mkdtemp(join(tmpdir(), "raw-cli-approval-"));
+test("T-08a/b: non-TTY tool call executes without an approval flag", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-auto-tool-"));
   const response = { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "edit", type: "function", function: {
     name: "write_file", arguments: '{"path":"nope.txt","content":"created"}',
   } }] }, "tool_calls"), openAiDone] };
-  const fixture = await startMockProvider([response]);
+  const fixture = await startMockProvider([response, { frames: [openAiFrame({ content: "completed" }, "stop"), openAiDone] }]);
   try {
     const result = await raw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "write file"],
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
-    assert.equal(result.code, 2);
-    assert.match(result.stderr, /approval/i);
-    await assert.rejects(access(join(root, "nope.txt")));
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "completed\n");
+    assert.equal(await readFile(join(root, "nope.txt"), "utf8"), "created");
+    assert.doesNotMatch(result.stderr, /approval|allow .+\?/i);
   } finally { await fixture.close(); }
 });
 
-test("T-08 review: non-TTY REPL exits 2 on first tool needing approval", async () => {
-  const root = await mkdtemp(join(tmpdir(), "raw-repl-approval-"));
-  const fixture = await startMockProvider([{ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function", function: {
-    name: "write_file", arguments: '{"path":"denied.txt","content":"never"}',
-  } }] }, "tool_calls"), openAiDone] }]);
+test("T-08 review: piped REPL executes a tool without approval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-repl-auto-tool-"));
+  const fixture = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function", function: {
+      name: "write_file", arguments: '{"path":"written.txt","content":"created"}',
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "completed" }, "stop"), openAiDone] },
+  ]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"),
     "--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive"],
   { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
   let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (part: string) => { stdout += part; });
   child.stderr.setEncoding("utf8").on("data", (part: string) => { stderr += part; });
-  child.stdout.resume();
   try {
-    child.stdin.write("write denied\n");
+    child.stdin.write("write file\n");
+    await waitFor(() => stdout, "completed");
+    child.stdin.write("/exit\n");
     const code = await Promise.race([new Promise<number | null>((resolve) => child.once("exit", resolve)),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("REPL did not exit after approval failure")), 3000))]);
-    assert.equal(code, 2, stderr);
-    assert.match(stderr, /approval required/i);
-    await assert.rejects(access(join(root, "denied.txt")));
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("REPL did not exit")), 3000))]);
+    assert.equal(code, 0, stderr);
+    assert.equal(await readFile(join(root, "written.txt"), "utf8"), "created");
+    assert.doesNotMatch(stderr, /approval|allow .+\?/i);
   } finally { child.kill("SIGKILL"); await fixture.close(); }
 });
 
@@ -123,51 +133,42 @@ test("T-08 review: SIGINT during MCP startup reaps owned stdio child", async () 
   } finally { child.kill("SIGKILL"); if (mcpPid) { try { process.kill(mcpPid, "SIGKILL"); } catch { /* already reaped */ } } }
 });
 
-test("T-08b: real PTY approval allows a write; denial prevents the side effect", async () => {
-  for (const choice of ["y", "n"] as const) {
-    const root = await mkdtemp(join(tmpdir(), `raw-cli-pty-${choice}-`));
-    const fixture = await startMockProvider([
-      { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function", function: {
-        name: "write_file", arguments: JSON.stringify({ path: join(root, "marker"), content: "ok" }),
-      } }] }, "tool_calls"), openAiDone] },
-      { frames: [openAiFrame({ content: "handled" }, "stop"), openAiDone] },
-    ]);
-    const { child, output } = ptyRaw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "write marker"],
-      { ...process.env, OPENAI_API_KEY: "key" });
-    try {
-      await waitFor(output, "allow write_file");
-      child.stdin.write(`${choice}\n`);
-      const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
-      assert.equal(code, 0, output());
-      if (choice === "y") assert.equal(await readFile(join(root, "marker"), "utf8"), "ok");
-      else {
-        await assert.rejects(access(join(root, "marker")));
-        assert.match(JSON.stringify(fixture.requests[1]?.body), /approval denied/);
-      }
-    } finally { child.kill("SIGTERM"); await fixture.close(); }
-  }
-});
-
-test("T-08 review: queued REPL command is retained while a later approval answer is read", async () => {
-  const root = await mkdtemp(join(tmpdir(), "raw-pty-queued-approval-"));
+test("T-08b: real PTY executes a write without a permission prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-pty-auto-"));
   const fixture = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function", function: {
-      name: "write_file", arguments: JSON.stringify({ path: join(root, "marker"), content: "never" }),
+      name: "write_file", arguments: JSON.stringify({ path: join(root, "marker"), content: "ok" }),
     } }] }, "tool_calls"), openAiDone] },
-    { frames: [openAiFrame({ content: "denial handled" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "handled" }, "stop"), openAiDone] },
+  ]);
+  const { child, output } = ptyRaw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "write marker"],
+    { ...process.env, OPENAI_API_KEY: "key" });
+  try {
+    const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+    assert.equal(code, 0, output());
+    assert.equal(await readFile(join(root, "marker"), "utf8"), "ok");
+    assert.doesNotMatch(output(), /allow write_file|\[y\/N\]/i);
+  } finally { child.kill("SIGTERM"); await fixture.close(); }
+});
+
+test("T-08 review: queued REPL command follows an automatic tool call", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-pty-queued-tool-"));
+  const fixture = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function", function: {
+      name: "write_file", arguments: JSON.stringify({ path: join(root, "marker"), content: "written" }),
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "write handled" }, "stop"), openAiDone] },
   ]);
   const { child, output } = ptyRaw(["--provider", "openai", "--model", "fixture", "--base-url", fixture.url, "--interactive"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
     await waitFor(output, "> ");
     child.stdin.write("run write\n/exit\n");
-    await waitFor(output, "allow write_file");
-    child.stdin.write("n\n");
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 0, output());
-    assert.match(output(), /denial handled/);
-    await assert.rejects(access(join(root, "marker")));
-    assert.match(JSON.stringify(fixture.requests[1]?.body), /approval denied/);
+    assert.match(output(), /write handled/);
+    assert.equal(await readFile(join(root, "marker"), "utf8"), "written");
+    assert.doesNotMatch(output(), /allow write_file|\[y\/N\]/i);
   } finally { child.kill("SIGTERM"); await fixture.close(); }
 });
 

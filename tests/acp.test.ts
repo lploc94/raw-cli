@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { deflateSync } from "node:zlib";
 import { client, PROTOCOL_VERSION, type ContentBlock } from "@agentclientprotocol/sdk";
-import { loadConfig } from "../src/config.js";
+import { loadConfig as loadConfigActual } from "../src/config.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { createProvider } from "../src/llm/client.js";
 import { startMockProvider } from "./fixtures/mock-provider.js";
 import type { ProviderRequest } from "../src/llm/types.js";
+
+const configHome = mkdtempSync(join(tmpdir(), "raw-acp-test-config-"));
+const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
 
 test("T-07 review: upstream SDK errors never expose credentials in ACP replies", async () => {
   const secret = "secret-api-key-sentinel";
@@ -382,7 +386,7 @@ test("T-07d: independent session cwd/results and cross-peer ownership hold durin
 
 test("T-07d: cancel services pending permission while prompt is blocked and prevents write side effect", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-acp-permission-"));
-  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture" }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { provider: "ollama", model: "fixture", autoApprove: false }, env: {}, requireModel: true });
   let requests = 0;
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async () => {
     requests++;

@@ -1,4 +1,9 @@
 # Build raw-cli: small-context coding harness with reliable multi-turn caching
+
+## User correction after initial implementation (2026-09-24)
+
+The CLI and ACP execute exposed tools automatically with the invoking account's full permissions. This supersedes the TTY and headless approval defaults in D-03 and related approval test expectations below. `-y` remains accepted for compatibility but is unnecessary. Library callers may explicitly opt into approval callbacks with `autoApprove: false`.
+
 ## Plan schema
 loop-plan/v1
 

@@ -12,7 +12,7 @@ Relative paths resolve against the session's `cwd`; absolute paths are used as g
 
 Each result retains at most `maxOutputBytes` of content (8192 by default). `read_file` reads a bounded prefix. Bash shares this budget across stdout and stderr in observed arrival order and drains both pipes after the cap. UTF-8 characters are never split. Results carry `truncated`, `retainedBytes`, and, where known, `observedBytes` metadata. Bash also reports its actual exit code, signal, or deadline; a nonzero exit is returned for agent inspection. An over-limit JSON result is a labeled text preview, never malformed JSON presented as structured data.
 
-Dispatch validates the tool name, schema, visibility and session whitelist before requesting approval. A denied call has no side effects. Interactive terminal use prompts once per tool call. `-y` / `--auto-approve` approves tool execution automatically. Headless use without `-y` stops at the first attempted tool with `approval_required` and exit 2. Library callers may supply an approval callback.
+Dispatch validates the tool name, schema, visibility and session whitelist before execution. CLI and ACP sessions execute exposed tools automatically, including headless runs. `-y` / `--auto-approve` is retained as a compatibility alias. Library callers can explicitly set `autoApprove: false` and supply an approval callback; denial has no side effect.
 
 The `bash` tool requires Bash on `PATH`, or an explicit `RAW_BASH_PATH`. Each invocation supervises one process group. Abort or deadline sends TERM to that group, then KILL if needed. Long-lived, deliberately detached jobs can escape the group and are outside this guarantee; use an MCP server designed for managed persistent processes when needed.
 

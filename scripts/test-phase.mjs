@@ -1,5 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const suites = {
   foundation: ["config", "prompt", "foundation-cli"],
@@ -24,9 +26,12 @@ if (!files || files.some((file) => !existsSync(file))) {
   const build = selector === "cli" ? spawnSync("npm", ["run", "build"], { stdio: "inherit" }) : undefined;
   if (build && build.status !== 0) process.exitCode = build.status ?? 1;
   else {
+    const configHome = mkdtempSync(join(tmpdir(), "raw-test-config-"));
     const result = spawnSync(process.execPath, ["--import", "tsx", "--test", ...files], {
       stdio: "inherit",
+      env: { ...process.env, XDG_CONFIG_HOME: configHome },
     });
+    rmSync(configHome, { recursive: true, force: true });
     process.exitCode = result.status ?? 1;
   }
 }
