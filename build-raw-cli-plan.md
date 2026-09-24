@@ -34,7 +34,7 @@ Do not add automatic instruction-file loading, hidden context discovery, automat
 macOS/Linux are initial targets. Verify the actual host and Node 22/24; supply Linux/macOS CI configuration. Windows qualification and remote CI execution are not completion prerequisites and must never be reported as passed unless run. The user's Windows machine instructions apply to CTXE qualification; they do not automatically authorize unrelated raw-cli qualification there.
 
 ## Invariants
-- **I-01 Small input:** default prompt <=50 reference tokens; default prompt plus three tool schemas <=500 reference tokens. No prompt padding to reach provider cache thresholds.
+- **I-01 Small input (original plan):** default prompt <=50 reference tokens; default prompt plus three tool schemas <=500 reference tokens. No prompt padding to reach provider cache thresholds. The combined 500-token gate was superseded on 2026-09-24 by the user's clarification: necessary tool guidance takes precedence, and combined overhead is measured without a fixed ceiling.
 - **I-02 Three primitives:** absent explicit external registrations, every adapter advertises exactly the same three built-ins. REPL/config/ACP commands are not model tools.
 - **I-03 No hidden instructions:** no AGENTS.md, MCP server instructions, dates, cwd banners, approval text, stats, formatting rules, or workflow guidance enter model messages automatically. The short compaction instruction exists only in an explicit compaction request.
 - **I-04 Stable history:** freeze prior model-visible messages, IDs, argument strings, result previews, system prompt, and ordered tool schemas; append new content. Re-reading files or rendering UI must not rewrite history.

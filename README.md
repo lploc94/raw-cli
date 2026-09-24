@@ -1,6 +1,6 @@
 # raw-cli
 
-`raw` is a local coding agent for models with limited context. Its default system prompt is 25 reference tokens. A text-only model sees three built-in tools: `read_file`, `write_file`, and `bash`. A model configured with `vision: true` also sees `view_image`. Selected MCP servers can add external tools. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
+`raw` is a local coding agent for models with limited context. Its default system prompt covers general task behavior; the tool definitions explain how to use each tool. A text-only model sees three built-in tools: `read_file`, `write_file`, and `bash`. A model configured with `vision: true` also sees `view_image`. Selected MCP servers can add external tools. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
 
 ## Install and run
 

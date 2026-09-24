@@ -1,6 +1,6 @@
 # Built-in tools
 
-The default registry exposes exactly three tools. Their JSON object inputs reject unknown fields:
+The default registry exposes exactly three tools. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
 
 | Tool | Required input | Optional input | Action |
 |---|---|---|---|
@@ -39,4 +39,4 @@ An optional profile `tools.rules` array applies to built-ins, MCP tools and ACP-
 
 The `bash` tool requires Bash on `PATH`, or an explicit `RAW_BASH_PATH`. Each invocation supervises one process group. Abort or deadline sends TERM to that group, then KILL if needed. Long-lived, deliberately detached jobs can escape the group and are outside this guarantee; use an MCP server designed for managed persistent processes when needed.
 
-The development-only `npm run test:overhead` reports the exact canonical input and `o200k_base` token count for the production default prompt and built-in definitions. External tools, custom prompts, and provider framing add separate overhead.
+The development-only `npm run test:overhead` reports the exact canonical input and `o200k_base` token count for the production default prompt and built-in definitions. It measures combined overhead without imposing an arbitrary combined-token ceiling; essential tool guidance remains in the definitions. External tools, custom prompts, and provider framing add separate overhead.

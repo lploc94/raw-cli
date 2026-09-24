@@ -99,30 +99,70 @@ function validateBashBatch(value: unknown): string | undefined {
   return undefined;
 }
 
+const READ_FILE_DESCRIPTION = [
+  "Read 1-16 UTF-8 files in one call; results correspond to files by zero-based index. Relative paths use the session cwd.",
+  "With only path, request the whole file. For lines, start_line is 1-based and defaults to 1; use inclusive end_line or max_lines, never both. A start past EOF returns empty text.",
+  "Each ok or partial result reports the actual line range, eof, text, and sha256 of the exact returned file bytes, including original line endings and BOM.",
+  "If a read exceeds the shared output budget or max_bytes, it returns complete leading lines with status partial and next_line; read again with start_line=next_line. If the first selected line cannot fit, status is line_too_large; a limit too small for result metadata may return budget_exhausted. A file error does not stop later entries.",
+].join(" ");
+
+const WRITE_FILE_DESCRIPTION = [
+  "Apply 1-16 file operations in array order; results correspond to operations by zero-based index. Relative paths use the session cwd.",
+  "overwrite and append require content and create the file and parent directories. replace_text requires nonempty old_text and a new_text string; it changes exactly one literal occurrence, otherwise fails without writing. Empty new_text deletes that occurrence.",
+  "replace_lines requires existing 1-based inclusive start_line and end_line, content, and lowercase expected_sha256. First read exactly those lines with read_file, then copy that result's sha256 into expected_sha256; it hashes the original selected bytes, including BOM and line endings. A changed selected span or missing line fails without writing. Empty content deletes the lines; a nonempty replacement without a final newline keeps the original separator before following lines.",
+  "Invalid arguments reject the whole batch before any write. Runtime errors are reported per operation and later operations continue; completed writes are not rolled back. Abort skips remaining operations.",
+].join(" ");
+
+const BASH_DESCRIPTION = [
+  "Run 1-16 Bash commands sequentially in array order; results correspond to commands by zero-based index.",
+  "Each command starts a separate Bash process in the session cwd. Filesystem changes persist; shell variables and cd do not carry to the next command. timeout_ms is an optional per-command deadline in milliseconds (default 120000).",
+  "Each result reports status, exit_code, signal, timed_out, truncated, stdout, and stderr. Status ok means the command finished; inspect exit_code to determine success. A nonzero exit does not stop later commands. Timeout or abort stops the active process group and marks remaining commands skipped.",
+  "All output shares one bounded result budget, so stdout or stderr may be truncated. Invalid arguments reject the entire batch before any command starts.",
+].join(" ");
+
 const builtIns: readonly ToolRegistration[] = [
   {
-    name: "read_file", description: "Read UTF-8 files; optional 1-based line ranges and counts.",
+    name: "read_file", description: READ_FILE_DESCRIPTION,
     inputSchema: { type: "object", properties: { files: { type: "array", minItems: 1, maxItems: 16,
-      items: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer", minimum: 1 },
-        end_line: { type: "integer", minimum: 1 }, max_lines: { type: "integer", minimum: 1 }, max_bytes: { type: "integer", minimum: 1 } },
+      description: "Independent file selections; return rows follow this order.",
+      items: { type: "object", properties: {
+        path: { type: "string", description: "File path, absolute or relative to the session cwd." },
+        start_line: { type: "integer", minimum: 1, description: "First 1-based line; omit for a full read. Defaults to 1 for a range." },
+        end_line: { type: "integer", minimum: 1, description: "Inclusive last line; do not combine with max_lines." },
+        max_lines: { type: "integer", minimum: 1, description: "Maximum complete lines from start_line; do not combine with end_line." },
+        max_bytes: { type: "integer", minimum: 1, description: "Optional byte cap for this serialized success row, including JSON framing." },
+      },
         required: ["path"], additionalProperties: false } } }, required: ["files"], additionalProperties: false },
     validateArgs: validateReadBatch,
     handler: (args, ctx) => readFileTool(args as Parameters<typeof readFileTool>[0], ctx),
   },
   {
-    name: "write_file", description: "Batch overwrite, append or guarded edits.",
+    name: "write_file", description: WRITE_FILE_DESCRIPTION,
     inputSchema: { type: "object", properties: { operations: { type: "array", minItems: 1, maxItems: 16,
-      items: { type: "object", properties: { path: { type: "string" }, mode: { type: "string", enum: ["overwrite", "append", "replace_text", "replace_lines"] },
-        content: { type: "string" }, old_text: { type: "string" }, new_text: { type: "string" },
-        start_line: { type: "integer", minimum: 1 }, end_line: { type: "integer", minimum: 1 }, expected_sha256: { type: "string" } },
+      description: "Ordered writes; a runtime failure in one operation does not undo other successful operations.",
+      items: { type: "object", properties: {
+        path: { type: "string", description: "File path, absolute or relative to the session cwd." },
+        mode: { type: "string", enum: ["overwrite", "append", "replace_text", "replace_lines"],
+          description: "overwrite/append use content; replace_text uses old_text/new_text; replace_lines uses a guarded line range and content." },
+        content: { type: "string", description: "Whole content for overwrite, suffix for append, or replacement lines for replace_lines. Empty content is allowed." },
+        old_text: { type: "string", description: "Nonempty literal text for replace_text; must occur exactly once." },
+        new_text: { type: "string", description: "Replacement for replace_text; empty text deletes the match." },
+        start_line: { type: "integer", minimum: 1, description: "First existing 1-based line for replace_lines." },
+        end_line: { type: "integer", minimum: 1, description: "Inclusive last existing line for replace_lines; must not precede start_line." },
+        expected_sha256: { type: "string", description: "Lowercase sha256 from read_file for exactly the selected original lines; guards against changed bytes." },
+      },
         required: ["path", "mode"], additionalProperties: false } } }, required: ["operations"], additionalProperties: false },
     validateArgs: validateWriteBatch,
     handler: (args, ctx) => writeFileTool(args as Parameters<typeof writeFileTool>[0], ctx),
   },
   {
-    name: "bash", description: "Run Bash commands sequentially.",
+    name: "bash", description: BASH_DESCRIPTION,
     inputSchema: { type: "object", properties: { commands: { type: "array", minItems: 1, maxItems: 16,
-      items: { type: "object", properties: { command: { type: "string" }, timeout_ms: { type: "integer", minimum: 1 } },
+      description: "Bash commands run one at a time in this order.",
+      items: { type: "object", properties: {
+        command: { type: "string", description: "Nonempty Bash -c command to run in the session cwd." },
+        timeout_ms: { type: "integer", minimum: 1, description: "Positive deadline for this command in milliseconds; defaults to 120000." },
+      },
         required: ["command"], additionalProperties: false } } }, required: ["commands"], additionalProperties: false },
     validateArgs: validateBashBatch,
     handler: (args, ctx) => bashTool(args as Parameters<typeof bashTool>[0], ctx),
@@ -130,8 +170,8 @@ const builtIns: readonly ToolRegistration[] = [
 ];
 
 const imageTool: ToolRegistration = {
-  name: "view_image", description: "Read a PNG or JPEG image from a file.",
-  inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
+  name: "view_image", description: "Read a local PNG or JPEG when visual details matter. The result is a native image block for you to inspect, not a text description; use it for screenshots, diagrams, or photos. Relative paths use the session cwd. Files over 16 MiB and unsupported or invalid formats return an error.",
+  inputSchema: { type: "object", properties: { path: { type: "string", description: "Absolute image path or path relative to the session cwd." } }, required: ["path"], additionalProperties: false },
   handler: (args, ctx) => viewImageTool(args as { path: string }, ctx),
 };
 

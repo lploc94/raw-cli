@@ -13,7 +13,7 @@ This record distinguishes local executable evidence from configured CI and unrun
 | 5: automatic compact | Full-request estimate, image-safe chunking, rollback, calibration and 179 passing tests | `.codex-review/sessions/codex-impl-review-20260924-014` APPROVE |
 | 6: public/package/install | 181/181 tests on Node 22 and 24, packed consumer write/MCP/vision/ACP, exact installed bytes, live DeepSeek below | `.codex-review/sessions/codex-impl-review-20260924-015` APPROVE |
 
-The review runner sometimes failed to parse a verdict-only `APPROVE` response; the raw reviewer verdict was inspected and the session explicitly finalized as `APPROVE`. The base prompt remains 25 reference tokens with exactly three default built-ins. Phase 6 package qualification includes installed write, profile-selected MCP, native `view_image`, ACP and external TypeScript imports, without an approval flag.
+The review runner sometimes failed to parse a verdict-only `APPROVE` response; the raw reviewer verdict was inspected and the session explicitly finalized as `APPROVE`. At the time of that review the base prompt used 25 reference tokens; the current prompt and tool-definition counts are reported by `npm run test:overhead`. Exactly three default built-ins remain. Phase 6 package qualification includes installed write, profile-selected MCP, native `view_image`, ACP and external TypeScript imports, without an approval flag.
 
 ## Acceptance criteria
 
@@ -25,7 +25,7 @@ The review runner sometimes failed to parse a verdict-only `APPROVE` response; t
 | AC-2.1 | T-02d/e three primitive definitions and dispatch in [Phase 2](evidence/phase-2.md) |
 | AC-2.2 | T-02a/b file, UTF-8, Bash and output cap cases in Phase 2 |
 | AC-2.3 | T-02c real process group/descendant cancellation in Phase 2 |
-| AC-2.4 | T-02e measured prompt and schemas in Phase 2; current 25/175 report |
+| AC-2.4 | T-02e measured prompt and schemas in Phase 2; 25/175 was the historical report. Run `npm run test:overhead` for current counts. |
 | AC-3.1 | T-03a six official SDK profile paths in [Phase 3](evidence/phase-3.md) |
 | AC-3.2 | T-03b/c fragmented calls and opaque state replay in Phase 3 |
 | AC-3.3 | T-03d terminal errors, no retry and cancellation in Phase 3 |

@@ -14,7 +14,7 @@ Keep exactly three default built-ins while making each useful for several operat
 - Every batch response is an indexed, structured result with per-item status, metadata, and content. The existing `maxOutputBytes` (default 8192) is a **single cap for the whole serialized model-facing result**, not a fresh budget per item. CLI's separate 2,000-character/10-logical-line result preview remains display-only.
 
 ## Invariants
-- Exactly three text-model built-ins; conditional `view_image` and dynamic MCP/ACP tools remain separate. Default system prompt stays at most 50 tokens; combined prompt plus built-in definitions stays at most 500 reference tokens. Schemas remain stable across turns for cache reuse.
+- Exactly three text-model built-ins; conditional `view_image` and dynamic MCP/ACP tools remain separate. Default system prompt stays at most 50 reference tokens. Combined prompt plus built-in definitions are measured, with no fixed ceiling that would remove necessary tool guidance. Schemas remain stable across turns for cache reuse.
 - Full-file read returns the complete file when it fits, or a `partial` prefix with `next_line` when it does not. It never labels a prefix as full. Ranged reads emit complete UTF-8 lines only, a resumable `next_line` when budget-limited, and accurate actual range/EOF metadata. A selected first line too large for one response returns `line_too_large`. No successful item or batch may exceed its allocated model-facing byte budget, including JSON framing. A minimum-envelope budget failure happens before any write or Bash side effect.
 - Preserve per-tool-call IDs, agent transcript order, provider replay, ACP event linkage, policy/whitelist/approval behavior, and cwd resolution. One explicit `ask` rule applies to the whole batch call; the approval display must summarize all item identities without dumping write contents. Default execution remains full-permission and automatic.
 - Schema errors reject the complete call before approval/side effects. Runtime item errors do not erase successful earlier or later items. `ToolResult.isError` reports an actual item failure; Bash nonzero exits remain ordinary reported exit statuses. No symlink sandbox, transaction, or rollback is introduced.
@@ -36,12 +36,14 @@ Keep exactly three default built-ins while making each useful for several operat
 ## Global Gates
 - `git diff --check` passes at every phase and final HEAD.
 - `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH npm run check` passes at each phase and final HEAD.
-- `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH npm run test:overhead` reports three built-ins, prompt <=50 tokens, combined <=500 tokens.
+- `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH npm run test:overhead` reports three built-ins, prompt <=50 reference tokens, and measured combined overhead without a combined-token gate.
 - Final package qualification: `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH npm run test:package`; install with `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH npm install -g .`; compare SHA-256 of `dist/raw.js` with `/opt/homebrew/lib/node_modules/raw-cli/dist/raw.js`; `raw --version` and `raw config list >/dev/null` succeed. The existing user credentials/config stay untouched.
 - Each phase receives `gpt-6-astra` implementation review with verdict APPROVE, following the user's established review preference. Stage only phase-owned files and the plan bookkeeping; inspect for secrets; commit the phase once.
 
 ## Plan Review
 APPROVE. Self-review verified current paths/symbols, phase ownership, 185/185 baseline, the exact three-tool/500-token gates, and the no-compatibility constraint. `gpt-6-astra` plan review (session `.codex-review/sessions/codex-plan-review-20260924-004`, one round) returned an explicit raw `APPROVE` with no blocking issues; its parser could not structure a verdict-only response, so the runner was finalized with that raw verdict. The reviewer could not use CTXE inside its read-only sandbox; local CTXE index/Ask and direct source/test inspection above provide the code-grounded evidence. The user explicitly approved implementation immediately after review.
+
+Post-plan correction (2026-09-24): The user clarified that a lean tool and prompt surface must not sacrifice accurate tool use to meet an arbitrary token target. The original 500-token combined gate above is historical; the current invariant and gate measure that overhead without failing on a fixed combined limit. The 50-token default system prompt requirement remains.
 
 ## Phase 1: Bounded batch reads and shared result envelope
 ### Goal
