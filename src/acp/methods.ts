@@ -196,7 +196,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
     const creation = (async () => {
       const id = randomUUID();
-      const registry = createToolRegistry(options.runtime.toolRules);
+      const registry = createToolRegistry(options.runtime.toolRules, options.runtime.profile?.vision === true);
       const mcp = await connectMcpServers({ servers: sessionMcpServers(params.mcpServers, configuredMcp), registry,
         cwd: params.cwd, timeoutMs: options.runtime.requestTimeoutMs, signal: startupController.signal });
       try {

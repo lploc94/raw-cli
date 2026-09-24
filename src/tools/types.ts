@@ -1,3 +1,5 @@
+export const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+
 export interface ToolContentText {
   type: "text";
   text: string;
@@ -13,6 +15,8 @@ export interface ToolContentImage {
   type: "image";
   mimeType: "image/png" | "image/jpeg";
   data: string;
+  path?: string;
+  byteSize?: number;
 }
 
 export type ToolContent = ToolContentText | ToolContentJson | ToolContentImage;

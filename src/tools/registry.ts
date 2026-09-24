@@ -1,4 +1,5 @@
 import { bashTool, readFileTool, writeFileTool, type ToolContext } from "./primitives.js";
+import { viewImageTool } from "./image.js";
 import { capResult, errorResult } from "./results.js";
 import type { ToolResult } from "./types.js";
 
@@ -44,6 +45,12 @@ const builtIns: readonly ToolRegistration[] = [
     handler: (args, ctx) => bashTool(args as { command: string; timeout_ms?: number }, ctx),
   },
 ];
+
+const imageTool: ToolRegistration = {
+  name: "view_image", description: "Read a PNG or JPEG image from a file.",
+  inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
+  handler: (args, ctx) => viewImageTool(args as { path: string }, ctx),
+};
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") {
@@ -92,8 +99,8 @@ export class ToolRegistry {
     return [...this.tools.values()]
       .filter((tool) => this.effect(tool) !== "deny" && (whitelist === undefined || whitelist.includes(tool.name)))
       .sort((a, b) => {
-        const first = ["read_file", "write_file", "bash"].indexOf(a.name);
-        const second = ["read_file", "write_file", "bash"].indexOf(b.name);
+        const first = ["read_file", "write_file", "bash", "view_image"].indexOf(a.name);
+        const second = ["read_file", "write_file", "bash", "view_image"].indexOf(b.name);
         return first >= 0 && second >= 0 ? first - second : first >= 0 ? -1 : second >= 0 ? 1 : a.name.localeCompare(b.name);
       })
       .map(({ handler: _handler, validateArgs: _validateArgs, canonicalName: _canonicalName, ...definition }) => structuredClone(definition));
@@ -140,8 +147,9 @@ export class ToolRegistry {
   }
 }
 
-export function createToolRegistry(rules: readonly ToolPolicyRule[] = []): ToolRegistry {
+export function createToolRegistry(rules: readonly ToolPolicyRule[] = [], vision = false): ToolRegistry {
   const registry = new ToolRegistry(rules);
   for (const tool of builtIns) registry.register(tool);
+  if (vision) registry.register(imageTool);
   return registry;
 }

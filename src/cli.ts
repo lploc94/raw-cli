@@ -86,7 +86,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   process.on("SIGTERM", cancelStartup);
   let mcp;
   try {
-    mcp = await connectMcpServers({ cwd, servers: mcpServers, registry: createToolRegistry(runtime.toolRules),
+    mcp = await connectMcpServers({ cwd, servers: mcpServers, registry: createToolRegistry(runtime.toolRules, runtime.profile?.vision === true),
       timeoutMs: runtime.requestTimeoutMs, signal: startupController.signal });
   } catch (error) {
     if (startupCancelled) return 130;

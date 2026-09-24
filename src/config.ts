@@ -86,6 +86,11 @@ function string(value: unknown, context: string, allowEmpty = false): string {
   return value;
 }
 
+function booleanValue(value: unknown, context: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${context} must be boolean`);
+  return value;
+}
+
 function positive(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${context} must be a positive integer`);
@@ -183,6 +188,7 @@ interface ModelSpec {
   apiKeyEnv?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  vision: boolean;
 }
 
 interface ProfileSpec {
@@ -358,7 +364,7 @@ function requestSpec(raw: unknown, model: ModelSpec, where: string): ProfileRequ
 function modelSpec(name: string, raw: unknown): ModelSpec {
   const where = "model " + name;
   const value = object(raw, where);
-  keys(value, ["provider", "method", "model_id", "base_url", "api_key", "api_key_env", "context_window_tokens", "max_output_tokens"], where);
+  keys(value, ["provider", "method", "model_id", "base_url", "api_key", "api_key_env", "context_window_tokens", "max_output_tokens", "vision"], where);
   const provider = string(value.provider, where + ".provider");
   if (provider === "openai-compatible") throw new Error(where + ".provider must identify a service, not an API method");
   const method = enumValue(value.method, apiMethods, where + ".method");
@@ -366,6 +372,7 @@ function modelSpec(name: string, raw: unknown): ModelSpec {
     provider,
     method,
     model: string(value.model_id, where + ".model_id"),
+    vision: value.vision === undefined ? false : booleanValue(value.vision, where + ".vision"),
   };
   if (value.base_url !== undefined) result.baseUrl = endpoint(value.base_url, where + ".base_url");
   if (value.api_key !== undefined && value.api_key_env !== undefined) throw new Error(where + " must choose api_key or api_key_env");
@@ -491,6 +498,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
       provider: model.provider,
       method: model.method,
       model: model.model,
+      vision: model.vision,
       ...(model.baseUrl !== undefined ? { baseUrl: model.baseUrl } : {}),
       ...(model.apiKey !== undefined ? { apiKey: model.apiKey } : {}),
       ...(model.apiKeyEnv !== undefined ? { apiKeyEnv: model.apiKeyEnv } : {}),

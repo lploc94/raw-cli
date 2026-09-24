@@ -153,7 +153,7 @@ test("T-07 review: failed calls announce tool_call before tool_call_update", asy
 });
 
 test("T-07 review: multi-megabyte reverse image validates without regex stack failure", async () => {
-  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true, maxOutputBytes: 8 * 1024 * 1024 },
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama", "fixture", undefined, undefined, true), autoApprove: true, maxOutputBytes: 8 * 1024 * 1024 },
     env: {}, requireModel: true });
   let alias = "";
   let imageSeen = false;
@@ -224,7 +224,7 @@ test("T-07a/f: standard ACP works without raw negotiation and raw compact extens
 });
 
 test("T-07c/d: negotiated reverse tool executes through model history with typed image, error, validation and idle schema revision", async () => {
-  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama", "fixture", undefined, undefined, true), autoApprove: true }, env: {}, requireModel: true });
   let alias = "";
   let calls = 0;
   let reply: unknown = { isError: false, content: [{ type: "text", text: "peer-sentinel" },

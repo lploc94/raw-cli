@@ -30,6 +30,7 @@ export interface ProviderProfile {
   apiKeyEnv?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
+  vision?: boolean;
   cache?: Readonly<CacheOptions>;
   request?: Readonly<ProfileRequestOptions>;
 }

@@ -176,6 +176,8 @@ codex-impl-review with gpt-6-astra; verdict must be APPROVE.
 feat: select MCP tools and enforce per-profile tool rules
 
 ## Phase 4: Add conditional native vision tool
+### Status
+complete
 ### Goal
 Expose view_image only for models explicitly configured with vision:true, while preserving MCP vision-to-text for text-only models.
 ### Current behavior and gap
@@ -201,9 +203,9 @@ Inspect fixture request bytes/content type after a view_image call: a placeholde
 ### Implementation obligations
 Bound file read and encoded payload, bypass only text cap for image blocks, keep image data out of logs and public events, and validate every enabled method adapter.
 ### Acceptance criteria
-- [ ] AC-4.1: vision false -> 3 tools; vision true -> 4 tools; no --image flag — proven by config, registry and CLI tests.
-- [ ] AC-4.2: view_image delivers real image content in a valid continuation over each enabled API method and retains >8 KiB images — proven by provider wire tests.
-- [ ] AC-4.3: text-only model can use MCP vision-to-text without any image bytes upstream — proven by MCP/provider fixture test.
+- [x] AC-4.1: vision false -> 3 tools; vision true -> 4 tools; no --image flag — proven by config, registry and CLI tests.
+- [x] AC-4.2: view_image delivers real image content in a valid continuation over each enabled API method and retains >8 KiB images — proven by provider wire tests.
+- [x] AC-4.3: text-only model can use MCP vision-to-text without any image bytes upstream — proven by MCP/provider fixture test.
 ### Focused verification
 node --import tsx --test tests/primitives.test.ts tests/provider-content.test.ts tests/agent.test.ts tests/overhead.test.ts
 ### Phase gates
@@ -304,3 +306,4 @@ docs: complete config redesign and installed qualification
 - 2026-09-24: Phase 1 complete. Docs-first config reference and red tests preceded implementation. `npm run check` 135/135, `npm run typecheck`, focused tests, `npm run test:overhead` (25 prompt tokens, three built-ins), and `git diff --check` passed. GPT-6 Astra implementation review round 1 found three defects; all fixed and round 2 raw verdict APPROVE. Runner verdict-only parser required explicit APPROVE finalization; record `.codex-review/sessions/codex-impl-review-20260924-010`.
 - 2026-09-24: Phase 2 complete. Official API docs informed four SDK methods and typed controls. Red fixture tests proved missing Responses, DeepSeek reasoning replay and request options before implementation. `npm run check` 146/146, typecheck, focused tests, overhead and diff check passed. GPT-6 Astra review found three cap/budget defects, all fixed; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-011`.
 - 2026-09-24: Phase 3 complete. Docs-first reference and red tests preceded single-file MCP selection and canonical allow/ask/deny policy. `npm run check` 161/161, typecheck, focused tests, overhead and diff check passed. GPT-6 Astra review found two defects (newline glob bypass, empty stdio argument rejection), both fixed; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-012`.
+- 2026-09-24: Phase 4 complete. Docs-first reference and red tests preceded conditional `view_image` with real native payloads across four adapters, separate image cap, public event redaction and text-only MCP fallback. `npm run check` 168/168, typecheck, overhead 25 prompt tokens/three base tools, and diff check passed. GPT-6 Astra review found three defects (truncated image validation, FIFO hang, uncapped text errors), all fixed with regressions; round 2 raw verdict APPROVE and explicit parser override recorded at `.codex-review/sessions/codex-impl-review-20260924-013`.

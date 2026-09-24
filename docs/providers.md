@@ -29,4 +29,6 @@ The system prompt, tool definitions and committed message history keep stable or
 
 Function calls and tool results remain linked by call ID. Responses output items, Anthropic thinking/signature blocks, Gemini thought signatures, OpenRouter reasoning details and DeepSeek `reasoning_content` are kept as opaque continuation data and never displayed as assistant text. Tool images are passed as native image content where the method accepts them; base64 is never presented as an ordinary text description.
 
+For `vision:true`, `view_image` produces a typed PNG/JPEG tool result. Chat Completions sends the linked text tool response followed by an image user block; Responses sends image content inside the linked `function_call_output`; Anthropic uses an image within the `tool_result`; Gemini uses `inlineData` in the function response. A provider may still reject a specific model's vision capability; that upstream error remains visible. Text-only profiles can use MCP vision-to-text tools that perform OCR or visual analysis outside the selected model and return text.
+
 Usage reports include observed input, output, cache read and cache write counters. Missing fields remain unknown. This is not a tokenizer-based estimate of the model's remaining context.

@@ -1,4 +1,5 @@
 import type { ToolContent, ToolResult } from "./types.js";
+import { MAX_IMAGE_BYTES } from "./types.js";
 
 export function utf8Prefix(value: string, limit: number): { text: string; bytes: number; truncated: boolean } {
   let text = "";
@@ -33,6 +34,7 @@ export function capResult(result: ToolResult, maxOutputBytes: number): ToolResul
   let truncated = false;
   const content: ToolContent[] = [];
   let observed = 0;
+  let imageBytes = 0;
   for (const block of result.content) {
     if (block.type === "text") {
       observed += Buffer.byteLength(block.text);
@@ -53,18 +55,13 @@ export function capResult(result: ToolResult, maxOutputBytes: number): ToolResul
         content.push({ type: "text", text: preview.text });
       }
     } else {
-      const size = Buffer.byteLength(block.data);
-      observed += size;
-      if (size <= remaining) {
-        remaining -= size;
-        content.push(block);
-      } else {
-        const preview = utf8Prefix(`[${block.mimeType} omitted: ${size} bytes]`, remaining);
-        remaining -= preview.bytes;
-        truncated = true;
-        content.push({ type: "text", text: preview.text });
-      }
+      const size = Buffer.from(block.data, "base64").length;
+      imageBytes += size;
+      if (imageBytes > MAX_IMAGE_BYTES) return capResult(errorResult("image_too_large", "tool images exceed 16 MiB"), maxOutputBytes);
+      observed += Buffer.byteLength(block.data);
+      content.push(block);
     }
   }
-  return { ...result, content, truncated: result.truncated || truncated, retainedBytes: maxOutputBytes - remaining, observedBytes: result.observedBytes ?? observed };
+  const retained = maxOutputBytes - remaining + content.reduce((sum, block) => sum + (block.type === "image" ? Buffer.byteLength(block.data) : 0), 0);
+  return { ...result, content, truncated: result.truncated || truncated, retainedBytes: retained, observedBytes: result.observedBytes ?? observed };
 }

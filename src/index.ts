@@ -12,6 +12,7 @@ export { createProvider, ProviderError } from "./llm/client.js";
 export type { ProviderAdapter, ProviderRequest, ProviderTurn, ModelMessage, ModelToolCall } from "./llm/types.js";
 export type { ToolContent, ToolResult } from "./tools/types.js";
 export { BUILTIN_TOOL_DEFINITIONS, ToolRegistry, createToolRegistry } from "./tools/registry.js";
+export { viewImageTool, MAX_IMAGE_BYTES } from "./tools/image.js";
 export type { ToolDefinition, ToolRegistration, ToolPolicyRule } from "./tools/registry.js";
 export type { ToolContext } from "./tools/primitives.js";
 export { connectMcpServers, mcpResultToToolResult } from "./tools/mcp-client.js";

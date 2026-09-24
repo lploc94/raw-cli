@@ -64,7 +64,7 @@ export class AgentSession {
     }
     this.options = {
       provider: options.provider,
-      registry: options.registry ?? createToolRegistry(),
+      registry: options.registry ?? createToolRegistry([], options.provider.profile.vision === true),
       cwd: options.cwd ?? process.cwd(),
       system: options.system ?? DEFAULT_SYSTEM_PROMPT,
       maxSteps, maxOutputBytes, requestTimeoutMs,
@@ -220,7 +220,10 @@ export class AgentSession {
     const cancelled = (call: ModelToolCall): ToolResult => capResult(errorResult("cancelled", `tool ${call.name} cancelled`), this.options.maxOutputBytes);
     const appendResult = (call: ModelToolCall, result: ToolResult) => {
       this.messages.push({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) });
-      emit({ type: "tool_result", id: call.id, name: call.name, result });
+      const publicResult: ToolResult = { ...result, content: result.content.map((block) => block.type === "image"
+        ? { type: "text", text: `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]` }
+        : block) };
+      emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult });
     };
     if (this.originalTask === undefined) this.originalTask = structuredClone(input);
     this.messages.push({ role: "user", content: structuredClone(input) });
@@ -276,7 +279,7 @@ export class AgentSession {
             for (const remaining of turn.toolCalls.slice(index)) appendResult(remaining, cancelled(remaining));
             return finish(interrupted());
           }
-          const result = call.argumentError
+          const dispatched = call.argumentError
             ? capResult(errorResult("invalid_arguments", call.argumentError), this.options.maxOutputBytes)
             : await this.options.registry.dispatch(call.name, call.arguments, {
               cwd: this.options.cwd,
@@ -288,6 +291,9 @@ export class AgentSession {
               toolCallId: call.id,
               onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
             });
+          const result = this.options.provider.profile.vision !== true && dispatched.content.some((block) => block.type === "image")
+            ? capResult(errorResult("vision_disabled", "this model cannot receive image content; use a text-description tool"), this.options.maxOutputBytes)
+            : dispatched;
           appendResult(call, result);
           if (result.code === "approval_required") {
             for (const remaining of turn.toolCalls.slice(index + 1)) appendResult(remaining, cancelled(remaining));
