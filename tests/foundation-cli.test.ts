@@ -1,0 +1,95 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+function cli(args: string[], xdg: string) {
+  return spawnSync(process.execPath, ["--import", "tsx", "bin/raw.ts", ...args], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, XDG_CONFIG_HOME: xdg, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", GEMINI_API_KEY: "" },
+    timeout: 5000,
+  });
+}
+
+test("T-01d: help/version do not need config or provider credentials", () => {
+  const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
+  const help = cli(["--help"], home);
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /raw/);
+  const version = cli(["--version"], home);
+  assert.equal(version.status, 0, version.stderr);
+  assert.match(version.stdout, /0\.1\.0/);
+});
+
+test("T-01d: config init creates valid local starter, refuses overwrite, list is sanitized", () => {
+  const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
+  const init = cli(["config", "init"], home);
+  assert.equal(init.status, 0, init.stderr);
+  const path = join(home, "raw", "config.json");
+  const created = readFileSync(path, "utf8");
+  const data = JSON.parse(created);
+  assert.equal(data.default_profile, "local");
+  assert.equal(data.profiles.local.provider, "ollama");
+  const second = cli(["config", "init"], home);
+  assert.notEqual(second.status, 0);
+  assert.equal(readFileSync(path, "utf8"), created);
+  const listed = cli(["config", "list"], home);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /local.*ollama/s);
+  assert.doesNotMatch(listed.stdout, /API_KEY|secret/);
+});
+
+test("T-01d: config list redacts endpoint credentials and invalid flags fail before execution", () => {
+  const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
+  mkdirSync(join(home, "raw"));
+  writeFileSync(join(home, "raw", "config.json"), JSON.stringify({
+    profiles: { remote: { provider: "openai-compatible", model: "m", base_url: "https://alice:pw@example.com/v1?token=secret" } },
+  }));
+  const listed = cli(["config", "list"], home);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /remote/);
+  assert.doesNotMatch(listed.stdout, /alice|pw|secret/);
+  const invalid = cli(["--max-steps", "0", "write sentinel"], home);
+  assert.equal(invalid.status, 2);
+});
+
+test("T-01e: selected official SDKs import and construct minimal clients", async () => {
+  const { default: OpenAI } = await import("openai");
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const { GoogleGenAI } = await import("@google/genai");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const acp = await import("@agentclientprotocol/sdk");
+  assert.ok(new OpenAI({ apiKey: "fixture" }));
+  assert.ok(new Anthropic({ apiKey: "fixture" }));
+  assert.ok(new GoogleGenAI({ apiKey: "fixture" }));
+  assert.ok(typeof Client === "function");
+  assert.ok(Object.keys(acp).length > 0);
+});
+
+test("T-01b: config list redacts uppercase URL credentials", () => {
+  const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
+  mkdirSync(join(home, "raw"));
+  writeFileSync(join(home, "raw", "config.json"), JSON.stringify({
+    profiles: { remote: { provider: "openai-compatible", model: "m", base_url: "HTTPS://alice:pw@example.com/v1?token=secret" } },
+  }));
+  const listed = cli(["config", "list"], home);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.doesNotMatch(listed.stdout + listed.stderr, /alice|pw|secret/);
+});
+
+test("T-01d: config list rejects malformed profile and compact definitions without credentials", () => {
+  const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
+  mkdirSync(join(home, "raw"));
+  const path = join(home, "raw", "config.json");
+  writeFileSync(path, JSON.stringify({ profiles: { bad: { provider: "not-a-provider", model: 42, api_key: "secret" } } }));
+  const bad = cli(["config", "list"], home);
+  assert.equal(bad.status, 2);
+  assert.doesNotMatch(bad.stdout + bad.stderr, /secret/);
+  writeFileSync(path, JSON.stringify({ profiles: [] }));
+  assert.equal(cli(["config", "list"], home).status, 2);
+  writeFileSync(path, JSON.stringify({ profiles: { local: { provider: "ollama", model: "m" } }, compact: { profile: "missing" } }));
+  assert.equal(cli(["config", "list"], home).status, 2);
+});

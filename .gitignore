@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+.codex-review/
+*.tgz
+.DS_Store
