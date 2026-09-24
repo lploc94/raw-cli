@@ -1,6 +1,7 @@
 export interface ToolContentText {
   type: "text";
   text: string;
+  channel?: "stdout" | "stderr";
 }
 
 export interface ToolContentJson {
@@ -22,4 +23,8 @@ export interface ToolResult {
   truncated?: boolean;
   retainedBytes?: number;
   observedBytes?: number;
+  code?: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  timedOut?: boolean;
 }

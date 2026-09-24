@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "test:phase": "node scripts/test-phase.mjs",
+    "test:overhead": "node --import tsx scripts/overhead.mjs",
     "build": "tsup",
     "check": "npm run typecheck && npm run build && npm test"
   },

@@ -427,10 +427,10 @@ A fixture's child must try to create a file after cancellation: absence after it
 3. Own process groups/timers/listeners; preserve real exits, cancel remaining queued work, always settle.
 4. Expose immutable tool definitions/result shapes; build overhead report from them.
 ### Acceptance criteria
-- [ ] **AC-2.1**: Exactly three primitives and host-side dispatch constraints hold — T-02d/e.
-- [ ] **AC-2.2**: Files/output semantics and bounded UTF-8 behavior hold — T-02a/b.
-- [ ] **AC-2.3**: Real descendant cancellation and unrelated-process preservation meet D-04 — T-02c.
-- [ ] **AC-2.4**: Default production prompt plus schemas meets the <=500 reference-token gate — T-02e.
+- [x] **AC-2.1**: Exactly three primitives and host-side dispatch constraints hold — T-02d/e.
+- [x] **AC-2.2**: Files/output semantics and bounded UTF-8 behavior hold — T-02a/b.
+- [x] **AC-2.3**: Real descendant cancellation and unrelated-process preservation meet D-04 — T-02c.
+- [x] **AC-2.4**: Default production prompt plus schemas meets the <=500 reference-token gate — T-02e.
 ### Focused verification
 `npm run test:phase -- tools` — primitives, registry and overhead suites; all pass with real subprocess cleanup.
 ### Phase gates
@@ -746,7 +746,7 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 | Phase | Selector | Status | Evidence | Review | Commit |
 |---|---|---|---|---|---|
 | 1 Foundation | foundation | complete | `docs/evidence/phase-1.md` | `gpt-6-astra` APPROVE (2 rounds) | `feat: scaffold raw configuration profiles and package contracts` |
-| 2 Primitives | tools | pending | — | — | — |
+| 2 Primitives | tools | complete | `docs/evidence/phase-2.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: implement primitive tools and owned process cleanup` |
 | 3 Providers | providers | pending | — | — | — |
 | 4 Agent loop | agent | pending | — | — | — |
 | 5 Compact/cache | context | pending | — | — | — |
@@ -764,3 +764,4 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 - 2026-09-24: `codex-plan-review` round 1 with `gpt-6-astra` returned REVISE on ISSUE-1 (ACP v1 mandatory `resource_link` prompts). Verified official ACP initialization/content docs and amended D-10, D-12, Phase 7 tests/docs/AC. Rounds 2 and 3 re-read the whole plan and returned explicit APPROVE with no open issues or new blockers. The runner parser cannot classify verdict-only replies, so raw verdict text is the review evidence; session `/Users/lploc94/projects/raw-cli/.codex-review/sessions/codex-plan-review-20260924-001` is retained by the runner.
 
 - 2026-09-24: User invoked `$loop-implement` and required `gpt-6-astra` review of every phase. Phase 1 docs/test-first work completed; `npm ci`, `npm run check`, Node 22 check and focused tests passed (18/18). `codex-impl-review` found six real defects, all repaired with RED/GREEN regression evidence; round 2 returned APPROVE. See `docs/evidence/phase-1.md`. Phase 2 is next.
+- 2026-09-24: Phase 2 docs/test-first work completed; focused 7/7, cumulative 25/25, overhead 25 prompt/175 combined. `gpt-6-astra` review found ten defects in two rounds, all fixed with RED/GREEN regressions; round 3 returned APPROVE. See `docs/evidence/phase-2.md`. Phase 3 is next.

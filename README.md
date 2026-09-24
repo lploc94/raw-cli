@@ -9,6 +9,8 @@ This project is under implementation. Phase 1 provides the package, configuratio
 - Node.js 22 or newer.
 - Bash for the `bash` tool when agent execution is available.
 
+The three built-in tool schemas, result limits, approval flow and process cancellation behavior are documented in [the tools reference](./docs/tools.md).
+
 `raw` runs with the full permissions of your OS account. A working directory selects where relative paths start; it is not a sandbox. Tool approval is configurable with `-y` / `--auto-approve`.
 
 ## Configuration

@@ -1,0 +1,63 @@
+{
+  "promptTokens": 25,
+  "combinedTokens": 175,
+  "definitions": [
+    {
+      "name": "read_file",
+      "description": "Read a UTF-8 file.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "write_file",
+      "description": "Create or overwrite a UTF-8 file.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "bash",
+      "description": "Run a Bash command.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "canonical": "{\"system\":\"You are a terminal coding assistant. Use read_file, write_file, and bash to complete tasks. Respond concisely.\",\"tools\":[{\"description\":\"Read a UTF-8 file.\",\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"],\"type\":\"object\"},\"name\":\"read_file\"},{\"description\":\"Create or overwrite a UTF-8 file.\",\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"content\":{\"type\":\"string\"},\"path\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"],\"type\":\"object\"},\"name\":\"write_file\"},{\"description\":\"Run a Bash command.\",\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"command\":{\"type\":\"string\"},\"timeout_ms\":{\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"command\"],\"type\":\"object\"},\"name\":\"bash\"}]}"
+}
