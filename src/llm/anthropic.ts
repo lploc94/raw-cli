@@ -1,0 +1,133 @@
+import Anthropic from "@anthropic-ai/sdk";
+import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
+import type { ProviderAdapter, ProviderProfile, ProviderRequest, ProviderTurn, ModelToolCall } from "./types.js";
+import { nativeToolContent } from "./content.js";
+import { ProviderError, withProviderAbort } from "./client.js";
+
+function inputMessages(request: ProviderRequest): MessageParam[] {
+  const messages: MessageParam[] = [];
+  for (const message of request.messages) {
+    if (message.role === "user") messages.push({ role: "user", content: message.content });
+    else if (message.role === "assistant") {
+      const blocks = Array.isArray(message.opaque) ? message.opaque : [
+        ...(message.text ? [{ type: "text", text: message.text }] : []),
+        ...message.toolCalls.map((call) => ({ type: "tool_use", id: call.id, name: call.name, input: call.arguments })),
+      ];
+      messages.push({ role: "assistant", content: blocks as MessageParam["content"] });
+    } else {
+      const result = nativeToolContent(message.result);
+      const content: Array<Record<string, unknown>> = [];
+      if (result.text) content.push({ type: "text", text: result.text });
+      for (const image of result.images) content.push({ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } });
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: message.callId, is_error: message.result.isError, content: content as never }] });
+    }
+  }
+  return messages;
+}
+
+export function createAnthropicProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
+  const client = new Anthropic({
+    apiKey: profile.apiKey ?? "",
+    ...(profile.baseUrl ? { baseURL: profile.baseUrl } : {}),
+    maxRetries: 0,
+  });
+  return {
+    profile,
+    async generate(request): Promise<ProviderTurn> {
+      return withProviderAbort(request, async (signal) => {
+        const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
+        const stream = await client.messages.create({
+          model: profile.model,
+          max_tokens: request.maxOutputTokens ?? profile.maxOutputTokens ?? 1024,
+          system: request.system,
+          messages: inputMessages(request),
+          stream: true,
+          ...(tools.length ? { tools } : {}),
+        }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
+        const blocks = new Map<number, Record<string, unknown>>();
+        const toolJson = new Map<number, string>();
+        const activeBlocks = new Set<number>();
+        const argumentErrors = new Map<number, string>();
+        let text = "";
+        let stopReason: string | undefined;
+        let stopped = false;
+        let started = false;
+        let usage: Record<string, unknown> = {};
+        for await (const event of stream) {
+          if (signal.aborted) throw new ProviderError("aborted", "provider stream aborted");
+          if (stopped) throw new ProviderError("invalid_stream", "Anthropic event after message stop");
+          if (event.type === "message_start") {
+            if (started) throw new ProviderError("invalid_stream", "duplicate Anthropic message start");
+            started = true;
+            usage = { ...event.message.usage };
+          }
+          else if (event.type === "content_block_start") {
+            if (!started || blocks.has(event.index)) throw new ProviderError("invalid_stream", "invalid Anthropic block start");
+            blocks.set(event.index, { ...event.content_block });
+            activeBlocks.add(event.index);
+            if (event.content_block.type === "text" && event.content_block.text) {
+              text += event.content_block.text;
+              request.onTextDelta?.(event.content_block.text);
+            }
+          }
+          else if (event.type === "content_block_delta") {
+            const block = blocks.get(event.index);
+            if (!block || !activeBlocks.has(event.index)) throw new ProviderError("invalid_stream", "content delta outside active block");
+            const delta = event.delta;
+            if (delta.type === "text_delta") {
+              if (block.type !== "text") throw new ProviderError("invalid_stream", "text delta on nontext block");
+              block.text = String(block.text ?? "") + delta.text;
+              text += delta.text;
+              if (delta.text) request.onTextDelta?.(delta.text);
+            } else if (delta.type === "thinking_delta") {
+              if (block.type !== "thinking") throw new ProviderError("invalid_stream", "thinking delta on nonthinking block");
+              block.thinking = String(block.thinking ?? "") + delta.thinking;
+            } else if (delta.type === "signature_delta") {
+              if (block.type !== "thinking") throw new ProviderError("invalid_stream", "signature delta on nonthinking block");
+              block.signature = String(block.signature ?? "") + delta.signature;
+            } else if (delta.type === "input_json_delta") {
+              if (block.type !== "tool_use") throw new ProviderError("invalid_stream", "tool JSON delta on nontool block");
+              toolJson.set(event.index, (toolJson.get(event.index) ?? "") + delta.partial_json);
+            }
+          } else if (event.type === "content_block_stop") {
+            if (!activeBlocks.delete(event.index)) throw new ProviderError("invalid_stream", "Anthropic block stop without start");
+          } else if (event.type === "message_delta") {
+            if (!started || activeBlocks.size) throw new ProviderError("invalid_stream", "Anthropic message delta before blocks complete");
+            if (event.delta.stop_reason) stopReason = event.delta.stop_reason;
+            usage = { ...usage, ...event.usage };
+          } else if (event.type === "message_stop") {
+            if (!started || activeBlocks.size) throw new ProviderError("invalid_stream", "Anthropic message stopped with incomplete blocks");
+            stopped = true;
+          }
+        }
+        if (!started || !stopped || !stopReason) throw new ProviderError("incomplete_stream", "Anthropic stream ended without terminal event");
+        if (stopReason !== "end_turn" && stopReason !== "tool_use") throw new ProviderError("provider_finish", `Anthropic stop reason: ${stopReason}`);
+        const orderedBlocks = [...blocks].sort(([a], [b]) => a - b);
+        const opaque = orderedBlocks.map(([index, block]) => {
+          if (block.type === "tool_use" && toolJson.has(index)) {
+            try { block.input = JSON.parse(toolJson.get(index)!); }
+            catch { argumentErrors.set(index, "Anthropic tool arguments are invalid JSON"); block.input = {}; }
+            if (!argumentErrors.has(index) && (!block.input || typeof block.input !== "object" || Array.isArray(block.input))) {
+              argumentErrors.set(index, "Anthropic tool arguments must be an object");
+              block.input = {};
+            }
+          }
+          return block;
+        });
+        const toolCalls: ModelToolCall[] = orderedBlocks.flatMap(([index, block]) => {
+          if (block.type !== "tool_use") return [];
+          if (typeof block.id !== "string" || !block.id || typeof block.name !== "string" || !block.name || !block.input || typeof block.input !== "object" || Array.isArray(block.input)) {
+            throw new ProviderError("invalid_stream", "Anthropic tool call linkage invalid");
+          }
+          const argumentError = argumentErrors.get(index);
+          return [{ id: block.id, name: block.name, arguments: block.input as Record<string, unknown>,
+            ...(argumentError ? { argumentError, rawArguments: toolJson.get(index)! } : {}) }];
+        });
+        if (new Set(toolCalls.map((call) => call.id)).size !== toolCalls.length) throw new ProviderError("invalid_stream", "duplicate Anthropic tool call ID");
+        if (stopReason === "tool_use" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool stop without calls");
+        if (stopReason === "end_turn" && toolCalls.length) throw new ProviderError("invalid_stream", "tool calls with end_turn stop");
+        return { text, toolCalls, finishReason: stopReason, opaque, usage };
+      });
+    },
+  };
+}

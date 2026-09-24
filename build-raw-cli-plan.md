@@ -473,10 +473,10 @@ Fixture accepts the second request only with exact call linkage and required sig
 3. Implement actual abort/deadline and zero-retry behavior with proper stream disposal.
 4. Implement native result/image translation needed by MCP later, without adding a primitive or silently fetching URLs.
 ### Acceptance criteria
-- [ ] **AC-3.1**: All six configured provider paths exercise correct official SDK requests — T-03a.
-- [ ] **AC-3.2**: Fragmented streams and opaque blocks produce valid subsequent turns — T-03b/c.
-- [ ] **AC-3.3**: Provider failures/cancellation do not retry or invent success — T-03d.
-- [ ] **AC-3.4**: Result content mapping supports text/JSON/PNG/JPEG and explicit unsupported cases — T-03e.
+- [x] **AC-3.1**: All six configured provider paths exercise correct official SDK requests — T-03a.
+- [x] **AC-3.2**: Fragmented streams and opaque blocks produce valid subsequent turns — T-03b/c.
+- [x] **AC-3.3**: Provider failures/cancellation do not retry or invent success — T-03d.
+- [x] **AC-3.4**: Result content mapping supports text/JSON/PNG/JPEG and explicit unsupported cases — T-03e.
 ### Focused verification
 `npm run test:phase -- providers` — provider and content suites using real SDKs/local wire fixtures.
 ### Phase gates
@@ -747,7 +747,7 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 |---|---|---|---|---|---|
 | 1 Foundation | foundation | complete | `docs/evidence/phase-1.md` | `gpt-6-astra` APPROVE (2 rounds) | `feat: scaffold raw configuration profiles and package contracts` |
 | 2 Primitives | tools | complete | `docs/evidence/phase-2.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: implement primitive tools and owned process cleanup` |
-| 3 Providers | providers | pending | — | — | — |
+| 3 Providers | providers | complete | `docs/evidence/phase-3.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: add official streaming provider adapters` |
 | 4 Agent loop | agent | pending | — | — | — |
 | 5 Compact/cache | context | pending | — | — | — |
 | 6 MCP | mcp | pending | — | — | — |
@@ -765,3 +765,4 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 
 - 2026-09-24: User invoked `$loop-implement` and required `gpt-6-astra` review of every phase. Phase 1 docs/test-first work completed; `npm ci`, `npm run check`, Node 22 check and focused tests passed (18/18). `codex-impl-review` found six real defects, all repaired with RED/GREEN regression evidence; round 2 returned APPROVE. See `docs/evidence/phase-1.md`. Phase 2 is next.
 - 2026-09-24: Phase 2 docs/test-first work completed; focused 7/7, cumulative 25/25, overhead 25 prompt/175 combined. `gpt-6-astra` review found ten defects in two rounds, all fixed with RED/GREEN regressions; round 3 returned APPROVE. See `docs/evidence/phase-2.md`. Phase 3 is next.
+- 2026-09-24: Phase 3 official SDK adapters completed; focused 17/17, cumulative 42/42, overhead 25/175. `gpt-6-astra` review found eleven defects in two rounds, all fixed with RED/GREEN regressions; round 3 returned APPROVE. See `docs/evidence/phase-3.md`. Phase 4 is next.

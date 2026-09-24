@@ -8,6 +8,8 @@ export {
 export type { CliArgs, CliCommand, LoadConfigOptions, RawFlags, RuntimeConfig } from "./config.js";
 export { DEFAULT_SYSTEM_PROMPT, resolveSystemPrompt } from "./llm/prompt.js";
 export type { ProviderName, ProviderProfile, CacheOptions } from "./llm/types.js";
+export { createProvider, ProviderError } from "./llm/client.js";
+export type { ProviderAdapter, ProviderRequest, ProviderTurn, ModelMessage, ModelToolCall } from "./llm/types.js";
 export type { ToolContent, ToolResult } from "./tools/types.js";
 export { BUILTIN_TOOL_DEFINITIONS, ToolRegistry, createToolRegistry } from "./tools/registry.js";
 export type { ToolDefinition, ToolRegistration } from "./tools/registry.js";
