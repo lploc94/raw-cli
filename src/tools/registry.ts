@@ -31,7 +31,8 @@ function matcher(pattern: string): RegExp {
 function validateReadBatch(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
   const args = value as Record<string, unknown>;
-  if (Object.keys(args).some((key) => key !== "files")) return "unknown read_file property";
+  const unexpected = Object.keys(args).find((key) => key !== "files");
+  if (unexpected !== undefined) return `unknown read_file property ${JSON.stringify(unexpected)}; use {"files":[{"path":"..."}]}`;
   if (!Array.isArray(args.files) || args.files.length < 1 || args.files.length > 16) return "files must contain 1 to 16 entries";
   for (const [index, raw] of args.files.entries()) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `files[${index}] must be an object`;
@@ -52,7 +53,8 @@ function validateReadBatch(value: unknown): string | undefined {
 function validateWriteBatch(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
   const args = value as Record<string, unknown>;
-  if (Object.keys(args).some((key) => key !== "operations")) return "unknown write_file property";
+  const unexpected = Object.keys(args).find((key) => key !== "operations");
+  if (unexpected !== undefined) return `unknown write_file property ${JSON.stringify(unexpected)}; use {"operations":[{"path":"...","mode":"overwrite","content":"..."}]}`;
   if (!Array.isArray(args.operations) || args.operations.length < 1 || args.operations.length > 16) return "operations must contain 1 to 16 entries";
   const fields: Record<string, readonly string[]> = {
     overwrite: ["path", "mode", "content"], append: ["path", "mode", "content"],
@@ -86,7 +88,8 @@ function validateWriteBatch(value: unknown): string | undefined {
 function validateBashBatch(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
   const args = value as Record<string, unknown>;
-  if (Object.keys(args).some((key) => key !== "commands")) return "unknown bash property";
+  const unexpected = Object.keys(args).find((key) => key !== "commands");
+  if (unexpected !== undefined) return `unknown bash property ${JSON.stringify(unexpected)}; use {"commands":[{"command":"..."}]}`;
   if (!Array.isArray(args.commands) || args.commands.length < 1 || args.commands.length > 16) return "commands must contain 1 to 16 entries";
   for (const [index, raw] of args.commands.entries()) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `commands[${index}] must be an object`;
@@ -100,21 +103,21 @@ function validateBashBatch(value: unknown): string | undefined {
 }
 
 const READ_FILE_DESCRIPTION = [
-  "Read 1-16 UTF-8 files in one call; results correspond to files by zero-based index. Relative paths use the session cwd.",
+  "Read 1-16 UTF-8 files in one call. Example: {\"files\":[{\"path\":\"README.md\"}]}. Results correspond to files by zero-based index. Relative paths use the session cwd.",
   "With only path, request the whole file. For lines, start_line is 1-based and defaults to 1; use inclusive end_line or max_lines, never both. A start past EOF returns empty text.",
   "Each ok or partial result reports the actual line range, eof, text, and sha256 of the exact returned file bytes, including original line endings and BOM.",
   "If a read exceeds the shared output budget or max_bytes, it returns complete leading lines with status partial and next_line; read again with start_line=next_line. If the first selected line cannot fit, status is line_too_large; a limit too small for result metadata may return budget_exhausted. A file error does not stop later entries.",
 ].join(" ");
 
 const WRITE_FILE_DESCRIPTION = [
-  "Apply 1-16 file operations in array order; results correspond to operations by zero-based index. Relative paths use the session cwd.",
+  "Apply 1-16 file operations in array order. Example: {\"operations\":[{\"path\":\"notes.txt\",\"mode\":\"append\",\"content\":\"text\"}]}. Results correspond to operations by zero-based index. Relative paths use the session cwd.",
   "overwrite and append require content and create the file and parent directories. replace_text requires nonempty old_text and a new_text string; it changes exactly one literal occurrence, otherwise fails without writing. Empty new_text deletes that occurrence.",
   "replace_lines requires existing 1-based inclusive start_line and end_line, content, and lowercase expected_sha256. First read exactly those lines with read_file, then copy that result's sha256 into expected_sha256; it hashes the original selected bytes, including BOM and line endings. A changed selected span or missing line fails without writing. Empty content deletes the lines; a nonempty replacement without a final newline keeps the original separator before following lines.",
   "Invalid arguments reject the whole batch before any write. Runtime errors are reported per operation and later operations continue; completed writes are not rolled back. Abort skips remaining operations.",
 ].join(" ");
 
 const BASH_DESCRIPTION = [
-  "Run 1-16 Bash commands sequentially in array order; results correspond to commands by zero-based index.",
+  "Run 1-16 Bash commands sequentially in array order. Call with {\"commands\":[{\"command\":\"pwd\"}]}; do not pass command at the top level. Results correspond to commands by zero-based index.",
   "Each command starts a separate Bash process in the session cwd. Filesystem changes persist; shell variables and cd do not carry to the next command. timeout_ms is an optional per-command deadline in milliseconds (default 120000).",
   "Each result reports status, exit_code, signal, timed_out, truncated, stdout, and stderr. Status ok means the command finished; inspect exit_code to determine success. A nonzero exit does not stop later commands. Timeout or abort stops the active process group and marks remaining commands skipped.",
   "All output shares one bounded result budget, so stdout or stderr may be truncated. Invalid arguments reject the entire batch before any command starts.",

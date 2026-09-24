@@ -16,6 +16,9 @@ test("registry has only three built-ins and rejects invalid/hidden calls before 
     ["write_file", { operations: [{ path: marker, mode: "overwrite", content: "bad", extra: 1 }] }],
     ["write_file", { operations: [{ path: marker, mode: "overwrite", content: 1 }] }],
     ["bash", { commands: [{ command: "true", timeout_ms: 0 }] }],
+    ["read_file", { "": 0, files: [{ path: marker }] }],
+    ["write_file", { "": 0, operations: [{ path: marker, mode: "overwrite", content: "bad" }] }],
+    ["bash", { "": 0, commands: [{ command: "true" }] }],
     ["missing", {}],
   ] as const) {
     assert.equal((await registry.dispatch(name, args, ctx)).isError, true);

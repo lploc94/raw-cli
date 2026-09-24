@@ -60,6 +60,7 @@ function textRun(session: AgentSession, task: string): Promise<RunResult> {
   let endedWithNewline = false;
   let thinkingOpen = false;
   let thinkingEndedWithNewline = false;
+  const pendingCalls = new Map<string, { name: string; arguments: Record<string, unknown> }>();
   const color = Boolean(process.stderr.isTTY && !process.env.NO_COLOR && process.env.TERM !== "dumb");
   const style = (value: string, code: string) => color ? `\x1b[${code}m${value}\x1b[0m` : value;
   const finishThinking = () => {
@@ -84,7 +85,10 @@ function textRun(session: AgentSession, task: string): Promise<RunResult> {
       process.stderr.write(style(event.text, "2"));
       thinkingOpen = true;
       thinkingEndedWithNewline = event.text.endsWith("\n");
+    } else if (event.type === "tool_call") {
+      pendingCalls.set(event.id, { name: event.name, arguments: event.arguments });
     } else if (event.type === "tool_start") {
+      pendingCalls.delete(event.id);
       finishTextLine();
       finishThinking();
       const label = color ? style(`⚙ ${event.name}`, "1;36") : event.name;
@@ -94,6 +98,14 @@ function textRun(session: AgentSession, task: string): Promise<RunResult> {
     else if (event.type === "tool_result") {
       finishTextLine();
       finishThinking();
+      const pending = pendingCalls.get(event.id);
+      if (pending) {
+        pendingCalls.delete(event.id);
+        const args = pending.name === "write_file" && !Array.isArray(pending.arguments.operations)
+          ? JSON.stringify({ argument_keys: Object.keys(pending.arguments) })
+          : toolArguments(pending.name, pending.arguments);
+        process.stderr.write(`raw: ${style(`⚠ ${pending.name}`, "1;33")} ${style(args, "2")}\n`);
+      }
       const result = event.result;
       const failed = result.isError || (typeof result.exitCode === "number" && result.exitCode !== 0);
       const meta = [

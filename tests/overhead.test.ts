@@ -20,6 +20,7 @@ test("model-facing tool definitions explain the required workflows", () => {
   assert.match(tools.write_file!.description, /replace_lines/);
   assert.match(tools.bash!.description, /exit_code/);
   assert.match(tools.bash!.description, /timeout/);
+  assert.match(tools.bash!.description, /\{"commands":\[\{"command":"pwd"\}\]\}/);
   for (const tool of Object.values(tools)) {
     const root = tool!.inputSchema as Record<string, unknown>;
     const properties = root.properties as Record<string, Record<string, unknown>>;

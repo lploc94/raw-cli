@@ -85,6 +85,43 @@ test("CLI streams provider thinking to stderr and shows bash arguments before ex
   } finally { await fixture.close(); }
 });
 
+test("CLI shows rejected bash arguments and the model receives the expected batch shape", async () => {
+  const fixture = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "bad-shell", type: "function", function: {
+      name: "bash", arguments: '{"command":"pwd"}',
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "good-shell", type: "function", function: {
+      name: "bash", arguments: '{"commands":[{"command":"pwd"}]}',
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const result = await raw(["--config", testConfig("local", "fixture", fixture.url), "inspect"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stderr, /raw: ⚠ bash \{"command":"pwd"\}/);
+    assert.match(result.stderr, /unknown bash property "command"; use \{"commands":\[\{"command":"\.\.\."\}\]\}/);
+    assert.match(result.stderr, /raw: bash \{"commands":\[\{"command":"pwd"\}\]\}/);
+    assert.equal((result.stderr.match(/raw: ⚠ bash/g) ?? []).length, 1);
+    assert.match(JSON.stringify(fixture.requests[1]?.body), /unknown bash property/);
+  } finally { await fixture.close(); }
+});
+
+test("CLI shows rejected write argument keys without printing the payload", async () => {
+  const fixture = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "bad-write", type: "function", function: {
+      name: "write_file", arguments: '{"path":"sentinel.txt","content":"private-payload"}',
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const result = await raw(["--config", testConfig("local", "fixture", fixture.url), "inspect"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stderr, /raw: ⚠ write_file \{"argument_keys":\["path","content"\]\}/);
+    assert.doesNotMatch(result.stderr, /private-payload/);
+    assert.match(result.stderr, /unknown write_file property "path"/);
+  } finally { await fixture.close(); }
+});
+
 test("TTY starts tool activity on a new line after unfinished assistant text", async () => {
   const fixture = await startMockProvider([
     { frames: [
