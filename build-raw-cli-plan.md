@@ -704,11 +704,11 @@ Installed task must change a sentinel file and then answer using its real result
 3. Implement exact final runtime/package runners and CI matrix with all expected suites; no hidden network/API-key prerequisite.
 4. Run complete gates, perform cumulative contract audit, fix concrete integration defects with regression tests, and produce final evidence matrix.
 ### Acceptance criteria
-- [ ] **AC-8.1**: CLI/REPL/modes/profile/exit and TTY/signal behavior meet D-11 — T-08a/b.
-- [ ] **AC-8.2**: Compact/reset/stats semantics remain correct through the public CLI — T-08c.
-- [ ] **AC-8.3**: Installed tarball executes a real task, MCP tool, ACP parent-child and usable library imports outside the checkout — T-08d.
-- [ ] **AC-8.4**: Required Node 22/24 final gates pass with actual tested artifacts and all test suites — T-08e.
-- [ ] **AC-8.5**: Every AC/invariant is mapped to evidence; no unqualified platform/cache hit claims or unfinished public stubs — `docs/verification.md` and cumulative diff audit.
+- [x] **AC-8.1**: CLI/REPL/modes/profile/exit and TTY/signal behavior meet D-11 — T-08a/b.
+- [x] **AC-8.2**: Compact/reset/stats semantics remain correct through the public CLI — T-08c.
+- [x] **AC-8.3**: Installed tarball executes a real task, MCP tool, ACP parent-child and usable library imports outside the checkout — T-08d.
+- [x] **AC-8.4**: Required Node 22/24 final gates pass with actual tested artifacts and all test suites — T-08e.
+- [x] **AC-8.5**: Every AC/invariant is mapped to evidence; no unqualified platform/cache hit claims or unfinished public stubs — `docs/verification.md` and cumulative diff audit.
 ### Focused verification
 `npm run test:phase -- cli`
 `npm run test:package`
@@ -727,17 +727,17 @@ Implementation review is required; verdict must be APPROVE. Record final artifac
 `feat: complete raw CLI and installed-package qualification`
 
 ## Completion Criteria
-- [ ] User has authorized implementation of this current revision; all 8 phases have approved implementation review, AC evidence and cohesive commits.
-- [ ] All **33 ACs** below the phase headings are satisfied; no unresolved contract gap is hidden by a green subset of tests.
-- [ ] I-01..I-12 and D-01..D-11 each map to executable tests or explicitly named inspections in the final evidence matrix.
-- [ ] Exactly three default tools and measured prompt/schema budget; no hidden instruction/context/cost behavior.
-- [ ] All official SDK/provider paths, real primitives, three MCP transports, real image results, standard ACP, ws and parent client are integrated.
-- [ ] Explicit compact preserves valid retained turns and rolls back on failure; named profiles support multiple local/cloud sources without fallback.
-- [ ] Multi-turn prefix stability, actual native cache controls and honest usage stats are verified; no universal cache-hit or context-capacity claim.
-- [ ] Final G-01 commands pass on exact tested source/artifacts; test reports distinguish local fixtures, actual OS/Node checks, configured-but-unrun CI and optional live checks.
-- [ ] Installed package works outside the source tree, with public executable and library exports.
-- [ ] Docs, examples, evidence and progress reflect shipped behavior; worktree clean except specifically recorded unrelated changes.
-- [ ] No publication, deployment, remote Git creation, unrelated machine qualification or OS sandbox was added.
+- [x] User has authorized implementation of this current revision; all 8 phases have approved implementation review, AC evidence and cohesive commits.
+- [x] All **33 ACs** below the phase headings are satisfied; no unresolved contract gap is hidden by a green subset of tests.
+- [x] I-01..I-12 and D-01..D-11 each map to executable tests or explicitly named inspections in the final evidence matrix.
+- [x] Exactly three default tools and measured prompt/schema budget; no hidden instruction/context/cost behavior.
+- [x] All official SDK/provider paths, real primitives, three MCP transports, real image results, standard ACP, ws and parent client are integrated.
+- [x] Explicit compact preserves valid retained turns and rolls back on failure; named profiles support multiple local/cloud sources without fallback.
+- [x] Multi-turn prefix stability, actual native cache controls and honest usage stats are verified; no universal cache-hit or context-capacity claim.
+- [x] Final G-01 commands pass on exact tested source/artifacts; test reports distinguish local fixtures, actual OS/Node checks, configured-but-unrun CI and optional live checks.
+- [x] Installed package works outside the source tree, with public executable and library exports.
+- [x] Docs, examples, evidence and progress reflect shipped behavior; worktree clean except specifically recorded unrelated changes.
+- [x] No publication, deployment, remote Git creation, unrelated machine qualification or OS sandbox was added.
 
 ## Progress Log
 ### Resume table
@@ -752,7 +752,7 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 | 5 Compact/cache | context | complete | `docs/evidence/phase-5.md` | `gpt-6-astra` APPROVE (reopened session, 2 rounds) | `feat: add explicit compaction and multi-turn cache reuse` |
 | 6 MCP | mcp | complete | `docs/evidence/phase-6.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: integrate selected MCP tools and multimodal results` |
 | 7 ACP/client | acp | complete | `docs/evidence/phase-7.md` | `gpt-6-astra` APPROVE (4 rounds) | `feat: add interoperable ACP sessions and parent client` |
-| 8 CLI/package | cli | in_progress | — | — | — |
+| 8 CLI/package | cli | complete | `docs/evidence/phase-8.md`, `docs/verification.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: complete raw CLI and installed-package qualification` |
 
 ### Decision and planning history
 - 2026-09-24: Initial empty workspace/Git/CTXE baseline checked. CTXE setup stopped on nonexistent representative paths; no index or production code created.

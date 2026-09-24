@@ -6,8 +6,14 @@ const files = readdirSync(new URL("../tests/", import.meta.url))
   .sort()
   .map((name) => `tests/${name}`);
 
-if (files.length === 0) {
-  process.stderr.write("No test files found.\n");
+const required = ["config", "prompt", "foundation-cli", "primitives", "registry", "overhead", "providers",
+  "provider-content", "agent", "agent-lifecycle", "compact", "cache", "usage", "mcp", "mcp-content",
+  "acp", "acp-client", "acp-transport", "cli", "repl", "package"]
+  .map((name) => `tests/${name}.test.ts`);
+const missing = required.filter((file) => !files.includes(file));
+
+if (files.length === 0 || missing.length) {
+  process.stderr.write(`Missing required test files: ${missing.join(", ") || "all"}\n`);
   process.exitCode = 1;
 } else {
   const result = spawnSync(process.execPath, ["--import", "tsx", "--test", ...files], {

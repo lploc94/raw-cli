@@ -316,7 +316,8 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
       let cursor: string | undefined;
       do {
         let page;
-        try { page = await client.listTools(cursor ? { cursor } : undefined, { timeout: timeoutMs, ...(options.signal ? { signal: options.signal } : {}) }); }
+        try { page = await deadline(client.listTools(cursor ? { cursor } : undefined,
+          { timeout: timeoutMs, ...(options.signal ? { signal: options.signal } : {}) }), timeoutMs, options.signal); }
         catch { throw new Error(`MCP server ${name} discovery failed`); }
         for (const tool of page.tools) {
           if (catalog.has(tool.name)) throw new Error(`duplicate MCP tool ${tool.name} from ${name}`);
