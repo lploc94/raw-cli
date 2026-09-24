@@ -37,8 +37,20 @@ export interface ModelToolCall {
   syntheticId?: boolean;
 }
 
+export type UserBlock =
+  | { type: "text"; text: string }
+  | { type: "resource_link"; uri: string; name: string; title?: string | null; description?: string | null;
+      mimeType?: string | null; size?: number | null; annotations?: unknown };
+
+export type UserInput = string | readonly UserBlock[];
+
+export function renderUserInput(input: UserInput): string {
+  if (typeof input === "string") return input;
+  return input.map((block) => block.type === "text" ? block.text : `\n[Resource link] ${JSON.stringify(block)}\n`).join("");
+}
+
 export type ModelMessage =
-  | { role: "user"; content: string }
+  | { role: "user"; content: UserInput }
   | { role: "assistant"; text: string; toolCalls: ModelToolCall[]; opaque?: unknown }
   | { role: "tool"; callId: string; name: string; result: ToolResult };
 

@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
-import type { ProviderAdapter, ProviderProfile, ProviderRequest, ProviderTurn, ModelToolCall } from "./types.js";
+import { renderUserInput, type ProviderAdapter, type ProviderProfile, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -18,7 +18,7 @@ function inputMessages(request: ProviderRequest, provider: ProviderProfile["prov
   };
   for (const message of request.messages) {
     if (message.role !== "tool") flushImages();
-    if (message.role === "user") messages.push({ role: "user", content: message.content });
+    if (message.role === "user") messages.push({ role: "user", content: renderUserInput(message.content) });
     else if (message.role === "assistant") {
       const opaque = provider === "openrouter" && message.opaque && typeof message.opaque === "object" && !Array.isArray(message.opaque)
         ? message.opaque as Record<string, unknown> : {};

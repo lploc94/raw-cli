@@ -180,7 +180,7 @@ Loop: append user input -> request model -> fully assemble assistant turn -> if 
 
 Streaming output may be shown before it is committed. Interrupted partial assistant text/call fragments are not committed as a complete turn. Already committed declarations with executed tools retain their real results; append matching `cancelled` error results for remaining declared calls before allowing a later inference request. Do not roll back a filesystem edit in history as though it never happened. On provider failure without committed calls, preserve the user request and earlier valid history; mark the host turn terminal without inventing an assistant success.
 
-Run events: `text_delta`, `tool_start`, `tool_result`, `usage`, and exactly one `run_end` with `completed|max_steps|cancelled|error`. Terminal events include a code/message on error, no credentials. `tool_start` occurs only after authorization and immediately before execution. A denied call produces a result with no misleading execution-start event. Completed empty assistant text is a valid empty answer when the provider declared completion; truncated/incomplete provider completion is an error, not success.
+Run events: `text_delta`, `tool_call` (committed declaration before validation), `tool_start`, `tool_result`, `usage`, and exactly one `run_end` with `completed|max_steps|cancelled|error`. Terminal events include a code/message on error, no credentials. `tool_start` occurs only after authorization and immediately before execution. A denied call produces a result with no misleading execution-start event. Completed empty assistant text is a valid empty answer when the provider declared completion; truncated/incomplete provider completion is an error, not success.
 
 ### D-07 Explicit compaction
 Public paths: REPL `/compact`, library `compactSession`, negotiated ACP `_raw/session/compact`. No compact primitive is advertised to the model. Manual only in v1; do not add a threshold loop to satisfy this requirement.
@@ -657,11 +657,11 @@ Independent SDK client catches a custom server/client pair sharing the same prot
 3. Implement nonblocking dispatch, linked abort and transport disconnect cleanup, including MCP/session resources.
 4. Deliver usable parent library/example for both transports with real spawn, permission handling and cancellation.
 ### Acceptance criteria
-- [ ] **AC-7.1**: Standard official client interoperates without raw extensions, including baseline text and resource-link prompts — T-07a/b.
-- [ ] **AC-7.2**: Dynamic registered tools actually execute through reverse RPC and return to model — T-07c.
-- [ ] **AC-7.3**: Session ownership/busy/cancel/disconnect contracts hold without deadlock/leaks — T-07d.
-- [ ] **AC-7.4**: WebSocket and real parent-client spawn/close work — T-07e.
-- [ ] **AC-7.5**: Compact extension shares the tested context operation and errors — T-07f.
+- [x] **AC-7.1**: Standard official client interoperates without raw extensions, including baseline text and resource-link prompts — T-07a/b.
+- [x] **AC-7.2**: Dynamic registered tools actually execute through reverse RPC and return to model — T-07c.
+- [x] **AC-7.3**: Session ownership/busy/cancel/disconnect contracts hold without deadlock/leaks — T-07d.
+- [x] **AC-7.4**: WebSocket and real parent-client spawn/close work — T-07e.
+- [x] **AC-7.5**: Compact extension shares the tested context operation and errors — T-07f.
 ### Focused verification
 `npm run test:phase -- acp` — all three ACP suites; stdio and ws subprocess/transport fixtures.
 ### Phase gates
@@ -751,8 +751,8 @@ All rows are currently pending. Exactly one may become in_progress. Replace dash
 | 4 Agent loop | agent | complete | `docs/evidence/phase-4.md` | `gpt-6-astra` APPROVE (2 rounds) | `feat: implement bounded agent loop and resumable turn state` |
 | 5 Compact/cache | context | complete | `docs/evidence/phase-5.md` | `gpt-6-astra` APPROVE (reopened session, 2 rounds) | `feat: add explicit compaction and multi-turn cache reuse` |
 | 6 MCP | mcp | complete | `docs/evidence/phase-6.md` | `gpt-6-astra` APPROVE (3 rounds) | `feat: integrate selected MCP tools and multimodal results` |
-| 7 ACP/client | acp | in_progress | — | — | — |
-| 8 CLI/package | cli | pending | — | — | — |
+| 7 ACP/client | acp | complete | `docs/evidence/phase-7.md` | `gpt-6-astra` APPROVE (4 rounds) | `feat: add interoperable ACP sessions and parent client` |
+| 8 CLI/package | cli | in_progress | — | — | — |
 
 ### Decision and planning history
 - 2026-09-24: Initial empty workspace/Git/CTXE baseline checked. CTXE setup stopped on nonexistent representative paths; no index or production code created.

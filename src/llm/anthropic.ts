@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
-import type { ProviderAdapter, ProviderProfile, ProviderRequest, ProviderTurn, ModelToolCall } from "./types.js";
+import { renderUserInput, type ProviderAdapter, type ProviderProfile, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -8,7 +8,7 @@ import { cacheSettings } from "./cache.js";
 function inputMessages(request: ProviderRequest): MessageParam[] {
   const messages: MessageParam[] = [];
   for (const message of request.messages) {
-    if (message.role === "user") messages.push({ role: "user", content: message.content });
+    if (message.role === "user") messages.push({ role: "user", content: renderUserInput(message.content) });
     else if (message.role === "assistant") {
       const blocks = Array.isArray(message.opaque) ? message.opaque : [
         ...(message.text ? [{ type: "text", text: message.text }] : []),

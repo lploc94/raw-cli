@@ -1,6 +1,6 @@
 import type { AgentSession } from "./agent.js";
 import { normalizeUsage } from "./llm/cache.js";
-import type { ModelMessage, ProviderAdapter } from "./llm/types.js";
+import type { ModelMessage, ProviderAdapter, UserInput } from "./llm/types.js";
 
 export interface CompactOptions {
   provider?: ProviderAdapter;
@@ -17,7 +17,7 @@ export interface CompactResult {
 
 export interface CompactSnapshot {
   messages: readonly ModelMessage[];
-  originalTask?: string;
+  originalTask?: UserInput;
   previousSummary?: string;
 }
 

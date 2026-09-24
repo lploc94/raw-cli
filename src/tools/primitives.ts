@@ -8,7 +8,8 @@ export interface ToolContext {
   cwd: string;
   maxOutputBytes: number;
   autoApprove?: boolean;
-  approve?: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => boolean | Promise<boolean>;
+  approve?: (name: string, args: Record<string, unknown>, signal?: AbortSignal, toolCallId?: string) => boolean | Promise<boolean>;
+  toolCallId?: string;
   onStart?: (name: string, args: Record<string, unknown>) => void;
   whitelist?: readonly string[];
   signal?: AbortSignal;

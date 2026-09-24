@@ -43,7 +43,9 @@ export interface McpToolInfo {
 export interface McpConnection {
   readonly registry: ToolRegistry;
   readonly discovered: readonly { server: string; name: string }[];
+  readonly catalog: readonly McpToolInfo[];
   readonly exposed: readonly McpToolInfo[];
+  activate(aliases: readonly string[]): void;
   close(): Promise<void>;
 }
 
@@ -272,7 +274,9 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
   const owners: Client[] = [];
   const discovered: { server: string; name: string }[] = [];
   const exposed: McpToolInfo[] = [];
-  const pending: ToolRegistration[] = [];
+  const catalogInfo: McpToolInfo[] = [];
+  const available = new Map<string, () => ToolRegistration>();
+  const selectedAliases: string[] = [];
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -323,18 +327,20 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
         if (cursor) { if (cursors.has(cursor)) throw new Error(`MCP pagination cycle from ${name}`); cursors.add(cursor); }
       } while (cursor);
       const selected = spec.tools === "*" ? [...catalog.keys()] : spec.tools ?? [];
-      for (const originalName of selected) {
-        const tool = catalog.get(originalName);
-        if (!tool) throw new Error(`unknown MCP tool ${originalName} selected from ${name}`);
+      for (const originalName of selected) if (!catalog.has(originalName)) throw new Error(`unknown MCP tool ${originalName} selected from ${name}`);
+      for (const [originalName, tool] of catalog) {
         const alias = aliasFor(name, originalName);
-        const schema = canonical(tool.inputSchema) as ToolRegistration["inputSchema"];
-        const ajv = new Ajv2020.default({ strict: true, allErrors: true });
-        addFormats.default(ajv);
-        let validate: ReturnType<typeof ajv.compile>;
-        try { validate = ajv.compile(schema); }
-        catch { throw new Error(`unsupported MCP tool schema for ${name}/${originalName}`); }
-        if ((validate as typeof validate & { $async?: boolean }).$async) throw new Error(`unsupported async MCP tool schema for ${name}/${originalName}`);
-        pending.push({ name: alias, description: tool.description, inputSchema: schema,
+        if (available.has(alias)) throw new Error(`duplicate MCP alias: ${alias}`);
+        catalogInfo.push({ server: name, originalName, alias });
+        available.set(alias, () => {
+          const schema = canonical(tool.inputSchema) as ToolRegistration["inputSchema"];
+          const ajv = new Ajv2020.default({ strict: true, allErrors: true });
+          addFormats.default(ajv);
+          let validate: ReturnType<typeof ajv.compile>;
+          try { validate = ajv.compile(schema); }
+          catch { throw new Error(`unsupported MCP tool schema for ${name}/${originalName}`); }
+          if ((validate as typeof validate & { $async?: boolean }).$async) throw new Error(`unsupported async MCP tool schema for ${name}/${originalName}`);
+          return { name: alias, description: tool.description, inputSchema: schema,
           validateArgs: (args) => validate(args) ? undefined : ajv.errorsText(validate.errors),
           handler: async (args, context) => {
             if (closed) return errorResult("mcp_closed", `MCP server ${name} is closed`);
@@ -348,17 +354,26 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
               const timedOut = /timeout|timed out/i.test((error as Error).message);
               return errorResult("mcp_call_error", timedOut ? `MCP call timed out: ${name}` : `MCP call failed: ${name}`);
             }
-          } });
-        exposed.push({ server: name, originalName, alias });
+          } };
+        });
+        if (selected.includes(originalName)) selectedAliases.push(alias);
       }
     }
-    const existing = new Set(registry.definitions().map((item) => item.name));
-    for (const tool of pending) {
-      if (existing.has(tool.name)) throw new Error(`duplicate MCP alias: ${tool.name}`);
-      existing.add(tool.name);
-    }
-    for (const tool of pending) registry.register(tool);
-    exposed.sort((a, b) => a.alias.localeCompare(b.alias));
-    return { registry, discovered, exposed, close };
+    const activated = new Set<string>();
+    const activate = (aliases: readonly string[]) => {
+      const existing = new Set(registry.definitions().map((item) => item.name));
+      const unique = [...new Set(aliases)];
+      for (const alias of unique) {
+        if (!available.has(alias) && !existing.has(alias)) throw new Error(`unknown MCP alias: ${alias}`);
+        if (available.has(alias) && existing.has(alias) && !activated.has(alias)) throw new Error(`duplicate MCP alias: ${alias}`);
+      }
+      const registrations = unique.filter((alias) => available.has(alias) && !activated.has(alias)).map((alias) => available.get(alias)!());
+      for (const registration of registrations) { registry.register(registration); activated.add(registration.name); }
+      for (const registration of registrations) exposed.push(catalogInfo.find((item) => item.alias === registration.name)!);
+      exposed.sort((a, b) => a.alias.localeCompare(b.alias));
+    };
+    activate(selectedAliases);
+    catalogInfo.sort((a, b) => a.alias.localeCompare(b.alias));
+    return { registry, discovered, catalog: catalogInfo, exposed, activate, close };
   } catch (error) { await close(); throw error; }
 }

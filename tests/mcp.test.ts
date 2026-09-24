@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,11 +7,21 @@ import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
 import { connectMcpServers, loadMcpConfig } from "../src/tools/mcp-client.js";
+import { createToolRegistry } from "../src/tools/registry.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { startMcpHttp } from "./fixtures/mcp-http.js";
 
 const stdio = (label: string, count = 2) => ({ command: process.execPath, args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"],
   env: { MCP_LABEL: label, MCP_COUNT: String(count) }, tools: ["selected"] });
+
+test("T-07 review: selected MCP alias collision with pre-registered tool fails startup", async () => {
+  const alias = `mcp_fixture_selected_${createHash("sha256").update("fixture\0selected").digest("hex").slice(0, 12)}`;
+  const registry = createToolRegistry();
+  registry.register({ name: alias, description: "pre-existing", inputSchema: { type: "object" },
+    handler: async () => ({ isError: false, content: [{ type: "text", text: "wrong-handler" }] }) });
+  await assert.rejects(connectMcpServers({ servers: { fixture: stdio("fixture") }, registry,
+    cwd: process.cwd(), timeoutMs: 3000 }), /duplicate MCP alias/);
+});
 
 test("T-06a: all official SDK transports paginate and selected page-two tools reach provider follow-up", async () => {
   const http = await Promise.all([startMcpHttp("sse", "sse"), startMcpHttp("streamable-http", "http")]);

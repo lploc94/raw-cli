@@ -2,7 +2,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { randomUUID } from "node:crypto";
 import { performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
-import type { ModelMessage, ModelToolCall, ProviderAdapter } from "./llm/types.js";
+import type { ModelMessage, ModelToolCall, ProviderAdapter, UserInput } from "./llm/types.js";
 import { createToolRegistry, type ToolDefinition, type ToolRegistry } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
@@ -21,6 +21,7 @@ export interface RunResult {
 
 export type RunEvent =
   | { type: "text_delta"; text: string }
+  | { type: "tool_call"; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
   | { type: "usage"; raw: unknown }
@@ -48,10 +49,11 @@ export class AgentSession {
   private activeCompact: Promise<CompactResult> | undefined;
   private rawUsage: unknown[] = [];
   private usageEntries: UsageRecord[] = [];
-  private originalTask: string | undefined;
+  private originalTask: UserInput | undefined;
   private summaryText: string | undefined;
   private readonly cacheKey = randomUUID();
-  private readonly schemaView: readonly ToolDefinition[];
+  private schemaView: readonly ToolDefinition[];
+  private schemaRevision = 1;
 
   constructor(options: AgentOptions) {
     const maxSteps = options.maxSteps ?? 25;
@@ -77,7 +79,19 @@ export class AgentSession {
   get transcript(): readonly ModelMessage[] { return structuredClone(this.messages); }
   get usageRecords(): readonly unknown[] { return structuredClone(this.rawUsage); }
   get cwd(): string { return this.options.cwd; }
+  get toolSchemaRevision(): number { return this.schemaRevision; }
+  get toolDefinitions(): readonly ToolDefinition[] { return structuredClone(this.schemaView); }
   stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
+
+  setToolView(whitelist?: readonly string[]): number {
+    if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
+    const known = new Set(this.options.registry.definitions().map((item) => item.name));
+    for (const name of whitelist ?? []) if (!known.has(name)) throw new Error(`unknown tool: ${name}`);
+    if (whitelist === undefined) delete this.options.whitelist;
+    else this.options.whitelist = [...whitelist];
+    this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
+    return ++this.schemaRevision;
+  }
 
   clear(): void {
     if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
@@ -165,7 +179,7 @@ export class AgentSession {
     return task;
   }
 
-  run(input: string, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+  run(input: UserInput, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     if (this.currentState === "closed" || this.currentState === "closing") return Promise.reject(new Error("agent session is closed"));
     if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
     this.currentState = "running";
@@ -180,7 +194,7 @@ export class AgentSession {
     return running;
   }
 
-  private async execute(input: string, controller: AbortController, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+  private async execute(input: UserInput, controller: AbortController, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     let steps = 0;
     let observerError: Error | undefined;
     let ended = false;
@@ -208,8 +222,8 @@ export class AgentSession {
       this.messages.push({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) });
       emit({ type: "tool_result", id: call.id, name: call.name, result });
     };
-    if (this.originalTask === undefined) this.originalTask = input;
-    this.messages.push({ role: "user", content: input });
+    if (this.originalTask === undefined) this.originalTask = structuredClone(input);
+    this.messages.push({ role: "user", content: structuredClone(input) });
     try {
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
@@ -255,6 +269,7 @@ export class AgentSession {
         }
         if (steps >= this.options.maxSteps) return finish({ status: "max_steps", steps, code: "max_steps", message: "tool calls require another inference step" });
         this.messages.push(structuredClone({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls, ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }));
+        for (const call of turn.toolCalls) emit({ type: "tool_call", id: call.id, name: call.name, arguments: call.arguments });
         for (let index = 0; index < turn.toolCalls.length; index++) {
           const call = turn.toolCalls[index]!;
           if (controller.signal.aborted) {
@@ -270,6 +285,7 @@ export class AgentSession {
               ...(this.options.approve ? { approve: this.options.approve } : {}),
               ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
               signal: controller.signal,
+              toolCallId: call.id,
               onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
             });
           appendResult(call, result);

@@ -54,7 +54,7 @@ test("manual compact pins original task, retains two complete turns and one summ
   const after = agent.transcript;
   assert.equal(after[0]?.role, "user");
   assert.equal(after[0]?.role === "user" ? after[0].content : "", before[0]?.role === "user" ? before[0].content : "");
-  assert.match(after[1]?.role === "user" ? after[1].content : "", /Conversation summary/);
+  assert.match(after[1]?.role === "user" && typeof after[1].content === "string" ? after[1].content : "", /Conversation summary/);
   const retained = before.slice(before.findIndex((message) => message.role === "user" && message.content === "recent tool turn"));
   assert.deepEqual(after.slice(2), retained);
   assert.equal(after.filter((message) => message.role === "tool").length, 2);
@@ -157,8 +157,8 @@ test("second compact carries the previous summary as data and pins original task
   assert.equal(result.status, "compacted");
   assert.match(input, /First summary/);
   const transcript = agent.transcript;
-  assert.equal(transcript.filter((message) => message.role === "user" && message.content.startsWith("original task")).length, 1);
-  assert.match(transcript[1]?.role === "user" ? transcript[1].content : "", /Second summary/);
+  assert.equal(transcript.filter((message) => message.role === "user" && typeof message.content === "string" && message.content.startsWith("original task")).length, 1);
+  assert.match(transcript[1]?.role === "user" && typeof transcript[1].content === "string" ? transcript[1].content : "", /Second summary/);
   assert.doesNotMatch(JSON.stringify(transcript), /First summary/);
 });
 

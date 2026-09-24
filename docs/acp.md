@@ -1,0 +1,28 @@
+# Agent Client Protocol
+
+`raw --acp --stdio` runs an ACP v1 agent over newline-delimited JSON-RPC on stdin/stdout. Stdout contains protocol messages only; diagnostics go to stderr. `raw --acp` defaults to stdio. `raw --acp --ws --host 127.0.0.1 --port 8765` serves one JSON-RPC object per WebSocket text frame, with a 16 MiB frame limit. The WebSocket server binds only loopback and rejects browser `Origin` and binary frames. This mode is for local IDE/parent processes, not public hosting.
+
+Standard clients call `initialize`, `session/new`, then `session/prompt`. Raw sends `session/update` chunks/tool statuses and replies to `session/prompt` only after the turn ends. `session/cancel` can interrupt inference, permission waits, MCP calls, reverse callbacks and Bash. Standard `session/request_permission` asks the client before each tool unless raw was started with `-y`. The default three model tools remain `read_file`, `write_file`, `bash`; ACP methods and slash commands do not become model tools. Raw advertises ACP version 1, text and `resource_link` prompt support, SSE and HTTP MCP support, and no session persistence or optional prompt image/audio/embedded-resource capability.
+
+`session/new` requires an existing absolute `cwd`. It accepts standard MCP server definitions. Local `mcp.json`/`raw-mcp.json` selections keyed by server name determine initial exposure; a client-supplied server without a matching local selection exposes no tools until an explicit raw configure extension is negotiated. A server's discovery data is never added to model instructions. Cwd changes how relative file paths resolve; it does not confine Bash or create an OS sandbox.
+
+Prompt blocks may contain text and `resource_link` in any order, including only resource links. Raw keeps their type and supplied metadata in the transcript. The provider receives each link as a concise labeled user reference containing its URI/name and supplied title, description, MIME type, size and annotations in order; raw does not fetch or read the URI. Unsupported optional prompt blocks return an explicit error if their capability was not advertised. Tool-result images follow the native provider mapping documented in [MCP](mcp.md); client prompt images are not advertised in v1.
+
+## Raw extensions
+
+The initialization `_meta.raw` object advertises `runtimeInfo`, `sessionConfigure`, `toolRegister`, `toolCall`, and `sessionCompact` booleans. A client advertises its supported raw booleans in its own initialization `_meta.raw`; unknown fields are ignored, known fields must be booleans. Standard ACP works without any raw negotiation. Extensions use underscore-prefixed methods and never replace standard ACP methods.
+
+| Method | Request | Result |
+|---|---|---|
+| `_raw/runtime/info` | `{ "sessionId"?: string }` | Redacted profile/model, limits, exposed tool aliases/origins and discovered MCP alias catalog |
+| `_raw/session/configure` | `{ "sessionId": string, "tools": string[] }` | `{ "schemaRevision": number, "tools": string[] }` |
+| `_raw/tool/register` | `{ "sessionId": string, "name": string, "description": string, "inputSchema": object }` | `{ "toolId": string, "alias": string, "schemaRevision": number }` |
+| `_raw/tool/call` (agent to client) | `{ "sessionId": string, "toolId": string, "invocationId": string, "arguments": object }` | `{ "isError": boolean, "content": ToolContent[] }` |
+| `_raw/tool/cancel` (agent to client notification) | `{ "sessionId": string, "invocationId": string }` | No response |
+| `_raw/session/compact` | `{ "sessionId": string }` | `{ "status": string, "beforeBytes"?: number, "afterBytes"?: number, "usage"?: object }` |
+
+`ToolContent` is `{type:"text",text:string}`, `{type:"json",value:JSON}`, or `{type:"image",mimeType:"image/png"|"image/jpeg",data:"BASE64"}`. Registration supplies a schema, never JavaScript source or a command path. A tool call travels back over the same connection to the owning client; the returned content enters the next model request through the ordinary tool-result path. Registration/configuration require an idle session. `_raw/runtime/info` lists discovered MCP aliases with `exposed` status; `_raw/session/configure` can select one of those aliases for a later turn. Unknown names, duplicate names, invalid schemas, missing capability, timeout, cancellation and late replies have explicit errors. Callback timeout or disconnect aborts the pending reverse request. `_raw/session/compact` uses the same atomic operation as the library and REPL; it cannot override the configured compact profile per request.
+
+Extension error codes: `-32001` unknown session, `-32002` busy, `-32003` capability missing, `-32004` unknown/denied tool, `-32005` timeout, `-32006` cancelled, `-32007` upstream failure, `-32008` duplicate registration. Standard ACP and JSON-RPC errors retain their standard meanings. Each peer owns only its own sessions and ephemeral registrations. On disconnect, raw aborts active work, closes owned MCP clients, rejects callbacks and releases child processes. Remote cancellation is best effort.
+
+The exported `createAcpClient` helper can spawn the installed `raw --acp --stdio` child or connect to the local WebSocket endpoint, initialize, create sessions, prompt, observe updates, answer permissions and reverse tool calls, cancel and close. `examples/parent-agent.ts` shows the parent lifecycle. Each `createAcpServer` instance owns one peer connection; the WebSocket listener creates a fresh instance for each peer. No remote account or cloud service is required for this transport.

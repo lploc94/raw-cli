@@ -97,8 +97,8 @@ export class ToolRegistry {
       let allowed: boolean;
       try {
         allowed = await (cancelled
-          ? Promise.race([Promise.resolve(context.approve(name, structuredClone(args as Record<string, unknown>), context.signal)), cancelled])
-          : context.approve(name, structuredClone(args as Record<string, unknown>), context.signal));
+          ? Promise.race([Promise.resolve(context.approve(name, structuredClone(args as Record<string, unknown>), context.signal, context.toolCallId)), cancelled])
+          : context.approve(name, structuredClone(args as Record<string, unknown>), context.signal, context.toolCallId));
       } catch (error) {
         return finish(errorResult("approval_error", `approval failed: ${(error as Error).message}`));
       } finally {

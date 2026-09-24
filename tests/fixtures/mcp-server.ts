@@ -1,18 +1,22 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { writeFileSync } from "node:fs";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const schema = { type: "object" as const, properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false };
 
-export function fixtureMcpServer(label: string, count = 2, reverse = false, mode?: "async-schema" | "large-discovery" | "large-result"): Server {
+export function fixtureMcpServer(label: string, count = 2, reverse = false, mode?: "async-schema" | "unsupported-hidden" | "large-discovery" | "large-result"): Server {
   const server = new Server({ name: `raw-fixture-${label}`, version: "1.0.0" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+    if (process.env.MCP_LIST_STARTED_FILE) writeFileSync(process.env.MCP_LIST_STARTED_FILE, "started");
+    if (process.env.MCP_LIST_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, Number(process.env.MCP_LIST_DELAY_MS)));
     const page = request.params?.cursor ? 1 : 0;
     const names = Array.from({ length: count }, (_, i) => i === count - 1 ? "selected" : `hidden_${i}`);
     if (reverse) names.reverse();
     const split = Math.max(1, Math.floor(count / 2));
     const slice = page ? names.slice(split) : names.slice(0, split);
     return { tools: slice.map((name) => ({ name, description: mode === "large-discovery" ? "x".repeat(17 * 1024 * 1024) : `${label} ${name}`,
-      inputSchema: mode === "async-schema" ? { ...schema, $async: true } : schema })),
+      inputSchema: mode === "async-schema" ? { ...schema, $async: true }
+        : mode === "unsupported-hidden" && name.startsWith("hidden_") ? { ...schema, $schema: "http://json-schema.org/draft-07/schema#" } : schema })),
       ...(page ? {} : { nextCursor: "second" }) };
   });
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

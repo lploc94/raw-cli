@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { configFilePath, parseCliArgs, readConfigDocument, redact } from "../src/config.js";
+import { configFilePath, loadConfig, parseCliArgs, readConfigDocument, redact } from "../src/config.js";
+import { createAcpServer } from "../src/acp/methods.js";
+import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
 
 const version = "0.1.0";
 
@@ -26,7 +28,7 @@ Options:
 `;
 }
 
-function run(): void {
+async function run(): Promise<void> {
   const parsed = parseCliArgs(process.argv.slice(2));
   if (parsed.command === "help") { process.stdout.write(help()); return; }
   if (parsed.command === "version") { process.stdout.write(`${version}\n`); return; }
@@ -62,12 +64,26 @@ function run(): void {
     }
     return;
   }
+  if (parsed.command === "acp") {
+    const runtime = await loadConfig({ flags: parsed.flags });
+    if (parsed.acpTransport !== "ws") {
+      await serveAcpStdio(createAcpServer({ runtime }));
+      return;
+    }
+    const listener = await serveAcpWebSocket({ host: parsed.flags.host ?? "127.0.0.1", port: parsed.flags.port ?? 8765,
+      serverFactory: () => createAcpServer({ runtime }) });
+    process.stderr.write(`raw: ACP WebSocket listening on 127.0.0.1:${listener.port}\n`);
+    await new Promise<void>((resolve) => {
+      const stop = () => { void listener.close().then(resolve); };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+    return;
+  }
   throw new Error(`The ${parsed.command} mode is not implemented in Phase 1`);
 }
 
-try {
-  run();
-} catch (error) {
+void run().catch((error) => {
   process.stderr.write(`raw: ${redact(error instanceof Error ? error.message : String(error))}\n`);
   process.exitCode = 2;
-}
+});
