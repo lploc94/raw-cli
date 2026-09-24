@@ -93,6 +93,19 @@ test("T-06b: 100 discovered tools expose only selected names, route same names t
   await assert.rejects(connectMcpServers({ servers: { one: { ...stdio("x"), tools: ["missing"] } }, cwd: process.cwd(), timeoutMs: 3000 }), /unknown|missing/);
 });
 
+test("MCP tools declaring JSON Schema draft-07 are exposed and validated", async () => {
+  const fixture = stdio("draft7");
+  const connection = await connectMcpServers({ servers: { draft7: { ...fixture, env: { ...fixture.env, MCP_MODE: "draft7-schema" } } },
+    cwd: process.cwd(), timeoutMs: 3000 });
+  try {
+    assert.equal(connection.exposed.length, 1);
+    const alias = connection.exposed[0]!.alias;
+    const context = { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true };
+    assert.match(JSON.stringify(await connection.registry.dispatch(alias, { value: "ok" }, context)), /draft7:selected:ok/);
+    assert.equal((await connection.registry.dispatch(alias, { value: 7 }, context)).code, "invalid_arguments");
+  } finally { await connection.close(); }
+});
+
 test("T-06b: all-selection, long-prefix collisions and shuffled discovery remain deterministic", async () => {
   const long = "same_prefix_".repeat(8);
   const servers = {

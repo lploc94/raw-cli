@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import AjvDraft7 from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -293,7 +294,11 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
         catalogInfo.push({ server: name, originalName, alias });
         available.set(alias, () => {
           const schema = canonical(tool.inputSchema) as ToolRegistration["inputSchema"];
-          const ajv = new Ajv2020.default({ strict: true, allErrors: true });
+          const draft7 = typeof schema.$schema === "string"
+            && /^https?:\/\/json-schema\.org\/draft-07\/schema#?$/.test(schema.$schema);
+          const ajv = draft7
+            ? new AjvDraft7.default({ strict: true, allErrors: true })
+            : new Ajv2020.default({ strict: true, allErrors: true });
           addFormats.default(ajv);
           let validate: ReturnType<typeof ajv.compile>;
           try { validate = ajv.compile(schema); }
