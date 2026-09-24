@@ -4,21 +4,98 @@ import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { connectMcpServers, type McpServerConfig } from "./tools/mcp-client.js";
 import { createToolRegistry } from "./tools/registry.js";
+import type { ToolResult } from "./tools/types.js";
+
+const RESULT_PREVIEW_CHARS = 2000;
+const RESULT_PREVIEW_LINES = 9; // The result header is the tenth displayed line.
+
+function resultPreview(result: ToolResult): string {
+  const channels = new Set(result.content.flatMap((block) => block.type === "text" && block.channel ? [block.channel] : []));
+  const labelChannels = channels.size > 1;
+  const body = result.content.map((block) => {
+    if (block.type === "text") return `${labelChannels && block.channel ? `[${block.channel}]\n` : ""}${block.text}`;
+    if (block.type === "json") return JSON.stringify(block.value);
+    return `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]`;
+  }).join("\n").replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  if (!body) return "";
+  const lines = body.split("\n");
+  const lineLimited = lines.length > RESULT_PREVIEW_LINES
+    ? [...lines.slice(0, 4), "… [middle lines hidden] …", ...lines.slice(-4)].join("\n") : body;
+  const characters = Array.from(lineLimited);
+  if (characters.length <= RESULT_PREVIEW_CHARS) return lineLimited;
+  const marker = "… [middle characters hidden] …";
+  const remaining = RESULT_PREVIEW_CHARS - Array.from(marker).length;
+  return characters.slice(0, Math.ceil(remaining / 2)).join("") + marker
+    + characters.slice(-Math.floor(remaining / 2)).join("");
+}
+
+function toolArguments(name: string, args: Record<string, unknown>): string {
+  const display = name === "write_file" && typeof args.content === "string"
+    ? { ...args, content: `[${Buffer.byteLength(args.content, "utf8")} bytes]` } : args;
+  const json = JSON.stringify(display);
+  return name === "bash" || json.length <= 240 ? json : `${json.slice(0, 239)}…`;
+}
 
 function textRun(session: AgentSession, task: string): Promise<RunResult> {
   let wrote = false;
   let endedWithNewline = false;
+  let thinkingOpen = false;
+  let thinkingEndedWithNewline = false;
+  const color = Boolean(process.stderr.isTTY && !process.env.NO_COLOR && process.env.TERM !== "dumb");
+  const style = (value: string, code: string) => color ? `\x1b[${code}m${value}\x1b[0m` : value;
+  const finishThinking = () => {
+    if (thinkingOpen && !thinkingEndedWithNewline) process.stderr.write("\n");
+    thinkingOpen = false;
+  };
+  const finishTextLine = () => {
+    if (wrote && !endedWithNewline) {
+      process.stdout.write("\n");
+      endedWithNewline = true;
+    }
+  };
   const show = (event: RunEvent) => {
     if (event.type === "text_delta") {
+      finishThinking();
       process.stdout.write(event.text);
       wrote ||= event.text.length > 0;
       if (event.text.length) endedWithNewline = event.text.endsWith("\n");
-    } else if (event.type === "tool_start") process.stderr.write(`raw: ${event.name}\n`);
-    else if (event.type === "tool_result" && event.result.isError) process.stderr.write(`raw: ${event.name}: ${event.result.code ?? "tool_error"}\n`);
-    else if (event.type === "compact_start") process.stderr.write(`raw: compacting context (${event.estimatedTokens} estimated input tokens)\n`);
-    else if (event.type === "compact_end") process.stderr.write(`raw: compact ${event.result.status}\n`);
+    } else if (event.type === "reasoning_delta" && event.text) {
+      finishTextLine();
+      if (!thinkingOpen) process.stderr.write(`raw: ${style("thinking", "2")}\n`);
+      process.stderr.write(style(event.text, "2"));
+      thinkingOpen = true;
+      thinkingEndedWithNewline = event.text.endsWith("\n");
+    } else if (event.type === "tool_start") {
+      finishTextLine();
+      finishThinking();
+      const label = color ? style(`⚙ ${event.name}`, "1;36") : event.name;
+      const args = ` ${style(toolArguments(event.name, event.arguments), "2")}`;
+      process.stderr.write(`raw: ${label}${args}\n`);
+    }
+    else if (event.type === "tool_result") {
+      finishTextLine();
+      finishThinking();
+      const result = event.result;
+      const failed = result.isError || (typeof result.exitCode === "number" && result.exitCode !== 0);
+      const meta = [
+        ...(typeof result.exitCode === "number" ? [`exit ${result.exitCode}`] : []),
+        ...(result.code ? [result.code] : []),
+        ...(result.truncated ? ["model output capped"] : []),
+      ];
+      const preview = resultPreview(result);
+      const label = `${failed ? "✗" : "↳"} ${event.name} result${meta.length ? ` (${meta.join(", ")})` : ""}${preview ? "" : " (empty)"}`;
+      process.stderr.write(`raw: ${style(label, failed ? "1;31" : "2")}\n`);
+      if (preview) process.stderr.write(`${style(preview, "2")}\n`);
+    } else if (event.type === "compact_start") {
+      finishTextLine();
+      process.stderr.write(`raw: compacting context (${event.estimatedTokens} estimated input tokens)\n`);
+    } else if (event.type === "compact_end") {
+      finishTextLine();
+      process.stderr.write(`raw: compact ${event.result.status}\n`);
+    }
   };
   return session.run(task, show).then((result) => {
+    finishThinking();
     if (!wrote && result.text) {
       process.stdout.write(result.text);
       endedWithNewline = result.text.endsWith("\n");

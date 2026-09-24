@@ -22,6 +22,7 @@ export interface RunResult {
 
 export type RunEvent =
   | { type: "text_delta"; text: string }
+  | { type: "reasoning_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_result"; id: string; name: string; result: ToolResult }
@@ -331,6 +332,7 @@ export class AgentSession {
               ?? this.options.provider.profile.maxOutputTokens ?? 1024 } : {}),
             signal: controller.signal,
             onTextDelta: (text) => { if (!controller.signal.aborted) emit({ type: "text_delta", text }); },
+            onReasoningDelta: (text) => { if (!controller.signal.aborted) emit({ type: "reasoning_delta", text }); },
             onUsage: recordUsage,
           }), aborted]);
         } finally { controller.signal.removeEventListener("abort", onAbort); }

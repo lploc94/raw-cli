@@ -80,7 +80,7 @@ export function createGoogleProvider(profile: Readonly<ProviderProfile>): Provid
           if (candidate.finishReason) finishReason = candidate.finishReason;
           for (const part of candidate.content?.parts ?? []) {
             parts.push(part);
-            if (part.thought) continue;
+            if (part.thought) { if (part.text) request.onReasoningDelta?.(part.text); continue; }
             if (part.text) { text += part.text; request.onTextDelta?.(part.text); }
             if (part.functionCall) {
               const call = part.functionCall;

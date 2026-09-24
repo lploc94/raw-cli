@@ -53,9 +53,95 @@ test("T-08a: one-shot streams once and a real write result reaches follow-up inf
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "Changed sentinel\n");
+    assert.match(result.stderr, /raw: write_file \{"path":"sentinel.txt","content":"\[10 bytes\]"\}/);
+    assert.doesNotMatch(result.stderr, /real-write/);
     assert.equal(await readFile(join(root, "sentinel.txt"), "utf8"), "real-write");
     assert.match(JSON.stringify(fixture.requests[1]?.body), /real-write/);
   } finally { await fixture.close(); }
+});
+
+test("CLI streams provider thinking to stderr and shows bash arguments before execution", async () => {
+  const fixture = await startMockProvider([
+    { frames: [
+      openAiFrame({ reasoning: "Inspect " }),
+      openAiFrame({ reasoning: "files." }),
+      openAiFrame({ tool_calls: [{ index: 0, id: "shell", type: "function", function: {
+        name: "bash", arguments: JSON.stringify({ command: "printf sample", timeout_ms: 1000 }),
+      } }] }, "tool_calls"), openAiDone,
+    ] },
+    { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const result = await raw(["--config", testConfig("local", "fixture", fixture.url), "run a command"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "done\n");
+    assert.match(result.stderr, /raw: thinking\nInspect files\.\n/);
+    assert.match(result.stderr, /raw: bash \{"command":"printf sample","timeout_ms":1000\}/);
+    assert.match(result.stderr, /raw: ↳ bash result \(exit 0\)\nsample\n/);
+    assert.doesNotMatch(result.stderr, /\x1b\[/);
+    assert.doesNotMatch(result.stderr, /allow bash|\[y\/N\]/i);
+    assert.match(JSON.stringify(fixture.requests[1]?.body), /sample/);
+  } finally { await fixture.close(); }
+});
+
+test("TTY starts tool activity on a new line after unfinished assistant text", async () => {
+  const fixture = await startMockProvider([
+    { frames: [
+      openAiFrame({ content: "I will inspect the repo." }),
+      openAiFrame({ tool_calls: [{ index: 0, id: "shell", type: "function", function: {
+        name: "bash", arguments: JSON.stringify({ command: "pwd" }),
+      } }] }, "tool_calls"), openAiDone,
+    ] },
+    { frames: [openAiFrame({ content: "Done." }, "stop"), openAiDone] },
+  ]);
+  const { child, output } = ptyRaw(["--config", testConfig("local", "fixture", fixture.url), "inspect"],
+    { ...process.env, NO_COLOR: "1" });
+  try {
+    const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+    assert.equal(code, 0, output());
+    assert.match(output().replace(/\r/g, ""), /I will inspect the repo\.\nraw: bash \{"command":"pwd"\}\nraw: ↳ bash result \(exit 0\)\n/);
+  } finally { child.kill("SIGTERM"); await fixture.close(); }
+});
+
+test("tool result preview keeps head and tail within 2000 characters and 10 lines", async () => {
+  const fixture = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "shell", type: "function", function: {
+      name: "bash", arguments: JSON.stringify({ command:
+        "printf 'HEAD\\n'; for i in {1..20}; do printf 'line-%02d\\n' \"$i\"; done; printf '%03000d\\nTAIL\\n' 0" }),
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "Done" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const result = await raw(["--config", testConfig("local", "fixture", fixture.url), "inspect"]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "Done\n");
+    const start = result.stderr.indexOf("raw: ↳ bash result");
+    assert.ok(start >= 0);
+    const lines = result.stderr.slice(start).trimEnd().split("\n");
+    assert.ok(lines.length <= 10, `preview used ${lines.length} lines`);
+    const preview = lines.slice(1).join("\n");
+    assert.ok(Array.from(preview).length <= 2000);
+    assert.match(preview, /HEAD/);
+    assert.match(preview, /TAIL/);
+    assert.match(preview, /hidden/);
+    assert.ok(JSON.stringify(fixture.requests[1]?.body).includes("0".repeat(3000)), "full output must reach the model");
+  } finally { await fixture.close(); }
+});
+
+test("TTY renders thinking in dim color while keeping the answer separate", async () => {
+  const fixture = await startMockProvider([{ frames: [
+    openAiFrame({ reasoning_content: "Checking context." }),
+    openAiFrame({ content: "ready" }, "stop"), openAiDone,
+  ] }]);
+  const { child, output } = ptyRaw(["--config", testConfig("deepseek", "fixture", fixture.url), "check"],
+    { ...process.env, DEEPSEEK_API_KEY: "key", NO_COLOR: "", TERM: "xterm-256color" });
+  try {
+    const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+    assert.equal(code, 0, output());
+    assert.match(output(), /raw: \x1b\[2mthinking\x1b\[0m/);
+    assert.match(output(), /\x1b\[2mChecking context\.\x1b\[0m/);
+    assert.match(output(), /ready/);
+  } finally { child.kill("SIGTERM"); await fixture.close(); }
 });
 
 test("T-08a/b: non-TTY tool call executes without an approval flag", async () => {
@@ -221,12 +307,13 @@ test("T-08b: Ctrl-C during an active PTY tool aborts it and exits 130", async ()
     name: "bash", arguments: JSON.stringify({ command: `sleep 0.5; printf late > ${join(root, "marker")}` }),
   } }] }, "tool_calls"), openAiDone] }]);
   const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "-y", "run shell"],
-    { ...process.env, OPENAI_API_KEY: "key" });
+    { ...process.env, OPENAI_API_KEY: "key", NO_COLOR: "", TERM: "xterm-256color" });
   try {
-    await waitFor(output, "raw: bash");
+    await waitFor(output, "⚙ bash");
     child.stdin.write("\x03");
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 130, output());
+    assert.match(output(), /\x1b\[1;36m⚙ bash\x1b\[0m/);
     await new Promise((resolve) => setTimeout(resolve, 650));
     await assert.rejects(access(join(root, "marker")));
   } finally { child.kill("SIGTERM"); await fixture.close(); }
@@ -241,13 +328,12 @@ test("T-08b: REPL Ctrl-C aborts active work, then Ctrl-C while idle exits", asyn
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
     await waitFor(output, "> ");
-    const firstPrompt = output().lastIndexOf("> ");
     child.stdin.write("run shell\n");
     await waitFor(output, "raw: bash");
     child.stdin.write("\x03");
     await waitFor(output, "raw: cancelled");
     const until = Date.now() + 3000;
-    while (output().lastIndexOf("> ") <= firstPrompt) {
+    while (output().lastIndexOf("\n> ") <= output().indexOf("raw: cancelled")) {
       if (Date.now() > until) throw new Error(`REPL did not return to prompt: ${output()}`);
       await new Promise((resolve) => setTimeout(resolve, 20));
     }

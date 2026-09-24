@@ -96,6 +96,7 @@ export function createAnthropicProvider(profile: Readonly<ProviderProfile>): Pro
             } else if (delta.type === "thinking_delta") {
               if (block.type !== "thinking") throw new ProviderError("invalid_stream", "thinking delta on nonthinking block");
               block.thinking = String(block.thinking ?? "") + delta.thinking;
+              if (delta.thinking) request.onReasoningDelta?.(delta.thinking);
             } else if (delta.type === "signature_delta") {
               if (block.type !== "thinking") throw new ProviderError("invalid_stream", "signature delta on nonthinking block");
               block.signature = String(block.signature ?? "") + delta.signature;

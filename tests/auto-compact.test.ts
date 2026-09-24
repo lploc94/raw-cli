@@ -33,7 +33,8 @@ test("automatic compact runs before the next over-threshold inference and keeps 
   const requests: ProviderRequest[] = [];
   const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 4000, maxOutputTokens: 100 }, async generate(request) {
-    const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta, ...wire } = request;
+    const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta,
+      onReasoningDelta: _onReasoningDelta, ...wire } = request;
     requests.push(structuredClone(wire));
     if (request.system === COMPACT_SYSTEM_PROMPT) return result("Summary of the prior task.", { prompt_tokens: 30, completion_tokens: 8 });
     return result(requests.length === 1 ? "x".repeat(1600) : "continued", { prompt_tokens: 100, completion_tokens: 10 });

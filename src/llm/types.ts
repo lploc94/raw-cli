@@ -72,6 +72,7 @@ export interface ProviderRequest {
   signal?: AbortSignal;
   maxOutputTokens?: number;
   onTextDelta?: (delta: string) => void;
+  onReasoningDelta?: (delta: string) => void;
   onUsage?: (raw: unknown) => void;
   cacheKey?: string;
 }

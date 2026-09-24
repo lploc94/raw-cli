@@ -86,6 +86,9 @@ export function createResponsesProvider(profile: Readonly<ProviderProfile>): Pro
         for await (const event of stream) {
           if (signal.aborted) throw new ProviderError("aborted", "Responses stream aborted");
           if (event.type === "response.output_text.delta") request.onTextDelta?.(event.delta);
+          else if (event.type === "response.reasoning_summary_text.delta" || event.type === "response.reasoning_text.delta") {
+            request.onReasoningDelta?.(event.delta);
+          }
           else if (event.type === "response.completed") {
             if (completed) throw new ProviderError("invalid_stream", "duplicate Responses completion");
             completed = event.response.output;

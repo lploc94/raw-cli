@@ -99,7 +99,11 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
             }
             if (profile.provider === "deepseek") {
               const part = (delta as unknown as { reasoning_content?: unknown }).reasoning_content;
-              if (typeof part === "string") reasoningContent += part;
+              if (typeof part === "string") { reasoningContent += part; request.onReasoningDelta?.(part); }
+            }
+            if (profile.provider !== "deepseek") {
+              const part = (delta as unknown as { reasoning?: unknown }).reasoning;
+              if (typeof part === "string") request.onReasoningDelta?.(part);
             }
             if (delta.content) { text += delta.content; request.onTextDelta?.(delta.content); }
             for (const part of delta.tool_calls ?? []) {
