@@ -82,6 +82,8 @@ MCP lives in the same config file. Only servers selected by the active profile a
 
 Merge these fields into a complete config with `models` and `default_profile`. Local stdio and remote Streamable HTTP MCP transports are supported; see [MCP](docs/mcp.md). Profile `tools.rules` matches built-ins, MCP identities (`mcp:server/tool`) and ACP-injected identities (`acp:name`) with ordered `allow`, `ask`, and `deny` effects; see [tools](docs/tools.md).
 
+The three built-ins each accept an ordered batch of up to 16 entries: `read_file({"files":[...]})`, `write_file({"operations":[...]})`, and `bash({"commands":[...]})`. Reads can select full files or 1-based line ranges. A large full read returns complete leading lines with `next_line` for paging. Writes support overwrite, append, unique text replacement, and SHA-256 guarded line replacement. Bash continues after a nonzero exit and stops on timeout or abort. All batch rows share the configured model-facing `maxOutputBytes` limit; terminal previews separately show at most 2,000 characters and 10 lines. See [tool contracts](docs/tools.md).
+
 ## Conversation, compact and cache
 
 The REPL keeps turns in memory. Host commands are `/compact`, `/clear`, `/stats`, and `/exit`. Without `compact.trigger_tokens`, compaction is manual. With it, Raw estimates the complete next request, emits visible compact progress, and sends bounded summary requests to the selected model when the threshold is reached. It excludes image base64 from summary prompts and retains a stable main cache key until a deliberate compact boundary. Cache reuse depends on the upstream service; a cache hit is only claimed when its usage counters report one. See [context and cache](docs/context.md).

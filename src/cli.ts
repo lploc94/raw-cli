@@ -9,12 +9,22 @@ import type { ToolResult } from "./tools/types.js";
 const RESULT_PREVIEW_CHARS = 2000;
 const RESULT_PREVIEW_LINES = 9; // The result header is the tenth displayed line.
 
-function resultPreview(result: ToolResult): string {
+export function resultPreview(name: string, result: ToolResult): string {
   const channels = new Set(result.content.flatMap((block) => block.type === "text" && block.channel ? [block.channel] : []));
   const labelChannels = channels.size > 1;
   const body = result.content.map((block) => {
     if (block.type === "text") return `${labelChannels && block.channel ? `[${block.channel}]\n` : ""}${block.text}`;
-    if (block.type === "json") return JSON.stringify(block.value);
+    if (block.type === "json") {
+      const value = block.value as { results?: unknown } | null;
+      if (["read_file", "write_file", "bash"].includes(name) && value && !Array.isArray(value) && Array.isArray(value.results)
+        && value.results.every((row) => row && typeof row === "object" && !Array.isArray(row)
+          && Number.isSafeInteger(row.index) && typeof row.status === "string")) {
+        const rows = value.results as Array<Record<string, unknown>>;
+        const statuses = rows.map((row) => `${row.index}:${row.status}${typeof row.exit_code === "number" ? `(exit${row.exit_code})` : ""}`).join(" ");
+        return `statuses: ${statuses}\n${rows.map((row) => JSON.stringify(row)).join("\n")}`;
+      }
+      return JSON.stringify(block.value);
+    }
     return `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]`;
   }).join("\n").replace(/\r\n?/g, "\n").replace(/\n+$/, "");
   if (!body) return "";
@@ -91,7 +101,7 @@ function textRun(session: AgentSession, task: string): Promise<RunResult> {
         ...(result.code ? [result.code] : []),
         ...(result.truncated ? ["model output capped"] : []),
       ];
-      const preview = resultPreview(result);
+      const preview = resultPreview(event.name, result);
       const label = `${failed ? "✗" : "↳"} ${event.name} result${meta.length ? ` (${meta.join(", ")})` : ""}${preview ? "" : " (empty)"}`;
       process.stderr.write(`raw: ${style(label, failed ? "1;31" : "2")}\n`);
       if (preview) process.stderr.write(`${style(preview, "2")}\n`);

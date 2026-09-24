@@ -175,9 +175,9 @@ Inspect the second inference request to verify complete indexed batch status/con
 ### Implementation obligations
 Close only demonstrated cross-surface gaps; update documentation/examples and installed package; do not add fourth built-in, compatibility shim, configuration migration, dependency, or hidden prompt. Review cumulative diff for accidental model-context or cache regressions.
 ### Acceptance criteria
-- [ ] AC-4.1: CLI/ACP/provider/package tests prove the batch schemas and result linkage through real adapters — proven by integration tests.
-- [ ] AC-4.2: Prompt/definition budget, global result cap, CLI preview cap, and cache-stable schema remain within contracts — proven by overhead, budget, and replay tests.
-- [ ] AC-4.3: Installed `raw` matches source build and runs with current config without credential exposure — proven by SHA-256 comparison and smoke commands.
+- [x] AC-4.1: CLI/ACP/provider/package tests prove the batch schemas and result linkage through real adapters — proven by `tests/batch-integration.test.ts` and `tests/package.test.ts`.
+- [x] AC-4.2: Prompt/definition budget, global result cap, CLI preview cap, and cache-stable schema remain within contracts — proven by overhead, budget, and replay tests.
+- [x] AC-4.3: Installed `raw` matches source build and runs with current config without credential exposure — proven by SHA-256 comparison and smoke commands.
 ### Focused verification
 `PATH=/Users/lploc94/.npm/_npx/52027bd8fc0022aa/node_modules/node/bin:$PATH node --import tsx --test tests/cli.test.ts tests/acp.test.ts tests/provider-content.test.ts tests/package.test.ts tests/overhead.test.ts`
 ### Phase gates
@@ -188,8 +188,8 @@ Implementation review by `gpt-6-astra` is required; verdict must be APPROVE.
 `docs: qualify batch built-ins across CLI and ACP`
 
 ## Completion Criteria
-- [ ] Every AC-1 through AC-4 is checked with named evidence, every phase review is APPROVE, all phase and global gates pass on final HEAD, and four cohesive phase commits plus plan bookkeeping exist.
-- [ ] The installed `/opt/homebrew/bin/raw` uses the final build, user config remains valid, no secrets appear in commits or test output, and the worktree is clean apart from explicitly recorded unrelated changes.
+- [x] Every AC-1 through AC-4 is checked with named evidence, every phase review returned raw APPROVE, all phase and global gates pass, and four cohesive phase commits plus plan bookkeeping exist.
+- [x] The installed `/opt/homebrew/bin/raw` uses the final build, user config remains valid, no secrets appear in commits or test output, and the worktree is clean apart from explicitly recorded unrelated changes.
 
 ## Progress Log
 | Phase | State | Evidence | Review | Commit |
@@ -197,4 +197,4 @@ Implementation review by `gpt-6-astra` is required; verdict must be APPROVE.
 | 1. Bounded batch reads | complete | 193/193 full tests; 15/15 focused; prompt/schema 267 tokens | Astra round 3 raw APPROVE (runner parser retained prior REVISE) | `feat: add bounded batch file reads` |
 | 2. Guarded batch writes | complete | 200/200 full tests; 371 prompt/schema tokens; abort and dense-file regressions | Astra round 2 raw APPROVE (runner parser retained prior REVISE) | `feat: add guarded batch file writes` |
 | 3. Sequential batch Bash | complete | 205/205 full tests; 408 prompt/schema tokens; escaped-output fairness regression | Astra round 2 raw APPROVE (runner parser retained prior REVISE) | `feat: run bounded sequential Bash batches` |
-| 4. Cross-surface qualification | pending | — | pending | — |
+| 4. Cross-surface qualification | complete | 209/209 full tests; package consumer pass; 408 tokens; installed hash `83858857…`; config smoke pass | Astra round 2 raw APPROVE (runner parser retained prior REVISE) | `docs: qualify batch built-ins across CLI and ACP` |

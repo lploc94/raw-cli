@@ -77,7 +77,7 @@ test("CLI streams provider thinking to stderr and shows bash arguments before ex
     assert.equal(result.stdout, "done\n");
     assert.match(result.stderr, /raw: thinking\nInspect files\.\n/);
     assert.match(result.stderr, /raw: bash \{"commands":\[\{"command":"printf sample","timeout_ms":1000\}\]\}/);
-    assert.match(result.stderr, /raw: ↳ bash result\n\{"results":\[\{"index":0,"status":"ok","exit_code":0/);
+    assert.match(result.stderr, /raw: ↳ bash result\nstatuses: 0:ok\(exit0\)\n\{"index":0,"status":"ok","exit_code":0/);
     assert.match(result.stderr, /"stdout":"sample"/);
     assert.doesNotMatch(result.stderr, /\x1b\[/);
     assert.doesNotMatch(result.stderr, /allow bash|\[y\/N\]/i);

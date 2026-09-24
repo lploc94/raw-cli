@@ -39,9 +39,17 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
 
   const fixture = await startMockProvider([
-    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function", function: {
-      name: "write_file", arguments: '{"operations":[{"mode":"overwrite","path":"installed-sentinel.txt","content":"installed-write"}]}',
-    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [
+      { index: 0, id: "write", type: "function", function: {
+        name: "write_file", arguments: '{"operations":[{"mode":"overwrite","path":"installed-sentinel.txt","content":"installed-write"}]}',
+      } },
+      { index: 1, id: "read", type: "function", function: {
+        name: "read_file", arguments: '{"files":[{"path":"installed-sentinel.txt"}]}',
+      } },
+      { index: 2, id: "shell", type: "function", function: {
+        name: "bash", arguments: '{"commands":[{"command":"cat installed-sentinel.txt"}]}',
+      } },
+    ] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "installed-task-done" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "mcp", type: "function", function: {
       name: `mcp_pkg_selected_${createHash("sha256").update("pkg\0selected").digest("hex").slice(0, 12)}`,
@@ -62,6 +70,11 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     assert.equal(task.stdout, "installed-task-done\n");
     assert.equal(await readFile(join(consumer, "installed-sentinel.txt"), "utf8"), "installed-write");
     assert.match(JSON.stringify(fixture.requests[1]?.body), /installed-write/);
+    const replay = (fixture.requests[1]?.body as { messages: Array<{ role: string; tool_call_id?: string; content?: string }> }).messages
+      .filter((message) => message.role === "tool");
+    assert.deepEqual(replay.map((message) => message.tool_call_id), ["write", "read", "shell"]);
+    assert.deepEqual(replay.map((message) => (JSON.parse(message.content!) as { results: Array<{ status: string }> }).results[0]?.status),
+      ["ok", "ok", "ok"]);
 
     const document = JSON.parse(await readFile(configPath, "utf8"));
     document.mcp = { servers: { pkg: { transport: "stdio", command: process.execPath,
