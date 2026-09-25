@@ -56,6 +56,177 @@ test("durable agent restores exact model messages, selected tools, and cache key
   } finally { await agent.close(); store.close(); }
 });
 
+test("changed selected tool definition rotates generated cache key and preserves committed transcript", async () => {
+  const { root, store, id } = setup();
+  const makeRegistry = (description: string) => {
+    const registry = createTestToolRegistry();
+    registry.register({ name: "selected", description, inputSchema: { type: "object", properties: {} },
+      async handler() { return { isError: false, content: [{ type: "text", text: "ran" }] }; } });
+    return registry;
+  };
+  const keys: string[] = [];
+  const first = createAgent({ cwd: root, provider: provider(async (request) => {
+    keys.push(request.cacheKey!);
+    return { text: "first", toolCalls: [], finishReason: "stop" };
+  }), registry: makeRegistry("old"), whitelist: ["selected"], system: "system",
+  persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    assert.equal((await first.run("one")).status, "completed");
+    const previous = first.transcript;
+    await first.close();
+    const second = createAgent({ cwd: root, provider: provider(async (request) => {
+      keys.push(request.cacheKey!);
+      assert.deepEqual(request.messages.slice(0, previous.length), previous);
+      assert.equal(request.tools.find((tool) => tool.name === "selected")?.description, "new");
+      return { text: "second", toolCalls: [], finishReason: "stop" };
+    }), registry: makeRegistry("new"), whitelist: ["selected"], system: "system",
+    persistence: { store, sessionId: id, surface: "cli" } });
+    try {
+      assert.equal(second.contextRevision, first.contextRevision + 1);
+      assert.equal((await second.run("two")).status, "completed");
+      assert.notEqual(keys[0], keys[1]);
+    } finally { await second.close(); }
+  } finally { await first.close(); store.close(); }
+});
+
+test("code-only selected tool source change rotates key but an unchanged source does not", async () => {
+  const { root, store, id } = setup();
+  const registry = createTestToolRegistry();
+  const keys: string[] = [];
+  const make = (source: string) => createAgent({ cwd: root, provider: provider(async (request) => {
+    keys.push(request.cacheKey!);
+    return { text: "done", toolCalls: [], finishReason: "stop" };
+  }), registry, whitelist: ["read_file"], toolSourceDigest: source, system: "system",
+  persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    const first = make("source-one");
+    assert.equal((await first.run("one")).status, "completed");
+    await first.close();
+    const same = make("source-one");
+    assert.equal(same.contextRevision, first.contextRevision);
+    assert.equal((await same.run("two")).status, "completed");
+    await same.close();
+    const changed = make("source-two");
+    assert.equal(changed.contextRevision, same.contextRevision + 1);
+    assert.equal((await changed.run("three")).status, "completed");
+    await changed.close();
+    assert.equal(keys[0], keys[1]);
+    assert.notEqual(keys[1], keys[2]);
+  } finally { store.close(); }
+});
+
+test("skill-only change keeps cache key and appends one durable reload notice after a linked load", async () => {
+  const { root, store, id } = setup();
+  const selected = (markdown: string) => [{ id: "agent/example", version: "1.0.0", name: "example",
+    description: "Example", markdown }];
+  const registry = createTestToolRegistry();
+  registry.register({ name: "load_skill", description: "Load selected skill", inputSchema: { type: "object",
+    properties: { name: { type: "string" } } },
+  async handler() { return { isError: false, content: [{ type: "text", text: "OLD_SKILL_BODY" }] }; } });
+  const keys: string[] = [];
+  let turns = 0;
+  const first = createAgent({ cwd: root, provider: provider(async (request) => {
+    keys.push(request.cacheKey!);
+    return ++turns === 1 ? { text: "", toolCalls: [{ id: "load", name: "load_skill", arguments: { name: "example" } }], finishReason: "tool_calls" }
+      : { text: "done", toolCalls: [], finishReason: "stop" };
+  }), registry, whitelist: ["load_skill"], selectedSkills: selected("OLD_SKILL_BODY"), system: "system",
+  persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    assert.equal((await first.run("one")).status, "completed");
+    const prior = first.transcript;
+    await first.close();
+    const second = createAgent({ cwd: root, provider: provider(async (request) => {
+      keys.push(request.cacheKey!);
+      const prefix = request.messages.slice(0, prior.length);
+      assert.deepEqual(prefix, prior);
+      assert.match(JSON.stringify(request.messages.at(-2)), /reload|stale/i);
+      return { text: "done", toolCalls: [], finishReason: "stop" };
+    }), registry, whitelist: ["load_skill"], selectedSkills: selected("NEW_SKILL_BODY"), system: "system",
+    persistence: { store, sessionId: id, surface: "cli" } });
+    try {
+      assert.equal(second.contextRevision, first.contextRevision + 1);
+      assert.equal((await second.run("two")).status, "completed");
+      assert.equal(keys[0], keys.at(-1));
+      assert.equal(second.transcript.filter((item) => item.role === "user" && JSON.stringify(item.content).includes("reload")).length, 1);
+    } finally { await second.close(); }
+  } finally { await first.close(); store.close(); }
+});
+
+test("compaction that removes a loaded skill appends one durable tail reminder", async () => {
+  const { root, store, id } = setup();
+  const body = "SKILL_BODY_TO_RELOAD_".repeat(80);
+  const registry = createTestToolRegistry();
+  registry.register({ name: "load_skill", description: "Load skill", inputSchema: { type: "object",
+    properties: { name: { type: "string" } } },
+  async handler() { return { isError: false, content: [{ type: "text", text: body }] }; } });
+  let ordinary = 0;
+  const agent = createAgent({ cwd: root, provider: provider(async (request) => {
+    if (request.system.startsWith("Summarize prior conversation")) return { text: "Earlier work summarized.", toolCalls: [], finishReason: "stop" };
+    return ++ordinary === 1 ? { text: "", toolCalls: [{ id: "load", name: "load_skill", arguments: { name: "example" } }], finishReason: "tool_calls" }
+      : { text: "done", toolCalls: [], finishReason: "stop" };
+  }), registry, whitelist: ["load_skill"], selectedSkills: [{ id: "agent/example", version: "1.0.0", name: "example",
+    description: "Example", markdown: body }], system: "system", persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    assert.equal((await agent.run("first")).status, "completed");
+    assert.equal((await agent.compact({ keepRecentTurns: 0 })).status, "compacted");
+    assert.doesNotMatch(JSON.stringify(agent.transcript), /SKILL_BODY_TO_RELOAD_/);
+    assert.match(JSON.stringify(agent.transcript.at(-1)), /example.*load_skill/);
+    const notices = agent.transcript.filter((item) => item.role === "user" && JSON.stringify(item.content).includes("reload notice"));
+    assert.equal(notices.length, 1);
+    await agent.close();
+    const owner = store.claimSession(id);
+    try { assert.equal(store.readAgentState(id, owner).messages.filter((item) => item.role === "user"
+      && JSON.stringify(item.content).includes("reload notice")).length, 1); }
+    finally { store.releaseSession(id, owner); }
+  } finally { await agent.close(); store.close(); }
+});
+
+test("crash recovery links unresolved calls before a skill notice and a failed transition retries once", async () => {
+  const { root, store, id } = setup();
+  let sideEffects = 0;
+  const registry = createTestToolRegistry();
+  registry.register({ name: "load_skill", description: "Load", inputSchema: { type: "object", properties: { name: { type: "string" } } },
+    async handler() { return { isError: false, content: [{ type: "text", text: "OLD_BODY" }] }; } });
+  registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object", properties: {} },
+    async handler() { sideEffects++; return { isError: false, content: [] }; } });
+  const skills = (markdown: string) => [{ id: "agent/example", version: "1.0.0", name: "example", description: "Example", markdown }];
+  let calls = 0;
+  const first = createAgent({ cwd: root, provider: provider(async () => ++calls === 1
+    ? { text: "", toolCalls: [{ id: "load", name: "load_skill", arguments: { name: "example" } }], finishReason: "tool_calls" }
+    : { text: "done", toolCalls: [], finishReason: "stop" }), registry,
+  whitelist: ["load_skill", "side_effect"], selectedSkills: skills("OLD_BODY"), system: "system",
+  persistence: { store, sessionId: id, surface: "cli" } });
+  try { assert.equal((await first.run("one")).status, "completed"); }
+  finally { await first.close(); }
+  const owner = store.claimSession(id);
+  store.appendAgentMessage(id, owner, { role: "user", content: "run side effect" });
+  store.appendAgentMessage(id, owner, { role: "assistant", text: "", toolCalls: [{ id: "pending", name: "side_effect", arguments: {} }] });
+  store.releaseSession(id, owner);
+  store.database.exec(`CREATE TRIGGER fail_notice BEFORE INSERT ON model_context
+    WHEN NEW.payload_json LIKE '%Raw skill reload notice%'
+    BEGIN SELECT RAISE(ABORT, 'simulated notice failure'); END`);
+  const make = () => createAgent({ cwd: root, provider: provider(async () => ({ text: "done", toolCalls: [], finishReason: "stop" })),
+    registry, whitelist: ["load_skill", "side_effect"], selectedSkills: skills("NEW_BODY"), system: "system",
+    persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    assert.throws(make, /simulated notice failure/);
+    assert.equal(store.database.prepare("SELECT context_revision AS revision FROM sessions WHERE id = ?").get(id)?.revision, 1);
+    assert.equal(store.database.prepare("SELECT count(*) AS n FROM model_context WHERE payload_json LIKE '%outcome_unknown%'").get()?.n, 0);
+  } finally { store.database.exec("DROP TRIGGER fail_notice"); }
+  const resumed = make();
+  try {
+    const tail = resumed.transcript.slice(-2);
+    assert.deepEqual(tail.map((item) => item.role), ["tool", "user"]);
+    assert.equal(tail[0]?.role === "tool" ? tail[0].result.code : undefined, "outcome_unknown");
+    assert.match(JSON.stringify(tail[1]), /reload notice.*example/);
+    assert.equal(sideEffects, 0);
+    assert.equal(resumed.contextRevision, 2);
+  } finally { await resumed.close(); }
+  const again = make();
+  try { assert.equal(again.transcript.filter((item) => item.role === "user" && JSON.stringify(item.content).includes("reload notice")).length, 1); }
+  finally { await again.close(); store.close(); }
+});
+
 test("pending declared tool recovers as uncertain without dispatch on resume", async () => {
   const { root, store, id } = setup();
   const registry = createTestToolRegistry();
@@ -271,7 +442,7 @@ test("successful compact retains full CLI Bash arguments and ACP raw result in d
   } finally { await acpAgent.close(); acp.store.close(); }
 });
 
-test("failed compaction and changed tool schema leave durable context intact", async () => {
+test("failed compaction leaves durable context intact and changed tool schema transitions on resume", async () => {
   const { root, store, id } = setup();
   const registry = createTestToolRegistry();
   registry.register({ name: "selected", description: "Original", inputSchema: { type: "object" },
@@ -291,11 +462,9 @@ test("failed compaction and changed tool schema leave durable context intact", a
     const changed = createTestToolRegistry();
     changed.register({ name: "selected", description: "Changed", inputSchema: { type: "object" },
       handler: async () => ({ isError: false, content: [] }) });
-    assert.throws(() => createAgent({ cwd: root, provider: runtime, registry: changed, system: "system",
-      persistence: { store, sessionId: id, surface: "cli" } }), /schema|selection/i);
-    const resumed = createAgent({ cwd: root, provider: runtime, registry, system: "system",
+    const resumed = createAgent({ cwd: root, provider: runtime, registry: changed, system: "system",
       persistence: { store, sessionId: id, surface: "cli" } });
-    try { assert.deepEqual(resumed.transcript, before); assert.deepEqual(resumed.toolDefinitions.map((tool) => tool.name), ["selected"]); }
+    try { assert.deepEqual(resumed.transcript, before); assert.equal(resumed.toolDefinitions.find((tool) => tool.name === "selected")?.description, "Changed"); }
     finally { await resumed.close(); }
   } finally { await agent.close(); store.close(); }
 });

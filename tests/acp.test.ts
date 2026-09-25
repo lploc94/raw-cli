@@ -278,13 +278,15 @@ test("T-07c/d: negotiated reverse tool executes through model history with typed
       _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true, toolCall: true, sessionCompact: true } } });
     assert.equal((init._meta?.raw as { toolRegister: boolean }).toolRegister, true);
     const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
-    const registration = await connection.agent.request<{ toolId: string; alias: string; schemaRevision: number }>("_raw/tool/register",
+    const registration = await connection.agent.request<{ toolId: string; alias: string; contextRevision: number }>("_raw/tool/register",
       { sessionId, name: "visual", description: "Returns an image", inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false } });
     alias = registration.alias;
     assert.ok(alias.length <= 64);
-    const configured = await connection.agent.request<{ schemaRevision: number; tools: string[] }>("_raw/session/configure", { sessionId, tools: [alias] });
-    assert.equal(configured.schemaRevision, registration.schemaRevision + 1);
+    const configured = await connection.agent.request<{ contextRevision: number; tools: string[] }>("_raw/session/configure", { sessionId, tools: [alias] });
+    assert.equal(configured.contextRevision, registration.contextRevision + 1);
     assert.deepEqual(configured.tools, [alias]);
+    const unchanged = await connection.agent.request<{ contextRevision: number }>("_raw/session/configure", { sessionId, tools: [alias] });
+    assert.equal(unchanged.contextRevision, configured.contextRevision);
     const info = await connection.agent.request<{ tools: Array<{ alias: string }> }>("_raw/runtime/info", { sessionId });
     assert.deepEqual(info.tools.map((item) => item.alias), [alias]);
     assert.equal((await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "call visual" }] })).stopReason, "end_turn");

@@ -31,7 +31,7 @@ export interface AcpParentClient {
   deleteSession(sessionId: string): Promise<void>;
   prompt(sessionId: string, prompt: string | ContentBlock[]): Promise<{ stopReason: string }>;
   cancel(sessionId: string): Promise<void>;
-  registerTool(sessionId: string, name: string, description: string, inputSchema: Record<string, unknown>, handler: ParentToolHandler): Promise<{ toolId: string; alias: string; schemaRevision: number }>;
+  registerTool(sessionId: string, name: string, description: string, inputSchema: Record<string, unknown>, handler: ParentToolHandler): Promise<{ toolId: string; alias: string; contextRevision: number }>;
   close(): Promise<void>;
 }
 
@@ -116,7 +116,7 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
       prompt: typeof prompt === "string" ? [{ type: "text", text: prompt }] : prompt }),
     cancel: (sessionId) => connection.agent.notify("session/cancel", { sessionId }),
     registerTool: async (sessionId, name, description, inputSchema, handler) => {
-      const response = await connection.agent.request<{ toolId: string; alias: string; schemaRevision: number }>("_raw/tool/register",
+      const response = await connection.agent.request<{ toolId: string; alias: string; contextRevision: number }>("_raw/tool/register",
         { sessionId, name, description, inputSchema });
       handlers.set(response.toolId, handler);
       return response;

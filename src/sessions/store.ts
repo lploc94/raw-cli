@@ -7,9 +7,10 @@ import { readSessionRetentionDays } from "../config.js";
 import type { UsageRecord } from "../llm/cache.js";
 import type { ModelMessage, ProviderProfile, UserInput } from "../llm/types.js";
 import type { ToolDefinition } from "../tools/registry.js";
+import type { SelectedSkill } from "../skills/contract.js";
 import { errorResult } from "../tools/results.js";
 import { initializeSessionSchema } from "./schema.js";
-import { isEphemeralPeerAlias } from "./restore.js";
+import { validateStoredAgentState } from "./restore.js";
 
 export interface SessionStoreOptions {
   env?: NodeJS.ProcessEnv;
@@ -73,15 +74,19 @@ export interface AgentIdentity {
   toolDefinitions: readonly ToolDefinition[];
   selectedTools: readonly string[] | null;
   cacheKey: string;
-  allowPeerToolDrop?: boolean;
+  toolSourceDigest?: string;
+  selectedSkills?: readonly SelectedSkill[];
 }
+export interface SkillSnapshotItem { id: string; name: string; metadataDigest: string; bodyDigest: string }
+export interface SkillVisibility { listed: boolean; loaded: readonly string[] }
 export interface StoredAgentState {
   messages: ModelMessage[];
   originalTask?: UserInput;
   summaryText?: string;
   cacheKey: string;
   selectedTools: readonly string[] | null;
-  schemaRevision: number;
+  contextRevision: number;
+  skillVisibility: SkillVisibility;
   tokenCalibration: number;
   rawUsage: unknown[];
   usageEntries: UsageRecord[];
@@ -92,7 +97,9 @@ export interface AgentMetadata {
   rawUsage?: readonly unknown[];
   usageEntries?: readonly UsageRecord[];
   tokenCalibration?: number;
-  schemaRevision?: number;
+  contextRevision?: number;
+  skillVisibility?: SkillVisibility;
+  skillNotice?: string;
 }
 export interface VisibleRecord { kind: string; payload: Record<string, unknown>; status?: string }
 
@@ -132,11 +139,28 @@ function makeCursor(kind: "sessions" | "history", scope: string, position: Recor
   return Buffer.from(JSON.stringify({ v: 1, kind, scope, ...position })).toString("base64url");
 }
 
-function nonPeerSchemaDigest(definitions: readonly ToolDefinition[]): string {
-  return createHash("sha256").update(JSON.stringify(definitions.filter((item) => !isEphemeralPeerAlias(item.name)))).digest("hex");
+function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+
+function snapshotSkills(skills: readonly SelectedSkill[]): SkillSnapshotItem[] {
+  return skills.map((skill) => ({ id: skill.id, name: skill.name,
+    metadataDigest: digest(JSON.stringify([skill.id, skill.version, skill.name, skill.description])),
+    bodyDigest: digest(skill.markdown) }));
 }
 
-function nonPeerSchemaKey(sessionId: string): string { return `non_peer_schema:${sessionId}`; }
+function staleSkillNames(previous: readonly SkillSnapshotItem[], current: readonly SkillSnapshotItem[],
+  visible: SkillVisibility): string[] {
+  const before = new Map(previous.map((item) => [item.id, item]));
+  const after = new Map(current.map((item) => [item.id, item]));
+  const names = new Set<string>();
+  for (const id of new Set([...before.keys(), ...after.keys()])) {
+    const old = before.get(id);
+    const next = after.get(id);
+    if (visible.listed && old?.metadataDigest !== next?.metadataDigest) names.add(old?.name ?? next!.name);
+    if (old && visible.loaded.includes(old.name)
+      && (old.bodyDigest !== next?.bodyDigest || old.metadataDigest !== next?.metadataDigest)) names.add(old.name);
+  }
+  return [...names].sort();
+}
 
 function pathForState(options: SessionStoreOptions): string {
   const env = options.env ?? process.env;
@@ -289,18 +313,23 @@ export class SessionStore {
     };
   }
 
-  getStoredSelection(sessionId: string): readonly string[] | null | undefined {
-    const value = this.database.prepare("SELECT selected_tools_json FROM sessions WHERE id = ?").get(sessionId)?.selected_tools_json;
-    return value === null || value === undefined ? undefined : JSON.parse(String(value)) as readonly string[] | null;
+  getStoredToolView(sessionId: string): { selection: readonly string[] | null; explicit: boolean } | undefined {
+    const row = this.database.prepare("SELECT selected_tools_json, selection_explicit FROM sessions WHERE id = ?").get(sessionId);
+    if (row?.selected_tools_json === null || row?.selected_tools_json === undefined) return undefined;
+    return { selection: JSON.parse(String(row.selected_tools_json)) as readonly string[] | null,
+      explicit: Number(row.selection_explicit) === 1 };
   }
 
   initializeAgent(sessionId: string, owner: SessionOwner, identity: AgentIdentity): StoredAgentState {
     const canonical = realpathSync(resolve(identity.cwd));
-    const digest = createHash("sha256").update(JSON.stringify(identity.toolDefinitions)).digest("hex");
-    const endpointHash = createHash("sha256").update(identity.profile.baseUrl ?? "").digest("hex");
-    const runtimeDigest = createHash("sha256").update(JSON.stringify({ request: identity.profile.request ?? null,
+    const toolDigest = digest(JSON.stringify(identity.toolDefinitions));
+    const sourceDigest = identity.toolSourceDigest ?? toolDigest;
+    const skillSnapshot = snapshotSkills(identity.selectedSkills ?? []);
+    const skillSnapshotJson = JSON.stringify(skillSnapshot);
+    const endpointHash = digest(identity.profile.baseUrl ?? "");
+    const runtimeDigest = digest(JSON.stringify({ request: identity.profile.request ?? null,
       cache: identity.profile.cache ?? null, vision: identity.profile.vision ?? false,
-      contextWindow: identity.profile.contextWindow ?? null, maxOutputTokens: identity.profile.maxOutputTokens ?? null })).digest("hex");
+      contextWindow: identity.profile.contextWindow ?? null, maxOutputTokens: identity.profile.maxOutputTokens ?? null }));
     this.transaction(() => {
       const row = this.ownerRow(sessionId, owner);
       const workspace = this.database.prepare("SELECT canonical_path FROM workspaces WHERE id = ?").get(String(row.workspace_id));
@@ -312,37 +341,47 @@ export class SessionStore {
           if (row[field] !== null && row[field] !== expected) throw new Error(`session ${field} differs from saved identity`);
         }
         this.database.prepare(`UPDATE sessions SET profile_name = ?, model_id = ?, provider = ?, method = ?, endpoint = ?,
-          system_prompt = ?, cache_key = ?, selected_tools_json = ?, tool_schema_digest = ?, runtime_digest = ? WHERE id = ?`)
+          system_prompt = ?, cache_key = ?, selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
+          skill_snapshot_json = ?, skill_visibility_json = ?, runtime_digest = ? WHERE id = ?`)
           .run(identity.profile.name, identity.profile.model, identity.profile.provider, identity.profile.method,
             endpointHash, identity.system, row.cache_key === null ? identity.cacheKey : String(row.cache_key),
-            JSON.stringify(identity.selectedTools), digest, runtimeDigest, sessionId);
-        this.database.prepare("INSERT INTO store_meta(key, value) VALUES (?, ?)")
-          .run(nonPeerSchemaKey(sessionId), nonPeerSchemaDigest(identity.toolDefinitions));
+            JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
+            JSON.stringify({ listed: false, loaded: [] }), runtimeDigest, sessionId);
       } else {
         if (row.profile_name !== identity.profile.name || row.model_id !== identity.profile.model
           || row.provider !== identity.profile.provider || row.method !== identity.profile.method
           || row.endpoint !== endpointHash || row.system_prompt !== identity.system || row.runtime_digest !== runtimeDigest) {
-          throw new Error("session runtime or tool schema changed; resume requires the saved profile and tool selection");
+          throw new Error("session runtime identity changed; resume requires the saved model and system prompt");
         }
-        const oldSelection = JSON.parse(String(row.selected_tools_json)) as readonly string[] | null;
-        const newSelection = identity.selectedTools;
-        const droppedPeerTools = identity.allowPeerToolDrop && Array.isArray(oldSelection) && Array.isArray(newSelection)
-          && oldSelection.length > newSelection.length
-          && JSON.stringify(oldSelection.filter((name) => newSelection.includes(name))) === JSON.stringify(newSelection)
-          && oldSelection.filter((name) => !newSelection.includes(name)).every(isEphemeralPeerAlias);
-        if (droppedPeerTools) {
-          const savedDigest = this.database.prepare("SELECT value FROM store_meta WHERE key = ?").get(nonPeerSchemaKey(sessionId))?.value;
-          if (savedDigest !== nonPeerSchemaDigest(identity.toolDefinitions)) {
-            throw new Error("session retained tool schema changed");
+        this.recoverInterruptedCallsInTransaction(sessionId, owner);
+        validateStoredAgentState(this.readAgentState(sessionId, owner));
+        const toolChanged = row.tool_schema_digest !== toolDigest || row.tool_source_digest !== sourceDigest
+          || row.selected_tools_json !== JSON.stringify(identity.selectedTools);
+        const skillChanged = row.skill_snapshot_json !== skillSnapshotJson;
+        if (toolChanged || skillChanged) {
+          const visibility = JSON.parse(String(row.skill_visibility_json)) as SkillVisibility;
+          const previousSkills = JSON.parse(String(row.skill_snapshot_json)) as SkillSnapshotItem[];
+          const stale = skillChanged ? staleSkillNames(previousSkills, skillSnapshot, visibility) : [];
+          this.database.prepare(`UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
+            skill_snapshot_json = ?, context_revision = context_revision + 1, cache_key = ? WHERE id = ?`)
+            .run(JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
+              toolChanged ? randomUUID() : String(row.cache_key), sessionId);
+          if (stale.length) {
+            const notice = `[Raw skill reload notice] Stale selected skill information: ${stale.join(", ")}. Call list_skills and load_skill again before relying on earlier results.`;
+            const position = Number(this.database.prepare("SELECT coalesce(max(position), -1) + 1 AS next FROM model_context WHERE session_id = ?")
+              .get(sessionId)?.next);
+            this.database.prepare("INSERT INTO model_context(session_id, position, payload_json) VALUES (?, ?, ?)")
+              .run(sessionId, position, JSON.stringify({ role: "user", content: notice }));
+            const sequence = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM history WHERE session_id = ?")
+              .get(sessionId)?.next);
+            this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
+              .run(sessionId, sequence, this.now(), "skill_notice", JSON.stringify({ text: notice }), "complete");
+            this.database.prepare("UPDATE sessions SET skill_notice_digest = ? WHERE id = ?")
+              .run(digest(skillSnapshotJson), sessionId);
           }
-          this.database.prepare(`UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, schema_revision = schema_revision + 1,
-            cache_key = ? WHERE id = ?`).run(JSON.stringify(newSelection), digest, randomUUID(), sessionId);
-        } else if (row.tool_schema_digest !== digest || row.selected_tools_json !== JSON.stringify(newSelection)) {
-          throw new Error("session runtime or tool schema changed; resume requires the saved profile and tool selection");
         }
       }
     });
-    this.recoverInterruptedCalls(sessionId, owner);
     return this.readAgentState(sessionId, owner);
   }
 
@@ -353,7 +392,8 @@ export class SessionStore {
     const usage = row.usage_json === null ? {} : JSON.parse(String(row.usage_json)) as { rawUsage?: unknown[]; usageEntries?: UsageRecord[] };
     return {
       messages, cacheKey: String(row.cache_key), selectedTools: JSON.parse(String(row.selected_tools_json)) as readonly string[] | null,
-      schemaRevision: Number(row.schema_revision), tokenCalibration: Number(row.token_calibration),
+      contextRevision: Number(row.context_revision), tokenCalibration: Number(row.token_calibration),
+      skillVisibility: JSON.parse(String(row.skill_visibility_json)) as SkillVisibility,
       rawUsage: usage.rawUsage ?? [], usageEntries: usage.usageEntries ?? [],
       ...(row.original_task === null ? {} : { originalTask: JSON.parse(String(row.original_task)) as UserInput }),
       ...(row.summary_text === null ? {} : { summaryText: String(row.summary_text) }),
@@ -373,7 +413,9 @@ export class SessionStore {
       fields.push("usage_json = ?"); values.push(JSON.stringify(usage));
     }
     if (metadata.tokenCalibration !== undefined) { fields.push("token_calibration = ?"); values.push(metadata.tokenCalibration); }
-    if (metadata.schemaRevision !== undefined) { fields.push("schema_revision = ?"); values.push(metadata.schemaRevision); }
+    if (metadata.contextRevision !== undefined) { fields.push("context_revision = ?"); values.push(metadata.contextRevision); }
+    if (metadata.skillVisibility !== undefined) { fields.push("skill_visibility_json = ?"); values.push(JSON.stringify(metadata.skillVisibility)); }
+    if (metadata.skillNotice !== undefined) { fields.push("skill_notice_digest = ?"); values.push(digest(metadata.skillNotice)); }
     if (fields.length) this.database.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values, sessionId);
   }
 
@@ -382,14 +424,13 @@ export class SessionStore {
   }
 
   updateAgentToolView(sessionId: string, owner: SessionOwner, selection: readonly string[] | null,
-    definitions: readonly ToolDefinition[], revision: number): void {
+    definitions: readonly ToolDefinition[], revision: number, cacheKey: string, explicit: boolean): void {
     this.transaction(() => {
       this.ownerRow(sessionId, owner);
-      const digest = createHash("sha256").update(JSON.stringify(definitions)).digest("hex");
-      this.database.prepare("UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, schema_revision = ? WHERE id = ?")
-        .run(JSON.stringify(selection), digest, revision, sessionId);
-      this.database.prepare("INSERT INTO store_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        .run(nonPeerSchemaKey(sessionId), nonPeerSchemaDigest(definitions));
+      const toolDigest = digest(JSON.stringify(definitions));
+      this.database.prepare(`UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, context_revision = ?,
+        cache_key = ?, selection_explicit = ? WHERE id = ?`)
+        .run(JSON.stringify(selection), toolDigest, revision, cacheKey, explicit ? 1 : 0, sessionId);
       this.renewSession(sessionId, owner);
     });
   }
@@ -605,7 +646,15 @@ export class SessionStore {
         this.database.prepare("INSERT INTO model_context(session_id, position, payload_json) VALUES (?, ?, ?)").run(sessionId, position, value.encoded);
       }
       this.writeMetadata(sessionId, metadata);
-      if (resetContextMetadata) this.database.prepare("UPDATE sessions SET original_task = NULL, summary_text = NULL WHERE id = ?").run(sessionId);
+      if (metadata.skillNotice !== undefined) {
+        const sequence = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM history WHERE session_id = ?")
+          .get(sessionId)?.next);
+        this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(sessionId, sequence, this.now(), "skill_notice", JSON.stringify({ text: metadata.skillNotice }), "complete");
+      }
+      if (resetContextMetadata) this.database.prepare(`UPDATE sessions SET original_task = NULL, summary_text = NULL,
+        skill_visibility_json = ?, skill_notice_digest = NULL WHERE id = ?`)
+        .run(JSON.stringify({ listed: false, loaded: [] }), sessionId);
       this.renewSession(sessionId, owner);
     });
     this.discardDuplicateStages(staged);
@@ -635,7 +684,10 @@ export class SessionStore {
   }
 
   recoverInterruptedCalls(sessionId: string, owner: SessionOwner): void {
-    this.transaction(() => {
+    this.transaction(() => this.recoverInterruptedCallsInTransaction(sessionId, owner));
+  }
+
+  private recoverInterruptedCallsInTransaction(sessionId: string, owner: SessionOwner): void {
       this.ownerRow(sessionId, owner);
       const rows = this.database.prepare("SELECT position, payload_json FROM model_context WHERE session_id = ? ORDER BY position")
         .all(sessionId);
@@ -663,7 +715,6 @@ export class SessionStore {
           .run(sessionId, sequence, this.now(), "tool_result", JSON.stringify({ id: call.id, name: call.name, result }), "interrupted");
       }
       if (unresolved.length) this.renewSession(sessionId, owner);
-    });
   }
 
   private cutoff(): number {
@@ -795,7 +846,6 @@ export class SessionStore {
         this.dropPayloadReference(String(item.payload_json));
       }
       this.database.prepare("DELETE FROM sessions WHERE id = ?").run(id);
-      this.database.prepare("DELETE FROM store_meta WHERE key = ?").run(nonPeerSchemaKey(id));
       return true;
     });
     if (deleted) {

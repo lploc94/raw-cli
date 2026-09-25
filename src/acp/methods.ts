@@ -229,8 +229,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
         if (saved) {
           id = saved.id;
-          const selection = store.getStoredSelection(id);
-          if (selection) mcp.activate(selection.filter((name) => !isEphemeralPeerAlias(name)));
+          const view = store.getStoredToolView(id);
+          if (view?.explicit && view.selection) mcp.activate(view.selection.filter((name) => !isEphemeralPeerAlias(name)));
         } else {
           id = store.createSession({ cwd, title: "New session", profileName: profile.name,
             configPath: options.runtime.configPath, modelId: profile.model, provider: profile.provider,
@@ -240,7 +240,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         }
         const sessionId = id;
         const agentSession = createAgent({ provider: providerFactory(profile), registry,
-          ...(!saved ? { whitelist: tools.selectedNames } : {}),
+          whitelist: tools.selectedNames,
+          toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
           cwd, system: options.runtime.systemPrompt,
           maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
           requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
@@ -263,8 +264,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         if (saved && claimed) store.releaseSession(saved.id, claimed);
         if (created && id) store.deleteSession(id);
         if (error instanceof Error && /busy|ownership/i.test(error.message)) throw rawError(rawErrors.busy, "session is busy");
-        if (error instanceof Error && /unknown MCP alias|tool schema changed|tool selection differs|session runtime/i.test(error.message)) {
-          throw RequestError.invalidParams(undefined, "saved tool selection or runtime schema differs");
+        if (error instanceof Error && /unknown MCP alias|session runtime identity changed/i.test(error.message)) {
+          throw RequestError.invalidParams(undefined, "saved tool selection or runtime identity differs");
         }
         throw error;
       }
@@ -370,7 +371,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     const session = getSession(string(params.sessionId, "sessionId"));
     if (session.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");
     const tools = stringArray(params.tools, "tools");
-    try { session.mcp.activate(tools); return { schemaRevision: session.agent.setToolView(tools), tools: session.agent.toolDefinitions.map((item) => item.name) }; }
+    try { session.mcp.activate(tools); return { contextRevision: session.agent.setToolView(tools), tools: session.agent.toolDefinitions.map((item) => item.name) }; }
     catch { throw rawError(rawErrors.tool, "unknown tool selection"); }
   });
   app.onRequest("_raw/tool/register", (params: unknown) => object(params, "tool registration"), ({ params }) => {
@@ -413,8 +414,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       } });
     session.registered.set(name, toolId);
     const permitted = session.registry.definitions().some((tool) => tool.name === alias);
-    const schemaRevision = permitted ? session.agent.setToolView([...visible, alias]) : session.agent.toolSchemaRevision;
-    return { toolId, alias, schemaRevision };
+    const contextRevision = permitted ? session.agent.setToolView([...visible, alias]) : session.agent.contextRevision;
+    return { toolId, alias, contextRevision };
   });
   app.onRequest("_raw/session/compact", (params: unknown) => object(params, "session compact"), async ({ params }) => {
     requireCapability("sessionCompact");

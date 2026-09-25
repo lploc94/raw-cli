@@ -9,11 +9,28 @@ import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import type { ToolResult } from "./tools/types.js";
 import type { SessionOwner, SessionStore } from "./sessions/store.js";
+import type { SkillVisibility } from "./sessions/store.js";
+import type { SelectedSkill } from "./skills/contract.js";
 import { isEphemeralPeerAlias, validateStoredAgentState } from "./sessions/restore.js";
 import { acpUpdate, resultPreview, toolArguments } from "./sessions/display.js";
 import type { AgentMetadata, VisibleRecord } from "./sessions/store.js";
 
 export type AgentState = "idle" | "running" | "cancelling" | "compacting" | "closing" | "closed";
+
+function loadedSkillNames(messages: readonly ModelMessage[]): Set<string> {
+  const calls = new Map<string, string>();
+  const loaded = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "assistant") for (const call of message.toolCalls) {
+      if (call.name === "load_skill" && typeof call.arguments.name === "string") calls.set(call.id, call.arguments.name);
+    }
+    if (message.role === "tool" && message.name === "load_skill" && !message.result.isError) {
+      const name = calls.get(message.callId);
+      if (name) loaded.add(name);
+    }
+  }
+  return loaded;
+}
 export type RunStatus = "completed" | "max_steps" | "cancelled" | "error";
 
 export interface RunResult {
@@ -38,6 +55,8 @@ export type RunEvent =
 export interface AgentOptions {
   provider: ProviderAdapter;
   registry?: ToolRegistry;
+  toolSourceDigest?: string;
+  selectedSkills?: readonly SelectedSkill[];
   cwd?: string;
   system?: string;
   maxSteps?: number;
@@ -63,7 +82,9 @@ export class AgentSession {
   private summaryText: string | undefined;
   private cacheKey: string = randomUUID();
   private schemaView: readonly ToolDefinition[];
-  private schemaRevision = 1;
+  private contextGenerationRevision = 1;
+  private readonly selectedSkills: readonly SelectedSkill[];
+  private skillVisibility: SkillVisibility = { listed: false, loaded: [] };
   private tokenCalibration = 1;
   private persistence: { store: SessionStore; sessionId: string; owner: SessionOwner; surface: "cli" | "acp" } | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
@@ -71,6 +92,7 @@ export class AgentSession {
   private persistenceError: Error | undefined;
 
   constructor(options: AgentOptions) {
+    this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
     const maxSteps = options.maxSteps ?? 25;
     const maxOutputBytes = options.maxOutputBytes ?? 8192;
     const requestTimeoutMs = options.requestTimeoutMs ?? 120000;
@@ -104,24 +126,25 @@ export class AgentSession {
       const { store, sessionId, surface } = options.persistence;
       const owner = options.persistence.owner ?? store.claimSession(sessionId);
       try {
-        const savedSelection = store.getStoredSelection(sessionId);
-        if (savedSelection !== undefined) {
-          if (options.whitelist !== undefined && JSON.stringify(options.whitelist) !== JSON.stringify(savedSelection)) {
-            throw new Error("explicit tool selection differs from saved session");
-          }
-          if (savedSelection === null) delete this.options.whitelist;
+        const savedView = store.getStoredToolView(sessionId);
+        if (savedView && (options.whitelist === undefined || (surface === "acp" && savedView.explicit))) {
+          if (savedView.selection === null) delete this.options.whitelist;
           else {
             const known = new Set(this.options.registry.definitions().map((item) => item.name));
-            this.options.whitelist = surface === "acp"
-              ? savedSelection.filter((name) => known.has(name) || !isEphemeralPeerAlias(name))
-              : [...savedSelection];
+            if (surface === "acp") {
+              for (const name of savedView.selection) {
+                if (!known.has(name) && !isEphemeralPeerAlias(name)) throw new Error(`saved tool selection unavailable or denied: ${name}`);
+              }
+              this.options.whitelist = savedView.selection.filter((name) => known.has(name));
+            } else this.options.whitelist = [...savedView.selection];
           }
           this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
         }
         const saved = store.initializeAgent(sessionId, owner, {
           cwd: this.options.cwd, system: this.options.system, profile: this.options.provider.profile,
           toolDefinitions: this.schemaView, selectedTools: this.options.whitelist ?? null, cacheKey: this.cacheKey,
-          allowPeerToolDrop: surface === "acp",
+          ...(options.toolSourceDigest ? { toolSourceDigest: options.toolSourceDigest } : {}),
+          selectedSkills: this.selectedSkills,
         });
         validateStoredAgentState(saved);
         this.messages = structuredClone(saved.messages);
@@ -131,7 +154,8 @@ export class AgentSession {
         this.rawUsage = structuredClone(saved.rawUsage);
         this.usageEntries = structuredClone(saved.usageEntries);
         this.tokenCalibration = saved.tokenCalibration;
-        this.schemaRevision = saved.schemaRevision;
+        this.contextGenerationRevision = saved.contextRevision;
+        this.skillVisibility = saved.skillVisibility;
         this.persistence = { store, sessionId, owner, surface };
         this.heartbeat = setInterval(() => {
           try { store.renewSession(sessionId, owner); }
@@ -153,7 +177,7 @@ export class AgentSession {
   get transcript(): readonly ModelMessage[] { return structuredClone(this.messages); }
   get usageRecords(): readonly unknown[] { return structuredClone(this.rawUsage); }
   get cwd(): string { return this.options.cwd; }
-  get toolSchemaRevision(): number { return this.schemaRevision; }
+  get contextRevision(): number { return this.contextGenerationRevision; }
   get toolDefinitions(): readonly ToolDefinition[] { return structuredClone(this.schemaView); }
   stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
 
@@ -183,12 +207,16 @@ export class AgentSession {
     const known = new Set(this.options.registry.definitions().map((item) => item.name));
     for (const name of whitelist ?? []) if (!known.has(name)) throw new Error(`unknown tool: ${name}`);
     const next = this.options.registry.definitions(whitelist);
+    if (JSON.stringify(this.options.whitelist ?? null) === JSON.stringify(whitelist ?? null)
+      && JSON.stringify(this.schemaView) === JSON.stringify(next)) return this.contextGenerationRevision;
+    const nextKey = randomUUID();
     if (this.persistence) this.persistence.store.updateAgentToolView(this.persistence.sessionId, this.persistence.owner,
-      whitelist ?? null, next, this.schemaRevision + 1);
+      whitelist ?? null, next, this.contextGenerationRevision + 1, nextKey, this.persistence.surface === "acp");
     if (whitelist === undefined) delete this.options.whitelist;
     else this.options.whitelist = [...whitelist];
     this.schemaView = Object.freeze(next);
-    return ++this.schemaRevision;
+    this.cacheKey = nextKey;
+    return ++this.contextGenerationRevision;
   }
 
   clear(): void {
@@ -197,6 +225,7 @@ export class AgentSession {
     this.messages = [];
     this.originalTask = undefined;
     this.summaryText = undefined;
+    this.skillVisibility = { listed: false, loaded: [] };
   }
 
   setMaxOutputBytes(value: number): void {
@@ -250,11 +279,26 @@ export class AgentSession {
       if (this.persistenceError) throw this.persistenceError;
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       if (work.replacement && work.summary !== undefined) {
-        this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, work.replacement!,
+        const retained = loadedSkillNames(work.replacement);
+        const selectedNames = new Set(this.selectedSkills.map((skill) => skill.name));
+        const missing = this.skillVisibility.loaded.filter((name) => selectedNames.has(name) && !retained.has(name));
+        const priorNotices = work.replacement.flatMap((message) => message.role === "user"
+          && typeof message.content === "string" && message.content.startsWith("[Raw skill reload notice]")
+          ? [message.content] : []).join("\n");
+        const uncovered = missing.filter((name) => !priorNotices.includes(name)).sort();
+        const notice = uncovered.length
+          ? `[Raw skill reload notice] Loaded skill content was removed by compaction: ${uncovered.join(", ")}. Call load_skill again before relying on earlier instructions.`
+          : undefined;
+        const replacement: ModelMessage[] = [...work.replacement,
+          ...(notice ? [{ role: "user" as const, content: notice }] : [])];
+        const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
+        if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
+        this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
           { summaryText: work.summary!, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
-            tokenCalibration: this.tokenCalibration }));
-        this.messages = structuredClone(work.replacement);
+            tokenCalibration: this.tokenCalibration, ...(notice ? { skillNotice: notice } : {}) }));
+        this.messages = structuredClone(replacement);
         this.summaryText = work.summary;
+        return { ...work.result, afterBytes: finalBytes };
       }
       return work.result;
     } catch (error) {
@@ -391,6 +435,13 @@ export class AgentSession {
       : { status: "cancelled", steps };
     const cancelled = (call: ModelToolCall): ToolResult => capResult(errorResult("cancelled", `tool ${call.name} cancelled`), this.options.maxOutputBytes);
     const appendResult = (call: ModelToolCall, result: ToolResult) => {
+      let visibility: SkillVisibility | undefined;
+      if (!result.isError && call.name === "list_skills" && this.selectedSkills.length) {
+        visibility = { ...this.skillVisibility, listed: true };
+      } else if (!result.isError && call.name === "load_skill" && typeof call.arguments.name === "string"
+        && this.selectedSkills.some((skill) => skill.name === call.arguments.name)) {
+        visibility = { ...this.skillVisibility, loaded: [...new Set([...this.skillVisibility.loaded, call.arguments.name])] };
+      }
       const publicResult: ToolResult = { ...result, content: result.content.map((block) => block.type === "image"
         ? { type: "text", text: `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]` }
         : block) };
@@ -406,7 +457,9 @@ export class AgentSession {
       if (this.persistence?.surface === "acp") display.push({ kind: "tool_result", payload: {
         update: acpUpdate({ type: "tool_result", id: call.id, name: call.name, result: publicResult }),
       } });
-      this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) }, {}, display);
+      this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) },
+        visibility ? { skillVisibility: visibility } : {}, display);
+      if (visibility) this.skillVisibility = visibility;
       emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult });
     };
     const firstTask = this.originalTask === undefined;

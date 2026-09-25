@@ -52,6 +52,24 @@ test("one loader selects bundled, global, and config-local tools without importi
   await assert.rejects(readFile(untouched));
 });
 
+test("editing only a selected entry changes its source identity and reloads its handler", async () => {
+  const options = await workspace();
+  const folder = join(dirname(options.configPath), "tools", "editable");
+  const source = (value: string) => `export async function handler() { return { isError: false,
+    content: [{ type: "text", text: ${JSON.stringify(value)} }] }; }`;
+  await plugin(folder, "editable", "editable", source("old"));
+  const first = (await loadToolPlugins({ ...options, selectedIds: ["agent/editable"] }))[0]!;
+  await writeFile(join(folder, "index.mjs"), source("new"));
+  const second = (await loadToolPlugins({ ...options, selectedIds: ["agent/editable"] }))[0]!;
+  assert.notEqual(first.sourceDigest, second.sourceDigest);
+  assert.deepEqual(first.registration.inputSchema, second.registration.inputSchema);
+  const context = { cwd: options.cwd, maxOutputBytes: 8192, autoApprove: true };
+  const before = new ToolRegistry(); before.register(first.registration);
+  const after = new ToolRegistry(); after.register(second.registration);
+  assert.match(JSON.stringify(await before.dispatch("editable", { payload: { value: "x" } }, context)), /old/);
+  assert.match(JSON.stringify(await after.dispatch("editable", { payload: { value: "x" } }, context)), /new/);
+});
+
 test("selected manifest and schema failures reject before any handler import", async () => {
   const options = await workspace();
   const agentRoot = join(dirname(options.configPath), "tools");

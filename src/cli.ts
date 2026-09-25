@@ -173,6 +173,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     ...(runtime.profile!.baseUrl ? { endpoint: runtime.profile!.baseUrl } : {}),
     systemPrompt: runtime.systemPrompt });
   const createRuntimeAgent = (id: string) => createAgent({ provider, registry: tools.registry, whitelist: tools.selectedNames,
+    toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
     cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
     requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
     persistence: { store, sessionId: id, surface: "cli" },

@@ -105,3 +105,37 @@ test("conditional policy paths incompatible with a selected schema fail before i
   const runtime = await loadConfig({ configPath, env: {} });
   await assert.rejects(createRuntimeTools({ runtime, cwd }), /when\.any path.*schema/);
 });
+
+test("CLI resume rotates generated cache hint after a code-only selected plugin edit", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-profile-code-generation-"));
+  const provider = await startMockProvider([answer, answer, answer]);
+  try {
+    const configPath = join(cwd, "config.json");
+    const folder = join(cwd, "tools", "custom");
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "tool.json"), JSON.stringify({ api_version: 1, id: "custom", version: "1.0.0",
+      name: "custom", description: "A stable schema", input_schema: { type: "object", properties: {} }, entry: "./index.mjs" }));
+    const entry = (value: string) => `export async function handler() { return { isError: false, content: [{ type: "text", text: ${JSON.stringify(value)} }] }; }`;
+    await writeFile(join(folder, "index.mjs"), entry("old"));
+    await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
+      provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: provider.url,
+    } }, profiles: { p: { model: "m", tools: { use: ["agent/custom"] } } } }));
+    const env = { ...process.env, OPENAI_API_KEY: "fixture", XDG_STATE_HOME: join(cwd, "state"), XDG_CONFIG_HOME: join(cwd, "xdg") };
+    const first = await runRaw(configPath, "p", cwd, env);
+    assert.equal(first.code, 0, first.stderr);
+    const id = first.stderr.match(/raw --resume ([0-9a-f-]{36})/)?.[1];
+    assert.ok(id);
+    const unchanged = await runRaw(configPath, "p", cwd, env, ["--resume", id]);
+    assert.equal(unchanged.code, 0, unchanged.stderr);
+    await writeFile(join(folder, "index.mjs"), entry("new"));
+    const second = await runRaw(configPath, "p", cwd, env, ["--resume", id]);
+    assert.equal(second.code, 0, second.stderr);
+    const [before, same, after] = provider.requests.map((item) => item.body as { prompt_cache_key: string; tools: unknown[]; messages: unknown[] });
+    assert.deepEqual(before?.tools, same?.tools);
+    assert.deepEqual(same?.tools, after?.tools);
+    assert.equal(before?.prompt_cache_key, same?.prompt_cache_key);
+    assert.notEqual(same?.prompt_cache_key, after?.prompt_cache_key);
+    assert.deepEqual(same?.messages.slice(0, before?.messages.length), before?.messages);
+    assert.deepEqual(after?.messages.slice(0, same?.messages.length), same?.messages);
+  } finally { await provider.close(); }
+});

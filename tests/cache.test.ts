@@ -4,6 +4,11 @@ import { createProvider } from "../src/llm/client.js";
 import { createAgent } from "../src/agent.js";
 import type { ProviderName, ProviderProfile } from "../src/llm/types.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openSessionStore } from "../src/sessions/store.js";
+import { ToolRegistry } from "../src/tools/registry.js";
 
 const finalFrames = (provider: ProviderName) => provider === "anthropic" ? [
   anthropicFrame("message_start", { message: { id: "m", type: "message", role: "assistant", content: [], model: "fixture", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 } } }),
@@ -119,4 +124,37 @@ test("three SDK requests keep exact tool/result and system/schema prefix while a
     assert.equal(b?.prompt_cache_key, c?.prompt_cache_key);
     assert.ok(a?.prompt_cache_key && !a.prompt_cache_key.includes(process.cwd()) && !a.prompt_cache_key.includes("first"));
   } finally { await fixture.close(); }
+});
+
+test("tool generation change rotates generated OpenAI hint while explicit profile key remains literal", async () => {
+  for (const explicit of [false, true]) {
+    const fixture = await startMockProvider([{ frames: finalFrames("openai") }, { frames: finalFrames("openai") }]);
+    const root = mkdtempSync(join(tmpdir(), "raw-cache-generation-"));
+    const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
+    const id = store.createSession({ cwd: root, title: "generation" }).id;
+    const profile = makeProfile("openai", fixture.url, explicit ? { key: "literal-profile-key" } : undefined);
+    const registry = (description: string) => {
+      const tools = new ToolRegistry();
+      tools.register({ name: "selected", description, inputSchema: { type: "object", properties: {} },
+        async handler() { return { isError: false, content: [] }; } });
+      return tools;
+    };
+    try {
+      const first = createAgent({ provider: createProvider(profile), registry: registry("old"), cwd: root, system: "system",
+        whitelist: ["selected"], persistence: { store, sessionId: id, surface: "cli" } });
+      assert.equal((await first.run("one")).status, "completed");
+      await first.close();
+      const second = createAgent({ provider: createProvider(profile), registry: registry("new"), cwd: root, system: "system",
+        whitelist: ["selected"], persistence: { store, sessionId: id, surface: "cli" } });
+      assert.equal((await second.run("two")).status, "completed");
+      await second.close();
+      const [before, after] = fixture.requests.map((item) => item.body as {
+        prompt_cache_key: string; messages: unknown[]; tools: Array<{ function: { description: string } }> });
+      assert.deepEqual(after?.messages.slice(0, before?.messages.length), before?.messages);
+      assert.equal(before?.tools[0]?.function.description, "old");
+      assert.equal(after?.tools[0]?.function.description, "new");
+      if (explicit) assert.deepEqual([before?.prompt_cache_key, after?.prompt_cache_key], ["literal-profile-key", "literal-profile-key"]);
+      else assert.notEqual(before?.prompt_cache_key, after?.prompt_cache_key);
+    } finally { store.close(); await fixture.close(); }
+  }
 });

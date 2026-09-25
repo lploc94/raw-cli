@@ -164,6 +164,7 @@ test("CLI appends list and load results after linked calls and keeps loaded Mark
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "load", type: "function", function: { name: "load_skill", arguments: '{"name":"alpha"}' } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "resumed" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "reloaded" }, "stop"), openAiDone] },
   ]);
   try {
     await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
@@ -191,5 +192,14 @@ test("CLI appends list and load results after linked calls and keeps loaded Mark
     assert.deepEqual(requests[2]!.messages.filter((item) => item.role === "tool").map((item) => item.tool_call_id), ["list", "load"]);
     await run(["--resume", id, "again"]);
     assert.match(JSON.stringify(provider.requests[3]?.body), /PRIVATE_MARKDOWN_ONLY_AFTER_LOAD/);
+    assert.doesNotMatch(JSON.stringify(provider.requests[3]?.body), /reload notice/);
+    await writeFile(join(root, "skills", "alpha", "SKILL.md"), "UPDATED_MARKDOWN_AFTER_RESUME\n");
+    await run(["--resume", id, "after edit"]);
+    const originalBody = provider.requests[0]?.body as { prompt_cache_key: string };
+    const editedBody = provider.requests[4]?.body as { prompt_cache_key: string; messages: unknown[] };
+    assert.equal(editedBody.prompt_cache_key, originalBody.prompt_cache_key);
+    assert.match(JSON.stringify(editedBody.messages), /PRIVATE_MARKDOWN_ONLY_AFTER_LOAD/);
+    assert.match(JSON.stringify(editedBody.messages), /reload notice.*alpha/);
+    assert.equal((JSON.stringify(editedBody.messages).match(/reload notice/g) ?? []).length, 1);
   } finally { await provider.close(); }
 });

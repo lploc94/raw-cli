@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SESSION_SCHEMA_VERSION = 2;
+export const SESSION_SCHEMA_VERSION = 3;
 
 export function initializeSessionSchema(database: DatabaseSync): void {
   database.exec("PRAGMA foreign_keys = ON");
@@ -47,12 +47,17 @@ export function initializeSessionSchema(database: DatabaseSync): void {
         cache_key TEXT,
         selected_tools_json TEXT,
         tool_schema_digest TEXT,
+        tool_source_digest TEXT,
+        skill_snapshot_json TEXT,
+        skill_visibility_json TEXT,
+        skill_notice_digest TEXT,
+        selection_explicit INTEGER NOT NULL DEFAULT 0,
         runtime_digest TEXT,
         original_task TEXT,
         summary_text TEXT,
         usage_json TEXT,
         token_calibration REAL NOT NULL DEFAULT 1,
-        schema_revision INTEGER NOT NULL DEFAULT 1,
+        context_revision INTEGER NOT NULL DEFAULT 1,
         owner_token TEXT,
         owner_generation INTEGER NOT NULL DEFAULT 0,
         lease_until INTEGER
@@ -81,7 +86,7 @@ export function initializeSessionSchema(database: DatabaseSync): void {
         byte_length INTEGER NOT NULL,
         ref_count INTEGER NOT NULL DEFAULT 0
       );
-      PRAGMA user_version = 2;
+      PRAGMA user_version = 3;
     `);
     }
     database.exec("CREATE INDEX IF NOT EXISTS payloads_relative_path ON payloads(relative_path)");

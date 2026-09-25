@@ -13,5 +13,6 @@ export interface ToolManifest {
 export interface ToolPlugin {
   id: string;
   version: string;
+  sourceDigest: string;
   registration: ToolRegistration;
 }

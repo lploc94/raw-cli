@@ -404,7 +404,7 @@ test("ACP resume drops an unavailable reverse callback and permits fresh registr
   } finally { secondConnection.close(); await second.close(); }
 });
 
-test("dropping an old callback cannot hide a changed retained MCP schema", async () => {
+test("dropping an old callback still transitions a changed retained MCP schema", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-session-acp-schema-"));
   const state = mkdtempSync(join(tmpdir(), "raw-session-acp-schema-state-"));
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
@@ -413,11 +413,15 @@ test("dropping an old callback cannot hide a changed retained MCP schema", async
   document.profiles.fixture.tools.use.push("mcp/fixture/selected");
   writeFileSync(configPath, JSON.stringify(document));
   const runtime = await loadConfig({ flags: { configPath }, env: {}, requireModel: true });
+  const captures: ProviderRequest[] = [];
   const makeServer = (label: string) => createAcpServer({ runtime, storeOptions,
     mcpServers: { fixture: { command: process.execPath,
       args: ["--import", import.meta.resolve("tsx"), join(process.cwd(), "tests/fixtures/mcp-stdio.ts")],
       env: { MCP_LABEL: label }, tools: ["selected"] } },
-    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+    providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+      captures.push(request);
+      return { text: "ok", toolCalls: [], finishReason: "stop" };
+    } }) });
   const first = makeServer("old-description");
   const firstConnection = client({ name: "schema-first" }).connect(first.app);
   let id!: string;
@@ -427,17 +431,24 @@ test("dropping an old callback cannot hide a changed retained MCP schema", async
     id = (await firstConnection.agent.request("session/new", { cwd: root, mcpServers: [] })).sessionId;
     await firstConnection.agent.request("_raw/tool/register", { sessionId: id, name: "callback",
       description: "temporary", inputSchema: { type: "object" } });
+    await firstConnection.agent.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "one" }] });
   } finally { firstConnection.close(); await first.close(); }
   const changed = makeServer("new-description");
   const changedConnection = client({ name: "schema-changed" }).connect(changed.app);
   try {
     await changedConnection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
-    await assert.rejects(changedConnection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] }), /schema|selection/i);
+    await changedConnection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] });
+    await changedConnection.agent.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "two" }] });
+    assert.notEqual(captures[0]?.cacheKey, captures[1]?.cacheKey);
+    assert.ok(captures[1]?.tools.some((tool) => tool.description.includes("new-description")));
+    assert.ok(!captures[1]?.tools.some((tool) => tool.description === "temporary"));
   } finally { changedConnection.close(); await changed.close(); }
   const same = makeServer("old-description");
   const sameConnection = client({ name: "schema-same" }).connect(same.app);
   try {
     await sameConnection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     await sameConnection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] });
+    await sameConnection.agent.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "three" }] });
+    assert.notEqual(captures[1]?.cacheKey, captures[2]?.cacheKey);
   } finally { sameConnection.close(); await same.close(); }
 });

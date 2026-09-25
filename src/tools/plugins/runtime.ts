@@ -4,12 +4,14 @@ import { ToolRegistry } from "../registry.js";
 import { loadToolPlugins } from "./loader.js";
 import { loadSelectedSkills } from "../../skills/loader.js";
 import type { SelectedSkill } from "../../skills/contract.js";
+import { createHash } from "node:crypto";
 
 export interface RuntimeTools {
   registry: ToolRegistry;
   mcp: McpConnection;
   selectedNames: readonly string[];
   skills: readonly SelectedSkill[];
+  toolSourceDigest: string;
 }
 
 export async function createRuntimeTools(options: {
@@ -59,6 +61,8 @@ export async function createRuntimeTools(options: {
       }
     }
     if (new Set(names).size !== names.length) throw new Error("duplicate model-visible tool name");
-    return { registry, mcp, selectedNames: Object.freeze(names), skills };
+    const toolSourceDigest = createHash("sha256").update(JSON.stringify(runtime.toolIds.map((id) =>
+      id.startsWith("mcp/") ? { id } : { id, source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }))).digest("hex");
+    return { registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest };
   } catch (error) { await mcp.close(); throw error; }
 }

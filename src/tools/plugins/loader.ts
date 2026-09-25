@@ -1,6 +1,7 @@
 import AjvDraft7 from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -92,7 +93,8 @@ function compileSchema(manifest: ToolManifest): (args: unknown) => string | unde
 }
 
 async function selectedManifest(id: string, root: string): Promise<{
-  id: string; manifest: ToolManifest; entryPath: string; validateSchema: (args: unknown) => string | undefined;
+  id: string; manifest: ToolManifest; entryPath: string; sourceDigest: string;
+  validateSchema: (args: unknown) => string | undefined;
 }> {
   const { folder } = parseId(id);
   let realRoot: string;
@@ -110,10 +112,13 @@ async function selectedManifest(id: string, root: string): Promise<{
   }
   if (!inside(realFolder, realManifest) || !inside(realFolder, realEntry)) throw new Error(`selected tool entry escapes folder: ${id}`);
   let manifest: ToolManifest;
-  try { manifest = manifestFrom(JSON.parse(await readFile(realManifest, "utf8")), id); }
+  let manifestBytes: Buffer;
+  try { manifestBytes = await readFile(realManifest); manifest = manifestFrom(JSON.parse(manifestBytes.toString("utf8")), id); }
   catch (error) { throw new Error(`invalid selected tool manifest ${id}: ${(error as Error).message}`); }
   const validateSchema = compileSchema(manifest);
-  return { id, manifest, entryPath: realEntry, validateSchema };
+  const entryBytes = await readFile(realEntry);
+  const sourceDigest = createHash("sha256").update(id).update("\0").update(manifestBytes).update("\0").update(entryBytes).digest("hex");
+  return { id, manifest, entryPath: realEntry, sourceDigest, validateSchema };
 }
 
 export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<ToolPlugin[]> {
@@ -138,7 +143,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
   const result: ToolPlugin[] = [];
   for (const item of prepared) {
     let entry: { handler?: unknown; validateArgs?: unknown };
-    try { entry = await import(pathToFileURL(item.entryPath).href) as typeof entry; }
+    try { entry = await import(`${pathToFileURL(item.entryPath).href}?raw_source=${item.sourceDigest}`) as typeof entry; }
     catch { throw new Error(`selected tool entry failed to load: ${item.id}`); }
     if (typeof entry.handler !== "function" || (entry.validateArgs !== undefined && typeof entry.validateArgs !== "function")) {
       throw new Error(`invalid selected tool handler or validator: ${item.id}`);
@@ -165,7 +170,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
         return (entry.handler as ToolRegistration["handler"])(args, pluginContext);
       },
     };
-    result.push({ id: item.id, version: item.manifest.version, registration });
+    result.push({ id: item.id, version: item.manifest.version, sourceDigest: item.sourceDigest, registration });
   }
   return result;
 }

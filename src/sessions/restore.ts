@@ -4,9 +4,11 @@ import type { StoredAgentState } from "./store.js";
 export function isEphemeralPeerAlias(name: string): boolean { return /^raw_[A-Za-z0-9_-]+_[a-f0-9]{12}$/.test(name); }
 
 export function validateStoredAgentState(state: StoredAgentState): void {
-  if (!state.cacheKey || !Number.isSafeInteger(state.schemaRevision) || state.schemaRevision < 1
+  if (!state.cacheKey || !Number.isSafeInteger(state.contextRevision) || state.contextRevision < 1
     || !Number.isFinite(state.tokenCalibration) || state.tokenCalibration < 1
-    || !Array.isArray(state.messages) || !Array.isArray(state.rawUsage) || !Array.isArray(state.usageEntries)) {
+    || !Array.isArray(state.messages) || !Array.isArray(state.rawUsage) || !Array.isArray(state.usageEntries)
+    || !state.skillVisibility || typeof state.skillVisibility.listed !== "boolean"
+    || !Array.isArray(state.skillVisibility.loaded) || state.skillVisibility.loaded.some((name) => typeof name !== "string")) {
     throw new Error("invalid saved agent state");
   }
   if (state.selectedTools !== null && (!Array.isArray(state.selectedTools)

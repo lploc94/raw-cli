@@ -35,7 +35,7 @@ test("ACP injected deny stays hidden and rejects direct call; ask still calls pe
     await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
       _meta: { raw: { toolRegister: true, toolCall: true, runtimeInfo: true } } });
     const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
-    const blocked = await connection.agent.request<{ alias: string; schemaRevision: number }>("_raw/tool/register",
+    const blocked = await connection.agent.request<{ alias: string; contextRevision: number }>("_raw/tool/register",
       { sessionId, name: "blocked", description: "blocked", inputSchema: { type: "object", properties: {}, additionalProperties: false } });
     alias = blocked.alias;
     const hidden = await connection.agent.request<{ tools: Array<{ alias: string }> }>("_raw/runtime/info", { sessionId });
