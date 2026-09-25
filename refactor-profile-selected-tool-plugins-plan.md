@@ -21,6 +21,7 @@ Make Raw a small agent host whose four shipped tools use the same plugin contrac
 - Plugin manifest and policy validation happen before handler import/dispatch. Handler arguments are validated against the declared JSON Schema; results keep current byte caps, typed image behavior, cancellation, approval, and error normalization. A conditional ask cannot hide a tool at schema-list time because arguments are not yet known.
 - Profile selection, tool ordering, descriptions, schema key ordering, effective instructions, and provider adapter serialization are deterministic. No-op reconfiguration does not bump revision or rotate cache key. A changed tool generation never replays an unresolved call or executes an old call under a newly selected handler.
 - An agent/session is never silently given a tool omitted by its explicit profile list. ACP peer callback tools remain separately negotiated, ephemeral, and governed by existing `acp:<name>` policy.
+- Selected MCP tools still connect, discover, validate, dispatch, return supported typed content, time out/cancel, and close through the existing MCP client; selected stdio and Streamable HTTP transports remain supported. ACP standard sessions and negotiated reverse tools, all provider adapters, CLI/REPL output, compaction, and new-contract session/history behavior remain functional. Their configuration/tool-identity syntax may change only as explicitly stated in Scope.
 - No plugin code, connection handles, secrets, or absolute user plugin paths are serialized into model history. Runtime source/version identity may be stored as private session metadata; model-visible identity is the actual ordered provider tool definition.
 
 ## Baseline
@@ -40,12 +41,13 @@ Make Raw a small agent host whose four shipped tools use the same plugin contrac
 
 ## Global Gates
 - Each implementation phase starts with the named documentation and meaningful failing tests, then production code. Use temporary `XDG_CONFIG_HOME` and `XDG_STATE_HOME` in tests; never load the user's real tools directory or touch real sessions. Do not call live model/MCP services.
+- Update existing fixtures to the new config contract without deleting their behavioral assertions. Keep MCP transport/content, ACP protocol/reverse-tool, provider, session, and compaction suites in the full regression gate; a breaking config format is not permission to remove runtime coverage.
 - Before each phase commit: focused tests, `npm run check`, `git diff --check`, an implementation review with an APPROVE verdict, and inspection that no unrelated files entered the phase. Run `npm run test:package` after phases affecting installed assets/startup and at final completion; run `npm run test:overhead` after bundled/model-visible definitions change.
 - The final gates are `npm run check`, `npm run test:overhead`, `npm run test:package`, and the existing macOS/Linux Node 22.13.0/24 CI matrix. The test runner must build the plugin assets before source/packed tests; no test may depend on stale `dist`. Cache-hit counts themselves are not acceptance criteria; exact provider request prefixes and keys are.
 - Do not install or execute downloaded/shared tool code. Package tests use fixture plugins in temporary directories. When a new-contract saved session has a changed profile tool generation, transition it only at an idle, owned boundary; failures leave the saved generation and context intact. Do not add a parser or DB migration for pre-refactor development state.
 
 ## Plan Review
-APPROVE — Self-review on 2026-09-25 checked the user's latest intent against all six phases: one real loader/contract, explicit profile-selected tools, matching-only Bash ask, stable unchanged-session prefixes, and intentional breaking changes with no compatibility parser or migration. Source paths, test seams, phase dependencies, packaging gates, and all required phase fields were checked. Material design assumptions are package-owned bundled folders plus global user-owned folders, in-process execution only for explicitly selected local code, and RE2JS-backed conditional ask patterns; agent sharing/installation remains out of scope.
+APPROVE — Self-review on 2026-09-25 checked the user's latest intent against all six phases: one real loader/contract, explicit profile-selected tools, matching-only Bash ask, stable unchanged-session prefixes, MCP/ACP and other runtime regression coverage, and intentional breaking changes with no compatibility parser or migration. Source paths, test seams, phase dependencies, packaging gates, and all required phase fields were checked. Material design assumptions are package-owned bundled folders plus global user-owned folders, in-process execution only for explicitly selected local code, and RE2JS-backed conditional ask patterns; agent sharing/installation remains out of scope.
 
 ## Phase 1: Establish the plugin contract and move shipped tools
 ### Goal
@@ -131,13 +133,13 @@ Extend strict profile parsing and immutable RuntimeConfig; reuse selected-only M
 ### Dependencies
 Phases 1-2.
 ### Files and symbols
-`src/config.ts` (ProfileSpec, profileSpec, loadConfig), `src/cli.ts` (runCli), `src/acp/methods.ts` (startSession), `src/tools/registry.ts` (remove createToolRegistry), `src/tools/mcp-client.ts`, new `src/tools/plugins/runtime.ts`, `src/index.ts`, `bin/raw.ts` (config init/list/help), `docs/configuration.md`, `docs/mcp.md`, `tests/fixtures/config.ts`, `tests/config-mcp-policy.test.ts`, `tests/session-cli.test.ts`, `tests/session-acp.test.ts`, and all callers/tests of createToolRegistry.
+`src/config.ts` (ProfileSpec, profileSpec, loadConfig), `src/cli.ts` (runCli), `src/acp/methods.ts` (startSession), `src/tools/registry.ts` (remove createToolRegistry), `src/tools/mcp-client.ts`, new `src/tools/plugins/runtime.ts`, `src/index.ts`, `bin/raw.ts` (config init/list/help), `docs/configuration.md`, `docs/mcp.md`, `tests/fixtures/config.ts`, `tests/config-mcp-policy.test.ts`, `tests/session-cli.test.ts`, `tests/session-acp.test.ts`, `tests/mcp.test.ts`, `tests/mcp-content.test.ts`, `tests/acp.test.ts`, and all callers/tests of createToolRegistry.
 ### Behavioral contract
 `tools.use` explicitly selects all effective built-in/local/MCP IDs; an empty array selects no tools. Missing `tools.use`, old `profile.mcp`, unknown ID, duplicate ID/model name, or selected image tool with a nonvision model fails config/startup before inference. Unselected local code and MCP servers stay inert. ACP `session/new` may supply a selected MCP server absent from the global config; a duplicate server name across ACP/global sources fails rather than silently overriding either. Profile instructions resolve relative to the actual selected config path and obey documented override precedence; absent instructions keep today's default prompt.
 ### Documentation
 Document exact ID syntax, examples for read-only and coding profiles, explicit empty selection, instruction-file precedence, and `config list` output without secrets. State that pre-refactor config must be rewritten and no migration is provided.
 ### Tests first
-Compare two profiles using the same model but disjoint tool sets; prove only selected schemas reach mock provider in CLI and ACP, including a selected ACP-provided MCP server; empty selection has no tools; unknown/duplicate/missing selections, duplicate ACP/global MCP server names, and missing instruction files fail before network; flags/env override instructions; old `profile.mcp` is rejected. Update every existing config fixture to the new required schema.
+Compare two profiles using the same model but disjoint tool sets; prove only selected schemas reach mock provider in CLI and ACP, including a selected ACP-provided MCP server; execute a selected MCP tool end to end over stdio and Streamable HTTP with typed result, cancellation, and cleanup assertions; empty selection has no tools; unknown/duplicate/missing selections, duplicate ACP/global MCP server names, and missing instruction files fail before network; flags/env override instructions; old `profile.mcp` is rejected. Update every existing config fixture to the new required schema without dropping its runtime assertions.
 ### Anti-shortcut coverage
 Create a selected local module whose top-level code writes a marker and an unselected MCP process with another marker; run the other profile and assert neither marker exists. Compare actual provider request tool arrays, not only parsed config.
 ### Implementation obligations
@@ -146,8 +148,9 @@ Resolve selection before connections/imports, assemble registry once per session
 - [ ] AC-3.1: Explicit profiles expose exactly their selected tools in the declared order through both CLI and ACP — proven by mock-provider requests.
 - [ ] AC-3.2: Unselected local/MCP implementations are not started; empty selection is valid — proven by sentinel tests.
 - [ ] AC-3.3: Every profile requires one explicit tool list; old profile.mcp is rejected, no sync factory caller remains, and prompt precedence is correct — proven by config/CLI tests and source search.
+- [ ] AC-3.4: Selected MCP calls still execute through both supported transports and preserve typed results, cancellation, and cleanup; ACP-selected MCP and peer reverse tools still work — proven by MCP/ACP integration tests.
 ### Focused verification
-`npm run build && node --import tsx --test tests/config-mcp-policy.test.ts tests/session-cli.test.ts tests/session-acp.test.ts`
+`npm run build && node --import tsx --test tests/config-mcp-policy.test.ts tests/session-cli.test.ts tests/session-acp.test.ts tests/mcp.test.ts tests/mcp-content.test.ts tests/acp.test.ts`
 ### Phase gates
 `npm run check && npm run test:package && git diff --check`
 ### Review
@@ -267,9 +270,11 @@ Implementation review is required; verdict must be APPROVE.
 - All six phases meet their checked acceptance criteria, pass their focused/full gates, receive APPROVE implementation reviews, and are committed in order. Final macOS/Linux Node 22.13.0/24 CI passes.
 - The generated starter profile explicitly selects the same three shipped tools; every other profile exposes only its chosen bundled/local/MCP IDs and optional agent instructions. An unselected user module cannot execute.
 - The agreed Bash rule asks for matching `rm` command strings and leaves nonmatching Bash calls automatic. Invalid policy fails early.
+- MCP remains fully usable through the new profile selection contract, and existing provider/ACP/CLI/REPL/compaction behavior passes its regression suites; only explicitly listed config/API and old-dev-session compatibility is removed.
 - Unchanged profile/plugin state preserves exact tool definitions and cache key through resume; a changed generation continues safely with a new revision/key and no replayed side effects.
 - Plugin folders and complete examples work from the npm package without modifying the user's global config on install. Old dev config/session formats are not supported or migrated. Agent sharing and untrusted-plugin isolation remain separate future work.
 
 ## Progress Log
 - 2026-09-25: Planning only. Baseline committed clean at `8c2e40d`; CTXE readiness was Ready/fresh, relevant runtime/config/session/package paths and tests inspected. User clarified that the project is unpublished development software, so the plan explicitly drops old config/API/session compatibility and migration. No application code changed for this plan.
-- 2026-09-25: Intent and structure self-review complete; six phase blocks and 18 binary acceptance criteria checked, Plan Review set to APPROVE. Implementation awaits user approval of this plan.
+- 2026-09-25: Intent and structure self-review complete; six phase blocks and 19 binary acceptance criteria checked, Plan Review set to APPROVE. Implementation awaits user approval of this plan.
+- 2026-09-25: Clarified non-regression requirement for MCP transports/content and other runtime subsystems; added an explicit MCP/ACP acceptance criterion. Config syntax and pre-refactor dev sessions remain intentionally breaking.
