@@ -1,9 +1,51 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BUILTIN_TOOL_DEFINITIONS, createToolRegistry } from "../src/tools/registry.js";
+import { BUILTIN_TOOL_DEFINITIONS, createToolRegistry, ToolRegistry } from "../src/tools/registry.js";
+import { loadBundledTools } from "../src/tools/plugins/loader.js";
+
+test("packaged bundled plugins preserve exact definitions and semantic batch preflight", async () => {
+  const names = ["read_file", "write_file", "bash", "view_image"];
+  const plugins = await loadBundledTools(names);
+  const registry = new ToolRegistry();
+  for (const plugin of plugins) registry.register(plugin);
+  assert.deepEqual(registry.definitions(), createToolRegistry([], true).definitions());
+  // Frozen from the pre-refactor four-tool definition array at 3681c12.
+  assert.equal(createHash("sha256").update(JSON.stringify(registry.definitions())).digest("hex"),
+    "ebb9316cba1a92401a88e5a17955e89f64bd17bd559e756209c82b414e8bfe3d");
+
+  const cwd = await mkdtemp(join(tmpdir(), "raw-bundled-"));
+  const marker = join(cwd, "side-effect");
+  let approvals = 0;
+  const ctx = { cwd, maxOutputBytes: 8192, autoApprove: false, approve: async () => { approvals++; return true; } };
+  const invalidWrite = await registry.dispatch("write_file", { operations: [
+    { path: marker, mode: "overwrite", content: "must not write" },
+    { path: marker, mode: "replace_lines", start_line: 2, end_line: 1, content: "bad", expected_sha256: "0".repeat(64) },
+  ] }, ctx);
+  assert.equal(invalidWrite.code, "invalid_arguments");
+  assert.match(JSON.stringify(invalidWrite), /operations\[1\].*invalid line range/);
+  const invalidBash = await registry.dispatch("bash", { commands: [
+    { command: `touch '${marker}'` }, { command: "true", timeout_ms: 0 },
+  ] }, ctx);
+  assert.equal(invalidBash.code, "invalid_arguments");
+  const invalidRead = await registry.dispatch("read_file", { files: [
+    { path: marker }, { path: marker, start_line: 3, end_line: 2 },
+  ] }, ctx);
+  assert.equal(invalidRead.code, "invalid_arguments");
+  assert.equal(approvals, 0);
+  await assert.rejects(access(marker));
+
+  const write = await registry.dispatch("write_file", { operations: [{ path: marker, mode: "overwrite", content: "ok" }] }, { ...ctx, autoApprove: true });
+  assert.equal(write.isError, false);
+  assert.equal(await readFile(marker, "utf8"), "ok");
+  const read = await registry.dispatch("read_file", { files: [{ path: marker }] }, { ...ctx, autoApprove: true });
+  assert.equal(read.isError, false);
+  assert.match(JSON.stringify(read), /ok/);
+  assert.equal((await registry.dispatch("view_image", { path: marker }, { ...ctx, autoApprove: true })).isError, true);
+});
 
 test("registry has only three built-ins and rejects invalid/hidden calls before approval", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-reg-"));

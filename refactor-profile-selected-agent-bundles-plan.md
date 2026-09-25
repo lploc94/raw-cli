@@ -77,9 +77,9 @@ A parity test compares complete descriptions and nested schema, not only tool na
 ### Implementation obligations
 Extract definition metadata, handlers, and the three existing batch validators into each corresponding plugin entry; chain semantic checks before compiled schema checks and before approval/execution, retaining old error messages and whole-batch rejection. Retain existing result caps and typed content, introduce the bundled-root loader and centralized plugin normalization, emit manifest+ESM assets, and build before tests. Defer removal of the old factory/caller path to Phase 3, when the new loader can replace it everywhere in one commit.
 ### Acceptance criteria
-- [ ] AC-1.1: Selected bundled tool arrays, including the vision tool when selected, are byte-for-byte equivalent to the pre-refactor definitions — proven by definition snapshot tests.
-- [ ] AC-1.2: Read/write/Bash/image registry dispatch retains current results, semantic batch rejection before side effects, limits, and abort behavior — proven by existing and packaged-plugin parity tests.
-- [ ] AC-1.3: Shipped plugins are distinct readable packaged folders using one manifest/handler contract — proven by packed asset and source inspection tests.
+- [x] AC-1.1: Selected bundled tool arrays, including the vision tool when selected, are byte-for-byte equivalent to the pre-refactor definitions — proven by definition snapshot tests.
+- [x] AC-1.2: Read/write/Bash/image registry dispatch retains current results, semantic batch rejection before side effects, limits, and abort behavior — proven by existing and packaged-plugin parity tests.
+- [x] AC-1.3: Shipped plugins are distinct readable packaged folders using one manifest/handler contract — proven by packed asset and source inspection tests.
 ### Focused verification
 `npm run build && node --import tsx --test tests/registry.test.ts tests/batch-integration.test.ts tests/vision.test.ts`
 ### Phase gates
@@ -319,6 +319,7 @@ Implementation review is required; verdict must be APPROVE.
 - Plugin folders and a complete copyable agent directory work from the npm package without modifying the user's global config on install. Old dev config/session formats are not supported or migrated. Registry-based sharing, dependency installation, and untrusted-plugin isolation remain separate future work.
 
 ## Progress Log
+- 2026-09-25: Implementation authorized at clean `3681c12`, CTXE Ready/fresh. Phase 1 complete; Phase 2 `in_progress`; phases 3-7 not started. Phase 1 docs-first RED was missing bundled loader; GREEN focused tests passed 12/12. `npm run check` passed 282/282, `npm run test:overhead` passed, `npm run test:package` passed 1/1 against an installed package, and `git diff --check` passed. Self-review APPROVE: manifests and standalone ESM handlers are packaged, pre-refactor definition hash is fixed, batch semantic validation precedes approval/side effects, and the old caller path remains live until Phase 3.
 - 2026-09-25: Planning only. Baseline committed clean at `8c2e40d`; CTXE readiness was Ready/fresh, relevant runtime/config/session/package paths and tests inspected. User clarified that the project is unpublished development software, so the plan explicitly drops old config/API/session compatibility and migration. No application code changed for this plan.
 - 2026-09-25: Earlier intent and structure self-review covered six phase blocks and 19 binary acceptance criteria; later user requirements superseded that review. Implementation still awaits approval of the amended plan.
 - 2026-09-25: Clarified non-regression requirement for MCP transports/content and other runtime subsystems; added an explicit MCP/ACP acceptance criterion. Config syntax and pre-refactor dev sessions remain intentionally breaking.

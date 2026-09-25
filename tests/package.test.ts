@@ -34,6 +34,25 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   assert.equal(install.status, 0, install.stderr);
   const bin = join(consumer, "node_modules", ".bin", "raw");
   await access(bin);
+  for (const name of ["read_file", "write_file", "bash", "view_image"]) {
+    const folder = join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", name);
+    const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8")) as { id: string; entry: string; input_schema: { type: string } };
+    assert.equal(manifest.id, name);
+    assert.equal(manifest.entry, "./index.mjs");
+    assert.equal(manifest.input_schema.type, "object");
+    await access(join(folder, "index.mjs"));
+  }
+  const standalone = await run(process.execPath, ["--input-type=module", "--eval", `
+import { pathToFileURL } from "node:url";
+const module = await import(pathToFileURL(${JSON.stringify(join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", "write_file", "index.mjs"))}).href);
+if (typeof module.handler !== "function" || typeof module.validateArgs !== "function") throw new Error("missing plugin exports");
+const invalid = module.validateArgs({ operations: [
+  { path: "sentinel", mode: "overwrite", content: "x" },
+  { path: "sentinel", mode: "replace_lines", start_line: 2, end_line: 1, content: "x", expected_sha256: "0".repeat(64) },
+] });
+if (!/operations\\[1\\].*invalid line range/.test(invalid)) throw new Error("missing semantic batch validator");
+`], consumer, { ...process.env });
+  assert.equal(standalone.code, 0, standalone.stderr);
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);

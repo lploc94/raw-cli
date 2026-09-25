@@ -1,5 +1,22 @@
 # Built-in tools
 
+## Bundled plugin contract (implementation phase 1)
+
+The four shipped tools are being moved into package-owned folders under
+`dist/tools/builtin/<name>/`. Each folder contains an editable `tool.json` and a
+standalone `index.mjs`. The manifest declares `api_version: 1`, `id`, `version`,
+`name`, `description`, `input_schema`, and `entry: "./index.mjs"`. The entry
+exports an async `handler(args, context)` and may export a synchronous
+`validateArgs(args)` that returns an error string or `undefined`. The host
+validates the full batch before approval or execution. The read, write, and
+Bash entries retain their semantic batch validators, including mode-specific
+write fields and ordered line ranges, even where JSON Schema alone is too
+broad. Results, abort behavior, and byte caps remain host-controlled.
+
+During this phase the existing registry assembly still supplies sessions;
+profiles do not load plugin folders yet. The shared selected-only loader and
+profile syntax are introduced in later phases.
+
 The default registry exposes exactly three tools. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
 
 | Tool | Required input | Optional input | Action |

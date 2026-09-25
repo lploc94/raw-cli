@@ -21,12 +21,12 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test.mjs",
+    "test": "npm run build && node scripts/test.mjs",
     "test:phase": "node scripts/test-phase.mjs",
     "test:overhead": "node --import tsx scripts/overhead.mjs",
     "test:package": "npm run build && node --import tsx --test tests/package.test.ts",
-    "build": "tsup",
-    "check": "npm run typecheck && npm run build && npm test"
+    "build": "tsup && tsup --config tsup.tools.config.ts && node scripts/copy-tool-manifests.mjs",
+    "check": "npm run typecheck && npm test"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.0",

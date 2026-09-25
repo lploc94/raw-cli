@@ -1,0 +1,42 @@
+{
+  "api_version": 1,
+  "id": "bash",
+  "version": "1.0.0",
+  "name": "bash",
+  "description": "Run 1-16 Bash commands sequentially in array order. The commands array contains objects, never strings. Call with {\"commands\":[{\"command\":\"pwd\"},{\"command\":\"ls -la\"}]}; do not pass command at the top level. Results correspond to commands by zero-based index. Each command starts a separate Bash process in the session cwd. Filesystem changes persist; shell variables and cd do not carry to the next command. timeout_ms is an optional per-command deadline in milliseconds (default 120000). Each result reports status, exit_code, signal, timed_out, truncated, stdout, and stderr. Status ok means the command finished; inspect exit_code to determine success. A nonzero exit does not stop later commands. Timeout or abort stops the active process group and marks remaining commands skipped. All output shares one bounded result budget, so stdout or stderr may be truncated. Invalid arguments reject the entire batch before any command starts.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "commands": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "description": "Array of command objects, not strings; Bash runs them one at a time in this order.",
+        "items": {
+          "type": "object",
+          "description": "One command object with a required command string and optional timeout_ms.",
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "Nonempty Bash -c command to run in the session cwd."
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Positive deadline for this command in milliseconds; defaults to 120000."
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "commands"
+    ],
+    "additionalProperties": false
+  },
+  "entry": "./index.mjs"
+}
