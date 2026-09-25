@@ -115,7 +115,7 @@ test("T-07e: local WebSocket supports parent client, rejects browser Origin/bina
   let entered!: () => void;
   const ready = new Promise<void>((resolve) => { entered = resolve; });
   const listener = await serveAcpWebSocket({ host: "127.0.0.1", port: 0,
-    serverFactory: () => createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!,
+    serverFactory: () => createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!,
       generate: async (request) => {
         if (JSON.stringify(request.messages.at(-1)).includes("hang")) { entered(); return new Promise<never>(() => {}); }
         return { text: "ws-answer", toolCalls: [], finishReason: "stop" };
@@ -195,12 +195,12 @@ test("T-07b: stdio handles split/coalesced JSON-RPC frames, notifications, inval
   } finally { rl.close(); child.stdin.end(); if (child.exitCode === null) child.kill("SIGTERM"); }
 });
 
-test("T-07a: profile-selected ACP session/new MCP server executes without raw extensions", async () => {
+test("T-07a: agent-selected ACP session/new MCP server executes without raw extensions", async () => {
   const responses = [{ frames: [openAiFrame({ content: "ready" }, "stop"), openAiDone] }];
   const fixture = await startMockProvider(responses);
   const configPath = testConfig("openai", "fixture", fixture.url);
   const document = JSON.parse(readFileSync(configPath, "utf8"));
-  document.profiles.fixture.tools.use.push("mcp/browser/selected");
+  document.agents.fixture.tools.use.push("mcp/browser/selected");
   writeFileSync(configPath, JSON.stringify(document));
   const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", configPath, "-y"],
     { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });

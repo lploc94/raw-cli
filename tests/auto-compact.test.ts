@@ -15,10 +15,10 @@ const result = (text: string, usage?: unknown): ProviderTurn => ({ text, toolCal
 test("trigger_tokens needs a context budget and validates its reserve", async () => {
   const directory = await mkdtemp(join(tmpdir(), "raw-auto-config-"));
   const path = join(directory, "config.json");
-  const config = (context?: number, trigger = 500) => ({ default_profile: "p",
+  const config = (context?: number, trigger = 500) => ({ default_agent: "p",
     models: { m: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture",
       ...(context === undefined ? {} : { context_window_tokens: context }) } },
-    profiles: { p: { model: "m", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, compact: { trigger_tokens: trigger, max_output_tokens: 100 } } } });
+    agents: { p: { model: "m", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, compact: { trigger_tokens: trigger, max_output_tokens: 100 } } } });
   await writeFile(path, JSON.stringify(config()));
   await assert.rejects(loadConfig({ configPath: path, env: {}, requireModel: true }), /trigger_tokens|context_window_tokens/);
   await writeFile(path, JSON.stringify(config(600)));
@@ -31,7 +31,7 @@ test("trigger_tokens needs a context budget and validates its reserve", async ()
 test("automatic compact runs before the next over-threshold inference and keeps usage/cache key visible", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-auto-run-"));
   const requests: ProviderRequest[] = [];
-  const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 4000, maxOutputTokens: 100 }, async generate(request) {
     const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta,
       onReasoningDelta: _onReasoningDelta, ...wire } = request;
@@ -61,7 +61,7 @@ test("manual compaction chunks older turns and never sends image base64 to the s
     handler: async () => ({ isError: false, content: [{ type: "image", mimeType: "image/png", data: image,
       path: "photo.png", byteSize: 8 }] }) });
   let calls = 0;
-  const main: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const main: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", vision: true, contextWindow: 1500, maxOutputTokens: 100 }, async generate() {
     calls++;
     if (calls === 1) return { text: "", toolCalls: [{ id: "img", name: "fixture_image", arguments: {} }], finishReason: "tool_calls" };
@@ -71,7 +71,7 @@ test("manual compaction chunks older turns and never sends image base64 to the s
   await agent.run("first photo");
   for (let index = 0; index < 5; index++) await agent.run(`turn ${index}`);
   const summaries: ProviderRequest[] = [];
-  const summarizer: ProviderAdapter = { profile: main.profile, async generate(request) {
+  const summarizer: ProviderAdapter = { modelConfig: main.modelConfig, async generate(request) {
     summaries.push(request);
     assert.ok(!JSON.stringify(request.messages).includes(image));
     assert.ok(!JSON.stringify(request.messages).includes("data:image"));
@@ -94,7 +94,7 @@ test("tool output and opaque reasoning trigger compact despite small previous us
     handler: async () => ({ isError: false, content: [{ type: "text", text: "T".repeat(2200) }] }) });
   let summaries = 0;
   let main = 0;
-  const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 5000, maxOutputTokens: 100 }, async generate(request) {
     if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result("task and tool result summarized"); }
     main++;
@@ -118,7 +118,7 @@ test("an early no-op does not consume the one actual compact attempt after a too
     handler: async () => ({ isError: false, content: [{ type: "text", text: "T".repeat(1600) }] }) });
   let main = 0;
   let summaries = 0;
-  const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 5000, maxOutputTokens: 100 }, async generate(request) {
     if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result("summarized"); }
     main++;
@@ -142,7 +142,7 @@ test("an oversized recent image is summarized as metadata before the next main r
       path: "photo.png", byteSize: 12_000 }] }) });
   let main = 0;
   let summarized = false;
-  const provider: ProviderAdapter = { profile: { name: "vision", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "vision", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", vision: true, contextWindow: 4000, maxOutputTokens: 100 }, async generate(request) {
     if (request.system === COMPACT_SYSTEM_PROMPT) {
       summarized = true;
@@ -164,7 +164,7 @@ test("an oversized recent image is summarized as metadata before the next main r
 
 test("irreducible summary fails before inference and nonshrinking summary does not recurse", async () => {
   let requests = 0;
-  const provider: ProviderAdapter = { profile: { name: "small", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "small", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 2000, maxOutputTokens: 100 }, async generate(request) {
     requests++;
     if (request.system === COMPACT_SYSTEM_PROMPT) return result("S".repeat(5000));
@@ -192,7 +192,7 @@ test("automatic compact is abortable and cannot commit a late summary", async ()
   let finish!: (turn: ProviderTurn) => void;
   const late = new Promise<ProviderTurn>((resolve) => { finish = resolve; });
   let main = 0;
-  const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 4000, maxOutputTokens: 100 }, async generate(request) {
     if (request.system === COMPACT_SYSTEM_PROMPT) { entered(); return late; }
     main++;
@@ -219,7 +219,7 @@ test("a second automatic compact can summarize continuation after zero-retention
     handler: async () => ({ isError: false, content: [{ type: "text", text: "T".repeat(2200) }] }) });
   let main = 0;
   let summaries = 0;
-  const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 5000, maxOutputTokens: 100 }, async generate(request) {
     if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result(`summary ${summaries}`); }
     main++;
@@ -237,7 +237,7 @@ test("a second automatic compact can summarize continuation after zero-retention
 test("successive usage reports can increase absolute token calibration", async () => {
   let main = 0;
   let summaries = 0;
-  const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 10000, maxOutputTokens: 100 }, async generate(request) {
     if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result("summary"); }
     main++;
@@ -266,7 +266,7 @@ test("every chunk of a repeated compact budgets its accumulated summary", async 
   for (let index = 0; index < 6; index++) messages.push({ role: "user", content: `turn ${index}` },
     { role: "assistant", text: "A".repeat(250), toolCalls: [] });
   const totals: number[] = [];
-  const provider: ProviderAdapter = { profile: { name: "p", provider: "ollama", method: "openai-chat-completions",
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow }, async generate(request) {
     totals.push(Buffer.byteLength(JSON.stringify({ system: request.system, messages: request.messages,
       tools: request.tools })) + outputTokens + 75);

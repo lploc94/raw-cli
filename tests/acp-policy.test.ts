@@ -9,7 +9,7 @@ import { testConfig } from "./fixtures/config.js";
 function policyConfig(rules: Array<{ match: string; effect: string; when?: { any: string; regex: string } }>): string {
   const path = testConfig("ollama");
   const document = JSON.parse(readFileSync(path, "utf8"));
-  document.profiles.fixture.tools = { ...document.profiles.fixture.tools, rules };
+  document.agents.fixture.tools = { ...document.agents.fixture.tools, rules };
   writeFileSync(path, JSON.stringify(document));
   return path;
 }
@@ -20,7 +20,7 @@ test("ACP injected deny stays hidden and rejects direct call; ask still calls pe
   let alias = "";
   let permissions = 0;
   let reverseCalls = 0;
-  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+  const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!, async generate(request) {
     const last = request.messages.at(-1);
     if (last?.role === "tool") return { text: `result:${last.result.code}`, toolCalls: [], finishReason: "stop" };
     return { text: "", toolCalls: [{ id: "call-1", name: alias, arguments: {} }], finishReason: "tool_calls" };
@@ -56,11 +56,11 @@ test("ACP injected deny stays hidden and rejects direct call; ask still calls pe
   } finally { connection.close(); await server.close(); }
 });
 
-test("ACP session MCP server is explicit but profile deny hides its tools", async () => {
+test("ACP session MCP server is explicit but agent deny hides its tools", async () => {
   const path = policyConfig([{ match: "mcp/browser/*", effect: "deny" }]);
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
   let tools: readonly string[] = [];
-  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+  const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!, async generate(request) {
     tools = request.tools.map((tool) => tool.name);
     return { text: "done", toolCalls: [], finishReason: "stop" };
   } }) });
@@ -86,7 +86,7 @@ test("ACP names with line breaks cannot bypass broad deny or ask rules", async (
     let alias = "";
     let permissions = 0;
     let reverseCalls = 0;
-    const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+    const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!, async generate(request) {
       if (request.messages.at(-1)?.role === "tool") return { text: "done", toolCalls: [], finishReason: "stop" };
       return { text: "", toolCalls: [{ id: "call", name: alias, arguments: {} }], finishReason: "tool_calls" };
     } }) });
@@ -117,7 +117,7 @@ test("ACP configure binds conditional policy to a later activated MCP tool", asy
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
   let alias = "";
   let permissions = 0;
-  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+  const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!, async generate(request) {
     const last = request.messages.at(-1);
     if (last?.role === "tool") return { text: "done", toolCalls: [], finishReason: "stop" };
     const user = last?.role === "user" ? JSON.stringify(last.content) : "";
@@ -152,7 +152,7 @@ test("ACP reverse tool conditional ask inspects nested typed arguments", async (
   let alias = "";
   let permissions = 0;
   let reverseCalls = 0;
-  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+  const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!, async generate(request) {
     const last = request.messages.at(-1);
     if (last?.role === "tool") return { text: "done", toolCalls: [], finishReason: "stop" };
     const user = last?.role === "user" ? JSON.stringify(last.content) : "";

@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ResponseInput, ResponseOutputItem } from "openai/resources/responses/responses";
-import { renderUserInput, type ModelToolCall, type ProviderAdapter, type ProviderProfile, type ProviderRequest, type ProviderTurn } from "./types.js";
+import { renderUserInput, type ModelToolCall, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -56,15 +56,15 @@ function completedTurn(output: readonly ResponseOutputItem[], usage: unknown): P
     ...(usage !== undefined ? { usage } : {}) };
 }
 
-export function createResponsesProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
+export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const fallbackCacheKey = randomUUID();
-  const client = new OpenAI({ apiKey: profile.apiKey ?? "unused", ...(profile.baseUrl ? { baseURL: profile.baseUrl } : {}), maxRetries: 0 });
-  return { profile, async generate(request): Promise<ProviderTurn> {
+  const client = new OpenAI({ apiKey: modelConfig.apiKey ?? "unused", ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}), maxRetries: 0 });
+  return { modelConfig, async generate(request): Promise<ProviderTurn> {
     return withProviderAbort(request, async (signal) => {
-      const cache = cacheSettings(profile, request.cacheKey, fallbackCacheKey);
-      const options = profile.request?.kind === "openai" ? profile.request : undefined;
+      const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
+      const options = modelConfig.request?.kind === "openai" ? modelConfig.request : undefined;
       const stream = await client.responses.create({
-        model: profile.model,
+        model: modelConfig.model,
         instructions: request.system,
         input: inputItems(request),
         store: false,
@@ -75,8 +75,8 @@ export function createResponsesProvider(profile: Readonly<ProviderProfile>): Pro
           ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
           ...(options.reasoningMode ? { mode: options.reasoningMode } : {}),
         } } : {}),
-        ...(request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens
-          ? { max_output_tokens: request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens } : {}),
+        ...(request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens
+          ? { max_output_tokens: request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens } : {}),
         ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: "function" as const, name: tool.name,
           description: tool.description, parameters: tool.inputSchema as Record<string, unknown>, strict: false })) } : {}),
       }, { signal, timeout: request.timeoutMs, maxRetries: 0 });

@@ -78,7 +78,7 @@ test("orphan sweep preserves a live writer payload staged before DB commit", asy
     const owner = store.claimSession(id);
     try {
       const state = store.initializeAgent(id, owner, { cwd: root, system: "system",
-        profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+        modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
         toolDefinitions: [], selectedTools: [], cacheKey: "stable" });
       assert.equal(state.messages[0]?.role, "user");
       assert.equal((state.messages[0] as { content: string }).content.length, 70_000);
@@ -112,7 +112,7 @@ test("killing a side-effecting tool never dispatches it again on resume", async 
     const registry = createTestToolRegistry();
     registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object" },
       handler: async () => { throw new Error("historical tool dispatched"); } });
-    const provider: ProviderAdapter = { profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+    const provider: ProviderAdapter = { modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
       generate: async () => ({ text: "inspect", toolCalls: [], finishReason: "stop" }) };
     const agent = createAgent({ cwd: root, provider, registry, system: "system", persistence: { store: recovery, sessionId: id, surface: "cli" } });
     try {
@@ -147,7 +147,7 @@ test("a committed tool result survives a crash before the next model response", 
     const registry = createTestToolRegistry();
     registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object" },
       handler: async () => { throw new Error("historical tool dispatched"); } });
-    const provider: ProviderAdapter = { profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+    const provider: ProviderAdapter = { modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
       generate: async () => ({ text: "continued", toolCalls: [], finishReason: "stop" }) };
     const agent = createAgent({ cwd: root, provider, registry, system: "system", persistence: { store: recovery, sessionId: id, surface: "cli" } });
     try {
@@ -166,7 +166,7 @@ test("reclaim cannot unlink a same-content payload republished after its delete 
   const owner = first.claimSession(id);
   const large = { role: "user" as const, content: "same".repeat(20_000) };
   first.initializeAgent(id, owner, { cwd: root, system: "system",
-    profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+    modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
     toolDefinitions: [], selectedTools: [], cacheKey: "stable" });
   try {
     first.appendAgentMessage(id, owner, large);

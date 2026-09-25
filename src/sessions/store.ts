@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { readSessionRetentionDays } from "../config.js";
 import type { UsageRecord } from "../llm/cache.js";
-import type { ModelMessage, ProviderProfile, UserInput } from "../llm/types.js";
+import type { ModelMessage, ResolvedModelConfig, UserInput } from "../llm/types.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import type { SelectedSkill } from "../skills/contract.js";
 import { errorResult } from "../tools/results.js";
@@ -26,7 +26,7 @@ export interface SessionSummary {
   title: string;
   createdAt: number;
   updatedAt: number;
-  profileName?: string;
+  agentName?: string;
   configPath?: string;
   modelId?: string;
 }
@@ -34,7 +34,7 @@ export interface SessionSummary {
 export interface CreateSessionOptions {
   cwd: string;
   title: string;
-  profileName?: string;
+  agentName?: string;
   configPath?: string;
   modelId?: string;
   provider?: string;
@@ -70,7 +70,7 @@ export interface SessionOwner { token: string; generation: number }
 export interface AgentIdentity {
   cwd: string;
   system: string;
-  profile: Readonly<ProviderProfile>;
+  modelConfig: Readonly<ResolvedModelConfig>;
   toolDefinitions: readonly ToolDefinition[];
   selectedTools: readonly string[] | null;
   cacheKey: string;
@@ -173,7 +173,7 @@ function sessionRow(row: DbRow): SessionSummary {
   return {
     id: String(row.id), workspaceId: String(row.workspace_id), cwd: String(row.display_path), title: String(row.title),
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
-    ...(row.profile_name === null ? {} : { profileName: String(row.profile_name) }),
+    ...(row.agent_name === null ? {} : { agentName: String(row.agent_name) }),
     ...(row.config_path === null ? {} : { configPath: String(row.config_path) }),
     ...(row.model_id === null ? {} : { modelId: String(row.model_id) }),
   };
@@ -326,30 +326,30 @@ export class SessionStore {
     const sourceDigest = identity.toolSourceDigest ?? toolDigest;
     const skillSnapshot = snapshotSkills(identity.selectedSkills ?? []);
     const skillSnapshotJson = JSON.stringify(skillSnapshot);
-    const endpointHash = digest(identity.profile.baseUrl ?? "");
-    const runtimeDigest = digest(JSON.stringify({ request: identity.profile.request ?? null,
-      cache: identity.profile.cache ?? null, vision: identity.profile.vision ?? false,
-      contextWindow: identity.profile.contextWindow ?? null, maxOutputTokens: identity.profile.maxOutputTokens ?? null }));
+    const endpointHash = digest(identity.modelConfig.baseUrl ?? "");
+    const runtimeDigest = digest(JSON.stringify({ request: identity.modelConfig.request ?? null,
+      cache: identity.modelConfig.cache ?? null, vision: identity.modelConfig.vision ?? false,
+      contextWindow: identity.modelConfig.contextWindow ?? null, maxOutputTokens: identity.modelConfig.maxOutputTokens ?? null }));
     this.transaction(() => {
       const row = this.ownerRow(sessionId, owner);
       const workspace = this.database.prepare("SELECT canonical_path FROM workspaces WHERE id = ?").get(String(row.workspace_id));
       if (workspace?.canonical_path !== canonical) throw new Error("session cwd changed");
       if (row.tool_schema_digest === null) {
-        for (const [field, expected] of [["profile_name", identity.profile.name], ["model_id", identity.profile.model],
-          ["provider", identity.profile.provider], ["method", identity.profile.method], ["endpoint", endpointHash],
+        for (const [field, expected] of [["agent_name", identity.modelConfig.agentName], ["model_id", identity.modelConfig.model],
+          ["provider", identity.modelConfig.provider], ["method", identity.modelConfig.method], ["endpoint", endpointHash],
           ["system_prompt", identity.system]] as const) {
           if (row[field] !== null && row[field] !== expected) throw new Error(`session ${field} differs from saved identity`);
         }
-        this.database.prepare(`UPDATE sessions SET profile_name = ?, model_id = ?, provider = ?, method = ?, endpoint = ?,
+        this.database.prepare(`UPDATE sessions SET agent_name = ?, model_id = ?, provider = ?, method = ?, endpoint = ?,
           system_prompt = ?, cache_key = ?, selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
           skill_snapshot_json = ?, skill_visibility_json = ?, runtime_digest = ? WHERE id = ?`)
-          .run(identity.profile.name, identity.profile.model, identity.profile.provider, identity.profile.method,
+          .run(identity.modelConfig.agentName, identity.modelConfig.model, identity.modelConfig.provider, identity.modelConfig.method,
             endpointHash, identity.system, row.cache_key === null ? identity.cacheKey : String(row.cache_key),
             JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
             JSON.stringify({ listed: false, loaded: [] }), runtimeDigest, sessionId);
       } else {
-        if (row.profile_name !== identity.profile.name || row.model_id !== identity.profile.model
-          || row.provider !== identity.profile.provider || row.method !== identity.profile.method
+        if (row.agent_name !== identity.modelConfig.agentName || row.model_id !== identity.modelConfig.model
+          || row.provider !== identity.modelConfig.provider || row.method !== identity.modelConfig.method
           || row.endpoint !== endpointHash || row.system_prompt !== identity.system || row.runtime_digest !== runtimeDigest) {
           throw new Error("session runtime identity changed; resume requires the saved model and system prompt");
         }
@@ -744,10 +744,10 @@ export class SessionStore {
       const workspace = this.database.prepare("SELECT id FROM workspaces WHERE canonical_path = ?").get(canonical);
       const workspaceId = workspace ? String(workspace.id) : randomUUID();
       if (!workspace) this.database.prepare("INSERT INTO workspaces(id, canonical_path, display_path) VALUES (?, ?, ?)").run(workspaceId, canonical, resolve(options.cwd));
-      this.database.prepare(`INSERT INTO sessions(id, workspace_id, title, created_at, updated_at, profile_name,
+      this.database.prepare(`INSERT INTO sessions(id, workspace_id, title, created_at, updated_at, agent_name,
         config_path, model_id, provider, method, endpoint, system_prompt, cache_key)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, workspaceId, options.title, timestamp, timestamp,
-        options.profileName ?? null, options.configPath ?? null, options.modelId ?? null, options.provider ?? null,
+        options.agentName ?? null, options.configPath ?? null, options.modelId ?? null, options.provider ?? null,
         options.method ?? null, options.endpoint === undefined ? null : createHash("sha256").update(options.endpoint).digest("hex"),
         options.systemPrompt ?? null, options.cacheKey ?? null);
       return this.getSession(id)!;

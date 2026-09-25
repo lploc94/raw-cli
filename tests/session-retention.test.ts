@@ -120,7 +120,7 @@ test("idle maintenance reclaims SQLite free pages and stats identify the heavies
   } finally { store.close(); }
 });
 
-test("two separate profile processes obey one canonical retention setting", () => {
+test("two separate agent processes obey one canonical retention setting", () => {
   const root = mkdtempSync(join(tmpdir(), "raw-retention-canonical-"));
   const configHome = join(root, "config");
   mkdirSync(join(configHome, "raw"), { recursive: true });
@@ -131,9 +131,9 @@ test("two separate profile processes obey one canonical retention setting", () =
   const id = store.createSession({ cwd: root, title: "canonical" }).id;
   store.close();
   const configs = [join(root, "first.json"), join(root, "second.json")];
-  for (const path of configs) writeFileSync(path, JSON.stringify({ default_profile: "local",
+  for (const path of configs) writeFileSync(path, JSON.stringify({ default_agent: "local",
     models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: path } },
-    profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } }));
+    agents: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } }));
   for (const [index, path] of configs.entries()) {
     const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"),
       join(process.cwd(), "tests/fixtures/retention-worker.ts"), path, id,
@@ -221,7 +221,7 @@ test("compacted model-only payloads disappear while every large visible item sti
       ids.push(id);
       const owner = store.claimSession(id);
       store.initializeAgent(id, owner, { cwd: root, system: "system",
-        profile: { name: "fixture", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+        modelConfig: { agentName: "fixture", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
         toolDefinitions: [], selectedTools: null, cacheKey: `key-${index}` });
       store.appendAgentMessage(id, owner, { role: "user", content: `model-${index}-` + "m".repeat(70_000) }, {}, [
         { kind: "tool_call", payload: { id: `call-${index}`, name: "bash",

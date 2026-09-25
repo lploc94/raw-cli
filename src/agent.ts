@@ -103,8 +103,8 @@ export class AgentSession {
       || options.compact.keepRecentTurns < 0 || !Number.isSafeInteger(options.compact.maxOutputTokens)
       || options.compact.maxOutputTokens < 1)) throw new Error("invalid compaction settings");
     if (options.compact?.triggerTokens !== undefined) {
-      const context = options.provider.profile.contextWindow;
-      const output = options.provider.profile.request?.maxOutputTokens ?? options.provider.profile.maxOutputTokens ?? 1024;
+      const context = options.provider.modelConfig.contextWindow;
+      const output = options.provider.modelConfig.request?.maxOutputTokens ?? options.provider.modelConfig.maxOutputTokens ?? 1024;
       if (!Number.isSafeInteger(context) || context! < 1 || !Number.isSafeInteger(options.compact.triggerTokens)
         || options.compact.triggerTokens < 1 || options.compact.triggerTokens >= context! - output - Math.max(64, Math.ceil(context! * 0.05))) {
         throw new Error("auto compact trigger requires a valid context window and output reserve");
@@ -141,7 +141,7 @@ export class AgentSession {
           this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
         }
         const saved = store.initializeAgent(sessionId, owner, {
-          cwd: this.options.cwd, system: this.options.system, profile: this.options.provider.profile,
+          cwd: this.options.cwd, system: this.options.system, modelConfig: this.options.provider.modelConfig,
           toolDefinitions: this.schemaView, selectedTools: this.options.whitelist ?? null, cacheKey: this.cacheKey,
           ...(options.toolSourceDigest ? { toolSourceDigest: options.toolSourceDigest } : {}),
           selectedSkills: this.selectedSkills,
@@ -261,7 +261,7 @@ export class AgentSession {
         keepRecentTurns, maxOutputTokens, timeoutMs: this.options.requestTimeoutMs,
         signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
         onRequestStart: (index) => {
-          const entry: UsageRecord = { method: provider.profile.method, provider: provider.profile.provider, raw: undefined };
+          const entry: UsageRecord = { method: provider.modelConfig.method, provider: provider.modelConfig.provider, raw: undefined };
           entries.set(index, { entry });
           this.usageEntries.push(entry);
           this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
@@ -480,9 +480,9 @@ export class AgentSession {
         let baseEstimate = 0;
         const compact = this.options.compact;
         if (compact?.triggerTokens !== undefined) {
-          const profile = this.options.provider.profile;
-          const context = profile.contextWindow!;
-          const outputReserve = profile.request?.maxOutputTokens ?? profile.maxOutputTokens ?? 1024;
+          const modelConfig = this.options.provider.modelConfig;
+          const context = modelConfig.contextWindow!;
+          const outputReserve = modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
           const inputBudget = context - outputReserve - Math.max(64, Math.ceil(context * 0.05));
           const estimate = () => {
             baseEstimate = estimateRequestTokens(this.options.system, this.messages, this.schemaView);
@@ -519,7 +519,7 @@ export class AgentSession {
             message: `estimated input ${requestEstimate} exceeds budget ${inputBudget}` });
         }
         steps++;
-        const usageEntry: UsageRecord = { method: this.options.provider.profile.method, provider: this.options.provider.profile.provider, raw: undefined };
+        const usageEntry: UsageRecord = { method: this.options.provider.modelConfig.method, provider: this.options.provider.modelConfig.provider, raw: undefined };
         this.usageEntries.push(usageEntry);
         this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
           { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
@@ -528,7 +528,7 @@ export class AgentSession {
           if (controller.signal.aborted) return;
           usageEntry.raw = structuredClone(raw);
           if (baseEstimate > 0) {
-            const actual = normalizeUsage(this.options.provider.profile.method, raw, this.options.provider.profile.provider).inputTokensTotal;
+            const actual = normalizeUsage(this.options.provider.modelConfig.method, raw, this.options.provider.modelConfig.provider).inputTokensTotal;
             if (actual !== undefined) this.tokenCalibration = Math.max(this.tokenCalibration, actual / baseEstimate * 1.1);
           }
           if (usageIndex === undefined) usageIndex = this.rawUsage.push(structuredClone(raw)) - 1;
@@ -551,8 +551,8 @@ export class AgentSession {
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
             cacheKey: this.cacheKey,
-            ...(compact?.triggerTokens !== undefined ? { maxOutputTokens: this.options.provider.profile.request?.maxOutputTokens
-              ?? this.options.provider.profile.maxOutputTokens ?? 1024 } : {}),
+            ...(compact?.triggerTokens !== undefined ? { maxOutputTokens: this.options.provider.modelConfig.request?.maxOutputTokens
+              ?? this.options.provider.modelConfig.maxOutputTokens ?? 1024 } : {}),
             signal: controller.signal,
             onTextDelta: (text) => { if (!controller.signal.aborted) emit({ type: "text_delta", text }); },
             onReasoningDelta: (text) => { if (!controller.signal.aborted) emit({ type: "reasoning_delta", text }); },
@@ -598,7 +598,7 @@ export class AgentSession {
               toolCallId: call.id,
               onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
             });
-          const result = this.options.provider.profile.vision !== true && dispatched.content.some((block) => block.type === "image")
+          const result = this.options.provider.modelConfig.vision !== true && dispatched.content.some((block) => block.type === "image")
             ? capResult(errorResult("vision_disabled", "this model cannot receive image content; use a text-description tool"), this.options.maxOutputBytes)
             : dispatched;
           appendResult(call, result);

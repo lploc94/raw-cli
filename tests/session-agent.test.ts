@@ -16,7 +16,7 @@ function setup() {
 }
 
 function provider(generate: (request: ProviderRequest) => Promise<ProviderTurn>, vision = false): ProviderAdapter {
-  return { profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture", vision }, generate };
+  return { modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture", vision }, generate };
 }
 
 test("durable agent restores exact model messages, selected tools, and cache key", async () => {
@@ -234,7 +234,7 @@ test("pending declared tool recovers as uncertain without dispatch on resume", a
   registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object" },
     handler: async () => { executed++; return { isError: false, content: [{ type: "text", text: "done" }] }; } });
   const owner = store.claimSession(id);
-  store.initializeAgent(id, owner, { cwd: root, system: "system", profile: provider(async () => { throw new Error("unused"); }).profile,
+  store.initializeAgent(id, owner, { cwd: root, system: "system", modelConfig: provider(async () => { throw new Error("unused"); }).modelConfig,
     toolDefinitions: registry.definitions(), selectedTools: null, cacheKey: "stable" });
   store.appendAgentMessage(id, owner, { role: "user", content: "execute" }, { originalTask: "execute" });
   store.appendAgentMessage(id, owner, { role: "assistant", text: "", toolCalls: [
@@ -254,8 +254,8 @@ test("pending declared tool recovers as uncertain without dispatch on resume", a
 test("compact checkpoint retains visible large text while releasing model-only payloads", () => {
   const { root, store, id } = setup();
   const owner = store.claimSession(id);
-  const profile = provider(async () => { throw new Error("unused"); }).profile;
-  store.initializeAgent(id, owner, { cwd: root, system: "system", profile, toolDefinitions: [], selectedTools: [], cacheKey: "stable" });
+  const agent = provider(async () => { throw new Error("unused"); }).modelConfig;
+  store.initializeAgent(id, owner, { cwd: root, system: "system", modelConfig: agent, toolDefinitions: [], selectedTools: [], cacheKey: "stable" });
   const visible = "visible:" + "x".repeat(70_000);
   const hidden = "hidden:" + "y".repeat(70_000);
   store.appendAgentMessage(id, owner, { role: "user", content: "first" }, { originalTask: "first" });
@@ -505,11 +505,11 @@ test("precreated cache identity survives attach and endpoint credentials are nev
   const root = mkdtempSync(join(tmpdir(), "raw-session-identity-"));
   const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
   const endpoint = "https://user:secret@example.test/v1?token=hidden";
-  const id = store.createSession({ cwd: root, title: "identity", profileName: "test", modelId: "fixture",
+  const id = store.createSession({ cwd: root, title: "identity", agentName: "test", modelId: "fixture",
     provider: "ollama", method: "openai-chat-completions", endpoint, systemPrompt: "system", cacheKey: "precreated" }).id;
   const current = store.database.prepare("SELECT endpoint FROM sessions WHERE id = ?").get(id);
   assert.doesNotMatch(String(current?.endpoint), /secret|token|user/);
-  const runtime: ProviderAdapter = { profile: { name: "test", provider: "ollama", method: "openai-chat-completions",
+  const runtime: ProviderAdapter = { modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", baseUrl: endpoint }, generate: async (request) => {
     assert.equal(request.cacheKey, "precreated");
     return { text: "ok", toolCalls: [], finishReason: "stop" };

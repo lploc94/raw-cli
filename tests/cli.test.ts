@@ -199,14 +199,14 @@ test("T-08a/b: non-TTY tool call executes without an approval flag", async () =>
   } finally { await fixture.close(); }
 });
 
-test("explicit profile ask fails closed in headless mode even with -y", async () => {
+test("explicit agent ask fails closed in headless mode even with -y", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-cli-ask-headless-"));
   const fixture = await startMockProvider([{ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function",
     function: { name: "write_file", arguments: '{"operations":[{"mode":"overwrite","path":"blocked.txt","content":"no"}]}' } }] }, "tool_calls"), openAiDone] }]);
   try {
     const configPath = testConfig("openai", "fixture", fixture.url);
     const document = JSON.parse(await readFile(configPath, "utf8"));
-    document.profiles.fixture.tools = { ...document.profiles.fixture.tools, rules: [{ match: "builtin/write_file", effect: "ask" }] };
+    document.agents.fixture.tools = { ...document.agents.fixture.tools, rules: [{ match: "builtin/write_file", effect: "ask" }] };
     await writeFile(configPath, JSON.stringify(document));
     const result = await raw(["--config", configPath, "-y", "write"], { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
     assert.equal(result.code, 2, result.stderr);
@@ -230,7 +230,7 @@ test("conditional Bash ask leaves safe headless commands automatic and gates rm 
   try {
     const configPath = testConfig("openai", "fixture", fixture.url);
     const document = JSON.parse(await readFile(configPath, "utf8"));
-    document.profiles.fixture.tools.rules = [{ match: "builtin/bash", effect: "ask",
+    document.agents.fixture.tools.rules = [{ match: "builtin/bash", effect: "ask",
       when: { any: "commands[*].command", regex: String.raw`(^|[;&|()\n])\s*(sudo\s+)?(/usr/bin/|/bin/)?rm(\s|$)` } }];
     await writeFile(configPath, JSON.stringify(document));
     const env = { ...process.env, OPENAI_API_KEY: "key" };
@@ -244,7 +244,7 @@ test("conditional Bash ask leaves safe headless commands automatic and gates rm 
   } finally { await fixture.close(); }
 });
 
-test("explicit profile ask prompts once in a TTY and -y does not bypass it", async () => {
+test("explicit agent ask prompts once in a TTY and -y does not bypass it", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-cli-ask-tty-"));
   const fixture = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "write", type: "function",
@@ -256,7 +256,7 @@ test("explicit profile ask prompts once in a TTY and -y does not bypass it", asy
   ]);
   const configPath = testConfig("openai", "fixture", fixture.url);
   const document = JSON.parse(await readFile(configPath, "utf8"));
-  document.profiles.fixture.tools = { ...document.profiles.fixture.tools, rules: [{ match: "builtin/write_file", effect: "ask" }] };
+  document.agents.fixture.tools = { ...document.agents.fixture.tools, rules: [{ match: "builtin/write_file", effect: "ask" }] };
   await writeFile(configPath, JSON.stringify(document));
   const { child, output } = ptyRaw(["--config", configPath, "-y", "write"], { ...process.env, OPENAI_API_KEY: "key" });
   try {
@@ -311,7 +311,7 @@ test("T-08 review: SIGINT during MCP startup reaps owned stdio child", async () 
   document.mcp = { servers: { delayed: { transport: "stdio", command: process.execPath,
     args: ["--import", import.meta.resolve("tsx"), join(process.cwd(), "tests/fixtures/mcp-stdio.ts")],
     env: { MCP_PID_FILE: pidFile, MCP_LIST_STARTED_FILE: started, MCP_LIST_DELAY_MS: "1200" } } } };
-  document.profiles.fixture.tools.use.push("mcp/delayed/selected");
+  document.agents.fixture.tools.use.push("mcp/delayed/selected");
   await writeFile(configPath, JSON.stringify(document));
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"),
     "--config", configPath, "-y", "task"],
@@ -452,19 +452,19 @@ test("T-08b: idle PTY EOF closes REPL cleanly", async () => {
   } finally { child.kill("SIGTERM"); }
 });
 
-test("T-08a: profile selection and -- task delimiter reach the chosen model", async () => {
-  const root = await mkdtemp(join(tmpdir(), "raw-cli-profile-"));
-  const fixture = await startMockProvider([{ frames: [openAiFrame({ content: "profile-answer" }, "stop"), openAiDone] }]);
+test("T-08a: agent selection and -- task delimiter reach the chosen model", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-agent-"));
+  const fixture = await startMockProvider([{ frames: [openAiFrame({ content: "agent-answer" }, "stop"), openAiDone] }]);
   const config = join(root, "config.json");
-  await writeFile(config, JSON.stringify({ default_profile: "local", models: {
+  await writeFile(config, JSON.stringify({ default_agent: "local", models: {
     local: { provider: "ollama", method: "openai-chat-completions", model_id: "unused", base_url: "http://127.0.0.1:9/v1" },
     selected: { provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: fixture.url },
-  }, profiles: { local: { model: "local", tools: { use: [] } }, selected: { model: "selected", tools: { use: [] } } } }));
+  }, agents: { local: { model: "local", tools: { use: [] } }, selected: { model: "selected", tools: { use: [] } } } }));
   try {
-    const result = await raw(["--config", config, "--profile", "selected", "--", "-leading task"],
+    const result = await raw(["--config", config, "--agent", "selected", "--", "-leading task"],
       { cwd: root, env: { ...process.env, OPENAI_API_KEY: "key" } });
     assert.equal(result.code, 0, result.stderr);
-    assert.equal(result.stdout, "profile-answer\n");
+    assert.equal(result.stdout, "agent-answer\n");
     assert.match(JSON.stringify(fixture.requests[0]?.body), /-leading task/);
   } finally { await fixture.close(); }
 });
@@ -506,11 +506,11 @@ test("T-08 review: malformed MCP config exits 2 while unreachable server exits 1
   const malformed = await raw(["--config", config, "-y", "task"], { cwd: root });
   assert.equal(malformed.code, 2, malformed.stderr);
   await writeFile(config, JSON.stringify({ ...base, mcp: { servers: { bad: { transport: "stdio", command: "node", url: "http://127.0.0.1:1" } } },
-    profiles: { fixture: { model: "fixture", tools: { use: ["mcp/bad/echo"] } } } }));
+    agents: { fixture: { model: "fixture", tools: { use: ["mcp/bad/echo"] } } } }));
   const invalid = await raw(["--config", config, "-y", "task"], { cwd: root });
   assert.equal(invalid.code, 2, invalid.stderr);
   await writeFile(config, JSON.stringify({ ...base, mcp: { servers: { unreachable: { transport: "stdio", command: "raw-missing-mcp-command" } } },
-    profiles: { fixture: { model: "fixture", tools: { use: ["mcp/unreachable/echo"] } } } }));
+    agents: { fixture: { model: "fixture", tools: { use: ["mcp/unreachable/echo"] } } } }));
   const connection = await raw(["--config", config, "-y", "task"], { cwd: root });
   assert.equal(connection.code, 1, connection.stderr);
 });

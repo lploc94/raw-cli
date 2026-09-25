@@ -14,32 +14,32 @@ function fixture(data: unknown): string {
   return home;
 }
 
-test("model alias resolves exact upstream ID and two profiles share one access path", async () => {
+test("model alias resolves exact upstream ID and two agents share one access path", async () => {
   const home = fixture({
-    default_profile: "fast",
+    default_agent: "fast",
     models: {
       flash: { provider: "deepseek", method: "openai-chat-completions", model_id: "deepseek-flash",
         base_url: "https://api.deepseek.com", api_key_env: "DS_KEY", context_window_tokens: 1048576 },
     },
-    profiles: {
+    agents: {
       fast: { model: "flash", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, max_steps: 5 },
       deep: { model: "flash", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, max_steps: 30 },
     },
   });
   const fast = await loadConfig({ home, env: { DS_KEY: "fixture-secret" }, requireModel: true });
-  const deep = await loadConfig({ home, env: { DS_KEY: "fixture-secret" }, flags: { profile: "deep" }, requireModel: true });
-  assert.equal(fast.profile?.modelAlias, "flash");
-  assert.equal(fast.profile?.model, "deepseek-flash");
-  assert.equal(fast.profile?.method, "openai-chat-completions");
-  assert.equal(fast.profile?.provider, "deepseek");
+  const deep = await loadConfig({ home, env: { DS_KEY: "fixture-secret" }, flags: { agent: "deep" }, requireModel: true });
+  assert.equal(fast.modelConfig?.modelAlias, "flash");
+  assert.equal(fast.modelConfig?.model, "deepseek-flash");
+  assert.equal(fast.modelConfig?.method, "openai-chat-completions");
+  assert.equal(fast.modelConfig?.provider, "deepseek");
   assert.equal(fast.maxSteps, 5);
   assert.equal(deep.maxSteps, 30);
-  assert.equal(deep.profile?.model, fast.profile?.model);
+  assert.equal(deep.modelConfig?.model, fast.modelConfig?.model);
 });
 
 test("direct key and env key are exclusive; inactive env key stays unresolved", async () => {
   const home = fixture({
-    default_profile: "local",
+    default_agent: "local",
     models: {
       local: { provider: "ollama", method: "openai-chat-completions", model_id: "small" },
       cloud: { provider: "custom", method: "openai-chat-completions", model_id: "large",
@@ -47,18 +47,18 @@ test("direct key and env key are exclusive; inactive env key stays unresolved", 
       missing: { provider: "anthropic", method: "anthropic-messages", model_id: "remote",
         api_key_env: "NO_SUCH_KEY" },
     },
-    profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } }, cloud: { model: "cloud", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } }, missing: { model: "missing", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } },
+    agents: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } }, cloud: { model: "cloud", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } }, missing: { model: "missing", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } },
   });
   const local = await loadConfig({ home, env: {}, requireModel: true });
-  assert.equal(local.profile?.modelAlias, "local");
-  const cloud = await loadConfig({ home, env: {}, flags: { profile: "cloud" }, requireModel: true });
-  assert.equal(cloud.profile?.apiKey, "literal-secret");
-  assert.doesNotMatch(JSON.stringify(readConfigDocument({ home, env: {} }).data.profiles), /literal-secret/);
-  await assert.rejects(loadConfig({ home, env: {}, flags: { profile: "missing" }, requireModel: true }), /NO_SUCH_KEY/);
+  assert.equal(local.modelConfig?.modelAlias, "local");
+  const cloud = await loadConfig({ home, env: {}, flags: { agent: "cloud" }, requireModel: true });
+  assert.equal(cloud.modelConfig?.apiKey, "literal-secret");
+  assert.doesNotMatch(JSON.stringify(readConfigDocument({ home, env: {} }).data.agents), /literal-secret/);
+  await assert.rejects(loadConfig({ home, env: {}, flags: { agent: "missing" }, requireModel: true }), /NO_SUCH_KEY/);
 });
 
-test("flat profile and removed direct model flags are rejected", async () => {
-  const home = fixture({ default_profile: "old", profiles: {
+test("flat agent and removed direct model flags are rejected", async () => {
+  const home = fixture({ default_agent: "old", agents: {
     old: { provider: "ollama", model: "small", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } },
   } });
   await assert.rejects(loadConfig({ home, env: {}, requireModel: true }), /models|provider|invalid|unknown/i);
@@ -69,21 +69,21 @@ test("flat profile and removed direct model flags are rejected", async () => {
 test("local alias is never sent as upstream model ID", async () => {
   const endpoint = await startMockProvider([{ frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] }]);
   try {
-    const home = fixture({ default_profile: "run", models: { flash: {
+    const home = fixture({ default_agent: "run", models: { flash: {
       provider: "deepseek", method: "openai-chat-completions", model_id: "deepseek-flash",
       base_url: endpoint.url, api_key: "fixture-key",
-    } }, profiles: { run: { model: "flash", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } });
+    } }, agents: { run: { model: "flash", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } });
     const runtime = await loadConfig({ home, env: {}, requireModel: true });
-    await createProvider(runtime.profile!).generate({ system: "tiny", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000 });
+    await createProvider(runtime.modelConfig!).generate({ system: "tiny", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000 });
     assert.equal((endpoint.requests[0]?.body as { model: string }).model, "deepseek-flash");
   } finally { await endpoint.close(); }
 });
 
 test("a known service cannot silently use another adapter's default endpoint", async () => {
-  const home = fixture({ default_profile: "run", models: { wrong: {
+  const home = fixture({ default_agent: "run", models: { wrong: {
     provider: "openai", method: "anthropic-messages", model_id: "example",
     api_key_env: "OPENAI_API_KEY",
-  } }, profiles: { run: { model: "wrong", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } });
+  } }, agents: { run: { model: "wrong", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } });
   await assert.rejects(loadConfig({ home, env: { OPENAI_API_KEY: "fixture" }, requireModel: true }), /base_url is required/);
 });
 

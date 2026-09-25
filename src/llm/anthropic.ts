@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
-import { renderUserInput, type ProviderAdapter, type ProviderProfile, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
+import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -26,25 +26,25 @@ function inputMessages(request: ProviderRequest): MessageParam[] {
   return messages;
 }
 
-export function createAnthropicProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
+export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const client = new Anthropic({
-    apiKey: profile.apiKey ?? "",
-    ...(profile.baseUrl ? { baseURL: profile.baseUrl } : {}),
+    apiKey: modelConfig.apiKey ?? "",
+    ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}),
     maxRetries: 0,
   });
   return {
-    profile,
+    modelConfig,
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
-        const cache = cacheSettings(profile, request.cacheKey);
-        const configured = profile.request?.kind === "anthropic" ? profile.request : undefined;
-        const outputLimit = request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens ?? 1024;
+        const cache = cacheSettings(modelConfig, request.cacheKey);
+        const configured = modelConfig.request?.kind === "anthropic" ? modelConfig.request : undefined;
+        const outputLimit = request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
         if (configured?.thinking?.type === "enabled" && configured.thinking.budgetTokens >= outputLimit) {
           throw new ProviderError("invalid_request", "Anthropic thinking budget must be smaller than max output tokens");
         }
         const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
         const stream = await client.messages.create({
-          model: profile.model,
+          model: modelConfig.model,
           max_tokens: outputLimit,
           system: request.system,
           messages: inputMessages(request),

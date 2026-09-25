@@ -13,7 +13,7 @@ when changing a batch tool.
 `examples/agents/project-helper/` is a complete copyable directory with
 `raw.json`, `prompt.md`, `tools/`, and `skills/`. Copy it anywhere, set the
 recipient's model ID, endpoint, and credentials, and run
-`raw --config /path/to/project-helper/raw.json --profile project "task"`.
+`raw --config /path/to/project-helper/raw.json --agent project "task"`.
 Its `agent/` IDs resolve beside that copied config file.
 
 The six shipped tools live in package-owned folders under
@@ -27,7 +27,7 @@ Bash entries retain their semantic batch validators, including mode-specific
 write fields and ordered line ranges, even where JSON Schema alone is too
 broad. Results, abort behavior, and byte caps remain host-controlled.
 
-Profiles load these tools only when their IDs appear in `tools.use`.
+Agents load these tools only when their IDs appear in `tools.use`.
 
 ## Selected plugin folders
 
@@ -57,9 +57,9 @@ The result uses Raw's text, JSON, and image blocks and is capped by the host.
 Local modules run with the invoking OS account's full permissions. No plugin
 sandbox is implied.
 
-The starter profile selects exactly three tools: `builtin/read_file`, `builtin/write_file`, and `builtin/bash`. Other profiles choose their own ordered `tools.use` list, including an empty list. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
+The starter agent selects exactly three tools: `builtin/read_file`, `builtin/write_file`, and `builtin/bash`. Other agents choose their own ordered `tools.use` list, including an empty list. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
 
-The other two shipped plugins, `builtin/list_skills` and `builtin/load_skill`, expose only profile-selected skills on demand. See [skills](skills.md) for the manifest, selection, and linked-result behavior.
+The other two shipped plugins, `builtin/list_skills` and `builtin/load_skill`, expose only agent-selected skills on demand. See [skills](skills.md) for the manifest, selection, and linked-result behavior.
 
 | Tool | Required input | Optional input | Action |
 |---|---|---|---|
@@ -67,7 +67,7 @@ The other two shipped plugins, `builtin/list_skills` and `builtin/load_skill`, e
 | `write_file` | `operations: array` (1–16 entries with `path` and `mode`) | Mode-specific fields below | Apply ordered UTF-8 writes and guarded edits. |
 | `bash` | `commands: array` (1–16 entries with `command`) | Per entry: `timeout_ms: positive integer` | Run commands sequentially using Bash. Default per-command deadline: 120000 ms. |
 
-When the selected model declares `vision: true`, a profile may select `builtin/view_image` with `{ "path": string }`. It reads a local PNG or JPEG and returns a native image block to the selected model. Relative paths use the session cwd. Raw checks file structure and a separate 16 MiB decoded-file limit; the normal text result cap does not replace a valid image with a placeholder. Missing, invalid, or oversized images return a structured tool error without base64. `raw "Explain screenshot.png"` needs no image flag: the model can call `view_image` using the named path.
+When the selected model declares `vision: true`, an agent may select `builtin/view_image` with `{ "path": string }`. It reads a local PNG or JPEG and returns a native image block to the selected model. Relative paths use the session cwd. Raw checks file structure and a separate 16 MiB decoded-file limit; the normal text result cap does not replace a valid image with a placeholder. Missing, invalid, or oversized images return a structured tool error without base64. `raw "Explain screenshot.png"` needs no image flag: the model can call `view_image` using the named path.
 
 Relative paths resolve against the session's `cwd`; absolute paths are used as given. The working directory does not restrict filesystem access. The process uses the user's full OS permissions. File errors are returned as tool errors. `write_file` reports success only after the write finishes.
 
@@ -90,9 +90,9 @@ All Bash rows share the one serialized `maxOutputBytes` cap. Raw reserves enough
 
 Dispatch validates the tool name, schema, visibility and session whitelist before execution. CLI and ACP sessions execute exposed tools automatically, including headless runs. `-y` / `--auto-approve` is retained as a compatibility alias. Library callers can explicitly set `autoApprove: false` and supply an approval callback; denial has no side effect.
 
-## Profile rules
+## Agent rules
 
-An optional profile `tools.rules` array applies to built-ins, MCP tools and ACP-injected tools. Each rule is `{ "match": "<glob>", "effect": "allow" | "ask" | "deny" }`. `*` matches any number of characters and `?` matches one character; the pattern covers the whole canonical tool identity. Built-in identities are `builtin/read_file`, `builtin/write_file`, `builtin/bash`, and `builtin/view_image`; local plugin identities are `local/<id>` or `agent/<id>`; MCP identities are `mcp/<server>/<original-tool-name>`; ACP-injected identities are `acp:<registered-name>`. Rules run in array order and the last match wins. No match means `allow`.
+An optional agent `tools.rules` array applies to built-ins, MCP tools and ACP-injected tools. Each rule is `{ "match": "<glob>", "effect": "allow" | "ask" | "deny" }`. `*` matches any number of characters and `?` matches one character; the pattern covers the whole canonical tool identity. Built-in identities are `builtin/read_file`, `builtin/write_file`, `builtin/bash`, and `builtin/view_image`; local plugin identities are `local/<id>` or `agent/<id>`; MCP identities are `mcp/<server>/<original-tool-name>`; ACP-injected identities are `acp:<registered-name>`. Rules run in array order and the last match wins. No match means `allow`.
 
 `deny` removes the schema from the model and rejects direct dispatch. `ask` remains visible and requests permission once for each call through the CLI TTY or ACP `session/request_permission`; headless execution without an approval channel returns `approval_required`. `-y` never overrides an explicit `ask`. `allow` executes automatically. Policies are tool-name filters, not filesystem or process isolation: allowing `bash` grants the agent the user's full shell permissions even if `write_file` is denied.
 

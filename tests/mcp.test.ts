@@ -15,7 +15,7 @@ import { startMcpHttp } from "./fixtures/mcp-http.js";
 const stdio = (label: string, count = 2) => ({ command: process.execPath, args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"],
   env: { MCP_LABEL: label, MCP_COUNT: String(count) }, tools: ["selected"] });
 
-test("profile deny removes selected MCP tool from exposed set and direct dispatch", async () => {
+test("agent deny removes selected MCP tool from exposed set and direct dispatch", async () => {
   const registry = createTestToolRegistry([{ match: "mcp/fixture/selected", effect: "deny" }]);
   const connection = await connectMcpServers({ servers: { fixture: stdio("fixture") }, registry,
     cwd: process.cwd(), timeoutMs: 3000 });
@@ -57,7 +57,7 @@ test("T-06a: all official SDK transports paginate and selected page-two tools re
           { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "call", type: "function", function: { name: alias, arguments: '{"value":"ping"}' } }] }, "tool_calls"), openAiDone] },
           { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
         ]);
-        const agent = createAgent({ provider: createProvider({ name: "model", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "key" }),
+        const agent = createAgent({ provider: createProvider({ agentName: "model", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "key" }),
             registry: connection.registry, cwd: process.cwd(), autoApprove: true });
         try {
           assert.equal((await agent.run("call the selected tool")).text, "done");
@@ -125,14 +125,14 @@ test("T-06b/c: unselected config starts nothing, explicit empty selection discov
   const configPath = join(root, "config.json");
   const stdioSpec = (label: string) => ({ transport: "stdio", command: process.execPath,
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: { MCP_LABEL: label, MCP_COUNT: "2" } });
-  await writeFile(configPath, JSON.stringify({ default_profile: "plain",
+  await writeFile(configPath, JSON.stringify({ default_agent: "plain",
     models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
-    profiles: { plain: { model: "local", tools: { use: [] } }, selected: { model: "local", tools: { use: ["mcp/shared/selected", "mcp/onlyUser/selected"] } } },
+    agents: { plain: { model: "local", tools: { use: [] } }, selected: { model: "local", tools: { use: ["mcp/shared/selected", "mcp/onlyUser/selected"] } } },
     mcp: { servers: { shared: stdioSpec("project"), onlyUser: stdioSpec("u") } },
   }));
   const plain = await loadConfig({ configPath, env: {}, requireModel: true });
   assert.equal(Object.keys(plain.mcpServers).length, 0);
-  const config = await loadConfig({ configPath, env: {}, flags: { profile: "selected" }, requireModel: true });
+  const config = await loadConfig({ configPath, env: {}, flags: { agent: "selected" }, requireModel: true });
   assert.deepEqual(config.mcpServers.shared?.tools, ["selected"]);
   if (!config.mcpServers.shared || !("command" in config.mcpServers.shared)) throw new Error("expected stdio config");
   assert.equal(config.mcpServers.shared?.env?.MCP_LABEL, "project");
@@ -154,7 +154,7 @@ test("T-06c: abort during a slow MCP call settles linked result and ignores late
   const connection = await connectMcpServers({ servers: { slow: stdio("slow") }, cwd: process.cwd(), timeoutMs: 3000 });
   const alias = connection.exposed[0]!.alias;
   let calls = 0;
-  const provider = { profile: { name: "fake", provider: "ollama" as const, method: "openai-chat-completions" as const, model: "fixture" },
+  const provider = { modelConfig: { agentName: "fake", provider: "ollama" as const, method: "openai-chat-completions" as const, model: "fixture" },
     async generate() { calls++; return calls === 1
       ? { text: "", finishReason: "tool_calls", toolCalls: [{ id: "c", name: alias, arguments: { value: "slow" } }] }
       : { text: "unexpected", finishReason: "stop", toolCalls: [] }; } };

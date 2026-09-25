@@ -48,7 +48,7 @@ function summaryInput(originalTask: UserInput | undefined, previousSummary: stri
 }
 
 function summaryFits(provider: ProviderAdapter, input: string, outputTokens: number): boolean {
-  const context = provider.profile.contextWindow;
+  const context = provider.modelConfig.contextWindow;
   if (context === undefined) return true;
   const margin = Math.max(64, Math.ceil(context * 0.05));
   const serialized = Buffer.byteLength(JSON.stringify({ system: COMPACT_SYSTEM_PROMPT,
@@ -115,7 +115,7 @@ export async function performCompaction(
     if (options.signal.aborted) return { result: { status: "cancelled", beforeBytes, afterBytes: beforeBytes } };
     if (turn.toolCalls.length || !["stop", "end_turn", "STOP"].includes(turn.finishReason)) throw new Error("compaction did not return a final text answer");
     if (!turn.text.trim()) throw new Error("compaction returned an empty summary");
-    const reportedOutput = normalizeUsage(provider.profile.method, turn.usage, provider.profile.provider).outputTokens;
+    const reportedOutput = normalizeUsage(provider.modelConfig.method, turn.usage, provider.modelConfig.provider).outputTokens;
     if (reportedOutput !== undefined && reportedOutput > options.maxOutputTokens) throw new Error("compaction exceeded output token budget");
     summary = turn.text;
     usage = turn.usage;

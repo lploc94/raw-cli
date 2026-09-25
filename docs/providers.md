@@ -1,6 +1,6 @@
 # API adapters and request controls
 
-`models.<alias>.provider` names the upstream service or deployment. `models.<alias>.method` chooses the wire API; it never follows from the provider name. `model_id` is sent verbatim as the upstream model. The supported methods are `openai-chat-completions`, `openai-responses`, `anthropic-messages`, and `google-generate-content`. The selected profile is fixed for a session.
+`models.<alias>.provider` names the upstream service or deployment. `models.<alias>.method` chooses the wire API; it never follows from the provider name. `model_id` is sent verbatim as the upstream model. The supported methods are `openai-chat-completions`, `openai-responses`, `anthropic-messages`, and `google-generate-content`. The selected agent is fixed for a session.
 
 | Method | SDK call | Typical service | Output cap field |
 |---|---|---|---|
@@ -11,9 +11,9 @@
 
 A service and method without a known matching endpoint must set `base_url`. Credential defaults apply only to the selected model, and unknown services have no guessed authentication or cache hints. SDK retries are disabled. Abort and timeout cover the full stream.
 
-## Profile request object
+## Agent request object
 
-`profiles.<name>.request` is strictly validated. It cannot override `model`, `messages`, `tools`, endpoint, or credentials. All methods accept `max_output_tokens` as a positive integer no larger than the model's configured output capability and smaller than its context window when those limits are supplied.
+`agents.<name>.request` is strictly validated. It cannot override `model`, `messages`, `tools`, endpoint, or credentials. All methods accept `max_output_tokens` as a positive integer no larger than the model's configured output capability and smaller than its context window when those limits are supplied.
 
 - OpenAI Chat Completions: `service_tier` (`auto`, `default`, `flex`, `fast`, `priority`) and `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). These fields are accepted only for `provider: "openai"`; custom compatible services do not receive them by assumption.
 - OpenAI Responses: the same `service_tier` and `reasoning_effort`, plus `reasoning_mode` (`standard`, `pro`), only for `provider: "openai"`. The adapter uses `store:false`, replays full response output items including opaque reasoning and function calls, and appends linked `function_call_output` items. GPT-6 Astra tool use requires this method. [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning), [Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Fast mode](https://developers.openai.com/api/docs/guides/fast-mode).
@@ -29,6 +29,6 @@ The system prompt, tool definitions and committed message history keep stable or
 
 Function calls and tool results remain linked by call ID. Responses output items, Anthropic thinking/signature blocks, Gemini thought signatures, OpenRouter reasoning details and DeepSeek `reasoning_content` are kept as opaque continuation data and never mixed into assistant answer text. When a provider streams plaintext reasoning, the CLI displays those deltas on stderr. Opaque signatures and encrypted reasoning remain hidden. Tool images are passed as native image content where the method accepts them; base64 is never presented as an ordinary text description.
 
-For `vision:true`, `view_image` produces a typed PNG/JPEG tool result. Chat Completions sends the linked text tool response followed by an image user block; Responses sends image content inside the linked `function_call_output`; Anthropic uses an image within the `tool_result`; Gemini uses `inlineData` in the function response. A provider may still reject a specific model's vision capability; that upstream error remains visible. Text-only profiles can use MCP vision-to-text tools that perform OCR or visual analysis outside the selected model and return text.
+For `vision:true`, `view_image` produces a typed PNG/JPEG tool result. Chat Completions sends the linked text tool response followed by an image user block; Responses sends image content inside the linked `function_call_output`; Anthropic uses an image within the `tool_result`; Gemini uses `inlineData` in the function response. A provider may still reject a specific model's vision capability; that upstream error remains visible. Text-only agents can use MCP vision-to-text tools that perform OCR or visual analysis outside the selected model and return text.
 
 Usage reports include observed input, output, cache read and cache write counters. Missing fields remain unknown. This is not a tokenizer-based estimate of the model's remaining context.

@@ -23,7 +23,7 @@ test("Responses streams a function call, replays complete output items, and link
       event("response.completed", { response: response([message]) }), "data: [DONE]\n\n"] },
   ]);
   try {
-    const adapter = createProvider({ name: "fixture", provider: "openai", method: "openai-responses", model: "gpt-6-astra",
+    const adapter = createProvider({ agentName: "fixture", provider: "openai", method: "openai-responses", model: "gpt-6-astra",
       baseUrl: fixture.url, apiKey: "fixture", maxOutputTokens: 128 });
     const first = await adapter.generate({ system: "tiny", messages: [{ role: "user", content: "inspect" }],
       tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 1000, cacheKey: "stable" });
@@ -58,7 +58,7 @@ test("DeepSeek reasoning_content is replayed from ordinary and tool-call assista
     { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] },
   ]);
   try {
-    const adapter = createProvider({ name: "deepseek", provider: "deepseek", method: "openai-chat-completions",
+    const adapter = createProvider({ agentName: "deepseek", provider: "deepseek", method: "openai-chat-completions",
       model: "deepseek-flash", baseUrl: fixture.url, apiKey: "fixture" });
     const base = { system: "tiny", tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 1000 };
     const one = await adapter.generate({ ...base, messages: [{ role: "user", content: "first" }] });
@@ -73,18 +73,18 @@ test("DeepSeek reasoning_content is replayed from ordinary and tool-call assista
   } finally { await fixture.close(); }
 });
 
-test("profile request options validate before connection and do not allow arbitrary fields", async () => {
+test("agent request options validate before connection and do not allow arbitrary fields", async () => {
   const configPath = testConfig("openai", "gpt-6-astra", "http://127.0.0.1:1");
   const fs = await import("node:fs/promises");
   const doc = JSON.parse(await fs.readFile(configPath, "utf8"));
   doc.models.fixture.method = "openai-responses";
   doc.models.fixture.max_output_tokens = 1000;
-  doc.profiles.fixture.request = { service_tier: "fast", reasoning_effort: "high", max_output_tokens: 400 };
+  doc.agents.fixture.request = { service_tier: "fast", reasoning_effort: "high", max_output_tokens: 400 };
   await fs.writeFile(configPath, JSON.stringify(doc));
   const runtime = await loadConfig({ configPath, env: { OPENAI_API_KEY: "fixture" }, requireModel: true });
-  assert.equal(runtime.profile?.method, "openai-responses");
-  assert.equal(runtime.profile?.request?.maxOutputTokens, 400);
-  doc.profiles.fixture.request.model = "other";
+  assert.equal(runtime.modelConfig?.method, "openai-responses");
+  assert.equal(runtime.modelConfig?.request?.maxOutputTokens, 400);
+  doc.agents.fixture.request.model = "other";
   await fs.writeFile(configPath, JSON.stringify(doc));
   await assert.rejects(loadConfig({ configPath, env: { OPENAI_API_KEY: "fixture" }, requireModel: true }), /unknown|model/);
 });
@@ -99,7 +99,7 @@ test("Responses usage reads cached input and incomplete streams never become suc
     incomplete_details: { reason: "max_output_tokens" },
   } }), "data: [DONE]\n\n"] }]);
   try {
-    const adapter = createProvider({ name: "fixture", provider: "openai", method: "openai-responses",
+    const adapter = createProvider({ agentName: "fixture", provider: "openai", method: "openai-responses",
       model: "gpt-6-astra", baseUrl: fixture.url, apiKey: "fixture" });
     const observed: unknown[] = [];
     await assert.rejects(adapter.generate({ system: "tiny", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000,
@@ -112,7 +112,7 @@ test("Responses usage reads cached input and incomplete streams never become suc
 test("Responses abort cancels the stream and makes no retry", async () => {
   const fixture = await startMockProvider([{ hold: true }]);
   try {
-    const adapter = createProvider({ name: "fixture", provider: "openai", method: "openai-responses",
+    const adapter = createProvider({ agentName: "fixture", provider: "openai", method: "openai-responses",
       model: "gpt-6-astra", baseUrl: fixture.url, apiKey: "fixture" });
     const controller = new AbortController();
     const pending = adapter.generate({ system: "tiny", messages: [{ role: "user", content: "hello" }], tools: [],

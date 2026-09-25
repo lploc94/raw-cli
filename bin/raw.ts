@@ -32,7 +32,7 @@ Usage: raw [options] [task]
        raw --acp --ws --host 127.0.0.1 --port 8765
 
 Options:
-  --profile NAME             Select a configured LLM profile
+  --agent NAME               Select a configured agent
   --config PATH              Use one alternate config file
   --system-prompt TEXT       Replace the system prompt literally
   --max-steps N              Maximum inference requests (default 25)
@@ -47,11 +47,11 @@ Options:
 Session options: --all (list all workspaces), --before CURSOR (older page)
 
 REPL: /compact, /clear, /stats, /exit
-Config: models define access paths; profiles select a model, prompt, tools and policy.
+Config: models define access paths; agents select a model, prompt, tools and policy.
 Vision: a model with vision=true may select builtin/view_image.
-Skills: profiles may select local or config-adjacent skills and both bundled skill tools.
+Skills: agents may select local or config-adjacent skills and both bundled skill tools.
 Examples: installed examples/tools/ can be forked; examples/agents/project-helper/ is copyable.
-Compact: profile compact.trigger_tokens enables automatic compaction.
+Compact: agent compact.trigger_tokens enables automatic compaction.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 `;
 }
@@ -63,7 +63,7 @@ async function run(): Promise<void> {
   if (parsed.command === "config-init") {
     const path = input(() => configFilePath({ flags: parsed.flags }));
     const starter = {
-      default_profile: "local",
+      default_agent: "local",
       models: {
         local: {
           provider: "ollama",
@@ -72,7 +72,7 @@ async function run(): Promise<void> {
           base_url: "http://127.0.0.1:11434/v1",
         },
       },
-      profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } },
+      agents: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } },
     };
     input(() => {
       mkdirSync(dirname(path), { recursive: true });
@@ -83,13 +83,13 @@ async function run(): Promise<void> {
   }
   if (parsed.command === "config-list") {
     const document = input(() => readConfigDocument({ flags: parsed.flags }));
-    const profiles = document.data.profiles;
+    const agents = document.data.agents;
     const models = document.data.models;
-    if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) {
-      process.stdout.write("No configured profiles.\n");
+    if (!agents || typeof agents !== "object" || Array.isArray(agents)) {
+      process.stdout.write("No configured agents.\n");
       return;
     }
-    for (const [name, raw] of Object.entries(profiles)) {
+    for (const [name, raw] of Object.entries(agents)) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
       const data = raw as Record<string, unknown>;
       const alias = String(data.model ?? "?");
@@ -138,7 +138,7 @@ async function run(): Promise<void> {
           ...(parsed.flags.before ? { before: parsed.flags.before } : {}) }));
         const retention = input(() => readSessionRetentionDays());
         for (const item of page.items) {
-          process.stdout.write(`${item.id}\t${item.title}\t${item.cwd}\t${item.profileName ?? "?"}/${item.modelId ?? "?"}`
+          process.stdout.write(`${item.id}\t${item.title}\t${item.cwd}\t${item.agentName ?? "?"}/${item.modelId ?? "?"}`
             + `\t${new Date(item.updatedAt).toISOString()}\t${new Date(item.updatedAt + retention * 86_400_000).toISOString()}\n`);
         }
         if (page.nextCursor) process.stdout.write(`next: ${page.nextCursor}\n`);
@@ -161,14 +161,14 @@ async function run(): Promise<void> {
     let runtime;
     if (selected) {
       const savedConfigPath = selected.configPath;
-      const savedProfileName = selected.profileName;
-      if (!savedConfigPath || !savedProfileName) throw new InputError("saved session has no config/profile identity");
-      if (parsed.flags.profile && parsed.flags.profile !== savedProfileName) throw new InputError("explicit --profile differs from saved session");
+      const savedAgentName = selected.agentName;
+      if (!savedConfigPath || !savedAgentName) throw new InputError("saved session has no config/agent identity");
+      if (parsed.flags.agent && parsed.flags.agent !== savedAgentName) throw new InputError("explicit --agent differs from saved session");
       if (parsed.flags.configPath && configFilePath({ flags: parsed.flags }) !== savedConfigPath) {
         throw new InputError("explicit --config differs from saved session");
       }
       runtime = await inputAsync(() => loadConfig({ cwd: selected.cwd, flags: {
-        ...parsed.flags, configPath: savedConfigPath, profile: savedProfileName,
+        ...parsed.flags, configPath: savedConfigPath, agent: savedAgentName,
       }, requireModel: true }));
       process.stderr.write(`raw: resuming in ${selected.cwd}\n`);
     } else runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true }));

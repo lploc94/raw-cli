@@ -1,12 +1,12 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
-import { renderUserInput, type ProviderAdapter, type ProviderProfile, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
+import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
-function inputMessages(request: ProviderRequest, provider: ProviderProfile["provider"]): ChatCompletionMessageParam[] {
+function inputMessages(request: ProviderRequest, provider: ResolvedModelConfig["provider"]): ChatCompletionMessageParam[] {
   const messages: ChatCompletionMessageParam[] = [{ role: "system", content: request.system }];
   const pendingImages: { mimeType: "image/png" | "image/jpeg"; data: string }[] = [];
   const flushImages = () => {
@@ -42,29 +42,29 @@ function inputMessages(request: ProviderRequest, provider: ProviderProfile["prov
   return messages;
 }
 
-export function createOpenAiProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
+export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const fallbackCacheKey = randomUUID();
   const client = new OpenAI({
-    apiKey: profile.apiKey ?? (profile.provider === "ollama" ? "ollama" : "unused"),
-    ...(profile.baseUrl ? { baseURL: profile.baseUrl } : {}),
+    apiKey: modelConfig.apiKey ?? (modelConfig.provider === "ollama" ? "ollama" : "unused"),
+    ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}),
     maxRetries: 0,
   });
   return {
-    profile,
+    modelConfig,
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
-        const cache = cacheSettings(profile, request.cacheKey, fallbackCacheKey);
-        const messages = inputMessages(request, profile.provider);
+        const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
+        const messages = inputMessages(request, modelConfig.provider);
         const tools: ChatCompletionTool[] = request.tools.map((tool) => ({
           type: "function",
           function: { name: tool.name, description: tool.description, parameters: tool.inputSchema as unknown as Record<string, unknown> },
         }));
-        const configured = profile.request;
+        const configured = modelConfig.request;
         const openAiOptions = configured?.kind === "openai" ? configured : undefined;
         const deepSeekOptions = configured?.kind === "deepseek" ? configured : undefined;
-        const outputLimit = request.maxOutputTokens ?? configured?.maxOutputTokens ?? profile.maxOutputTokens;
+        const outputLimit = request.maxOutputTokens ?? configured?.maxOutputTokens ?? modelConfig.maxOutputTokens;
         const stream = await client.chat.completions.create({
-          model: profile.model,
+          model: modelConfig.model,
           messages,
           stream: true,
           ...cache.openai,
@@ -73,9 +73,9 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
           ...(openAiOptions?.reasoningEffort ? { reasoning_effort: openAiOptions.reasoningEffort } : {}),
           ...(deepSeekOptions?.thinking ? { thinking: { type: deepSeekOptions.thinking } } : {}),
           ...(deepSeekOptions?.reasoningEffort ? { reasoning_effort: deepSeekOptions.reasoningEffort } : {}),
-          ...(profile.provider === "openai" ? { stream_options: { include_usage: true } } : {}),
+          ...(modelConfig.provider === "openai" ? { stream_options: { include_usage: true } } : {}),
           ...(tools.length ? { tools } : {}),
-          ...(outputLimit !== undefined ? (profile.provider === "openai"
+          ...(outputLimit !== undefined ? (modelConfig.provider === "openai"
             ? { max_completion_tokens: outputLimit }
             : { max_tokens: outputLimit }) : {}),
         }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
@@ -93,15 +93,15 @@ export function createOpenAiProvider(profile: Readonly<ProviderProfile>): Provid
             if (choice.index !== 0) throw new ProviderError("invalid_stream", "multiple OpenAI choices are unsupported");
             const delta = choice.delta;
             if (delta.refusal) throw new ProviderError("refusal", delta.refusal);
-            if (profile.provider === "openrouter") {
+            if (modelConfig.provider === "openrouter") {
               const details = (delta as unknown as { reasoning_details?: unknown[] }).reasoning_details;
               if (Array.isArray(details)) reasoningDetails.push(...details);
             }
-            if (profile.provider === "deepseek") {
+            if (modelConfig.provider === "deepseek") {
               const part = (delta as unknown as { reasoning_content?: unknown }).reasoning_content;
               if (typeof part === "string") { reasoningContent += part; request.onReasoningDelta?.(part); }
             }
-            if (profile.provider !== "deepseek") {
+            if (modelConfig.provider !== "deepseek") {
               const part = (delta as unknown as { reasoning?: unknown }).reasoning;
               if (typeof part === "string") request.onReasoningDelta?.(part);
             }

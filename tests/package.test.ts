@@ -113,7 +113,7 @@ if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new 
     const document = JSON.parse(await readFile(configPath, "utf8"));
     document.mcp = { servers: { pkg: { transport: "stdio", command: process.execPath,
       args: ["--import", import.meta.resolve("tsx"), join(repo, "tests/fixtures/mcp-stdio.ts")], env: { MCP_LABEL: "pkg" } } } };
-    document.profiles.fixture.tools.use.push("mcp/pkg/selected");
+    document.agents.fixture.tools.use.push("mcp/pkg/selected");
     await writeFile(configPath, JSON.stringify(document));
     const mcp = await run(bin, [...args, "call MCP"], consumer, env);
     assert.equal(mcp.code, 0, mcp.stderr);
@@ -121,7 +121,7 @@ if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new 
     assert.match(JSON.stringify(fixture.requests[3]?.body), /pkg:selected:probe/);
 
     document.models.fixture.vision = true;
-    document.profiles.fixture.tools.use.push("builtin/view_image");
+    document.agents.fixture.tools.use.push("builtin/view_image");
     await writeFile(configPath, JSON.stringify(document));
     const jpeg = await readFile(join(repo, "tests/fixtures/vision.jpg"));
     await writeFile(join(consumer, "installed.jpg"), jpeg);

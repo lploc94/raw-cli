@@ -22,7 +22,7 @@ export async function createRuntimeTools(options: {
 }): Promise<RuntimeTools> {
   const { runtime, cwd, signal } = options;
   if (signal?.aborted) throw new Error("tool startup aborted");
-  if (runtime.toolIds.includes("builtin/view_image") && runtime.profile?.vision !== true) {
+  if (runtime.toolIds.includes("builtin/view_image") && runtime.modelConfig?.vision !== true) {
     throw new Error("builtin/view_image requires a vision model");
   }
   const localIds = runtime.toolIds.filter((id) => !id.startsWith("mcp/"));

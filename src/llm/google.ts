@@ -1,5 +1,5 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type Part } from "@google/genai";
-import { renderUserInput, type ProviderAdapter, type ProviderProfile, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
+import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -36,26 +36,26 @@ function inputContents(request: ProviderRequest): Content[] {
   return contents;
 }
 
-export function createGoogleProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
+export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const client = new GoogleGenAI({
-    apiKey: profile.apiKey ?? "",
-    httpOptions: { ...(profile.baseUrl ? { baseUrl: profile.baseUrl } : {}), retryOptions: { attempts: 1 } },
+    apiKey: modelConfig.apiKey ?? "",
+    httpOptions: { ...(modelConfig.baseUrl ? { baseUrl: modelConfig.baseUrl } : {}), retryOptions: { attempts: 1 } },
   });
   return {
-    profile,
+    modelConfig,
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal) => {
-        cacheSettings(profile, request.cacheKey);
-        const configured = profile.request?.kind === "google" ? profile.request : undefined;
+        cacheSettings(modelConfig, request.cacheKey);
+        const configured = modelConfig.request?.kind === "google" ? modelConfig.request : undefined;
         const stream = await client.models.generateContentStream({
-          model: profile.model,
+          model: modelConfig.model,
           contents: inputContents(request),
           config: {
             systemInstruction: request.system,
             abortSignal: signal,
             httpOptions: { timeout: request.timeoutMs, retryOptions: { attempts: 1 } },
-            ...(request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens
-              ? { maxOutputTokens: request.maxOutputTokens ?? profile.request?.maxOutputTokens ?? profile.maxOutputTokens } : {}),
+            ...(request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens
+              ? { maxOutputTokens: request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens } : {}),
             ...(configured?.thinkingLevel ? { thinkingConfig: { thinkingLevel: {
               minimal: ThinkingLevel.MINIMAL, low: ThinkingLevel.LOW, medium: ThinkingLevel.MEDIUM, high: ThinkingLevel.HIGH,
             }[configured.thinkingLevel] } } : {}),

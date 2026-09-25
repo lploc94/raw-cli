@@ -78,15 +78,15 @@ test("packed forks and copied agent execute outside the checkout with isolated s
 writeFileSync(${JSON.stringify(join(root, "unselected-imported"))}, "bad");
 export async function handler() { return { content: [] }; }`);
     const configPath = join(root, "forks.json");
-    await writeFile(configPath, JSON.stringify({ default_profile: "forks", models: { fixture: {
+    await writeFile(configPath, JSON.stringify({ default_agent: "forks", models: { fixture: {
       provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: provider.url,
-    } }, profiles: { forks: { model: "fixture", tools: { use: ["local/fork_write", "local/fork_bash"],
+    } }, agents: { forks: { model: "fixture", tools: { use: ["local/fork_write", "local/fork_bash"],
       rules: [{ match: "local/fork_bash", effect: "ask", when: {
         any: "commands[*].command", regex: "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)",
       } }],
     } } } }));
     const env = { ...process.env, OPENAI_API_KEY: "fixture", XDG_CONFIG_HOME: xdg, XDG_STATE_HOME: join(root, "state") };
-    const args = ["--config", configPath, "--profile", "forks"];
+    const args = ["--config", configPath, "--agent", "forks"];
     const first = await run(bin, [...args, "bad write"], consumer, env);
     assert.equal(first.code, 0, first.stderr);
     const sessionId = first.stderr.match(/raw --resume ([0-9a-f-]{36})/)?.[1];
@@ -133,15 +133,15 @@ export async function handler() { return { content: [] }; }`);
       await writeFile(path, JSON.stringify(config));
       assert.doesNotMatch(JSON.stringify(config), new RegExp(repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     }
-    const firstAgent = await run(bin, ["--config", join(destinations[0]!, "raw.json"), "--profile", "project", "inspect"],
+    const firstAgent = await run(bin, ["--config", join(destinations[0]!, "raw.json"), "--agent", "project", "inspect"],
       join(root, "copy-one"), env);
     assert.equal(firstAgent.code, 0, firstAgent.stderr);
     const agentId = firstAgent.stderr.match(/raw --resume ([0-9a-f-]{36})/)?.[1];
     assert.ok(agentId);
-    const secondAgent = await run(bin, ["--config", join(destinations[1]!, "raw.json"), "--profile", "project", "inspect"],
+    const secondAgent = await run(bin, ["--config", join(destinations[1]!, "raw.json"), "--agent", "project", "inspect"],
       join(root, "other"), env);
     assert.equal(secondAgent.code, 0, secondAgent.stderr);
-    const resumeAgent = await run(bin, ["--config", join(destinations[0]!, "raw.json"), "--profile", "project",
+    const resumeAgent = await run(bin, ["--config", join(destinations[0]!, "raw.json"), "--agent", "project",
       "--resume", agentId, "continue"], join(root, "copy-one"), env);
     assert.equal(resumeAgent.code, 0, resumeAgent.stderr);
     const requestA = provider.requests[9]?.body as { messages: unknown[]; tools: unknown[] };

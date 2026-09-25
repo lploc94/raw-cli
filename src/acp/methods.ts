@@ -12,7 +12,7 @@ import { isEphemeralPeerAlias } from "../sessions/restore.js";
 import { runSessionMaintenance } from "../sessions/maintenance.js";
 import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
-import type { ProviderAdapter, ProviderProfile, UserBlock } from "../llm/types.js";
+import type { ProviderAdapter, ResolvedModelConfig, UserBlock } from "../llm/types.js";
 import type { McpConnection, McpServerConfig } from "../tools/mcp-client.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { createRuntimeTools } from "../tools/plugins/runtime.js";
@@ -23,7 +23,7 @@ import { fields, object, rawCapabilities, rawError, rawErrors, string, stringArr
 
 export interface AcpServerOptions {
   runtime: RuntimeConfig;
-  providerFactory?: (profile: Readonly<ProviderProfile>) => ProviderAdapter;
+  providerFactory?: (modelConfig: Readonly<ResolvedModelConfig>) => ProviderAdapter;
   mcpServers?: Readonly<Record<string, McpServerConfig>>;
   storeOptions?: SessionStoreOptions;
 }
@@ -195,15 +195,15 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     loading = false): Promise<{ sessionId: string }> => {
     if (!initialized) throw RequestError.invalidRequest(undefined, "initialize first");
     const canonicalCwd = validCwd(cwd);
-    if (!options.runtime.profile) throw rawError(rawErrors.upstream, "provider and model are required");
-    const profile = options.runtime.profile;
+    if (!options.runtime.modelConfig) throw rawError(rawErrors.upstream, "provider and model are required");
+    const modelConfig = options.runtime.modelConfig;
     if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
     const saved = resumeId === undefined ? undefined : store.getSession(resumeId);
     if (resumeId !== undefined) {
       if (!saved) throw rawError(rawErrors.unknownSession, "unknown or expired session");
       if (realpathSync(saved.cwd) !== canonicalCwd) throw RequestError.invalidParams(undefined, "session cwd differs from saved cwd");
-      if (saved.configPath !== options.runtime.configPath || saved.profileName !== profile.name) {
-        throw RequestError.invalidParams(undefined, "session config/profile differs from saved identity");
+      if (saved.configPath !== options.runtime.configPath || saved.agentName !== modelConfig.agentName) {
+        throw RequestError.invalidParams(undefined, "session config/agent differs from saved identity");
       }
       if (sessions.has(resumeId)) throw rawError(rawErrors.busy, "session is already attached to this peer");
     }
@@ -232,14 +232,14 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
           const view = store.getStoredToolView(id);
           if (view?.explicit && view.selection) mcp.activate(view.selection.filter((name) => !isEphemeralPeerAlias(name)));
         } else {
-          id = store.createSession({ cwd, title: "New session", profileName: profile.name,
-            configPath: options.runtime.configPath, modelId: profile.model, provider: profile.provider,
-            method: profile.method, ...(profile.baseUrl === undefined ? {} : { endpoint: profile.baseUrl }),
+          id = store.createSession({ cwd, title: "New session", agentName: modelConfig.agentName,
+            configPath: options.runtime.configPath, modelId: modelConfig.model, provider: modelConfig.provider,
+            method: modelConfig.method, ...(modelConfig.baseUrl === undefined ? {} : { endpoint: modelConfig.baseUrl }),
             systemPrompt: options.runtime.systemPrompt }).id;
           created = true;
         }
         const sessionId = id;
-        const agentSession = createAgent({ provider: providerFactory(profile), registry,
+        const agentSession = createAgent({ provider: providerFactory(modelConfig), registry,
           whitelist: tools.selectedNames,
           toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
           cwd, system: options.runtime.systemPrompt,
@@ -353,10 +353,10 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     requireCapability("runtimeInfo");
     fields(params, ["sessionId"], "runtime info");
     const session = params.sessionId === undefined ? undefined : getSession(string(params.sessionId, "sessionId"));
-    return { profile: options.runtime.profile ? { name: options.runtime.profile.name,
-      provider: options.runtime.profile.provider, modelAlias: options.runtime.profile.modelAlias,
-      model: options.runtime.profile.model, method: options.runtime.profile.method,
-      vision: options.runtime.profile.vision === true, contextWindowTokens: options.runtime.profile.contextWindow } : undefined,
+    return { agent: options.runtime.modelConfig ? { name: options.runtime.agentName,
+      provider: options.runtime.modelConfig.provider, modelAlias: options.runtime.modelConfig.modelAlias,
+      model: options.runtime.modelConfig.model, method: options.runtime.modelConfig.method,
+      vision: options.runtime.modelConfig.vision === true, contextWindowTokens: options.runtime.modelConfig.contextWindow } : undefined,
       limits: { maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
         requestTimeoutMs: options.runtime.requestTimeoutMs, compact: options.runtime.compact },
       mcpSelection: Object.fromEntries(Object.entries(options.runtime.mcpServers).map(([name, server]) => [name, server.tools ?? []])),
@@ -422,9 +422,9 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     fields(params, ["sessionId"], "session compact");
     const session = getSession(string(params.sessionId, "sessionId"));
     if (session.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");
-    const profile = options.runtime.resolveCompactProfile();
+    const modelConfig = options.runtime.resolveCompactModelConfig();
     try {
-      return await session.agent.compact({ provider: providerFactory(profile),
+      return await session.agent.compact({ provider: providerFactory(modelConfig),
         keepRecentTurns: options.runtime.compact.keepRecentTurns,
         maxOutputTokens: options.runtime.compact.maxOutputTokens });
     } catch { throw rawError(rawErrors.upstream, "compaction failed"); }

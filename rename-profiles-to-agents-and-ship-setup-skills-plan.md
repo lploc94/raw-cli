@@ -42,6 +42,8 @@ Every phase runs focused verification plus `npm run check && npm run test:packag
 APPROVE — intent and structure self-review complete. The rename is full across Raw-owned config/CLI/runtime/provider/session/ACP-extension contracts, while standard ACP spelling and distinct model/agent/session semantics remain. Four phases, 15 binary criteria, exact gates, clean-v4/no-migration behavior, installed skill proofs and the user-authorized test-session clear are all covered. No application code has changed.
 
 ## Phase 1: Rename the agent contract across config, runtime, sessions and ACP
+### Status
+complete
 ### Goal
 Make agent the only current Raw-owned name for a named runnable configuration, end to end, before publishing new skill instructions.
 ### Current behavior and gap
@@ -65,16 +67,16 @@ A search-and-replace that leaves `ProviderAdapter.profile`, `RuntimeConfig.profi
 ### Implementation obligations
 Rename the owned API/type/config/session/extension surfaces, bump schema cleanly, update fixtures/current docs, and remove old public spellings with explicit errors. Adapt the machine's config manually only after code gates; no install-time migration or compatibility layer.
 ### Acceptance criteria
-- [ ] AC-1.1: New `agents`/`default_agent`/`--agent`/`RAW_AGENT` contract works with the same effective model/prompt/tools/settings; all old spelling is rejected — proven by config/CLI tests.
-- [ ] AC-1.2: Public Raw library, session history, CLI and Raw ACP extension use `agentName`/`agent` while standard ACP remains wire-compatible — proven by type, CLI, API and ACP tests.
-- [ ] AC-1.3: Fresh v4 sessions resume with unchanged/changed tool and skill generations and no call replay; v3 has no reader/migration — proven by session/ACP/process tests.
-- [ ] AC-1.4: This machine's config is backed up and rewritten with `agents.raw`/`agents.deepseek`, preserving `models.local`, the current default selection `deepseek`, and model/MCP/credential/prompt values; disposable session state is cleared to fresh v4 — proven by sanitized structural comparison and local CLI check.
+- [x] AC-1.1: New `agents`/`default_agent`/`--agent`/`RAW_AGENT` contract works with the same effective model/prompt/tools/settings; all old spelling is rejected — proven by config/CLI tests.
+- [x] AC-1.2: Public Raw library, session history, CLI and Raw ACP extension use `agentName`/`agent` while standard ACP remains wire-compatible — proven by type, CLI, API and ACP tests.
+- [x] AC-1.3: Fresh v4 sessions resume with unchanged/changed tool and skill generations and no call replay; v3 has no reader/migration — proven by session/ACP/process tests.
+- [x] AC-1.4: This machine's config is backed up and rewritten with `agents.raw`/`agents.deepseek`, preserving `models.local`, the current default selection `deepseek`, and model/MCP/credential/prompt values; disposable session state is cleared to fresh v4 — proven by sanitized structural comparison and local CLI check.
 ### Focused verification
 `npm run build && node --import tsx --test tests/config.test.ts tests/config-v2.test.ts tests/config-mcp-policy.test.ts tests/foundation-cli.test.ts tests/session-agent.test.ts tests/session-acp.test.ts tests/acp.test.ts tests/package.test.ts`
 ### Phase gates
 `npm run check && npm run test:package && git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — self-reviewed owned API, ACP and persistence diff against the rename mapping and exclusions; old spellings remain only in explicit rejection tests, the rejected environment variable, and historical records. Focused suite 80/80, full check 318/318, package 2/2, and sanitized personal-config/state checks passed.
 ### Commit
 `refactor: rename Raw profiles to agents`
 
@@ -195,5 +197,6 @@ Implementation review is required; verdict must be APPROVE.
 - Installed examples actually create a skill, tool, portable agent and exact MCP selection outside the checkout; provider/MCP/ACP/session regressions remain green. Historical plans/evidence remain historical.
 
 ## Progress Log
+- 2026-09-25: Phase 1 complete. Added red agent-contract/schema tests, renamed config/CLI/provider/session/ACP surfaces, rejected v3, and updated current docs. Focused 80/80, full check 318/318, package 2/2 passed; implementation self-review APPROVE. Backed up personal config, renamed its local agent to raw while retaining DeepSeek as default, verified preserved model/MCP/prompt/credential settings, cleared two v3 test sessions and the older v2 test archive after zero active-owner/process checks, and created an empty v4 store.
 - 2026-09-25: Plan self-review APPROVE: checked rename mapping, current source paths and tests, model/provider distinction, standard ACP boundary, schema-v4 reset without migration, 4 ordered phases/15 criteria, package-independent skill examples, and personal config preservation. Clarified fresh-init `raw` default, configurable selection without `--agent`, and this machine's preserved `deepseek` default. Implementation awaits approval of the amended plan.
 - 2026-09-25: User added a breaking `profile` → `agent` concept rename and explicitly authorized clearing saved test sessions; no migration/backward compatibility. CTXE Ready/fresh routed config/CLI/runtime/provider/session/ACP surfaces. The former three-phase plan at `8a36fa1` was amended into four phases with the rename first. No application code or personal config/state changed in this planning turn.

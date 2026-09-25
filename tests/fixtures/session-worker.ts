@@ -38,7 +38,7 @@ if (mode === "hold") {
       return { isError: false, content: [{ type: "text", text: "done" }] };
     } });
   let requests = 0;
-  const provider: ProviderAdapter = { profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+  const provider: ProviderAdapter = { modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
     generate: async () => {
       if (++requests === 1) return { text: "", toolCalls: [{ id: "call", name: "side_effect", arguments: {} }], finishReason: "tool_calls" };
       await new Promise<void>(() => {});

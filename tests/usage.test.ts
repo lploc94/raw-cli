@@ -47,7 +47,7 @@ test("DeepSeek cache-hit counters are reported without guessing for other gatewa
 
 test("a custom service uses its selected method for agent usage", async () => {
   const agent = createAgent({ provider: {
-    profile: { name: "custom", provider: "my-gemini-gateway", method: "google-generate-content", model: "fixture" },
+    modelConfig: { agentName: "custom", provider: "my-gemini-gateway", method: "google-generate-content", model: "fixture" },
     async generate() { return { text: "done", toolCalls: [], finishReason: "STOP",
       usage: { promptTokenCount: 100, candidatesTokenCount: 20, thoughtsTokenCount: 500, totalTokenCount: 620 } }; },
   } });

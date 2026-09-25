@@ -10,9 +10,9 @@ import { BUILTIN_TOOL_DEFINITIONS } from "../src/tools/registry.js";
 
 function config(provider: string, method: string, request: Record<string, unknown>, url: string, limits: Record<string, unknown> = {}) {
   const path = join(mkdtempSync(join(tmpdir(), "raw-request-")), "config.json");
-  writeFileSync(path, JSON.stringify({ default_profile: "run", models: { model: {
+  writeFileSync(path, JSON.stringify({ default_agent: "run", models: { model: {
     provider, method, model_id: "fixture", base_url: url, api_key: "fixture-key", ...limits,
-  } }, profiles: { run: { model: "model", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, request } } }));
+  } }, agents: { run: { model: "model", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, request } } }));
   return path;
 }
 const ordinary = { system: "tiny", messages: [{ role: "user" as const, content: "hello" }], tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 1000 };
@@ -57,7 +57,7 @@ test("OpenAI Chat, DeepSeek Chat, Anthropic Messages and Gemini controls reach t
     try {
       const path = config(scenario.provider, scenario.method, scenario.request, fixture.url, { max_output_tokens: 500, context_window_tokens: 2000 });
       const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
-      await createProvider(runtime.profile!).generate(ordinary);
+      await createProvider(runtime.modelConfig!).generate(ordinary);
       scenario.inspect(fixture.requests[0]?.body as Record<string, unknown>);
     } finally { await fixture.close(); }
   }
@@ -68,7 +68,7 @@ test("custom service with Anthropic method reaches Messages and has no guessed A
   try {
     const path = config("my-anthropic-gateway", "anthropic-messages", { max_output_tokens: 120 }, fixture.url);
     const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
-    const turn = await createProvider(runtime.profile!).generate(ordinary);
+    const turn = await createProvider(runtime.modelConfig!).generate(ordinary);
     assert.equal(turn.text, "ok");
     assert.match(fixture.requests[0]?.url ?? "", /\/v1\/messages/);
     assert.equal((fixture.requests[0]?.body as Record<string, unknown>).cache_control, undefined);
@@ -76,7 +76,7 @@ test("custom service with Anthropic method reaches Messages and has no guessed A
   } finally { await fixture.close(); }
 });
 
-test("generic Responses and Gemini gateways honor the common profile output cap", async () => {
+test("generic Responses and Gemini gateways honor the common agent output cap", async () => {
   const cases = [
     { method: "openai-responses", frames: [`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", sequence_number: 1,
       response: { id: "r", object: "response", status: "completed", model: "fixture", output: [], usage: null } })}\n\n`, "data: [DONE]\n\n"],
@@ -89,7 +89,7 @@ test("generic Responses and Gemini gateways honor the common profile output cap"
     try {
       const path = config("my-gateway", scenario.method, { max_output_tokens: 120 }, fixture.url, { max_output_tokens: 4096 });
       const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
-      await createProvider(runtime.profile!).generate(ordinary);
+      await createProvider(runtime.modelConfig!).generate(ordinary);
       assert.equal(scenario.read(fixture.requests[0]?.body as Record<string, unknown>), 120);
     } finally { await fixture.close(); }
   }
@@ -125,12 +125,12 @@ test("Anthropic manual thinking requires a valid compact cap and rejects smaller
     await assert.rejects(loadConfig({ configPath: path, env: {}, requireModel: true }), /compact.max_output_tokens/);
     const fs = await import("node:fs/promises");
     const doc = JSON.parse(await fs.readFile(path, "utf8"));
-    doc.profiles.run.compact = { max_output_tokens: 2048 };
+    doc.agents.run.compact = { max_output_tokens: 2048 };
     await fs.writeFile(path, JSON.stringify(doc));
     const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
-    await assert.rejects(createProvider(runtime.profile!).generate({ ...ordinary, maxOutputTokens: 512 }), /thinking budget/);
+    await assert.rejects(createProvider(runtime.modelConfig!).generate({ ...ordinary, maxOutputTokens: 512 }), /thinking budget/);
     assert.equal(fixture.requests.length, 0);
-    await createProvider(runtime.profile!).generate(ordinary);
+    await createProvider(runtime.modelConfig!).generate(ordinary);
     assert.equal((fixture.requests[0]?.body as Record<string, unknown>).max_tokens, 2048);
   } finally { await fixture.close(); }
 });

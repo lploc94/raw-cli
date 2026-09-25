@@ -16,7 +16,7 @@ test("standard ACP list, load replay, resume without replay, and delete survive 
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   const requests: ProviderRequest[] = [];
-  const factory = () => ({ profile: runtime.profile!, generate: async (request: ProviderRequest) => {
+  const factory = () => ({ modelConfig: runtime.modelConfig!, generate: async (request: ProviderRequest) => {
     requests.push(request);
     return { text: `answer-${requests.length}`, toolCalls: [], finishReason: "stop" as const };
   } });
@@ -88,7 +88,7 @@ test("ACP list pages older IDs and rejects wrong cwd, unknown IDs, and a second 
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   const makeServer = () => createAcpServer({ runtime, mcpServers: {}, storeOptions,
-    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+    providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const first = makeServer();
   const firstConnection = client({ name: "page-owner" }).connect(first.app);
   const second = makeServer();
@@ -133,7 +133,7 @@ test("ACP rejects an expired ID without contacting a provider", async () => {
   let providers = 0;
   const makeServer = () => createAcpServer({ runtime, mcpServers: {}, storeOptions, providerFactory: () => {
     providers++;
-    return { profile: runtime.profile!, generate: async () => ({ text: "never", toolCalls: [], finishReason: "stop" }) };
+    return { modelConfig: runtime.modelConfig!, generate: async () => ({ text: "never", toolCalls: [], finishReason: "stop" }) };
   } });
   const first = makeServer();
   const firstConnection = client({ name: "expiry-first" }).connect(first.app);
@@ -163,7 +163,7 @@ test("a long-lived ACP peer re-reads canonical retention after a config change",
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: root, XDG_CONFIG_HOME: configHome }, now: () => now };
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: storeOptions.env, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: {}, storeOptions,
-    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+    providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const connection = client({ name: "policy-reload" }).connect(server.app);
   try {
     await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
@@ -187,10 +187,10 @@ test("ACP shutdown reclaims expired pages after releasing its session claim", as
     payload: { text: `large-${index}-` + "x".repeat(50_000) } });
   now += 8 * 86_400_000;
   const recent = seed.createSession({ cwd: root, title: "recent", configPath: runtime.configPath,
-    profileName: runtime.profile!.name }).id;
+    agentName: runtime.modelConfig!.agentName }).id;
   seed.close();
   const server = createAcpServer({ runtime, mcpServers: {}, storeOptions,
-    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+    providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const connection = client({ name: "reclaim" }).connect(server.app);
   try {
     await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
@@ -210,10 +210,10 @@ test("ACP reports maintenance contention as busy", async () => {
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   const seed = openSessionStore(storeOptions);
   const id = seed.createSession({ cwd: root, title: "fenced", configPath: runtime.configPath,
-    profileName: runtime.profile!.name }).id;
+    agentName: runtime.modelConfig!.agentName }).id;
   seed.database.prepare("INSERT INTO store_meta(key, value) VALUES ('maintenance_owner', ?)").run(`${process.pid}-test`);
   const server = createAcpServer({ runtime, mcpServers: {}, storeOptions,
-    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+    providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const connection = client({ name: "maintenance" }).connect(server.app);
   try {
     await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
@@ -237,7 +237,7 @@ test("ACP configured MCP alias survives restart and missing alias fails closed",
   const fixture = { command: process.execPath, args: ["--import", import.meta.resolve("tsx"), join(process.cwd(), "tests/fixtures/mcp-stdio.ts")], tools: [] };
   const requests: ProviderRequest[] = [];
   const makeServer = (withMcp: boolean) => createAcpServer({ runtime, storeOptions,
-    mcpServers: withMcp ? { fixture } : {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+    mcpServers: withMcp ? { fixture } : {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
       requests.push(request);
       return { text: "ok", toolCalls: [], finishReason: "stop" };
     } }) });
@@ -281,7 +281,7 @@ test("ACP load replays complete raw tool input and output without dispatching th
   const args = { commands: [{ command, extra: true }] };
   let calls = 0;
   const makeServer = () => createAcpServer({ runtime, mcpServers: {}, storeOptions,
-    providerFactory: () => ({ profile: runtime.profile!, generate: async () => {
+    providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => {
       calls++;
       return calls === 1 ? { text: "", toolCalls: [{ id: "invalid-bash", name: "bash", arguments: args }], finishReason: "tool_calls" }
         : { text: "done", toolCalls: [], finishReason: "stop" };
@@ -320,7 +320,7 @@ test("ACP cancel retains the writer claim for the original peer's next prompt", 
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: false }, env: {}, requireModel: true });
   let calls = 0;
-  const makeServer = () => createAcpServer({ runtime, mcpServers: {}, storeOptions, providerFactory: () => ({ profile: runtime.profile!,
+  const makeServer = () => createAcpServer({ runtime, mcpServers: {}, storeOptions, providerFactory: () => ({ modelConfig: runtime.modelConfig!,
     generate: async () => {
       calls++;
       return calls === 1 ? { text: "", toolCalls: [{ id: "write", name: "write_file", arguments: {
@@ -359,7 +359,7 @@ test("ACP resume drops an unavailable reverse callback and permits fresh registr
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   const requests: ProviderRequest[] = [];
-  const makeServer = () => createAcpServer({ runtime, mcpServers: {}, storeOptions, providerFactory: () => ({ profile: runtime.profile!,
+  const makeServer = () => createAcpServer({ runtime, mcpServers: {}, storeOptions, providerFactory: () => ({ modelConfig: runtime.modelConfig!,
     generate: async (request: ProviderRequest) => {
       requests.push(request);
       return { text: "done", toolCalls: [], finishReason: "stop" };
@@ -410,7 +410,7 @@ test("dropping an old callback still transitions a changed retained MCP schema",
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
   const configPath = testConfig("ollama");
   const document = JSON.parse(readFileSync(configPath, "utf8"));
-  document.profiles.fixture.tools.use.push("mcp/fixture/selected");
+  document.agents.fixture.tools.use.push("mcp/fixture/selected");
   writeFileSync(configPath, JSON.stringify(document));
   const runtime = await loadConfig({ flags: { configPath }, env: {}, requireModel: true });
   const captures: ProviderRequest[] = [];
@@ -418,7 +418,7 @@ test("dropping an old callback still transitions a changed retained MCP schema",
     mcpServers: { fixture: { command: process.execPath,
       args: ["--import", import.meta.resolve("tsx"), join(process.cwd(), "tests/fixtures/mcp-stdio.ts")],
       env: { MCP_LABEL: label }, tools: ["selected"] } },
-    providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+    providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
       captures.push(request);
       return { text: "ok", toolCalls: [], finishReason: "stop" };
     } }) });

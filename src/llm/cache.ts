@@ -1,4 +1,4 @@
-import type { ApiMethod, ProviderProfile } from "./types.js";
+import type { ApiMethod, ResolvedModelConfig } from "./types.js";
 
 export interface NormalizedUsage {
   inputTokensTotal?: number;
@@ -114,20 +114,20 @@ const openAiExtendedRetentionModels = new Set([
   "gpt-5", "gpt-5-codex", "gpt-4.1",
 ]);
 
-export function cacheSettings(profile: Readonly<ProviderProfile>, requestKey?: string, fallbackKey?: string): CacheSettings {
-  const options = profile.cache;
+export function cacheSettings(modelConfig: Readonly<ResolvedModelConfig>, requestKey?: string, fallbackKey?: string): CacheSettings {
+  const options = modelConfig.cache;
   const mode = options?.mode ?? "auto";
   if (mode !== "auto" && mode !== "no-hints") throw new Error(`unsupported cache mode: ${mode}`);
-  if (options?.backend === "llama.cpp" && profile.method !== "openai-chat-completions") throw new Error("llama.cpp backend requires openai-chat-completions method");
-  if (profile.provider === "openai") {
+  if (options?.backend === "llama.cpp" && modelConfig.method !== "openai-chat-completions") throw new Error("llama.cpp backend requires openai-chat-completions method");
+  if (modelConfig.provider === "openai") {
     const retention = options?.retention;
     if (retention !== undefined && !["in_memory", "24h", "30m"].includes(retention)) throw new Error(`unsupported OpenAI cache retention: ${retention}`);
-    const retentionModel = profile.model.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+    const retentionModel = modelConfig.model.replace(/-\d{4}-\d{2}-\d{2}$/, "");
     if (retention === "24h" && !openAiExtendedRetentionModels.has(retentionModel)) {
-      throw new Error(`24h cache retention is unsupported for ${profile.model}`);
+      throw new Error(`24h cache retention is unsupported for ${modelConfig.model}`);
     }
-    if (retention === "in_memory" && /^gpt-(?:5\.5|5\.6|[6-9])/.test(profile.model)) throw new Error(`in_memory cache retention is unsupported for ${profile.model}`);
-    if (retention === "30m" && !/^gpt-(?:5\.[6-9]|[6-9])/.test(profile.model)) throw new Error(`30m cache retention is unsupported for ${profile.model}`);
+    if (retention === "in_memory" && /^gpt-(?:5\.5|5\.6|[6-9])/.test(modelConfig.model)) throw new Error(`in_memory cache retention is unsupported for ${modelConfig.model}`);
+    if (retention === "30m" && !/^gpt-(?:5\.[6-9]|[6-9])/.test(modelConfig.model)) throw new Error(`30m cache retention is unsupported for ${modelConfig.model}`);
     if (mode === "no-hints") return {};
     const key = options?.key ?? requestKey ?? fallbackKey;
     if (key !== undefined && !key.trim()) throw new Error("cache key must be nonempty");
@@ -137,13 +137,13 @@ export function cacheSettings(profile: Readonly<ProviderProfile>, requestKey?: s
         : retention === "in_memory" || retention === "24h" ? { prompt_cache_retention: retention } : {}),
     } };
   }
-  if (options?.key !== undefined) throw new Error(`cache key is unsupported for ${profile.provider}`);
-  if (profile.provider === "anthropic") {
+  if (options?.key !== undefined) throw new Error(`cache key is unsupported for ${modelConfig.provider}`);
+  if (modelConfig.provider === "anthropic") {
     if (options?.retention !== undefined && options.retention !== "5m" && options.retention !== "1h") throw new Error(`unsupported Anthropic cache retention: ${options.retention}`);
     if (mode === "no-hints") return {};
     return { anthropic: { cache_control: { type: "ephemeral", ...(options?.retention ? { ttl: options.retention } : {}) } } };
   }
-  if (options?.retention !== undefined) throw new Error(`cache retention is unsupported for ${profile.provider}`);
+  if (options?.retention !== undefined) throw new Error(`cache retention is unsupported for ${modelConfig.provider}`);
   if (options?.backend === "llama.cpp" && mode === "auto") return { llamaPrompt: true };
   return {};
 }

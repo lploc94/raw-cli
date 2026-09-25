@@ -10,7 +10,7 @@ import { createTestToolRegistry } from "./fixtures/registry.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 const fake = (generate: (request: ProviderRequest) => Promise<ProviderTurn>): ProviderAdapter => ({
-  profile: { name: "fake", provider: "ollama", method: "openai-chat-completions", model: "fixture" }, generate,
+  modelConfig: { agentName: "fake", provider: "ollama", method: "openai-chat-completions", model: "fixture" }, generate,
 });
 const options = (cwd: string, provider: ProviderAdapter, maxSteps = 25) => ({
   cwd, provider, registry: createTestToolRegistry(), system: "tiny", maxSteps, maxOutputBytes: 8192,
@@ -26,7 +26,7 @@ test("real SDK fixture executes write/read/bash and carries exact history into t
   ] }, "tool_calls"), openAiDone];
   const fixture = await startMockProvider([{ frames: first }, { frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] }, { frames: [openAiFrame({ content: "again" }, "stop"), openAiDone] }]);
   try {
-    const provider = createProvider({ name: "fixture", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "test" });
+    const provider = createProvider({ agentName: "fixture", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "test" });
     const agent = createAgent(options(cwd, provider));
     const events: string[] = [];
     const firstRun = await agent.run("do it", (event) => events.push(event.type));

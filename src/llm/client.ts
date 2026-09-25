@@ -1,4 +1,4 @@
-import type { ProviderAdapter, ProviderProfile, ProviderRequest, ProviderTurn } from "./types.js";
+import type { ProviderAdapter, ResolvedModelConfig, ProviderRequest, ProviderTurn } from "./types.js";
 import { createOpenAiProvider } from "./openai.js";
 import { createAnthropicProvider } from "./anthropic.js";
 import { createGoogleProvider } from "./google.js";
@@ -33,10 +33,10 @@ export async function withProviderAbort(request: ProviderRequest, run: (signal: 
   }
 }
 
-export function createProvider(profile: Readonly<ProviderProfile>): ProviderAdapter {
-  if (profile.method === "anthropic-messages") return createAnthropicProvider(profile);
-  if (profile.method === "google-generate-content") return createGoogleProvider(profile);
-  if (profile.method === "openai-chat-completions") return createOpenAiProvider(profile);
-  if (profile.method === "openai-responses") return createResponsesProvider(profile);
-  throw new ProviderError("unsupported_method", `unsupported API method: ${String(profile.method)}`);
+export function createProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
+  if (modelConfig.method === "anthropic-messages") return createAnthropicProvider(modelConfig);
+  if (modelConfig.method === "google-generate-content") return createGoogleProvider(modelConfig);
+  if (modelConfig.method === "openai-chat-completions") return createOpenAiProvider(modelConfig);
+  if (modelConfig.method === "openai-responses") return createResponsesProvider(modelConfig);
+  throw new ProviderError("unsupported_method", `unsupported API method: ${String(modelConfig.method)}`);
 }

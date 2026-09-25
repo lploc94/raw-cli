@@ -142,9 +142,9 @@ async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, 
 
 export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   store: SessionStore, selected?: SessionSummary): Promise<number> {
-  if (!runtime.profile) throw new Error("provider and model are required");
+  if (!runtime.modelConfig) throw new Error("provider and model are required");
   const cwd = selected?.cwd ?? process.cwd();
-  const provider = createProvider(runtime.profile);
+  const provider = createProvider(runtime.modelConfig);
   const startupController = new AbortController();
   let startupCancelled = false;
   const cancelStartup = () => { startupCancelled = true; startupController.abort(); };
@@ -168,9 +168,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   let closed = false;
   let cancelledWhileIdle = false;
   const createSavedSession = (title: string) => store.createSession({ cwd, title,
-    profileName: runtime.profile!.name, configPath: runtime.configPath, modelId: runtime.profile!.model,
-    provider: runtime.profile!.provider, method: runtime.profile!.method,
-    ...(runtime.profile!.baseUrl ? { endpoint: runtime.profile!.baseUrl } : {}),
+    agentName: runtime.modelConfig!.agentName, configPath: runtime.configPath, modelId: runtime.modelConfig!.model,
+    provider: runtime.modelConfig!.provider, method: runtime.modelConfig!.method,
+    ...(runtime.modelConfig!.baseUrl ? { endpoint: runtime.modelConfig!.baseUrl } : {}),
     systemPrompt: runtime.systemPrompt });
   const createRuntimeAgent = (id: string) => createAgent({ provider, registry: tools.registry, whitelist: tools.selectedNames,
     toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
@@ -214,7 +214,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
         if (stats.requests > 0 && stats.cacheRatioCoverage === stats.requests) usage.push(`${stats.cacheReadTokensKnown} cache-read tokens`);
         if (usage.length) process.stderr.write(`raw: session usage: ${stats.requests} request${stats.requests === 1 ? "" : "s"}, ${usage.join(", ")}\n`);
         const contextTokens = session.estimatedContextTokens();
-        const contextWindow = runtime.profile!.contextWindow;
+        const contextWindow = runtime.modelConfig!.contextWindow;
         process.stderr.write(contextWindow === undefined
           ? `raw: context: ~${contextTokens} tokens (window unknown)\n`
           : `raw: context: ~${contextTokens} / ${contextWindow} tokens (${(contextTokens / contextWindow * 100).toFixed(1)}% used)\n`);
@@ -244,9 +244,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       if (line === "/stats") { process.stderr.write(`${JSON.stringify(session.stats())}\n`); continue; }
       if (line === "/compact") {
         try {
-          const profile = runtime.resolveCompactProfile();
-          process.stderr.write(`raw: compacting with ${profile.name}\n`);
-          const result = await session.compact({ provider: createProvider(profile),
+          const modelConfig = runtime.resolveCompactModelConfig();
+          process.stderr.write(`raw: compacting with ${modelConfig.agentName}\n`);
+          const result = await session.compact({ provider: createProvider(modelConfig),
             keepRecentTurns: runtime.compact.keepRecentTurns, maxOutputTokens: runtime.compact.maxOutputTokens });
           process.stderr.write(`raw: compact ${result.status}\n`);
         } catch { process.stderr.write("raw: compaction failed\n"); }

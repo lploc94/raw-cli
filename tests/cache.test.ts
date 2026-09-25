@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createProvider } from "../src/llm/client.js";
 import { createAgent } from "../src/agent.js";
-import type { ProviderName, ProviderProfile } from "../src/llm/types.js";
+import type { ProviderName, ResolvedModelConfig } from "../src/llm/types.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,8 +20,8 @@ const finalFrames = (provider: ProviderName) => provider === "anthropic" ? [
   ? [googleFrame({ candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }] })]
   : [openAiFrame({ content: "ok" }, "stop"), openAiDone];
 
-const makeProfile = (provider: ProviderName, baseUrl: string, cache?: ProviderProfile["cache"]): ProviderProfile => ({
-  name: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture", baseUrl, apiKey: "key", ...(cache ? { cache } : {}),
+const makeProfile = (provider: ProviderName, baseUrl: string, cache?: ResolvedModelConfig["cache"]): ResolvedModelConfig => ({
+  agentName: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture", baseUrl, apiKey: "key", ...(cache ? { cache } : {}),
 });
 
 test("OpenAI stable key, Anthropic cache_control, Google implicit and generic absence reach real SDK wire", async () => {
@@ -126,13 +126,13 @@ test("three SDK requests keep exact tool/result and system/schema prefix while a
   } finally { await fixture.close(); }
 });
 
-test("tool generation change rotates generated OpenAI hint while explicit profile key remains literal", async () => {
+test("tool generation change rotates generated OpenAI hint while explicit agent key remains literal", async () => {
   for (const explicit of [false, true]) {
     const fixture = await startMockProvider([{ frames: finalFrames("openai") }, { frames: finalFrames("openai") }]);
     const root = mkdtempSync(join(tmpdir(), "raw-cache-generation-"));
     const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
     const id = store.createSession({ cwd: root, title: "generation" }).id;
-    const profile = makeProfile("openai", fixture.url, explicit ? { key: "literal-profile-key" } : undefined);
+    const agent = makeProfile("openai", fixture.url, explicit ? { key: "literal-agent-key" } : undefined);
     const registry = (description: string) => {
       const tools = new ToolRegistry();
       tools.register({ name: "selected", description, inputSchema: { type: "object", properties: {} },
@@ -140,11 +140,11 @@ test("tool generation change rotates generated OpenAI hint while explicit profil
       return tools;
     };
     try {
-      const first = createAgent({ provider: createProvider(profile), registry: registry("old"), cwd: root, system: "system",
+      const first = createAgent({ provider: createProvider(agent), registry: registry("old"), cwd: root, system: "system",
         whitelist: ["selected"], persistence: { store, sessionId: id, surface: "cli" } });
       assert.equal((await first.run("one")).status, "completed");
       await first.close();
-      const second = createAgent({ provider: createProvider(profile), registry: registry("new"), cwd: root, system: "system",
+      const second = createAgent({ provider: createProvider(agent), registry: registry("new"), cwd: root, system: "system",
         whitelist: ["selected"], persistence: { store, sessionId: id, surface: "cli" } });
       assert.equal((await second.run("two")).status, "completed");
       await second.close();
@@ -153,7 +153,7 @@ test("tool generation change rotates generated OpenAI hint while explicit profil
       assert.deepEqual(after?.messages.slice(0, before?.messages.length), before?.messages);
       assert.equal(before?.tools[0]?.function.description, "old");
       assert.equal(after?.tools[0]?.function.description, "new");
-      if (explicit) assert.deepEqual([before?.prompt_cache_key, after?.prompt_cache_key], ["literal-profile-key", "literal-profile-key"]);
+      if (explicit) assert.deepEqual([before?.prompt_cache_key, after?.prompt_cache_key], ["literal-agent-key", "literal-agent-key"]);
       else assert.notEqual(before?.prompt_cache_key, after?.prompt_cache_key);
     } finally { store.close(); await fixture.close(); }
   }

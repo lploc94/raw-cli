@@ -48,22 +48,22 @@ const context = (cwd: string) => ({ cwd, maxOutputBytes: 8192, autoApprove: true
 function config(vision?: unknown): Promise<string> {
   return mkdtemp(join(tmpdir(), "raw-vision-config-")).then(async (directory) => {
     const path = join(directory, "config.json");
-    await writeFile(path, JSON.stringify({ default_profile: "local", models: { local: {
+    await writeFile(path, JSON.stringify({ default_agent: "local", models: { local: {
       provider: "ollama", method: "openai-chat-completions", model_id: "fixture",
       ...(vision === undefined ? {} : { vision }),
-    } }, profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", ...(vision === true ? ["builtin/view_image"] : [])] } } } }));
+    } }, agents: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", ...(vision === true ? ["builtin/view_image"] : [])] } } } }));
     return path;
   });
 }
 
 test("vision is opt-in, adds only view_image, and needs no image CLI flag", async () => {
   const plain = await loadConfig({ configPath: await config(), env: {}, requireModel: true });
-  assert.equal(plain.profile?.vision, false);
-  assert.deepEqual(createTestToolRegistry([], plain.profile?.vision).definitions().map((tool) => tool.name),
+  assert.equal(plain.modelConfig?.vision, false);
+  assert.deepEqual(createTestToolRegistry([], plain.modelConfig?.vision).definitions().map((tool) => tool.name),
     ["read_file", "write_file", "bash"]);
   const enabled = await loadConfig({ configPath: await config(true), env: {}, requireModel: true });
-  assert.equal(enabled.profile?.vision, true);
-  assert.deepEqual(createTestToolRegistry([], enabled.profile?.vision).definitions().map((tool) => tool.name),
+  assert.equal(enabled.modelConfig?.vision, true);
+  assert.deepEqual(createTestToolRegistry([], enabled.modelConfig?.vision).definitions().map((tool) => tool.name),
     ["read_file", "write_file", "bash", "view_image"]);
   await assert.rejects(loadConfig({ configPath: await config("yes"), env: {}, requireModel: true }), /vision/);
   assert.throws(() => parseCliArgs(["--image", "photo.png", "explain"]), /unknown option/);
@@ -127,7 +127,7 @@ test("image rejection and non-vision errors respect the text output cap", async 
   registry.register({ name: "external_image", description: "fixture", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [{ type: "image", mimeType: "image/png", data: png.toString("base64") }] }) });
   let turn = 0;
-  const agent = createAgent({ provider: { profile: { name: "text", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+  const agent = createAgent({ provider: { modelConfig: { agentName: "text", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
     async generate() { return ++turn === 1
       ? { text: "", toolCalls: [{ id: "c", name: "external_image", arguments: {} }], finishReason: "tool_calls" }
       : { text: "done", toolCalls: [], finishReason: "stop" }; } }, registry, maxOutputBytes: 3 });
@@ -161,7 +161,7 @@ test("real view_image result reaches each adapter as native image content", asyn
   for (const scenario of cases) {
     const fixture = await startMockProvider([{ frames: scenario.frames }]);
     try {
-      const adapter = createProvider({ name: "fixture", provider: scenario.provider, method: scenario.method as never,
+      const adapter = createProvider({ agentName: "fixture", provider: scenario.provider, method: scenario.method as never,
         model: "fixture", baseUrl: fixture.url, apiKey: "fixture" });
       const response = await adapter.generate({ system: "tiny", messages: [
         { role: "user", content: "inspect large.png" },
@@ -186,7 +186,7 @@ test("image bytes stay out of public tool-result events while transcript retains
   await writeFile(join(cwd, "large.png"), png);
   let calls = 0;
   const seen: string[] = [];
-  const provider = { profile: { name: "vision", provider: "ollama", method: "openai-chat-completions" as const,
+  const provider = { modelConfig: { agentName: "vision", provider: "ollama", method: "openai-chat-completions" as const,
     model: "fixture", vision: true }, async generate(request: { messages: readonly unknown[] }) {
     calls++;
     return calls === 1 ? { text: "", toolCalls: [{ id: "c", name: "view_image", arguments: { path: "large.png" } }], finishReason: "tool_calls" }
@@ -212,7 +212,7 @@ test("a text-only model receives MCP descriptions but no native image bytes", as
       function: { name: alias, arguments: JSON.stringify({ value: "image" }) } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "cannot view" }, "stop"), openAiDone] },
   ]);
-  const agent = createAgent({ provider: createProvider({ name: "text", provider: "openai", method: "openai-chat-completions",
+  const agent = createAgent({ provider: createProvider({ agentName: "text", provider: "openai", method: "openai-chat-completions",
     model: "fixture", baseUrl: fixture.url, apiKey: "fixture", vision: false }), registry: connection.registry });
   try {
     assert.ok(!agent.toolDefinitions.some((tool) => tool.name === "view_image"));

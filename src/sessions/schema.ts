@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SESSION_SCHEMA_VERSION = 3;
+export const SESSION_SCHEMA_VERSION = 4;
 
 export function initializeSessionSchema(database: DatabaseSync): void {
   database.exec("PRAGMA foreign_keys = ON");
@@ -37,7 +37,7 @@ export function initializeSessionSchema(database: DatabaseSync): void {
         title TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        profile_name TEXT,
+        agent_name TEXT,
         config_path TEXT,
         model_id TEXT,
         provider TEXT,
@@ -86,7 +86,7 @@ export function initializeSessionSchema(database: DatabaseSync): void {
         byte_length INTEGER NOT NULL,
         ref_count INTEGER NOT NULL DEFAULT 0
       );
-      PRAGMA user_version = 3;
+      PRAGMA user_version = 4;
     `);
     }
     database.exec("CREATE INDEX IF NOT EXISTS payloads_relative_path ON payloads(relative_path)");

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
-import type { ApiMethod, CacheOptions, ProfileRequestOptions, ProviderName, ProviderProfile } from "./llm/types.js";
+import type { ApiMethod, CacheOptions, ModelRequestOptions, ProviderName, ResolvedModelConfig } from "./llm/types.js";
 import type { McpServerConfig } from "./tools/mcp-client.js";
 import type { ToolPolicyRule } from "./tools/registry.js";
 import { compileWhen } from "./tools/policy.js";
@@ -13,7 +13,7 @@ type JsonObject = Record<string, unknown>;
 const apiMethods = new Set<ApiMethod>(["openai-chat-completions", "openai-responses", "anthropic-messages", "google-generate-content"]);
 
 export interface RawFlags {
-  profile?: string;
+  agent?: string;
   configPath?: string;
   systemPrompt?: string;
   maxSteps?: number;
@@ -46,7 +46,8 @@ export interface CompactSettings {
 }
 
 export interface RuntimeConfig {
-  readonly profile?: Readonly<ProviderProfile>;
+  readonly agentName?: string;
+  readonly modelConfig?: Readonly<ResolvedModelConfig>;
   readonly systemPrompt: string;
   readonly maxSteps: number;
   readonly maxOutputBytes: number;
@@ -61,7 +62,7 @@ export interface RuntimeConfig {
   readonly toolIds: readonly string[];
   readonly skillIds: readonly string[];
   readonly toolRules: readonly ToolPolicyRule[];
-  resolveCompactProfile(): Readonly<ProviderProfile>;
+  resolveCompactModelConfig(): Readonly<ResolvedModelConfig>;
 }
 
 export interface LoadConfigOptions {
@@ -164,7 +165,7 @@ function sessionsSpec(raw: unknown): number {
   return value.retention_days === undefined ? 7 : positive(value.retention_days, "sessions.retention_days");
 }
 
-function parseConfigDocument(options: LoadConfigOptions, validateProfiles: boolean): ConfigDocument {
+function parseConfigDocument(options: LoadConfigOptions, validateAgents: boolean): ConfigDocument {
   const path = configFilePath(options);
   let source: string;
   try {
@@ -180,12 +181,12 @@ function parseConfigDocument(options: LoadConfigOptions, validateProfiles: boole
   if (!tree || errors.length) throw new Error(`invalid JSON config: ${path}`);
   checkDuplicates(tree);
   const data = object(getNodeValue(tree), "config root");
-  keys(data, ["default_profile", "models", "profiles", "mcp", "sessions"], "config");
+  keys(data, ["default_agent", "models", "agents", "mcp", "sessions"], "config");
   if (data.sessions !== undefined && path !== canonicalConfigPath(options)) {
     throw new Error("sessions settings are allowed only in the canonical global config");
   }
   sessionsSpec(data.sessions);
-  if (validateProfiles) validateDocument(data);
+  if (validateAgents) validateDocument(data);
   return { path, data, exists: true };
 }
 
@@ -232,14 +233,14 @@ interface ModelSpec {
   vision: boolean;
 }
 
-interface ProfileSpec {
+interface AgentSpec {
   modelAlias: string;
   toolIds: readonly string[];
   skillIds: readonly string[];
   systemPrompt?: string;
   systemPromptFile?: string;
   toolRules: readonly ToolPolicyRule[];
-  request?: ProfileRequestOptions;
+  request?: ModelRequestOptions;
   maxSteps?: number;
   maxOutputBytes?: number;
   requestTimeoutMs?: number;
@@ -361,7 +362,7 @@ function usesOfficialEndpoint(provider: ProviderName, method: ApiMethod): boolea
     || (provider === "google" && method === "google-generate-content");
 }
 
-function requestSpec(raw: unknown, model: ModelSpec, where: string): ProfileRequestOptions {
+function requestSpec(raw: unknown, model: ModelSpec, where: string): ModelRequestOptions {
   const value = object(raw, where);
   const common = ["max_output_tokens"];
   const isOpenAi = model.provider === "openai" && (model.method === "openai-chat-completions" || model.method === "openai-responses");
@@ -397,7 +398,7 @@ function requestSpec(raw: unknown, model: ModelSpec, where: string): ProfileRequ
     };
   }
   if (isAnthropic) {
-    let thinking: Extract<ProfileRequestOptions, { kind: "anthropic" }>["thinking"];
+    let thinking: Extract<ModelRequestOptions, { kind: "anthropic" }>["thinking"];
     if (value.thinking !== undefined) {
       const spec = object(value.thinking, where + ".thinking");
       const type = enumValue(spec.type, new Set<"adaptive" | "disabled" | "enabled">(["adaptive", "disabled", "enabled"]), where + ".thinking.type");
@@ -467,8 +468,8 @@ function compactSpec(raw: unknown, where: string): CompactSettings {
   };
 }
 
-function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): ProfileSpec {
-  const where = "profile " + name;
+function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): AgentSpec {
+  const where = "agent " + name;
   const value = object(raw, where);
   keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "system_prompt", "system_prompt_file"], where);
   const modelAlias = string(value.model, where + ".model");
@@ -480,7 +481,7 @@ function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, Mod
     throw new Error(where + " with skills.use requires builtin/list_skills and builtin/load_skill in tools.use");
   }
   if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
-  const result: ProfileSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact"),
+  const result: AgentSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact"),
     toolIds: tools.ids, skillIds, toolRules: tools.rules,
     ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
     ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
@@ -512,71 +513,72 @@ function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, Mod
   return result;
 }
 
-function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; profiles: Map<string, ProfileSpec>; servers: Map<string, McpServerConfig>; defaultName?: string } {
+function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; agents: Map<string, AgentSpec>; servers: Map<string, McpServerConfig>; defaultName?: string } {
   const servers = mcpServersSpec(root.mcp);
   const modelsData = root.models === undefined ? {} : object(root.models, "models");
   const models = new Map<string, ModelSpec>();
   for (const [name, raw] of Object.entries(modelsData)) models.set(string(name, "model alias"), modelSpec(name, raw));
-  const profilesData = root.profiles === undefined ? {} : object(root.profiles, "profiles");
-  const profiles = new Map<string, ProfileSpec>();
-  for (const [name, raw] of Object.entries(profilesData)) profiles.set(string(name, "profile name"), profileSpec(name, raw, models));
-  const defaultName = root.default_profile === undefined ? undefined : string(root.default_profile, "default_profile");
-  if (defaultName !== undefined && !profiles.has(defaultName)) throw new Error("unknown profile: " + defaultName);
-  return { models, profiles, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
+  const agentsData = root.agents === undefined ? {} : object(root.agents, "agents");
+  const agents = new Map<string, AgentSpec>();
+  for (const [name, raw] of Object.entries(agentsData)) agents.set(string(name, "agent name"), agentSpec(name, raw, models));
+  const defaultName = root.default_agent === undefined ? undefined : string(root.default_agent, "default_agent");
+  if (defaultName !== undefined && !agents.has(defaultName)) throw new Error("unknown agent: " + defaultName);
+  return { models, agents, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
 }
 
 function validateDocument(root: JsonObject): void { parseDocument(root); }
 
-function resolveKey(profile: ProviderProfile, env: NodeJS.ProcessEnv): ProviderProfile {
-  if (profile.apiKey) return profile;
-  let apiKeyEnv = profile.apiKeyEnv;
+function resolveKey(modelConfig: ResolvedModelConfig, env: NodeJS.ProcessEnv): ResolvedModelConfig {
+  if (modelConfig.apiKey) return modelConfig;
+  let apiKeyEnv = modelConfig.apiKeyEnv;
   if (!apiKeyEnv) {
-    if (profile.provider === "openai") apiKeyEnv = "OPENAI_API_KEY";
-    if (profile.provider === "anthropic") apiKeyEnv = "ANTHROPIC_API_KEY";
-    if (profile.provider === "google") apiKeyEnv = env.GEMINI_API_KEY ? "GEMINI_API_KEY" : "GOOGLE_API_KEY";
-    if (profile.provider === "openrouter") apiKeyEnv = "OPENROUTER_API_KEY";
+    if (modelConfig.provider === "openai") apiKeyEnv = "OPENAI_API_KEY";
+    if (modelConfig.provider === "anthropic") apiKeyEnv = "ANTHROPIC_API_KEY";
+    if (modelConfig.provider === "google") apiKeyEnv = env.GEMINI_API_KEY ? "GEMINI_API_KEY" : "GOOGLE_API_KEY";
+    if (modelConfig.provider === "openrouter") apiKeyEnv = "OPENROUTER_API_KEY";
   }
-  if (!apiKeyEnv) return profile;
+  if (!apiKeyEnv) return modelConfig;
   const key = env[apiKeyEnv];
   if (!key) throw new Error("missing credential environment variable " + apiKeyEnv);
-  return { ...profile, apiKey: key, apiKeyEnv };
+  return { ...modelConfig, apiKey: key, apiKeyEnv };
 }
 
-function numberOption(flag: number | undefined, env: string | undefined, profile: number | undefined, fallback: number, name: string): number {
+function numberOption(flag: number | undefined, env: string | undefined, agent: number | undefined, fallback: number, name: string): number {
   if (flag !== undefined) return positive(flag, name);
   if (env !== undefined) {
     if (!/^[0-9]+$/.test(env)) throw new Error(name + " must be a positive integer");
     return positive(Number(env), name);
   }
-  return profile ?? fallback;
+  return agent ?? fallback;
 }
 
-function freezeProfile(profile: ProviderProfile): Readonly<ProviderProfile> {
-  if (profile.cache) Object.freeze(profile.cache);
-  if (profile.request) {
-    if (profile.request.kind === "anthropic" && profile.request.thinking) Object.freeze(profile.request.thinking);
-    Object.freeze(profile.request);
+function freezeModelConfig(modelConfig: ResolvedModelConfig): Readonly<ResolvedModelConfig> {
+  if (modelConfig.cache) Object.freeze(modelConfig.cache);
+  if (modelConfig.request) {
+    if (modelConfig.request.kind === "anthropic" && modelConfig.request.thinking) Object.freeze(modelConfig.request.thinking);
+    Object.freeze(modelConfig.request);
   }
-  return Object.freeze(profile);
+  return Object.freeze(modelConfig);
 }
 
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<RuntimeConfig> {
   const env = options.env ?? process.env;
+  if (env.RAW_PROFILE !== undefined) throw new Error("RAW_PROFILE was removed; use RAW_AGENT");
   for (const removed of ["RAW_PROVIDER", "RAW_MODEL", "RAW_BASE_URL"]) {
-    if (env[removed] !== undefined) throw new Error(removed + " was removed; select a configured profile instead");
+    if (env[removed] !== undefined) throw new Error(removed + " was removed; select a configured agent instead");
   }
   const flags = options.flags ?? {};
   const document = readConfigDocument(options);
   const sessionsRetentionDays = readSessionRetentionDays(options);
   const parsed = parseDocument(document.data);
-  const selectedName = flags.profile ?? env.RAW_PROFILE ?? parsed.defaultName;
-  if (selectedName !== undefined && !parsed.profiles.has(selectedName)) throw new Error("unknown profile: " + selectedName);
-  const selectedSpec = selectedName === undefined ? undefined : parsed.profiles.get(selectedName);
+  const selectedName = flags.agent ?? env.RAW_AGENT ?? parsed.defaultName;
+  if (selectedName !== undefined && !parsed.agents.has(selectedName)) throw new Error("unknown agent: " + selectedName);
+  const selectedSpec = selectedName === undefined ? undefined : parsed.agents.get(selectedName);
   const model = selectedSpec === undefined ? undefined : parsed.models.get(selectedSpec.modelAlias);
-  let selected: ProviderProfile | undefined;
+  let selected: ResolvedModelConfig | undefined;
   if (selectedName !== undefined && selectedSpec && model) {
-    const spec: ProviderProfile = {
-      name: selectedName,
+    const spec: ResolvedModelConfig = {
+      agentName: selectedName,
       modelAlias: selectedSpec.modelAlias,
       provider: model.provider,
       method: model.method,
@@ -590,9 +592,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
       ...(selectedSpec.cache !== undefined ? { cache: selectedSpec.cache } : {}),
       ...(selectedSpec.request !== undefined ? { request: selectedSpec.request } : {}),
     };
-    selected = freezeProfile(options.requireModel === false ? spec : resolveKey(spec, env));
+    selected = freezeModelConfig(options.requireModel === false ? spec : resolveKey(spec, env));
   } else if (options.requireModel !== false) {
-    throw new Error("profile is required");
+    throw new Error("agent is required");
   }
   const compact = Object.freeze(selectedSpec?.compact ?? compactSpec(undefined, "compact"));
   const availableMcpServers: Record<string, McpServerConfig> = Object.create(null);
@@ -610,20 +612,21 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     const previous = mcpServers[name!]?.tools;
     mcpServers[name!] = Object.freeze({ ...server, tools: Object.freeze([...(Array.isArray(previous) ? previous : []), tool!]) });
   }
-  let profilePrompt = selectedSpec?.systemPrompt;
+  let agentPrompt = selectedSpec?.systemPrompt;
   if (flags.systemPrompt === undefined && env.RAW_SYSTEM_PROMPT === undefined && selectedSpec?.systemPromptFile !== undefined) {
     const promptPath = resolve(dirname(document.path), selectedSpec.systemPromptFile);
     let bytes: Buffer;
     try { bytes = readFileSync(promptPath); }
     catch { throw new Error(`cannot read system prompt file: ${promptPath}`); }
-    try { profilePrompt = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    try { agentPrompt = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
     catch { throw new Error(`invalid UTF-8 system prompt file: ${promptPath}`); }
   }
   const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule,
     ...(rule.when ? { when: Object.freeze({ ...rule.when }) } : {}) })));
   return Object.freeze({
-    ...(selected === undefined ? {} : { profile: selected }),
-    systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? profilePrompt ?? resolveSystemPrompt(undefined, undefined),
+    ...(selectedName === undefined ? {} : { agentName: selectedName }),
+    ...(selected === undefined ? {} : { modelConfig: selected }),
+    systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? agentPrompt ?? resolveSystemPrompt(undefined, undefined),
     maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, selectedSpec?.maxSteps, 25, "max-steps"),
     maxOutputBytes: numberOption(flags.maxOutputBytes, env.RAW_MAX_OUTPUT_BYTES, selectedSpec?.maxOutputBytes, 8192, "max-output-bytes"),
     requestTimeoutMs: numberOption(flags.requestTimeoutMs, env.RAW_REQUEST_TIMEOUT_MS, selectedSpec?.requestTimeoutMs, 120000, "request-timeout-ms"),
@@ -639,9 +642,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     toolIds: Object.freeze([...(selectedSpec?.toolIds ?? [])]),
     skillIds: Object.freeze([...(selectedSpec?.skillIds ?? [])]),
     toolRules,
-    resolveCompactProfile() {
-      if (!selected) throw new Error("profile is required for compact");
-      return options.requireModel === false ? freezeProfile(resolveKey(selected, env)) : selected;
+    resolveCompactModelConfig() {
+      if (!selected) throw new Error("agent is required for compact");
+      return options.requireModel === false ? freezeModelConfig(resolveKey(selected, env)) : selected;
     },
   });
 }
@@ -674,7 +677,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   let afterDash = false;
   const seen = new Set<string>();
   const valueFlags: Record<string, keyof RawFlags> = {
-    "--profile": "profile", "--config": "configPath", "--system-prompt": "systemPrompt",
+    "--agent": "agent", "--config": "configPath", "--system-prompt": "systemPrompt",
     "--max-steps": "maxSteps", "--max-output-bytes": "maxOutputBytes",
     "--request-timeout-ms": "requestTimeoutMs", "--host": "host", "--port": "port",
     "--resume": "resumeId", "--before": "before",
@@ -715,7 +718,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
         if (key === "requestTimeoutMs") flags.requestTimeoutMs = numeric;
         if (key === "port") flags.port = numeric;
       } else {
-        if (key === "profile") flags.profile = next;
+        if (key === "agent") flags.agent = next;
         if (key === "configPath") flags.configPath = next;
         if (key === "systemPrompt") flags.systemPrompt = next;
         if (key === "host") flags.host = next;
@@ -732,7 +735,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   if (flags.continue && flags.resumeId) throw new Error("--continue and --resume are mutually exclusive");
   if (positional[0] === "sessions") {
     if (interactive || acp || acpTransport || flags.host || flags.port || flags.continue || flags.resumeId
-      || flags.profile || flags.configPath || flags.systemPrompt || flags.maxSteps || flags.maxOutputBytes
+      || flags.agent || flags.configPath || flags.systemPrompt || flags.maxSteps || flags.maxOutputBytes
       || flags.requestTimeoutMs || flags.autoApprove) throw new Error("sessions cannot be combined with run options");
     if (positional.length === 1) return { command: "sessions-list", flags };
     if (positional[1] === "show" && positional.length === 3 && !flags.allSessions) {

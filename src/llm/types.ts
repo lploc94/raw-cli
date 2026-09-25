@@ -2,7 +2,7 @@ export type ProviderName = string;
 export type ApiMethod = "openai-chat-completions" | "openai-responses" | "anthropic-messages" | "google-generate-content";
 
 interface RequestBase { maxOutputTokens?: number }
-export type ProfileRequestOptions =
+export type ModelRequestOptions =
   | (RequestBase & { kind: "openai"; serviceTier?: "auto" | "default" | "flex" | "fast" | "priority";
       reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
       reasoningMode?: "standard" | "pro" })
@@ -19,8 +19,8 @@ export interface CacheOptions {
   backend?: "generic" | "llama.cpp";
 }
 
-export interface ProviderProfile {
-  name: string;
+export interface ResolvedModelConfig {
+  agentName: string;
   provider: ProviderName;
   method: ApiMethod;
   model: string;
@@ -32,7 +32,7 @@ export interface ProviderProfile {
   maxOutputTokens?: number;
   vision?: boolean;
   cache?: Readonly<CacheOptions>;
-  request?: Readonly<ProfileRequestOptions>;
+  request?: Readonly<ModelRequestOptions>;
 }
 
 import type { ToolDefinition } from "../tools/registry.js";
@@ -86,6 +86,6 @@ export interface ProviderTurn {
 }
 
 export interface ProviderAdapter {
-  readonly profile: Readonly<ProviderProfile>;
+  readonly modelConfig: Readonly<ResolvedModelConfig>;
   generate(request: ProviderRequest): Promise<ProviderTurn>;
 }

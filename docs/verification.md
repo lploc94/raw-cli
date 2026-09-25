@@ -13,33 +13,33 @@ On 2026-09-25, the persistent-session implementation passed the same source mani
 
 The Linux containers used `node:22.13.0` image digest `sha256:fa54405993eaa6bab6b6e460f5f3e945a2e2f07942ba31c0e297a7d9c2041f62` and `node:24.21.0` digest `sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4`, with a fresh `npm ci` in each isolated source copy. The packed tarball is 126,826 bytes, SHA-256 `4b499fdbbc64fbb0e6d4d228d809f32df3a77b974d87179b04ca9bce70d96b4e`. GPT-6 Astra returned APPROVE after crash-window and bounded-sweep regressions, with 47/47 focused tests. The GitHub Actions workflow configures the same OS/Node matrix, but no remote run was possible because this checkout has no Git remote; the table records local executable qualification, not an Actions result.
 
-This record distinguishes local executable evidence from configured CI and unrun external integrations. The current configuration contract and six-phase review record are in [the redesign plan](../redesign-model-profile-configuration-plan.md). The original scaffold qualification remains in [the build plan](../build-raw-cli-plan.md) and `docs/evidence/phase-*.md`; its matrix below is historical baseline evidence.
+This record distinguishes local executable evidence from configured CI and unrun external integrations. The current configuration contract and six-phase review record are in [the redesign plan](../redesign-model-agent-configuration-plan.md). The original scaffold qualification remains in [the build plan](../build-raw-cli-plan.md) and `docs/evidence/phase-*.md`; its matrix below is historical baseline evidence.
 
 ## Configuration redesign qualification
 
 | Phase | Evidence | GPT-6 Astra implementation review |
 |---|---|---|
-| 1: model/profile schema | Strict config, selected credential, removed direct override and 135 passing tests | `.codex-review/sessions/codex-impl-review-20260924-010` APPROVE |
+| 1: model/agent schema | Strict config, selected credential, removed direct override and 135 passing tests | `.codex-review/sessions/codex-impl-review-20260924-010` APPROVE |
 | 2: API methods and controls | Four SDK methods, typed request fields, DeepSeek replay/cache and 146 passing tests | `.codex-review/sessions/codex-impl-review-20260924-011` APPROVE |
-| 3: MCP and policy | Profile-selected tools, canonical allow/ask/deny and 161 passing tests | `.codex-review/sessions/codex-impl-review-20260924-012` APPROVE |
+| 3: MCP and policy | Agent-selected tools, canonical allow/ask/deny and 161 passing tests | `.codex-review/sessions/codex-impl-review-20260924-012` APPROVE |
 | 4: conditional vision | Native PNG/JPEG across four methods, text-only MCP fallback, bounded errors and 168 passing tests | `.codex-review/sessions/codex-impl-review-20260924-013` APPROVE |
 | 5: automatic compact | Full-request estimate, image-safe chunking, rollback, calibration and 179 passing tests | `.codex-review/sessions/codex-impl-review-20260924-014` APPROVE |
 | 6: public/package/install | 181/181 tests on Node 22 and 24, packed consumer write/MCP/vision/ACP, exact installed bytes, live DeepSeek below | `.codex-review/sessions/codex-impl-review-20260924-015` APPROVE |
 
-The review runner sometimes failed to parse a verdict-only `APPROVE` response; the raw reviewer verdict was inspected and the session explicitly finalized as `APPROVE`. At the time of that review the base prompt used 25 reference tokens; the current prompt and tool-definition counts are reported by `npm run test:overhead`. Exactly three default built-ins remain. Phase 6 package qualification includes installed write, profile-selected MCP, native `view_image`, ACP and external TypeScript imports, without an approval flag.
+The review runner sometimes failed to parse a verdict-only `APPROVE` response; the raw reviewer verdict was inspected and the session explicitly finalized as `APPROVE`. At the time of that review the base prompt used 25 reference tokens; the current prompt and tool-definition counts are reported by `npm run test:overhead`. Exactly three default built-ins remain. Phase 6 package qualification includes installed write, agent-selected MCP, native `view_image`, ACP and external TypeScript imports, without an approval flag.
 
 ## Acceptance criteria
 
 | Criterion | Evidence |
 |---|---|
 | AC-1.1 | T-01a..e; strict typecheck/build in [Phase 1](evidence/phase-1.md) |
-| AC-1.2 | T-01a..d; profile, credential, config command and prompt cases in Phase 1 |
+| AC-1.2 | T-01a..d; agent, credential, config command and prompt cases in Phase 1 |
 | AC-1.3 | T-01e official SDK import and Node 22 in Phase 1; [provider API matrix](providers.md) |
 | AC-2.1 | T-02d/e three primitive definitions and dispatch in [Phase 2](evidence/phase-2.md) |
 | AC-2.2 | T-02a/b file, UTF-8, Bash and output cap cases in Phase 2 |
 | AC-2.3 | T-02c real process group/descendant cancellation in Phase 2 |
 | AC-2.4 | T-02e measured prompt and schemas in Phase 2; 25/175 was the historical report. Run `npm run test:overhead` for current counts. |
-| AC-3.1 | T-03a six official SDK profile paths in [Phase 3](evidence/phase-3.md) |
+| AC-3.1 | T-03a six official SDK agent paths in [Phase 3](evidence/phase-3.md) |
 | AC-3.2 | T-03b/c fragmented calls and opaque state replay in Phase 3 |
 | AC-3.3 | T-03d terminal errors, no retry and cancellation in Phase 3 |
 | AC-3.4 | T-03e native text/JSON/PNG/JPEG mapping in Phase 3 |
@@ -60,7 +60,7 @@ The review runner sometimes failed to parse a verdict-only `APPROVE` response; t
 | AC-7.3 | T-07d ownership, busy, permission/callback cancellation and MCP/Bash cleanup in Phase 7 |
 | AC-7.4 | T-07e local WebSocket and installed parent/child lifecycle in Phase 7 |
 | AC-7.5 | T-07f compact extension rollback/status/usage in Phase 7 |
-| AC-8.1 | T-08a/b subprocess one-shot, profile, exits, PTY approvals, Ctrl-C and EOF in [Phase 8](evidence/phase-8.md) |
+| AC-8.1 | T-08a/b subprocess one-shot, agent, exits, PTY approvals, Ctrl-C and EOF in [Phase 8](evidence/phase-8.md) |
 | AC-8.2 | T-08c REPL multi-turn compact/clear/stats request counts and history in Phase 8 |
 | AC-8.3 | T-08d packed consumer task edit, MCP, ACP, import and TypeScript declarations in Phase 8 |
 | AC-8.4 | T-08e exact Node 22/24 process gates and package test in Phase 8 |
@@ -108,4 +108,4 @@ On 2026-09-24, Node 22.23.3 and Node 24.21.0 each ran `scripts/verify-runtime.mj
 
 `npm pack` produced `raw-cli-0.1.0.tgz`, 79,098 bytes, SHA-256 `aa5b4899dcf56e46e1649d122f65f1d48580d732981889263333b5aac97f8b10`. Global `raw` resolves to `/opt/homebrew/bin/raw`. Installed `/opt/homebrew/lib/node_modules/raw-cli/dist/raw.js` and the packed build's `dist/raw.js` both have SHA-256 `16a6088db34808cee1b639aaf426af736ed78b1626d5962e6a28fb7e37c643d2`; the installed library and build `dist/index.js` both have SHA-256 `71a02ada5d2c118b5bc98593e94b5906a3b351314b1cd4bb0bd03c47c593b8a2`. The old user config was copied intact to `~/.config/raw/config.json.backup-2026-09-24T12-54-47-112Z` with mode 0600. The new strict `models`/`profiles` config at `~/.config/raw/config.json` also has mode 0600, preserves the local literal key and DeepSeek `api_key_env`, and passes installed `raw config list` without displaying credentials.
 
-An installed-library DeepSeek `deepseek-flash` session used only `read_file` on a temporary probe file, two turns and four requests. Per-request `prompt_cache_hit_tokens` were **128, 256, 384, 384**; `prompt_cache_miss_tokens` were **214, 176, 174, 260**. The total observed cache-read count was 1,152 of 1,976 input tokens. An independent installed `raw` REPL run used two `read_file` calls, four requests, no `-y` and no permission prompt; its `/stats` showed 1,024 cache-read tokens of 1,800 input tokens. These are reported provider counters, so the observed hit claim is grounded in actual usage rather than prefix similarity. The local Vast LLM profile has endpoint `http://127.0.0.1:8080/v1`, model `qwen-3.8` and the preserved user API key; `/v1/models` returned HTTP 503 while the user was starting that server, so local inference was not yet qualified.
+An installed-library DeepSeek `deepseek-flash` session used only `read_file` on a temporary probe file, two turns and four requests. Per-request `prompt_cache_hit_tokens` were **128, 256, 384, 384**; `prompt_cache_miss_tokens` were **214, 176, 174, 260**. The total observed cache-read count was 1,152 of 1,976 input tokens. An independent installed `raw` REPL run used two `read_file` calls, four requests, no `-y` and no permission prompt; its `/stats` showed 1,024 cache-read tokens of 1,800 input tokens. These are reported provider counters, so the observed hit claim is grounded in actual usage rather than prefix similarity. The local Vast LLM agent has endpoint `http://127.0.0.1:8080/v1`, model `qwen-3.8` and the preserved user API key; `/v1/models` returned HTTP 503 while the user was starting that server, so local inference was not yet qualified.

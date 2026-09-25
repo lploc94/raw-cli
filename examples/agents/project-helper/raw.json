@@ -1,5 +1,5 @@
 {
-  "default_profile": "project",
+  "default_agent": "project",
   "models": {
     "local": {
       "provider": "ollama",
@@ -8,7 +8,7 @@
       "base_url": "http://127.0.0.1:11434/v1"
     }
   },
-  "profiles": {
+  "agents": {
     "project": {
       "model": "local",
       "system_prompt_file": "prompt.md",

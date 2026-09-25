@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createProvider } from "../src/llm/client.js";
-import type { ProviderName, ProviderProfile } from "../src/llm/types.js";
+import type { ProviderName, ResolvedModelConfig } from "../src/llm/types.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import type { ToolResult } from "../src/tools/types.js";
 import { nativeToolContent } from "../src/llm/content.js";
 
-const profile = (provider: ProviderName, baseUrl: string): ProviderProfile => ({ name: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
+const agent = (provider: ProviderName, baseUrl: string): ResolvedModelConfig => ({ agentName: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
 const request = { system: "sys", messages: [{ role: "user" as const, content: "hello" }], tools: [], timeoutMs: 1000 };
 
 test("OpenAI assembles interleaved fragmented calls, Unicode, usage and finish reason", async () => {
@@ -19,7 +19,7 @@ test("OpenAI assembles interleaved fragmented calls, Unicode, usage and finish r
   ] }]);
   try {
     const deltas: string[] = [];
-    const result = await createProvider(profile("openai", fixture.url)).generate({ ...request, onTextDelta: (delta) => deltas.push(delta) });
+    const result = await createProvider(agent("openai", fixture.url)).generate({ ...request, onTextDelta: (delta) => deltas.push(delta) });
     assert.deepEqual(deltas, ["hé", "😀"]);
     assert.equal(result.text, "hé😀");
     assert.deepEqual(result.toolCalls.map((call) => [call.id, call.name, call.arguments]), [["one", "read_file", { files: [{ path: "a" }] }], ["two", "bash", { commands: [{ command: "pwd" }] }]]);
@@ -54,7 +54,7 @@ test("Anthropic thinking/signature and Google thought signatures survive replay 
     ] : [googleFrame({ candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }] })];
     const fixture = await startMockProvider([{ frames: first }, { frames: second }]);
     try {
-      const adapter = createProvider(profile(provider, fixture.url));
+      const adapter = createProvider(agent(provider, fixture.url));
       const deltas: string[] = [];
       const turn = await adapter.generate({ ...request, onTextDelta: (delta) => deltas.push(delta) });
       assert.deepEqual(deltas, []);
@@ -76,26 +76,26 @@ test("SDK failures, incomplete stream and cancellation are terminal with no retr
   for (const status of [401, 429, 500]) {
     const fixture = await startMockProvider([{ status, body: { error: { message: "failed", type: "fixture" } } }]);
     try {
-      await assert.rejects(createProvider(profile("openai", fixture.url)).generate(request));
+      await assert.rejects(createProvider(agent("openai", fixture.url)).generate(request));
       assert.equal(fixture.requests.length, 1);
     } finally { await fixture.close(); }
   }
   const incomplete = await startMockProvider([{ frames: [openAiFrame({ content: "partial" })] }]);
-  try { await assert.rejects(createProvider(profile("openai", incomplete.url)).generate(request)); assert.equal(incomplete.requests.length, 1); }
+  try { await assert.rejects(createProvider(agent("openai", incomplete.url)).generate(request)); assert.equal(incomplete.requests.length, 1); }
   finally { await incomplete.close(); }
   const malformed = await startMockProvider([{ frames: ["data: {broken-json}\n\n", openAiDone] }]);
-  try { await assert.rejects(createProvider(profile("openai", malformed.url)).generate(request)); assert.equal(malformed.requests.length, 1); }
+  try { await assert.rejects(createProvider(agent("openai", malformed.url)).generate(request)); assert.equal(malformed.requests.length, 1); }
   finally { await malformed.close(); }
   const refusal = await startMockProvider([{ frames: [openAiFrame({ refusal: "no" }, "stop"), openAiDone] }]);
-  try { await assert.rejects(createProvider(profile("openai", refusal.url)).generate(request), /no/); assert.equal(refusal.requests.length, 1); }
+  try { await assert.rejects(createProvider(agent("openai", refusal.url)).generate(request), /no/); assert.equal(refusal.requests.length, 1); }
   finally { await refusal.close(); }
   const hanging = await startMockProvider([{ hold: true }]);
-  try { await assert.rejects(createProvider(profile("openai", hanging.url)).generate({ ...request, timeoutMs: 40 })); assert.equal(hanging.requests.length, 1); }
+  try { await assert.rejects(createProvider(agent("openai", hanging.url)).generate({ ...request, timeoutMs: 40 })); assert.equal(hanging.requests.length, 1); }
   finally { await hanging.close(); }
   const abortFixture = await startMockProvider([{ hold: true }]);
   try {
     const controller = new AbortController();
-    const run = createProvider(profile("openai", abortFixture.url)).generate({ ...request, timeoutMs: 1000, signal: controller.signal });
+    const run = createProvider(agent("openai", abortFixture.url)).generate({ ...request, timeoutMs: 1000, signal: controller.signal });
     for (let i = 0; i < 50 && !abortFixture.requests.length; i++) await new Promise((resolve) => setTimeout(resolve, 5));
     controller.abort();
     await assert.rejects(run, /aborted/);
@@ -120,7 +120,7 @@ test("native text, JSON, PNG/JPEG mapping preserves linkage and rejects unsuppor
     ] : provider === "google" ? [googleFrame({ candidates: [{ content: { role: "model", parts: [{ text: "seen" }] }, finishReason: "STOP" }] })] : [openAiFrame({ content: "seen" }, "stop"), openAiDone];
     const fixture = await startMockProvider([{ frames }]);
     try {
-      const adapter = createProvider(profile(provider, fixture.url));
+      const adapter = createProvider(agent(provider, fixture.url));
       await adapter.generate({ ...request, messages: [
         ...request.messages,
         { role: "assistant", text: "", toolCalls: [{ id: "c", name: "view", arguments: {} }] },
@@ -142,7 +142,7 @@ test("native text, JSON, PNG/JPEG mapping preserves linkage and rejects unsuppor
 test("OpenAI emits every tool result before user image attachments", async () => {
   const fixture = await startMockProvider([{ frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] }]);
   try {
-    await createProvider(profile("openai", fixture.url)).generate({ ...request, messages: [
+    await createProvider(agent("openai", fixture.url)).generate({ ...request, messages: [
       ...request.messages,
       { role: "assistant", text: "", toolCalls: [{ id: "a", name: "view", arguments: {} }, { id: "b", name: "read_file", arguments: {} }] },
       { role: "tool", callId: "a", name: "view", result: { isError: false, content: [{ type: "image", mimeType: "image/png", data: "AA==" }] } },
@@ -159,7 +159,7 @@ test("Google groups parallel responses, echoes provider IDs and accepts omitted 
     { functionCall: { id: "b", name: "noop", args: {} } },
   ] }, finishReason: "STOP" }] })] }, { frames: [googleFrame({ candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }] })] }]);
   try {
-    const adapter = createProvider(profile("google", fixture.url));
+    const adapter = createProvider(agent("google", fixture.url));
     const first = await adapter.generate(request);
     assert.deepEqual(first.toolCalls.map((call) => call.arguments), [{}, {}]);
     await adapter.generate({ ...request, messages: [...request.messages,
@@ -180,7 +180,7 @@ test("Google synthetic ID state does not shadow a later real ID with the same sp
     { frames: response([{ text: "done" }]) },
   ]);
   try {
-    const adapter = createProvider(profile("google", fixture.url));
+    const adapter = createProvider(agent("google", fixture.url));
     const messages: Array<import("../src/llm/types.js").ModelMessage> = [...request.messages];
     for (let i = 0; i < 2; i++) {
       const turn = await adapter.generate({ ...request, messages });
@@ -201,7 +201,7 @@ test("OpenRouter replays opaque reasoning details without showing them", async (
     openAiFrame({ reasoning_details: [signed], tool_calls: [{ index: 0, id: "c", type: "function", function: { name: "bash", arguments: "{}" } }] }, "tool_calls"), openAiDone,
   ] }, { frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] }]);
   try {
-    const adapter = createProvider(profile("openrouter", fixture.url));
+    const adapter = createProvider(agent("openrouter", fixture.url));
     const deltas: string[] = [];
     const first = await adapter.generate({ ...request, onTextDelta: (delta) => deltas.push(delta) });
     assert.deepEqual(deltas, []);
@@ -218,26 +218,26 @@ test("duplicate call IDs and malformed Anthropic block lifecycle are terminal", 
     { index: 0, id: "same", type: "function", function: { name: "bash", arguments: "{}" } },
     { index: 1, id: "same", type: "function", function: { name: "bash", arguments: "{}" } },
   ] }, "tool_calls"), openAiDone] }]);
-  try { await assert.rejects(createProvider(profile("openai", openai.url)).generate(request)); }
+  try { await assert.rejects(createProvider(agent("openai", openai.url)).generate(request)); }
   finally { await openai.close(); }
   const anthropic = await startMockProvider([{ frames: [
     anthropicFrame("content_block_start", { index: 0, content_block: { type: "tool_use", id: "a", name: "bash", input: {} } }),
     anthropicFrame("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }),
     anthropicFrame("message_stop", {}),
   ] }]);
-  try { await assert.rejects(createProvider(profile("anthropic", anthropic.url)).generate(request)); }
+  try { await assert.rejects(createProvider(agent("anthropic", anthropic.url)).generate(request)); }
   finally { await anthropic.close(); }
   const google = await startMockProvider([{ frames: [googleFrame({ candidates: [{ content: { role: "model", parts: [
     { functionCall: { id: "same", name: "bash", args: {} } }, { functionCall: { id: "same", name: "bash", args: {} } },
   ] }, finishReason: "STOP" }] })] }]);
-  try { await assert.rejects(createProvider(profile("google", google.url)).generate(request)); }
+  try { await assert.rejects(createProvider(agent("google", google.url)).generate(request)); }
   finally { await google.close(); }
 });
 
 test("early error closes live provider response and large valid image passes validation", async () => {
   const fixture = await startMockProvider([{ frames: [googleFrame({ promptFeedback: { blockReason: "SAFETY" } })], keepOpen: true }]);
   try {
-    await assert.rejects(createProvider(profile("google", fixture.url)).generate(request));
+    await assert.rejects(createProvider(agent("google", fixture.url)).generate(request));
     for (let i = 0; i < 40 && fixture.closed === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(fixture.closed, 1);
   } finally { await fixture.close(); }
@@ -248,7 +248,7 @@ test("early error closes live provider response and large valid image passes val
 test("linked malformed arguments remain an error call for matching tool-result continuation", async () => {
   const fixture = await startMockProvider([{ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "a", type: "function", function: { name: "bash", arguments: "{oops" } }] }, "tool_calls"), openAiDone] }]);
   try {
-    const result = await createProvider(profile("openai", fixture.url)).generate(request);
+    const result = await createProvider(agent("openai", fixture.url)).generate(request);
     assert.equal(result.toolCalls[0]?.id, "a");
     assert.ok(result.toolCalls[0]?.argumentError);
   } finally { await fixture.close(); }

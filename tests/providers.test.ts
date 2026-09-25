@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createProvider } from "../src/llm/client.js";
-import type { ProviderName, ProviderProfile } from "../src/llm/types.js";
+import type { ProviderName, ResolvedModelConfig } from "../src/llm/types.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { BUILTIN_TOOL_DEFINITIONS } from "../src/tools/registry.js";
 
-const profile = (provider: ProviderName, baseUrl: string): ProviderProfile => ({ name: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
+const agent = (provider: ProviderName, baseUrl: string): ResolvedModelConfig => ({ agentName: provider, provider, method: provider === "anthropic" ? "anthropic-messages" : provider === "google" ? "google-generate-content" : "openai-chat-completions", model: "fixture-model", baseUrl, apiKey: "fixture-key", maxOutputTokens: 128 });
 const user = [{ role: "user" as const, content: "do it" }];
 
 function openAiToolFrames() {
@@ -47,7 +47,7 @@ for (const provider of ["openai", "llamacpp", "openrouter", "ollama", "anthropic
         : [openAiFrame({ content: "done" }, "stop"), openAiDone];
     const fixture = await startMockProvider([{ frames: first }, { frames: second }]);
     try {
-      const adapter = createProvider(profile(provider, fixture.url));
+      const adapter = createProvider(agent(provider, fixture.url));
       const turn = await adapter.generate({ system: "tiny system", messages: user, tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 2000 });
       assert.equal(turn.toolCalls.length, 1);
       assert.deepEqual(turn.toolCalls[0]?.arguments, { files: [{ path: "a" }] });

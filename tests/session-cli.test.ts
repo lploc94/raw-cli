@@ -120,7 +120,7 @@ test("one-shot footer shows reported session token usage without inventing cache
   } finally { await provider.close(); }
 });
 
-test("--continue is workspace-scoped and explicit --profile conflict fails before provider work", async () => {
+test("--continue is workspace-scoped and explicit --agent conflict fails before provider work", async () => {
   const { a, b, env } = fixture();
   const provider = await startMockProvider([answer("a-first"), answer("b-first"), answer("a-next")]);
   try {
@@ -135,9 +135,9 @@ test("--continue is workspace-scoped and explicit --profile conflict fails befor
     const id = listed.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)?.[0];
     assert.ok(id);
     const before = provider.requests.length;
-    const mismatch = await raw(["--resume", id, "--profile", "other", "do not call"], a, env);
+    const mismatch = await raw(["--resume", id, "--agent", "other", "do not call"], a, env);
     assert.equal(mismatch.code, 2);
-    assert.match(mismatch.stderr, /profile/i);
+    assert.match(mismatch.stderr, /agent/i);
     assert.equal(provider.requests.length, before);
     const alternate = testConfig("openai", "fixture", provider.url);
     const configMismatch = await raw(["--resume", id, "--config", alternate, "do not call"], a, env);
@@ -224,8 +224,8 @@ test("sessions show reproduces a complete rejected Bash argument after restart a
   ]);
   try {
     const config = testConfig("openai", "fixture", provider.url);
-    const document = JSON.parse(readFileSync(config, "utf8")) as { profiles: { fixture: Record<string, unknown> } };
-    document.profiles.fixture.compact = { keep_recent_turns: 0, max_output_tokens: 512 };
+    const document = JSON.parse(readFileSync(config, "utf8")) as { agents: { fixture: Record<string, unknown> } };
+    document.agents.fixture.compact = { keep_recent_turns: 0, max_output_tokens: 512 };
     writeFileSync(config, JSON.stringify(document));
     const first = await raw(["--config", config, "run invalid Bash"], a, env);
     assert.equal(first.code, 0, first.stderr);
@@ -260,12 +260,12 @@ test("list and history cursors expose older IDs/items, and an older ID resumes",
   const store = openSessionStore({ env });
   try {
     for (let i = 0; i < 25; i++) {
-      const row = store.createSession({ cwd: a, title: `seed ${i}`, profileName: runtime.profile!.name,
-        configPath: runtime.configPath, modelId: runtime.profile!.model, provider: runtime.profile!.provider,
-        method: runtime.profile!.method, ...(runtime.profile!.baseUrl ? { endpoint: runtime.profile!.baseUrl } : {}),
+      const row = store.createSession({ cwd: a, title: `seed ${i}`, agentName: runtime.modelConfig!.agentName,
+        configPath: runtime.configPath, modelId: runtime.modelConfig!.model, provider: runtime.modelConfig!.provider,
+        method: runtime.modelConfig!.method, ...(runtime.modelConfig!.baseUrl ? { endpoint: runtime.modelConfig!.baseUrl } : {}),
         systemPrompt: runtime.systemPrompt });
-      const agent = createAgent({ cwd: a, provider: createProvider(runtime.profile!),
-        registry: createTestToolRegistry(runtime.toolRules, runtime.profile!.vision === true), system: runtime.systemPrompt,
+      const agent = createAgent({ cwd: a, provider: createProvider(runtime.modelConfig!),
+        registry: createTestToolRegistry(runtime.toolRules, runtime.modelConfig!.vision === true), system: runtime.systemPrompt,
         whitelist: ["read_file", "write_file", "bash"],
         persistence: { store, sessionId: row.id, surface: "cli" } });
       await agent.close();

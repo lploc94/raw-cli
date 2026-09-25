@@ -10,9 +10,9 @@ import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-prov
 
 const answer = { frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] };
 
-async function runRaw(configPath: string, profile: string, cwd: string, env: NodeJS.ProcessEnv, extra: string[] = []) {
+async function runRaw(configPath: string, agent: string, cwd: string, env: NodeJS.ProcessEnv, extra: string[] = []) {
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"),
-    "--config", configPath, "--profile", profile, ...extra, "hello"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    "--config", configPath, "--agent", agent, ...extra, "hello"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.end();
   let stderr = "";
   child.stderr.setEncoding("utf8").on("data", (part: string) => { stderr += part; });
@@ -21,8 +21,8 @@ async function runRaw(configPath: string, profile: string, cwd: string, env: Nod
   return { code, stderr };
 }
 
-test("CLI exposes profile tools in declared order while unselected local and MCP sources remain inert", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "raw-profile-tools-"));
+test("CLI exposes agent tools in declared order while unselected local and MCP sources remain inert", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-agent-tools-"));
   const fixture = await startMockProvider([answer, answer]);
   try {
     const configPath = join(cwd, "config.json");
@@ -35,9 +35,9 @@ test("CLI exposes profile tools in declared order while unselected local and MCP
     await writeFile(join(toolFolder, "index.mjs"), `import { writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(marker)}, "imported");
 export async function handler() { return { isError: false, content: [] }; }`);
-    await writeFile(configPath, JSON.stringify({ default_profile: "read", models: { shared: {
+    await writeFile(configPath, JSON.stringify({ default_agent: "read", models: { shared: {
       provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: fixture.url,
-    } }, profiles: {
+    } }, agents: {
       read: { model: "shared", tools: { use: ["builtin/read_file"] }, system_prompt: "Read only" },
       code: { model: "shared", tools: { use: ["builtin/bash", "builtin/read_file"] }, system_prompt: "Code" },
       unused: { model: "shared", tools: { use: ["agent/unused", "mcp/hidden/selected"] } },
@@ -56,12 +56,12 @@ export async function handler() { return { isError: false, content: [] }; }`);
 });
 
 test("prompt files are strict UTF-8 and run-time overrides take precedence", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "raw-profile-prompt-"));
+  const cwd = await mkdtemp(join(tmpdir(), "raw-agent-prompt-"));
   const configPath = join(cwd, "config.json");
   const promptPath = join(cwd, "SYSTEM.md");
-  const make = (profile: Record<string, unknown>) => ({ default_profile: "p", models: { m: {
+  const make = (agent: Record<string, unknown>) => ({ default_agent: "p", models: { m: {
     provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
-  profiles: { p: { model: "m", tools: { use: [] }, ...profile } } });
+  agents: { p: { model: "m", tools: { use: [] }, ...agent } } });
   await writeFile(promptPath, "From Markdown\n");
   await writeFile(configPath, JSON.stringify(make({ system_prompt_file: "SYSTEM.md" })));
   assert.equal((await loadConfig({ configPath, env: {} })).systemPrompt, "From Markdown\n");
@@ -78,12 +78,12 @@ test("prompt files are strict UTF-8 and run-time overrides take precedence", asy
 });
 
 test("startup rejects a selected unknown server, missing plugin, and image tool on a text model", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "raw-profile-invalid-"));
+  const cwd = await mkdtemp(join(tmpdir(), "raw-agent-invalid-"));
   const configPath = join(cwd, "config.json");
   const make = async (ids: string[]) => {
-    await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
+    await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
       provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
-    profiles: { p: { model: "m", tools: { use: ids } } } }));
+    agents: { p: { model: "m", tools: { use: ids } } } }));
     return loadConfig({ configPath, env: {} });
   };
   await assert.rejects(createRuntimeTools({ runtime: await make(["mcp/missing/selected"]), cwd }), /unknown MCP server/);
@@ -95,10 +95,10 @@ test("startup rejects a selected unknown server, missing plugin, and image tool 
 });
 
 test("conditional policy paths incompatible with a selected schema fail before inference", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "raw-profile-policy-bind-"));
+  const cwd = await mkdtemp(join(tmpdir(), "raw-agent-policy-bind-"));
   const configPath = join(cwd, "config.json");
-  await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
-    provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, profiles: { p: {
+  await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
+    provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, agents: { p: {
       model: "m", tools: { use: ["builtin/bash"], rules: [{ match: "builtin/bash", effect: "ask",
         when: { any: "commands[*].missing", regex: "rm" } }] },
     } } }));
@@ -107,7 +107,7 @@ test("conditional policy paths incompatible with a selected schema fail before i
 });
 
 test("CLI resume rotates generated cache hint after a code-only selected plugin edit", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "raw-profile-code-generation-"));
+  const cwd = await mkdtemp(join(tmpdir(), "raw-agent-code-generation-"));
   const provider = await startMockProvider([answer, answer, answer]);
   try {
     const configPath = join(cwd, "config.json");
@@ -117,9 +117,9 @@ test("CLI resume rotates generated cache hint after a code-only selected plugin 
       name: "custom", description: "A stable schema", input_schema: { type: "object", properties: {} }, entry: "./index.mjs" }));
     const entry = (value: string) => `export async function handler() { return { isError: false, content: [{ type: "text", text: ${JSON.stringify(value)} }] }; }`;
     await writeFile(join(folder, "index.mjs"), entry("old"));
-    await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
+    await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
       provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: provider.url,
-    } }, profiles: { p: { model: "m", tools: { use: ["agent/custom"] } } } }));
+    } }, agents: { p: { model: "m", tools: { use: ["agent/custom"] } } } }));
     const env = { ...process.env, OPENAI_API_KEY: "fixture", XDG_STATE_HOME: join(cwd, "state"), XDG_CONFIG_HOME: join(cwd, "xdg") };
     const first = await runRaw(configPath, "p", cwd, env);
     assert.equal(first.code, 0, first.stderr);

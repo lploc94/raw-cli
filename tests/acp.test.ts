@@ -22,16 +22,16 @@ test("runtime info exposes selected model/method/vision/MCP/policy without crede
   const root = await mkdtemp(join(tmpdir(), "raw-acp-runtime-"));
   const path = join(root, "config.json");
   const secret = "acp-literal-key-sentinel";
-  await writeFile(path, JSON.stringify({ default_profile: "research",
+  await writeFile(path, JSON.stringify({ default_agent: "research",
     models: { flash: { provider: "deepseek", method: "openai-chat-completions", model_id: "deepseek-flash",
       base_url: "https://api.deepseek.com", api_key: secret, vision: true, context_window_tokens: 4096 } },
-    profiles: { research: { model: "flash",
+    agents: { research: { model: "flash",
       compact: { trigger_tokens: 1000, max_output_tokens: 100 },
       tools: { use: ["mcp/search/web_search"], rules: [{ match: "builtin/bash", effect: "deny" }] } } },
     mcp: { servers: { search: { transport: "stdio", command: "unused", args: [] } } },
   }));
   const runtime = await loadConfig({ flags: { configPath: path }, env: {}, requireModel: true });
-  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!,
+  const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!,
     generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const connection = client({ name: "runtime-info-client" }).connect(server.app);
   try {
@@ -68,7 +68,7 @@ test("T-07 review: disconnect during MCP discovery reaps child and creates no pr
   const server = createAcpServer({ runtime, mcpServers: { delayed: { command: process.execPath,
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"],
     env: { MCP_PID_FILE: pidFile, MCP_LIST_DELAY_MS: "800" }, tools: [] } },
-  providerFactory: () => { providers++; return { profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }; } });
+  providerFactory: () => { providers++; return { modelConfig: runtime.modelConfig!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }; } });
   const connection = client({ name: "early-disconnect" }).connect(server.app);
   await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
   const pending = connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
@@ -92,7 +92,7 @@ test("T-07 review: pending MCP startup cannot delay cancellation of an existing 
   const root = await mkdtemp(join(tmpdir(), "raw-acp-close-race-"));
   const discoveryStarted = join(root, "discovery-started");
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) =>
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) =>
     request.messages.at(-1)?.role === "tool" ? { text: "done", toolCalls: [], finishReason: "stop" }
       : { text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { commands: [{ command: "sleep 0.3; printf late > marker" }] } }], finishReason: "tool_calls" } }) });
   let started!: () => void;
@@ -130,7 +130,7 @@ test("T-07 review: hidden MCP catalog can be selected while idle and appears on 
   let requested: ProviderRequest | undefined;
   const server = createAcpServer({ runtime, mcpServers: { fixture: { command: process.execPath,
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], tools: [] } },
-  providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => { requested = request; return { text: "ok", toolCalls: [], finishReason: "stop" }; } }) });
+  providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => { requested = request; return { text: "ok", toolCalls: [], finishReason: "stop" }; } }) });
   const connection = client({ name: "catalog-client" }).connect(server.app);
   try {
     await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
@@ -154,7 +154,7 @@ test("T-07 review: unsupported hidden MCP schema does not block selected valid t
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
   const server = createAcpServer({ runtime, mcpServers: { fixture: { command: process.execPath,
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: { MCP_MODE: "unsupported-hidden" }, tools: ["selected"] } },
-  providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+  providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const connection = client({ name: "hidden-schema" }).connect(server.app);
   try {
     await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
@@ -165,7 +165,7 @@ test("T-07 review: unsupported hidden MCP schema does not block selected valid t
 
 test("T-07 review: failed calls announce tool_call before tool_call_update", async () => {
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => request.messages.at(-1)?.role === "tool"
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => request.messages.at(-1)?.role === "tool"
     ? { text: "done", toolCalls: [], finishReason: "stop" }
     : { text: "", toolCalls: [{ id: "bad", name: "read_file", arguments: { path: 5 }, argumentError: "invalid json" }], finishReason: "tool_calls" } }) });
   const updates: Array<{ sessionUpdate: string; toolCallId?: string }> = [];
@@ -185,7 +185,7 @@ test("T-07 review: multi-megabyte reverse image validates without regex stack fa
     env: {}, requireModel: true });
   let alias = "";
   let imageSeen = false;
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
     const last = request.messages.at(-1);
     if (last?.role === "tool") {
       imageSeen = last.result.content[0]?.type === "image";
@@ -238,7 +238,7 @@ test("T-07 review: multi-megabyte reverse image validates without regex stack fa
 
 test("T-07a/f: standard ACP works without raw negotiation and raw compact extension is capability gated", async () => {
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
-  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!,
+  const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!,
     generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const peer = client({ name: "test" });
   const connection = peer.connect(server.app);
@@ -258,7 +258,7 @@ test("T-07c/d: negotiated reverse tool executes through model history with typed
   let reply: unknown = { isError: false, content: [{ type: "text", text: "peer-sentinel" },
     { type: "image", mimeType: "image/png", data: Buffer.from([137, 80, 78, 71]).toString("base64") }] };
   const requests: ProviderRequest[] = [];
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
     requests.push({ ...request, messages: structuredClone(request.messages), tools: structuredClone(request.tools) });
     const last = request.messages.at(-1);
     if (last?.role === "tool") return { text: last.result.isError ? `error:${last.result.code}` : "peer-sentinel received", toolCalls: [], finishReason: "stop" };
@@ -314,7 +314,7 @@ test("T-07c: reverse callback timeout becomes matching tool error and late answe
   let finish!: (value: unknown) => void;
   const late = new Promise<unknown>((resolve) => { finish = resolve; });
   const requests: ProviderRequest[] = [];
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
     requests.push({ ...request, messages: structuredClone(request.messages), tools: structuredClone(request.tools) });
     if (request.messages.at(-1)?.role === "tool") return { text: "handled timeout", toolCalls: [], finishReason: "stop" };
     return { text: "", toolCalls: [{ id: "c", name: alias, arguments: { value: "x" } }], finishReason: "tool_calls" };
@@ -344,7 +344,7 @@ test("T-07c/d: cancelling pending reverse callback notifies peer and late reply 
   let alias = "";
   let modelCalls = 0;
   let resumed: ProviderRequest["messages"] | undefined;
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
     modelCalls++;
     if (modelCalls === 1) return { text: "", toolCalls: [{ id: "reverse", name: alias, arguments: { value: "wait" } }], finishReason: "tool_calls" };
     resumed = structuredClone(request.messages);
@@ -387,7 +387,7 @@ test("T-07d: independent session cwd/results and cross-peer ownership hold durin
   await writeFile(join(dirs[1]!, "sentinel.txt"), "session-two");
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
   const observed: string[] = [];
-  const makeServer = () => createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+  const makeServer = () => createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
     const last = request.messages.at(-1);
     if (last?.role === "tool") {
       observed.push(JSON.stringify(last.result));
@@ -419,7 +419,7 @@ test("T-07d: cancel services pending permission while prompt is blocked and prev
   const root = await mkdtemp(join(tmpdir(), "raw-acp-permission-"));
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: false }, env: {}, requireModel: true });
   let requests = 0;
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async () => {
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => {
     requests++;
     return { text: "", toolCalls: [{ id: "write", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "created.txt", content: "should-not-exist" }] } }], finishReason: "tool_calls" };
   } }) });
@@ -447,7 +447,7 @@ test("T-07d: cancel services pending permission while prompt is blocked and prev
 test("T-07d: peer disconnect aborts active Bash before delayed filesystem side effect", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-acp-disconnect-"));
   const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => ({
     text: "", toolCalls: [{ id: "shell", name: "bash", arguments: { commands: [{ command: "sleep 0.5; printf late > sentinel.txt" }] } }], finishReason: "tool_calls",
   }) }) });
   let started!: () => void;
@@ -471,7 +471,7 @@ test("T-07f: compact extension delegates to atomic session compact and returns s
   let summaries = 0;
   let summaryText = "Task objective and chosen constraints remain.";
   let postCompactMessages: ProviderRequest["messages"] | undefined;
-  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ profile: runtime.profile!, generate: async (request) => {
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
     if (request.system.startsWith("Summarize prior conversation")) {
       summaries++;
       return { text: summaryText, toolCalls: [], finishReason: "stop", usage: { prompt_tokens: 40, completion_tokens: 10 } };

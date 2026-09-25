@@ -21,7 +21,7 @@ test("library session APIs page history and resume with an owned store lifetime"
   assert.equal(getSessionHistory({ sessionId: saved.id, storeOptions }).items[0]?.kind, "user");
 
   const provider = {
-    profile: { name: "fixture", provider: "openai", method: "openai-chat-completions", model: "fixture" },
+    modelConfig: { agentName: "fixture", provider: "openai", method: "openai-chat-completions", model: "fixture" },
     async *complete() { yield { type: "text_delta", text: "done" }; },
   } as unknown as ProviderAdapter;
   const handle = resumeSession({ sessionId: saved.id, storeOptions,

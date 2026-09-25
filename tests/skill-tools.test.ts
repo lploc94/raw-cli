@@ -21,9 +21,9 @@ async function fixture() {
     await writeFile(join(folder, "SKILL.md"), body);
   };
   const config = async (skills: string[], tools = ["builtin/list_skills", "builtin/load_skill"], extra: Record<string, unknown> = {}) => {
-    await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
+    await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
       provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
-    profiles: { p: { model: "m", tools: { use: tools }, skills: { use: skills }, ...extra } } }));
+    agents: { p: { model: "m", tools: { use: tools }, skills: { use: skills }, ...extra } } }));
     return loadConfig({ configPath, env: {}, requireModel: true });
   };
   return { root, configPath, skill, config };
@@ -73,9 +73,9 @@ test("skills require both explicit tools, and selected-only discovery validates 
   const empty = await createRuntimeTools({ runtime: await config([], []), cwd: root });
   try { assert.deepEqual(empty.selectedNames, []); }
   finally { await empty.mcp.close(); }
-  await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
+  await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
     provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
-  profiles: { p: { model: "m", tools: { use: ["builtin/list_skills", "builtin/load_skill"] },
+  agents: { p: { model: "m", tools: { use: ["builtin/list_skills", "builtin/load_skill"] },
     skills: { use: ["agent/one"] }, max_output_bytes: 4 } } }));
   await assert.rejects(createRuntimeTools({ runtime: await loadConfig({ configPath, env: {} }), cwd: root }), /max_output_bytes/);
 });
@@ -116,8 +116,8 @@ test("global skill root follows the config environment and ignores unselected in
     name: "global", description: "Global instructions" }));
   await writeFile(join(selectedFolder, "SKILL.md"), "Global body\n");
   await writeFile(join(invalidFolder, "skill.json"), "not JSON");
-  await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
-    provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, profiles: { p: {
+  await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
+    provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, agents: { p: {
       model: "m", tools: { use: ["builtin/list_skills", "builtin/load_skill"] },
       skills: { use: ["local/global"] },
     } } }));
@@ -133,7 +133,7 @@ test("ACP provider sees skill metadata and Markdown only after linked tool calls
   const runtime = await config(["agent/acp"]);
   const requests: Array<{ system: string; tools: unknown; messages: unknown }> = [];
   const server = createAcpServer({ runtime, storeOptions: { env: { XDG_STATE_HOME: join(root, "state"), XDG_CONFIG_HOME: join(root, "xdg") } },
-    providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+    providerFactory: () => ({ modelConfig: runtime.modelConfig!, async generate(request) {
       requests.push({ system: request.system, tools: structuredClone(request.tools), messages: structuredClone(request.messages) });
       if (requests.length === 1) return { text: "", toolCalls: [{ id: "list", name: "list_skills", arguments: {} }], finishReason: "tool_calls" };
       if (requests.length === 2) return { text: "", toolCalls: [{ id: "load", name: "load_skill", arguments: { name: "acp_skill" } }], finishReason: "tool_calls" };
@@ -167,9 +167,9 @@ test("CLI appends list and load results after linked calls and keeps loaded Mark
     { frames: [openAiFrame({ content: "reloaded" }, "stop"), openAiDone] },
   ]);
   try {
-    await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
+    await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
       provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: provider.url,
-    } }, profiles: { p: { model: "m", tools: { use: ["builtin/list_skills", "builtin/load_skill"] },
+    } }, agents: { p: { model: "m", tools: { use: ["builtin/list_skills", "builtin/load_skill"] },
       skills: { use: ["agent/alpha", "agent/beta"] }, system_prompt: "Skill agent" } } }));
     const env = { ...process.env, OPENAI_API_KEY: "fixture", XDG_STATE_HOME: join(root, "state"), XDG_CONFIG_HOME: join(root, "xdg") };
     const run = async (args: string[]) => {
