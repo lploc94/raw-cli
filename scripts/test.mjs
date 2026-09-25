@@ -10,7 +10,7 @@ const files = readdirSync(new URL("../tests/", import.meta.url))
 
 const required = ["config", "prompt", "foundation-cli", "primitives", "registry", "overhead", "providers",
   "provider-content", "agent", "agent-lifecycle", "compact", "cache", "usage", "mcp", "mcp-content",
-  "acp", "acp-client", "acp-transport", "cli", "repl", "package"]
+  "acp", "acp-client", "acp-transport", "cli", "repl", "package", "session-store"]
   .map((name) => `tests/${name}.test.ts`);
 const missing = required.filter((file) => !files.includes(file));
 
@@ -19,10 +19,12 @@ if (files.length === 0 || missing.length) {
   process.exitCode = 1;
 } else {
   const configHome = mkdtempSync(join(tmpdir(), "raw-test-config-"));
+  const stateHome = mkdtempSync(join(tmpdir(), "raw-test-state-"));
   const result = spawnSync(process.execPath, ["--import", "tsx", "--test", ...files], {
     stdio: "inherit",
-    env: { ...process.env, XDG_CONFIG_HOME: configHome },
+    env: { ...process.env, XDG_CONFIG_HOME: configHome, XDG_STATE_HOME: stateHome },
   });
   rmSync(configHome, { recursive: true, force: true });
+  rmSync(stateHome, { recursive: true, force: true });
   process.exitCode = result.status ?? 1;
 }

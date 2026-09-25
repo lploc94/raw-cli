@@ -3,6 +3,7 @@ export {
   loadConfig,
   parseCliArgs,
   readConfigDocument,
+  readSessionRetentionDays,
   redact,
 } from "./config.js";
 export type { CliArgs, CliCommand, CompactSettings, ConfigDocument, LoadConfigOptions, RawFlags, RuntimeConfig } from "./config.js";
@@ -29,3 +30,5 @@ export { createAcpClient } from "./acp/client.js";
 export type { AcpClientOptions, AcpParentClient, ParentToolCall, ParentToolHandler } from "./acp/client.js";
 export { serveAcpStdio, serveAcpWebSocket } from "./acp/transport.js";
 export type { AcpWsListener } from "./acp/transport.js";
+export { openSessionStore, sessionStorePath, SessionStore } from "./sessions/store.js";
+export type { CreateSessionOptions, HistoryItem, Page, SessionStoreOptions, SessionSummary } from "./sessions/store.js";

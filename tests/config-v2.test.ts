@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, parseCliArgs, readConfigDocument } from "../src/config.js";
+import { loadConfig, parseCliArgs, readConfigDocument, readSessionRetentionDays } from "../src/config.js";
 import { createProvider } from "../src/llm/client.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
@@ -85,4 +85,29 @@ test("a known service cannot silently use another adapter's default endpoint", a
     api_key_env: "OPENAI_API_KEY",
   } }, profiles: { run: { model: "wrong" } } });
   await assert.rejects(loadConfig({ home, env: { OPENAI_API_KEY: "fixture" }, requireModel: true }), /base_url is required/);
+});
+
+test("retention defaults to seven days and only canonical config may set it", async () => {
+  const home = fixture({});
+  assert.equal(readSessionRetentionDays({ home, env: {} }), 7);
+  const canonical = join(home, ".config", "raw", "config.json");
+  writeFileSync(canonical, JSON.stringify({ sessions: { retention_days: 30 } }));
+  assert.equal(readSessionRetentionDays({ home, env: {} }), 30);
+  const alternate = join(home, "alternate.json");
+  writeFileSync(alternate, JSON.stringify({}));
+  const loaded = await loadConfig({ home, env: {}, configPath: alternate, requireModel: false });
+  assert.equal(loaded.sessionsRetentionDays, 30);
+  writeFileSync(alternate, JSON.stringify({ sessions: { retention_days: 1 } }));
+  await assert.rejects(loadConfig({ home, env: {}, configPath: alternate, requireModel: false }), /canonical|global/i);
+});
+
+test("retention rejects invalid numbers and unknown settings", () => {
+  const home = fixture({});
+  const canonical = join(home, ".config", "raw", "config.json");
+  for (const value of [0, -1, 1.5, "7", null, true]) {
+    writeFileSync(canonical, JSON.stringify({ sessions: { retention_days: value } }));
+    assert.throws(() => readSessionRetentionDays({ home, env: {} }), /positive integer/i);
+  }
+  writeFileSync(canonical, JSON.stringify({ sessions: { retention_days: 7, pin: true } }));
+  assert.throws(() => readSessionRetentionDays({ home, env: {} }), /unknown sessions field/i);
 });

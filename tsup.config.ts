@@ -10,6 +10,8 @@ export default defineConfig([
     clean: true,
     dts: true,
     splitting: false,
+    external: ["node:sqlite"],
+    removeNodeProtocol: false,
   },
   {
     entry: { raw: "bin/raw.ts" },
@@ -20,6 +22,8 @@ export default defineConfig([
     clean: false,
     dts: false,
     splitting: false,
+    external: ["node:sqlite"],
+    removeNodeProtocol: false,
     banner: { js: "#!/usr/bin/env node" },
   },
 ]);

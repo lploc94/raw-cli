@@ -34,7 +34,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   assert.equal(install.status, 0, install.stderr);
   const bin = join(consumer, "node_modules", ".bin", "raw");
   await access(bin);
-  const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), OPENAI_API_KEY: "key" };
+  const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
 

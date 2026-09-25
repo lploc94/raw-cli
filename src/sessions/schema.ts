@@ -1,0 +1,80 @@
+import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+
+export const SESSION_SCHEMA_VERSION = 1;
+
+export function initializeSessionSchema(database: DatabaseSync): void {
+  database.exec("PRAGMA foreign_keys = ON");
+  database.exec("PRAGMA busy_timeout = 5000");
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const version = Number(database.prepare("PRAGMA user_version").get()?.user_version);
+    if (version !== 0 && version !== SESSION_SCHEMA_VERSION) {
+      throw new Error(`unsupported session schema version: ${version}`);
+    }
+    if (version === 0) {
+      const existing = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1").get();
+      if (existing) throw new Error("unsupported session schema version: unversioned database");
+      const storeId = randomUUID();
+      database.exec(`
+      CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        canonical_path TEXT NOT NULL UNIQUE,
+        display_path TEXT NOT NULL
+      );
+      CREATE TABLE store_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO store_meta(key, value) VALUES ('id', '${storeId}');
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        profile_name TEXT,
+        config_path TEXT,
+        model_id TEXT,
+        provider TEXT,
+        method TEXT,
+        endpoint TEXT,
+        system_prompt TEXT,
+        cache_key TEXT,
+        selected_tools_json TEXT,
+        tool_schema_digest TEXT,
+        original_task TEXT,
+        summary_text TEXT,
+        usage_json TEXT,
+        owner_token TEXT,
+        owner_generation INTEGER NOT NULL DEFAULT 0,
+        lease_until INTEGER
+      );
+      CREATE INDEX sessions_workspace_updated ON sessions(workspace_id, updated_at DESC, id DESC);
+      CREATE INDEX sessions_updated ON sessions(updated_at DESC, id DESC);
+      CREATE TABLE history (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        PRIMARY KEY(session_id, sequence)
+      );
+      CREATE INDEX history_session_sequence ON history(session_id, sequence DESC);
+      CREATE TABLE model_context (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        PRIMARY KEY(session_id, position)
+      );
+      PRAGMA user_version = 1;
+    `);
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+  database.exec("PRAGMA journal_mode = WAL");
+}

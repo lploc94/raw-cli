@@ -47,6 +47,7 @@ export interface RuntimeConfig {
   readonly autoApprove: boolean;
   readonly compact: Readonly<CompactSettings>;
   readonly configPath: string;
+  readonly sessionsRetentionDays: number;
   readonly mcpServers: Readonly<Record<string, McpServerConfig>>;
   readonly toolRules: readonly ToolPolicyRule[];
   resolveCompactProfile(): Readonly<ProviderProfile>;
@@ -139,6 +140,19 @@ export function configFilePath(options: LoadConfigOptions = {}): string {
   return join(base, "raw", "config.json");
 }
 
+function canonicalConfigPath(options: LoadConfigOptions = {}): string {
+  const { configPath: _path, flags, ...rest } = options;
+  const { configPath: _flagPath, ...otherFlags } = flags ?? {};
+  return configFilePath({ ...rest, flags: otherFlags });
+}
+
+function sessionsSpec(raw: unknown): number {
+  if (raw === undefined) return 7;
+  const value = object(raw, "sessions");
+  keys(value, ["retention_days"], "sessions");
+  return value.retention_days === undefined ? 7 : positive(value.retention_days, "sessions.retention_days");
+}
+
 export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocument {
   const path = configFilePath(options);
   let source: string;
@@ -155,9 +169,20 @@ export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocum
   if (!tree || errors.length) throw new Error(`invalid JSON config: ${path}`);
   checkDuplicates(tree);
   const data = object(getNodeValue(tree), "config root");
-  keys(data, ["default_profile", "models", "profiles", "mcp"], "config");
+  keys(data, ["default_profile", "models", "profiles", "mcp", "sessions"], "config");
+  if (data.sessions !== undefined && path !== canonicalConfigPath(options)) {
+    throw new Error("sessions settings are allowed only in the canonical global config");
+  }
+  sessionsSpec(data.sessions);
   validateDocument(data);
   return { path, data, exists: true };
+}
+
+export function readSessionRetentionDays(options: LoadConfigOptions = {}): number {
+  const { configPath: _path, flags, ...rest } = options;
+  const { configPath: _flagPath, ...otherFlags } = flags ?? {};
+  const canonical = readConfigDocument({ ...rest, flags: otherFlags });
+  return sessionsSpec(canonical.data.sessions);
 }
 
 function cacheOptions(value: unknown, provider: ProviderName, method: ApiMethod, context: string): CacheOptions {
@@ -498,6 +523,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   }
   const flags = options.flags ?? {};
   const document = readConfigDocument(options);
+  const sessionsRetentionDays = readSessionRetentionDays(options);
   const parsed = parseDocument(document.data);
   const selectedName = flags.profile ?? env.RAW_PROFILE ?? parsed.defaultName;
   if (selectedName !== undefined && !parsed.profiles.has(selectedName)) throw new Error("unknown profile: " + selectedName);
@@ -546,6 +572,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     autoApprove: flags.autoApprove ?? true,
     compact,
     configPath: document.path,
+    sessionsRetentionDays,
     mcpServers: Object.freeze(mcpServers),
     toolRules,
     resolveCompactProfile() {

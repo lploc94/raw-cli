@@ -4,6 +4,8 @@
 
 Raw reads one strict JSON file from $XDG_CONFIG_HOME/raw/config.json or ~/.config/raw/config.json. --config PATH replaces that file. An absent implicit file is allowed; an absent explicit file is an error. Duplicate and unknown fields fail validation.
 
+The canonical global file alone may set `"sessions": {"retention_days": 7}`. The value must be a positive integer and defaults to 7. An alternate `--config` file may select a model/profile, but a `sessions` block there is rejected so it cannot change the shared session database's expiry policy. Retention is measured from the last committed conversation activity; reading or listing a session does not renew it. Expired sessions become unavailable before the later cleanup pass permanently deletes their history. The session store lives at `$XDG_STATE_HOME/raw/sessions.sqlite`, or `~/.local/state/raw/sessions.sqlite` when that variable is unset. Its directory and database are private to the OS user. Back up the state directory if saved history must survive local disk loss. There is no migration for unreleased session formats.
+
 The unreleased schema is breaking. It has no old flat-profile parser or migration aliases. The root has models, profiles and optional default_profile. A model key is a local alias; model_id is the exact value sent upstream. A profile names one model alias and supplies run settings.
 
 ~~~json
