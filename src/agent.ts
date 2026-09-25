@@ -323,15 +323,20 @@ export class AgentSession {
     let steps = 0;
     let observerError: Error | undefined;
     let ended = false;
-    let visibleText = "";
-    let visibleReasoning = "";
+    const visibleSegments: Array<{ kind: "assistant" | "reasoning"; text: string }> = [];
+    const appendVisible = (kind: "assistant" | "reasoning", text: string) => {
+      if (!text) return;
+      const last = visibleSegments.at(-1);
+      if (last?.kind === kind) last.text += text;
+      else visibleSegments.push({ kind, text });
+    };
     const startedCalls = new Set<string>();
     const emit = (event: RunEvent) => {
       if (observerError) return;
       try {
         onEvent?.(structuredClone(event));
-        if (event.type === "text_delta") visibleText += event.text;
-        else if (event.type === "reasoning_delta") visibleReasoning += event.text;
+        if (event.type === "text_delta") appendVisible("assistant", event.text);
+        else if (event.type === "reasoning_delta") appendVisible("reasoning", event.text);
         else if (event.type === "tool_start" && this.persistence?.surface === "cli") {
           this.recordVisible("tool_call", { id: event.id, name: event.name,
             arguments: toolArguments(event.name, event.arguments), started: true });
@@ -352,14 +357,15 @@ export class AgentSession {
       }
     };
     const visibleMessage = (fallbackText = "", status = "complete"): VisibleRecord[] => {
-      const records: VisibleRecord[] = [];
-      const text = visibleText || fallbackText;
-      if (text) records.push({ kind: "assistant", payload: this.persistence?.surface === "acp"
-        ? { update: acpUpdate({ type: "text_delta", text }) } : { text }, status });
-      if (visibleReasoning && this.persistence?.surface !== "acp") records.push({ kind: "reasoning", payload: { text: visibleReasoning }, status });
-      visibleText = "";
-      visibleReasoning = "";
-      return records;
+      const segments = visibleSegments.splice(0);
+      if (fallbackText && !segments.some((segment) => segment.kind === "assistant")) {
+        segments.push({ kind: "assistant", text: fallbackText });
+      }
+      if (this.persistence?.surface === "acp") {
+        const text = segments.filter((segment) => segment.kind === "assistant").map((segment) => segment.text).join("");
+        return text ? [{ kind: "assistant", payload: { update: acpUpdate({ type: "text_delta", text }) }, status }] : [];
+      }
+      return segments.map((segment) => ({ kind: segment.kind, payload: { text: segment.text }, status }));
     };
     const finish = (result: RunResult): RunResult => {
       if (!ended) {

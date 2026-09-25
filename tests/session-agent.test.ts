@@ -120,6 +120,46 @@ test("provider error flushes one incomplete text and reasoning record without a 
   } finally { await agent.close(); store.close(); }
 });
 
+test("CLI history preserves the order of streamed reasoning and answer fragments", async () => {
+  const { root, store, id } = setup();
+  const runtime = provider(async (request) => {
+    request.onReasoningDelta?.("think-");
+    request.onReasoningDelta?.("first");
+    request.onTextDelta?.("answer-one");
+    request.onReasoningDelta?.("think-again");
+    request.onTextDelta?.("answer-two");
+    return { text: "answer-oneanswer-two", toolCalls: [], finishReason: "stop" };
+  });
+  const agent = createAgent({ cwd: root, provider: runtime, system: "system", persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    assert.equal((await agent.run("question")).status, "completed");
+    const history = store.getSessionHistory({ sessionId: id, limit: 100 }).items;
+    assert.deepEqual(history.map((item) => [item.kind, item.payload.text ?? item.payload.input]), [
+      ["user", "question"],
+      ["reasoning", "think-first"],
+      ["assistant", "answer-one"],
+      ["reasoning", "think-again"],
+      ["assistant", "answer-two"],
+    ]);
+  } finally { await agent.close(); store.close(); }
+});
+
+test("CLI history puts a nonstreamed final answer after streamed reasoning", async () => {
+  const { root, store, id } = setup();
+  const runtime = provider(async (request) => {
+    request.onReasoningDelta?.("thinking");
+    return { text: "answer", toolCalls: [], finishReason: "stop" };
+  });
+  const agent = createAgent({ cwd: root, provider: runtime, system: "system", persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    assert.equal((await agent.run("question")).status, "completed");
+    const history = store.getSessionHistory({ sessionId: id, limit: 100 }).items;
+    assert.deepEqual(history.map((item) => [item.kind, item.payload.text ?? item.payload.input]), [
+      ["user", "question"], ["reasoning", "thinking"], ["assistant", "answer"],
+    ]);
+  } finally { await agent.close(); store.close(); }
+});
+
 test("graceful cancel keeps streamed text incomplete after restart", async () => {
   const { root, store, id } = setup();
   let started!: () => void;
