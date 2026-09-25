@@ -45,6 +45,9 @@ test("packaged bundled plugins preserve exact definitions and semantic batch pre
   assert.equal(read.isError, false);
   assert.match(JSON.stringify(read), /ok/);
   assert.equal((await registry.dispatch("view_image", { path: marker }, { ...ctx, autoApprove: true })).isError, true);
+  const imageArgs = await registry.dispatch("view_image", { path: 3 }, { ...ctx, autoApprove: true });
+  assert.equal(imageArgs.code, "invalid_arguments");
+  assert.match(JSON.stringify(imageArgs), /path must be a string/);
 });
 
 test("registry has only three built-ins and rejects invalid/hidden calls before approval", async () => {

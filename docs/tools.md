@@ -17,6 +17,34 @@ During this phase the existing registry assembly still supplies sessions;
 profiles do not load plugin folders yet. The shared selected-only loader and
 profile syntax are introduced in later phases.
 
+## Selected plugin folders (implementation phase 2)
+
+The loader accepts exact IDs from three roots: `builtin/<folder>` in the
+installed package, `local/<folder>` in `$XDG_CONFIG_HOME/raw/tools/` (or
+`~/.config/raw/tools/`), and `agent/<folder>` in `tools/` beside the selected
+config file. `--config` does not change the global root. Each selected folder
+must have one `tool.json` and one `index.mjs`; one folder registers one
+model-facing tool. Names and IDs must be unique among selected tools. The
+loader reads and validates all selected manifests before importing any handler.
+Unselected folders are not read or executed.
+
+Folder IDs use lowercase letters, digits, `_` and `-`, starting with a letter;
+`version` is `major.minor.patch`. Model-facing names start with a letter or `_`
+and contain at most 64 letters, digits, `_` or `-`. Manifests reject unknown
+fields. The schema must describe an object and may use JSON Schema draft-07 or
+2020-12 with local references; remote references and async schemas are not
+supported. A symlinked folder, manifest, or entry that escapes its root fails
+before code is imported.
+
+The entry exports `handler(args, context)` and may export synchronous
+`validateArgs(args)`, which returns an error string or `undefined`. Raw runs
+semantic validation and the declared JSON Schema before permission or any
+side effect. The context gives the session cwd, abort signal, result byte cap,
+tool-call ID, and available host options; callbacks for approval stay in Raw.
+The result uses Raw's text, JSON, and image blocks and is capped by the host.
+Local modules run with the invoking OS account's full permissions. No plugin
+sandbox is implied. The profile-to-loader connection is added in Phase 3.
+
 The default registry exposes exactly three tools. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
 
 | Tool | Required input | Optional input | Action |

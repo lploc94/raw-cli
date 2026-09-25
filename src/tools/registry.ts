@@ -6,7 +6,7 @@ import imageManifest from "./bundled/view_image/tool.json" with { type: "json" }
 import { handler as readHandler, validateArgs as validateReadBatch } from "./bundled/read_file/index.js";
 import { handler as writeHandler, validateArgs as validateWriteBatch } from "./bundled/write_file/index.js";
 import { handler as bashHandler, validateArgs as validateBashBatch } from "./bundled/bash/index.js";
-import { handler as imageHandler } from "./bundled/view_image/index.js";
+import { handler as imageHandler, validateArgs as validateImageArgs } from "./bundled/view_image/index.js";
 import { capResult, errorResult } from "./results.js";
 import type { ToolResult } from "./types.js";
 
@@ -49,7 +49,7 @@ const builtIns: readonly ToolRegistration[] = [
   registration(writeManifest, writeHandler, validateWriteBatch),
   registration(bashManifest, bashHandler, validateBashBatch),
 ];
-const imageTool: ToolRegistration = registration(imageManifest, imageHandler);
+const imageTool: ToolRegistration = registration(imageManifest, imageHandler, validateImageArgs);
 
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") {

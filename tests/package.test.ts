@@ -53,6 +53,12 @@ const invalid = module.validateArgs({ operations: [
 if (!/operations\\[1\\].*invalid line range/.test(invalid)) throw new Error("missing semantic batch validator");
 `], consumer, { ...process.env });
   assert.equal(standalone.code, 0, standalone.stderr);
+  const installedLoader = await run(process.execPath, ["--input-type=module", "--eval", `
+import { loadToolPlugins } from "raw-cli";
+const tools = await loadToolPlugins({ selectedIds: ["builtin/read_file"], configPath: "ignored.json" });
+if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new Error("installed bundled root failed");
+`], consumer, { ...process.env });
+  assert.equal(installedLoader.code, 0, installedLoader.stderr);
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
