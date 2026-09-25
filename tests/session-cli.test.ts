@@ -61,6 +61,8 @@ test("one-shot session lists, resumes in another process, pages history, and del
     assert.ok(id);
     assert.match(first.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
     assert.doesNotMatch(first.stderr, /raw: session usage:/);
+    const firstContext = Number(first.stderr.match(/raw: context: ~(\d+) tokens \(window unknown\)/)?.[1]);
+    assert.ok(firstContext > 0);
     assert.match(listed.stdout, /first task/);
     const noTask = await raw(["--resume", id], a, env, "/exit\n");
     assert.equal(noTask.code, 0, noTask.stderr);
@@ -70,6 +72,8 @@ test("one-shot session lists, resumes in another process, pages history, and del
     assert.equal(continued.code, 0, continued.stderr);
     assert.equal(continued.stdout, "second-answer\n");
     assert.match(continued.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
+    const continuedContext = Number(continued.stderr.match(/raw: context: ~(\d+) tokens \(window unknown\)/)?.[1]);
+    assert.ok(continuedContext > firstContext);
     assert.match(JSON.stringify(provider.requests[1]?.body), /first-answer/);
     const shown = await raw(["sessions", "show", id], a, env);
     assert.equal(shown.code, 0, shown.stderr);
@@ -99,12 +103,20 @@ test("one-shot footer shows reported session token usage without inventing cache
     model: "fixture", choices: [], usage })}\n\n`;
   const provider = await startMockProvider([{ frames: [openAiFrame({ content: "measured-answer" }, "stop"), usageFrame, openAiDone] }]);
   try {
-    const result = await raw(["--config", testConfig("openai", "fixture", provider.url), "measure"], a, env);
+    const config = testConfig("openai", "fixture", provider.url);
+    const document = JSON.parse(readFileSync(config, "utf8"));
+    document.models.fixture.context_window_tokens = 20000;
+    writeFileSync(config, JSON.stringify(document));
+    const result = await raw(["--config", config, "measure"], a, env);
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "measured-answer\n");
     assert.match(result.stderr, /raw: session usage: 1 request, 120 input \/ 24 output tokens, 80 cache-read tokens/);
     assert.doesNotMatch(result.stderr, /cache miss/i);
-    assert.match(result.stderr, /raw: continue: raw --resume [0-9a-f-]+ "query"/);
+    const context = result.stderr.match(/raw: context: ~(\d+) \/ 20000 tokens \((\d+\.\d)% used\)/);
+    assert.ok(context, result.stderr);
+    assert.equal(Number(context[2]), Number((Number(context[1]) / 20000 * 100).toFixed(1)));
+    assert.notEqual(Number(context[1]), 144, "current context is not cumulative provider usage");
+    assert.match(result.stderr, /raw: context: .*\nraw: continue: raw --resume [0-9a-f-]+ "query"\n$/);
   } finally { await provider.close(); }
 });
 

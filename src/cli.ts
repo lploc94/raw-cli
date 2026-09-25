@@ -213,6 +213,11 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
         }
         if (stats.requests > 0 && stats.cacheRatioCoverage === stats.requests) usage.push(`${stats.cacheReadTokensKnown} cache-read tokens`);
         if (usage.length) process.stderr.write(`raw: session usage: ${stats.requests} request${stats.requests === 1 ? "" : "s"}, ${usage.join(", ")}\n`);
+        const contextTokens = session.estimatedContextTokens();
+        const contextWindow = runtime.profile!.contextWindow;
+        process.stderr.write(contextWindow === undefined
+          ? `raw: context: ~${contextTokens} tokens (window unknown)\n`
+          : `raw: context: ~${contextTokens} / ${contextWindow} tokens (${(contextTokens / contextWindow * 100).toFixed(1)}% used)\n`);
         process.stderr.write(`raw: continue: raw --resume ${record.id} "query"\n`);
       }
       return code;

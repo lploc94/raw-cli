@@ -180,6 +180,9 @@ export class AgentSession {
   get contextRevision(): number { return this.contextGenerationRevision; }
   get toolDefinitions(): readonly ToolDefinition[] { return structuredClone(this.schemaView); }
   stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
+  estimatedContextTokens(): number {
+    return Math.ceil(estimateRequestTokens(this.options.system, this.messages, this.schemaView) * this.tokenCalibration);
+  }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
     const binding = this.persistence;
