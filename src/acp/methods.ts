@@ -4,8 +4,9 @@ import { isAbsolute } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { agent, PROTOCOL_VERSION, RequestError, type AgentApp, type AgentConnection,
-  type AgentContext, type ContentBlock, type McpServer, type SessionUpdate } from "@agentclientprotocol/sdk";
+  type AgentContext, type ContentBlock, type McpServer } from "@agentclientprotocol/sdk";
 import { createAgent, type AgentSession, type RunEvent } from "../agent.js";
+import { acpUpdate } from "../sessions/display.js";
 import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter, ProviderProfile, UserBlock } from "../llm/types.js";
@@ -65,21 +66,6 @@ function promptBlocks(blocks: readonly ContentBlock[]): UserBlock[] {
     }
     throw RequestError.invalidParams(undefined, `unsupported prompt block: ${block.type}`);
   });
-}
-
-function toolUpdate(event: RunEvent): SessionUpdate | undefined {
-  if (event.type === "text_delta") return { sessionUpdate: "agent_message_chunk", content: { type: "text", text: event.text } };
-  if (event.type === "tool_call") return { sessionUpdate: "tool_call", toolCallId: event.id, title: event.name,
-    name: event.name, kind: event.name === "read_file" ? "read" : event.name === "write_file" ? "edit" : "execute",
-    status: "pending", rawInput: event.arguments };
-  if (event.type === "tool_start") return { sessionUpdate: "tool_call_update", toolCallId: event.id, status: "in_progress" };
-  if (event.type === "tool_result") return { sessionUpdate: "tool_call_update", toolCallId: event.id,
-    status: event.result.isError ? "failed" : "completed", rawOutput: event.result };
-  if (event.type === "compact_start") return { sessionUpdate: "agent_thought_chunk",
-    content: { type: "text", text: `Compacting context (${event.estimatedTokens} estimated input tokens).` } };
-  if (event.type === "compact_end") return { sessionUpdate: "agent_thought_chunk",
-    content: { type: "text", text: `Context compact ${event.result.status}.` } };
-  return undefined;
 }
 
 function reverseResult(raw: unknown, maxOutputBytes: number): ToolResult {
@@ -235,7 +221,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     let updateError: unknown;
     let updateChain = Promise.resolve();
     const result = await session.agent.run(input, (event) => {
-      const update = toolUpdate(event);
+      const update = acpUpdate(event);
       if (!update) return;
       updateChain = updateChain.then(() => client.notify("session/update", { sessionId: session.id, update }))
         .catch((error: unknown) => { updateError = error; session.agent.abort(); });

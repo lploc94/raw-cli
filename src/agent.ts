@@ -8,6 +8,10 @@ import { createToolRegistry, type ToolDefinition, type ToolRegistry } from "./to
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import type { ToolResult } from "./tools/types.js";
+import type { SessionOwner, SessionStore } from "./sessions/store.js";
+import { validateStoredAgentState } from "./sessions/restore.js";
+import { acpUpdate, resultPreview, toolArguments } from "./sessions/display.js";
+import type { AgentMetadata, VisibleRecord } from "./sessions/store.js";
 
 export type AgentState = "idle" | "running" | "cancelling" | "compacting" | "closing" | "closed";
 export type RunStatus = "completed" | "max_steps" | "cancelled" | "error";
@@ -43,6 +47,7 @@ export interface AgentOptions {
   approve?: ToolContext["approve"];
   whitelist?: readonly string[];
   compact?: Readonly<CompactSettings>;
+  persistence?: { store: SessionStore; sessionId: string; surface: "cli" | "acp" };
 }
 
 export class AgentSession {
@@ -56,10 +61,14 @@ export class AgentSession {
   private usageEntries: UsageRecord[] = [];
   private originalTask: UserInput | undefined;
   private summaryText: string | undefined;
-  private readonly cacheKey = randomUUID();
+  private cacheKey: string = randomUUID();
   private schemaView: readonly ToolDefinition[];
   private schemaRevision = 1;
   private tokenCalibration = 1;
+  private persistence: { store: SessionStore; sessionId: string; owner: SessionOwner; surface: "cli" | "acp" } | undefined;
+  private heartbeat: NodeJS.Timeout | undefined;
+  private persistenceFailed = false;
+  private persistenceError: Error | undefined;
 
   constructor(options: AgentOptions) {
     const maxSteps = options.maxSteps ?? 25;
@@ -91,6 +100,47 @@ export class AgentSession {
       ...(options.compact !== undefined ? { compact: { ...options.compact } } : {}),
     };
     this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
+    if (options.persistence) {
+      const { store, sessionId, surface } = options.persistence;
+      const owner = store.claimSession(sessionId);
+      try {
+        const savedSelection = store.getStoredSelection(sessionId);
+        if (savedSelection !== undefined) {
+          if (options.whitelist !== undefined && JSON.stringify(options.whitelist) !== JSON.stringify(savedSelection)) {
+            throw new Error("explicit tool selection differs from saved session");
+          }
+          if (savedSelection === null) delete this.options.whitelist;
+          else this.options.whitelist = [...savedSelection];
+          this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
+        }
+        const saved = store.initializeAgent(sessionId, owner, {
+          cwd: this.options.cwd, system: this.options.system, profile: this.options.provider.profile,
+          toolDefinitions: this.schemaView, selectedTools: this.options.whitelist ?? null, cacheKey: this.cacheKey,
+        });
+        validateStoredAgentState(saved);
+        this.messages = structuredClone(saved.messages);
+        this.cacheKey = saved.cacheKey;
+        this.originalTask = saved.originalTask;
+        this.summaryText = saved.summaryText;
+        this.rawUsage = structuredClone(saved.rawUsage);
+        this.usageEntries = structuredClone(saved.usageEntries);
+        this.tokenCalibration = saved.tokenCalibration;
+        this.schemaRevision = saved.schemaRevision;
+        this.persistence = { store, sessionId, owner, surface };
+        this.heartbeat = setInterval(() => {
+          try { store.renewSession(sessionId, owner); }
+          catch (error) {
+            this.persistenceFailed = true;
+            this.persistenceError = error instanceof Error ? error : new Error(String(error));
+            this.controller?.abort();
+          }
+        }, 5_000);
+        this.heartbeat.unref();
+      } catch (error) {
+        store.releaseSession(sessionId, owner);
+        throw error;
+      }
+    }
   }
 
   get state(): AgentState { return this.currentState; }
@@ -101,18 +151,43 @@ export class AgentSession {
   get toolDefinitions(): readonly ToolDefinition[] { return structuredClone(this.schemaView); }
   stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
 
+  private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
+    const binding = this.persistence;
+    if (!binding) return undefined;
+    try { return operation(binding.store, binding.sessionId, binding.owner); }
+    catch (error) {
+      this.persistenceFailed = true;
+      this.persistenceError = error instanceof Error ? error : new Error(String(error));
+      this.controller?.abort();
+      throw error;
+    }
+  }
+
+  private commitMessage(message: ModelMessage, metadata: AgentMetadata = {}, display: readonly VisibleRecord[] = []): void {
+    this.durable((store, sessionId, owner) => store.appendAgentMessage(sessionId, owner, message, metadata, display));
+    this.messages.push(structuredClone(message));
+  }
+
+  private recordVisible(kind: string, payload: Record<string, unknown>, status = "complete"): void {
+    this.durable((store, sessionId, owner) => store.appendOwnedHistory(sessionId, owner, kind, payload, status));
+  }
+
   setToolView(whitelist?: readonly string[]): number {
     if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
     const known = new Set(this.options.registry.definitions().map((item) => item.name));
     for (const name of whitelist ?? []) if (!known.has(name)) throw new Error(`unknown tool: ${name}`);
+    const next = this.options.registry.definitions(whitelist);
+    if (this.persistence) this.persistence.store.updateAgentToolView(this.persistence.sessionId, this.persistence.owner,
+      whitelist ?? null, next, this.schemaRevision + 1);
     if (whitelist === undefined) delete this.options.whitelist;
     else this.options.whitelist = [...whitelist];
-    this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
+    this.schemaView = Object.freeze(next);
     return ++this.schemaRevision;
   }
 
   clear(): void {
     if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
+    if (this.persistence) this.persistence.store.clearAgentContext(this.persistence.sessionId, this.persistence.owner);
     this.messages = [];
     this.originalTask = undefined;
     this.summaryText = undefined;
@@ -151,6 +226,8 @@ export class AgentSession {
           const entry: UsageRecord = { method: provider.profile.method, provider: provider.profile.provider, raw: undefined };
           entries.set(index, { entry });
           this.usageEntries.push(entry);
+          this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+            { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
         },
         onUsage: (index, raw) => {
           if (controller.signal.aborted) return;
@@ -159,16 +236,23 @@ export class AgentSession {
           current.entry.raw = structuredClone(raw);
           if (current.rawIndex === undefined) current.rawIndex = this.rawUsage.push(structuredClone(raw)) - 1;
           else this.rawUsage[current.rawIndex] = structuredClone(raw);
+          this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+            { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
           onUsage?.(raw);
         },
       }), aborted]);
+      if (this.persistenceError) throw this.persistenceError;
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       if (work.replacement && work.summary !== undefined) {
+        this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, work.replacement!,
+          { summaryText: work.summary!, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
+            tokenCalibration: this.tokenCalibration }));
         this.messages = structuredClone(work.replacement);
         this.summaryText = work.summary;
       }
       return work.result;
     } catch (error) {
+      if (this.persistenceError) throw this.persistenceError;
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       throw error;
     } finally { controller.signal.removeEventListener("abort", onAbort); }
@@ -182,7 +266,11 @@ export class AgentSession {
       if (this.activeRun) await this.activeRun;
       if (this.activeCompact) await this.activeCompact;
     }
-    finally { this.currentState = "closed"; }
+    finally {
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      if (this.persistence) this.persistence.store.releaseSession(this.persistence.sessionId, this.persistence.owner);
+      this.currentState = "closed";
+    }
   }
 
   compact(options: CompactOptions = {}): Promise<CompactResult> {
@@ -208,6 +296,7 @@ export class AgentSession {
   run(input: UserInput, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     if (this.currentState === "closed" || this.currentState === "closing") return Promise.reject(new Error("agent session is closed"));
     if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
+    if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
     this.currentState = "running";
     const controller = new AbortController();
     this.controller = controller;
@@ -224,37 +313,92 @@ export class AgentSession {
     let steps = 0;
     let observerError: Error | undefined;
     let ended = false;
+    let visibleText = "";
+    let visibleReasoning = "";
+    const startedCalls = new Set<string>();
     const emit = (event: RunEvent) => {
       if (observerError) return;
-      try { onEvent?.(structuredClone(event)); }
+      try {
+        onEvent?.(structuredClone(event));
+        if (event.type === "text_delta") visibleText += event.text;
+        else if (event.type === "reasoning_delta") visibleReasoning += event.text;
+        else if (event.type === "tool_start" && this.persistence?.surface === "cli") {
+          this.recordVisible("tool_call", { id: event.id, name: event.name,
+            arguments: toolArguments(event.name, event.arguments), started: true });
+          startedCalls.add(event.id);
+        }
+        else if (this.persistence?.surface === "acp" && ["tool_start", "compact_start", "compact_end"].includes(event.type)) {
+          const update = acpUpdate(event);
+          if (update) this.recordVisible("acp_update", { update });
+        } else if (this.persistence?.surface === "cli" && event.type === "compact_start") {
+          this.recordVisible("status", { text: `raw: compacting context (${event.estimatedTokens} estimated input tokens)` });
+        } else if (this.persistence?.surface === "cli" && event.type === "compact_end") {
+          this.recordVisible("status", { text: `raw: compact ${event.result.status}` });
+        }
+      }
       catch (error) {
         observerError = error instanceof Error ? error : new Error(String(error));
         controller.abort();
       }
     };
+    const visibleMessage = (fallbackText = "", status = "complete"): VisibleRecord[] => {
+      const records: VisibleRecord[] = [];
+      const text = visibleText || fallbackText;
+      if (text) records.push({ kind: "assistant", payload: this.persistence?.surface === "acp"
+        ? { update: acpUpdate({ type: "text_delta", text }) } : { text }, status });
+      if (visibleReasoning && this.persistence?.surface !== "acp") records.push({ kind: "reasoning", payload: { text: visibleReasoning }, status });
+      visibleText = "";
+      visibleReasoning = "";
+      return records;
+    };
     const finish = (result: RunResult): RunResult => {
       if (!ended) {
         ended = true;
-        try { onEvent?.(structuredClone({ type: "run_end", result })); }
+        let finalResult = result;
+        const status = result.status === "cancelled" ? "interrupted" : result.status === "error" ? "error" : "complete";
+        if (!this.persistenceError) {
+          try { for (const item of visibleMessage("", status)) this.recordVisible(item.kind, item.payload, item.status); }
+          catch (error) {
+            finalResult = { status: "error", steps, code: "persistence_error",
+              message: error instanceof Error ? error.message : String(error) };
+          }
+        }
+        try { onEvent?.(structuredClone({ type: "run_end", result: finalResult })); }
         catch { /* observer failure cannot emit a second terminal event */ }
+        return finalResult;
       }
       return result;
     };
-    const interrupted = (): RunResult => observerError
-      ? { status: "error", steps, code: "event_handler_error", message: observerError.message }
+    const interrupted = (): RunResult => this.persistenceError
+      ? { status: "error", steps, code: "persistence_error", message: this.persistenceError.message }
+      : observerError ? { status: "error", steps, code: "event_handler_error", message: observerError.message }
       : { status: "cancelled", steps };
     const cancelled = (call: ModelToolCall): ToolResult => capResult(errorResult("cancelled", `tool ${call.name} cancelled`), this.options.maxOutputBytes);
     const appendResult = (call: ModelToolCall, result: ToolResult) => {
-      this.messages.push({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) });
       const publicResult: ToolResult = { ...result, content: result.content.map((block) => block.type === "image"
         ? { type: "text", text: `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]` }
         : block) };
+      const display: VisibleRecord[] = [];
+      if (this.persistence?.surface === "cli" && !startedCalls.has(call.id)) {
+        const args = call.name === "write_file" && !Array.isArray(call.arguments.operations)
+          ? JSON.stringify({ argument_keys: Object.keys(call.arguments) }) : toolArguments(call.name, call.arguments);
+        display.push({ kind: "tool_call", payload: { id: call.id, name: call.name, arguments: args, started: false } });
+      }
+      if (this.persistence?.surface === "cli") display.push({ kind: "tool_result", payload: { id: call.id, name: call.name,
+        preview: resultPreview(call.name, publicResult), code: result.code ?? null, isError: result.isError,
+        exitCode: result.exitCode ?? null, truncated: result.truncated ?? false } });
+      if (this.persistence?.surface === "acp") display.push({ kind: "tool_result", payload: {
+        update: acpUpdate({ type: "tool_result", id: call.id, name: call.name, result: publicResult }),
+      } });
+      this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) }, {}, display);
       emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult });
     };
-    if (this.originalTask === undefined) this.originalTask = structuredClone(input);
-    this.messages.push({ role: "user", content: structuredClone(input) });
+    const firstTask = this.originalTask === undefined;
     let autoCompacted = false;
     try {
+      this.commitMessage({ role: "user", content: structuredClone(input) }, firstTask ? { originalTask: input } : {},
+        [{ kind: "user", payload: { input: structuredClone(input) } }]);
+      if (firstTask) this.originalTask = structuredClone(input);
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
         let requestEstimate = 0;
@@ -302,6 +446,8 @@ export class AgentSession {
         steps++;
         const usageEntry: UsageRecord = { method: this.options.provider.profile.method, provider: this.options.provider.profile.provider, raw: undefined };
         this.usageEntries.push(usageEntry);
+        this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+          { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
         let usageIndex: number | undefined;
         const recordUsage = (raw: unknown) => {
           if (controller.signal.aborted) return;
@@ -312,6 +458,8 @@ export class AgentSession {
           }
           if (usageIndex === undefined) usageIndex = this.rawUsage.push(structuredClone(raw)) - 1;
           else this.rawUsage[usageIndex] = structuredClone(raw);
+          this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+            { rawUsage: this.rawUsage, usageEntries: this.usageEntries, tokenCalibration: this.tokenCalibration }));
           emit({ type: "usage", raw });
         };
         let onAbort!: () => void;
@@ -343,11 +491,19 @@ export class AgentSession {
           throw new Error("provider returned invalid tool call linkage");
         }
         if (!turn.toolCalls.length) {
-          this.messages.push(structuredClone({ role: "assistant", text: turn.text, toolCalls: [], ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }));
+          this.commitMessage(structuredClone({ role: "assistant", text: turn.text, toolCalls: [],
+            ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }), {}, visibleMessage(turn.text));
           return finish({ status: "completed", steps, text: turn.text });
         }
         if (steps >= this.options.maxSteps) return finish({ status: "max_steps", steps, code: "max_steps", message: "tool calls require another inference step" });
-        this.messages.push(structuredClone({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls, ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }));
+        this.commitMessage(structuredClone({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls,
+          ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }), {}, [
+          ...visibleMessage(turn.text),
+          ...(this.persistence?.surface === "acp" ? turn.toolCalls.map((call) => ({
+            kind: "tool_call", payload: { update: acpUpdate({ type: "tool_call", id: call.id, name: call.name,
+              arguments: call.arguments }) }, status: "complete",
+          })) : []),
+        ]);
         for (const call of turn.toolCalls) emit({ type: "tool_call", id: call.id, name: call.name, arguments: call.arguments });
         for (let index = 0; index < turn.toolCalls.length; index++) {
           const call = turn.toolCalls[index]!;
@@ -383,6 +539,7 @@ export class AgentSession {
       }
       return finish({ status: "max_steps", steps, code: "max_steps" });
     } catch (error) {
+      if (this.persistenceError) return finish(interrupted());
       if (controller.signal.aborted) return finish(interrupted());
       const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "provider_error";
       return finish({ status: "error", steps, code, message: (error as Error).message });

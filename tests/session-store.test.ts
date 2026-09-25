@@ -115,7 +115,7 @@ test("a second opener winning the first-schema race does not break the first", (
   };
   try {
     initializeSessionSchema(first);
-    assert.equal(first.prepare("PRAGMA user_version").get()?.user_version, 1);
+    assert.equal(first.prepare("PRAGMA user_version").get()?.user_version, 2);
   } finally { first.close(); second.close(); }
 });
 

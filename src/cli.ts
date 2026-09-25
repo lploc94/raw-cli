@@ -4,56 +4,9 @@ import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { connectMcpServers, type McpServerConfig } from "./tools/mcp-client.js";
 import { createToolRegistry } from "./tools/registry.js";
-import type { ToolResult } from "./tools/types.js";
 
-const RESULT_PREVIEW_CHARS = 2000;
-const RESULT_PREVIEW_LINES = 9; // The result header is the tenth displayed line.
-
-export function resultPreview(name: string, result: ToolResult): string {
-  const channels = new Set(result.content.flatMap((block) => block.type === "text" && block.channel ? [block.channel] : []));
-  const labelChannels = channels.size > 1;
-  const body = result.content.map((block) => {
-    if (block.type === "text") return `${labelChannels && block.channel ? `[${block.channel}]\n` : ""}${block.text}`;
-    if (block.type === "json") {
-      const value = block.value as { results?: unknown } | null;
-      if (["read_file", "write_file", "bash"].includes(name) && value && !Array.isArray(value) && Array.isArray(value.results)
-        && value.results.every((row) => row && typeof row === "object" && !Array.isArray(row)
-          && Number.isSafeInteger(row.index) && typeof row.status === "string")) {
-        const rows = value.results as Array<Record<string, unknown>>;
-        const statuses = rows.map((row) => `${row.index}:${row.status}${typeof row.exit_code === "number" ? `(exit${row.exit_code})` : ""}`).join(" ");
-        return `statuses: ${statuses}\n${rows.map((row) => JSON.stringify(row)).join("\n")}`;
-      }
-      return JSON.stringify(block.value);
-    }
-    return `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]`;
-  }).join("\n").replace(/\r\n?/g, "\n").replace(/\n+$/, "");
-  if (!body) return "";
-  const lines = body.split("\n");
-  const lineLimited = lines.length > RESULT_PREVIEW_LINES
-    ? [...lines.slice(0, 4), "… [middle lines hidden] …", ...lines.slice(-4)].join("\n") : body;
-  const characters = Array.from(lineLimited);
-  if (characters.length <= RESULT_PREVIEW_CHARS) return lineLimited;
-  const marker = "… [middle characters hidden] …";
-  const remaining = RESULT_PREVIEW_CHARS - Array.from(marker).length;
-  return characters.slice(0, Math.ceil(remaining / 2)).join("") + marker
-    + characters.slice(-Math.floor(remaining / 2)).join("");
-}
-
-function toolArguments(name: string, args: Record<string, unknown>, full = false): string {
-  const display = name === "write_file" && Array.isArray(args.operations)
-    ? { operations: args.operations.map((value: unknown) => {
-      const op = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-      return { path: op.path, mode: op.mode,
-        ...(typeof op.content === "string" ? { content_bytes: Buffer.byteLength(op.content, "utf8") } : {}),
-        ...(typeof op.old_text === "string" ? { old_text_bytes: Buffer.byteLength(op.old_text, "utf8") } : {}),
-        ...(typeof op.new_text === "string" ? { new_text_bytes: Buffer.byteLength(op.new_text, "utf8") } : {}),
-        ...(op.start_line !== undefined ? { start_line: op.start_line } : {}),
-        ...(op.end_line !== undefined ? { end_line: op.end_line } : {}),
-      };
-    }) } : args;
-  const json = JSON.stringify(display);
-  return full || name === "bash" || json.length <= 240 ? json : `${json.slice(0, 239)}…`;
-}
+export { resultPreview } from "./sessions/display.js";
+import { resultPreview, toolArguments } from "./sessions/display.js";
 
 function textRun(session: AgentSession, task: string): Promise<RunResult> {
   let wrote = false;

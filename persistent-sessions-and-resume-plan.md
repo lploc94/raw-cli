@@ -93,7 +93,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 
 ## Phase 2: Durable agent context, compact, and crash recovery
 ### Status
-pending
+complete
 ### Goal
 Connect canonical agent transitions to durable state while preserving exact provider replay and safe recovery.
 ### Current behavior and gap
@@ -117,11 +117,11 @@ An interrupted side-effecting Bash increments a marker at most once across crash
 ### Implementation obligations
 Await durable declaration before tool dispatch and durable result before next dispatch; guard writes with owner generation; hydrate through a validated API; preserve existing cancellation and compact rollback; coalesce visible stream fragments and finalize them on graceful error/cancel; stage large payloads under protected live-owner namespace and remove only dead-owner or safely unreferenced files after commit.
 ### Acceptance criteria
-- [ ] AC-2.1: Restored next request equals the saved context including opaque/provider blocks, tool linkage, effective selected tool definitions, system/tool prefix, and cache identity when runtime is compatible — proven by session-agent tests.
-- [ ] AC-2.2: A crash before a tool-result commit never re-executes the tool and leaves an explicit uncertain result; a crash after commit retains the result — proven by subprocess tests.
-- [ ] AC-2.3: Successful compact preserves actual CLI/ACP-visible history, including long args/reasoning/raw ACP result, while model-only old payloads are reclaimed; failed/aborted/non-shrinking compact preserves durable state — proven by fault-injection and compact tests.
-- [ ] AC-2.4: Simultaneous writers to one session reject the second, while two different sessions can progress — proven by cross-process ownership tests.
-- [ ] AC-2.5: Cancelled/error streaming leaves one incomplete display record, and concurrent orphan sweep cannot remove a live writer's unpublished payload — proven by cancellation and deterministic two-process staging tests.
+- [x] AC-2.1: Restored next request equals the saved context including opaque/provider blocks, tool linkage, effective selected tool definitions, system/tool prefix, and cache identity when runtime is compatible — proven by session-agent tests.
+- [x] AC-2.2: A crash before a tool-result commit never re-executes the tool and leaves an explicit uncertain result; a crash after commit retains the result — proven by subprocess tests.
+- [x] AC-2.3: Successful compact preserves actual CLI/ACP-visible history, including long args/reasoning/raw ACP result, while model-only old payloads are reclaimed; failed/aborted/non-shrinking compact preserves durable state — proven by fault-injection and compact tests.
+- [x] AC-2.4: Simultaneous writers to one session reject the second, while two different sessions can progress — proven by cross-process ownership tests.
+- [x] AC-2.5: Cancelled/error streaming leaves one incomplete display record, and concurrent orphan sweep cannot remove a live writer's unpublished payload — proven by cancellation and deterministic two-process staging tests.
 ### Focused verification
 `node --import tsx --test tests/session-agent.test.ts tests/session-process.test.ts tests/compact.test.ts tests/auto-compact.test.ts`
 ### Phase gates
@@ -255,6 +255,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 - All phase acceptance checks, required reviews, test/CI/package gates, documentation, and commits are complete.
 
 ## Progress Log
+- 2026-09-25: Phase 2 complete. Agent transitions now commit user/assistant/tool state and visible projections, restore exact active context and selected schema, and recover pending calls without replay. Large payloads use private checksum-verified files with reference tracking; compact retains display history and reclaims model-only detail. Focused verification passed; `npm run typecheck && npm test` passed (245 tests), as did `npm run test:package`. GPT-6 Astra reviewed three rounds and returned APPROVE after fixes for reclamation/republication, JSON prototype safety, and persistence error reporting.
 - 2026-09-25: Phase 1 complete. Added global private SQLite store, strict canonical retention config, stable IDs, bounded indexed cursors and history APIs. TDD red evidence covered missing store/config exports and three Astra review defects; the latter were fixed with regression tests. `npm run typecheck && npm test` passed (222 tests); `npm run test:package` passed after preserving `node:sqlite` in bundles. GPT-6 Astra final review: APPROVE, three findings resolved.
 - 2026-09-25: Created plan from current conversation and CTXE-anchored repository evidence. No production implementation started. Awaiting user approval of the plan before `$loop-implement`.
 - 2026-09-25: GPT-6 Astra round 1 returned REVISE with seven issues. Updated scope, invariants, design, and phase tests/contracts for exact visible-history fidelity; partial streams; live-writer payload staging; cancel-vs-close ownership; saved tool selection/schema; canonical global retention authority; and CLI list continuation. Prepared revised plan for re-verification.
