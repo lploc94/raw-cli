@@ -1,0 +1,7 @@
+{
+  "api_version": 1,
+  "id": "create_agent",
+  "version": "1.0.0",
+  "name": "create_agent",
+  "description": "Create or share a named Raw agent with its model, prompt, exact tools, selected skills, MCP references, policy and validation."
+}

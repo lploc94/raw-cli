@@ -56,3 +56,26 @@ test("unselected builtin skill is inert and oversized selection fails before inf
   const selected = await loadConfig({ configPath: capped.configPath, env: {}, requireModel: true });
   await assert.rejects(createRuntimeTools({ runtime: selected, cwd: capped.root }), /max_output_bytes/);
 });
+
+test("the five setup skills have distinct catalog entries and complete linked bodies", async () => {
+  const ids = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp"];
+  const { root, configPath } = config(ids.map((id) => `builtin/${id}`));
+  const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
+  const tools = await createRuntimeTools({ runtime, cwd: root });
+  try {
+    const context = { cwd: root, maxOutputBytes: runtime.maxOutputBytes, autoApprove: true };
+    const catalog = await tools.registry.dispatch("list_skills", {}, context);
+    const entries = (catalog.content[0] as { value: { skills: Array<{ name: string; description: string }> } }).value.skills;
+    assert.deepEqual(entries.map((entry) => entry.name), ids);
+    assert.equal(new Set(entries.map((entry) => entry.description)).size, 5);
+    for (const id of ids) {
+      const body = await tools.registry.dispatch("load_skill", { name: id }, context);
+      assert.equal(body.isError, false);
+      const markdown = (body.content[0] as { text: string }).text;
+      assert.equal(markdown, readFileSync(join("dist", "skills", "builtin", id, "SKILL.md"), "utf8"));
+      assert.ok(Buffer.byteLength(markdown) > 2000, `${id} is too brief`);
+      assert.ok(Buffer.byteLength(markdown) <= 8192, `${id} exceeds the default cap`);
+      assert.match(markdown, /```json\n[\s\S]*?\n```/);
+    }
+  } finally { await tools.mcp.close(); }
+});

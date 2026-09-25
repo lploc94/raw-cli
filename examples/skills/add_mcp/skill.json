@@ -1,0 +1,7 @@
+{
+  "api_version": 1,
+  "id": "add_mcp",
+  "version": "1.0.0",
+  "name": "add_mcp",
+  "description": "Register an MCP server and select exact discovered tools for one Raw agent, with transport, credentials, policy and live verification."
+}

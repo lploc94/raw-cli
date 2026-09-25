@@ -119,6 +119,8 @@ APPROVE — self-reviewed the shared loader, package-root behavior and installed
 `feat: load packaged Raw skills and ship config reference`
 
 ## Phase 3: Author the four creation and integration skills
+### Status
+complete
 ### Goal
 Complete the five-skill kit with real procedures for creating skills, tools, agent profiles and MCP selections.
 ### Current behavior and gap
@@ -142,16 +144,16 @@ File-existence/keyword tests alone fail. Each document must produce a runnable a
 ### Implementation obligations
 Author four substantial, typed, stepwise skill bodies/manifests, keep full results under the cap, generate/package forkable copies, align current docs/examples and avoid adding a new creation tool or registry.
 ### Acceptance criteria
-- [ ] AC-3.1: Five manifest descriptions distinguish tasks, and five complete bodies are available only via explicit linked list/load calls — proven by runtime and packed tests.
-- [ ] AC-3.2: Create-skill and create-tool instructions yield selected loadable/executable assets, with malformed later batch input preflighted before side effects — proven by fixture-driven tests.
-- [ ] AC-3.3: Create-agent and add-MCP instructions yield a portable agent config and an exact selected MCP tool, with inactive sources inert — proven by installed-consumer tests.
-- [ ] AC-3.4: Each body is a detailed, agent-vocabulary, code-accurate procedure with typed schemas, concrete edits, verification and failure handling — proven by code-grounded content review and runnable examples.
+- [x] AC-3.1: Five manifest descriptions distinguish tasks, and five complete bodies are available only via explicit linked list/load calls — proven by runtime and packed tests.
+- [x] AC-3.2: Create-skill and create-tool instructions yield selected loadable/executable assets, with malformed later batch input preflighted before side effects — proven by fixture-driven tests.
+- [x] AC-3.3: Create-agent and add-MCP instructions yield a portable agent config and an exact selected MCP tool, with inactive sources inert — proven by installed-consumer tests.
+- [x] AC-3.4: Each body is a detailed, agent-vocabulary, code-accurate procedure with typed schemas, concrete edits, verification and failure handling — proven by code-grounded content review and runnable examples.
 ### Focused verification
 `npm run build && node --import tsx --test tests/bundled-skills.test.ts tests/skill-tools.test.ts tests/package-agent.test.ts tests/mcp.test.ts`
 ### Phase gates
 `npm run check && npm run test:package && git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — self-reviewed the four manifests and Markdown against the tool, skill, agent and MCP validators. Source-derived package copies match each body; all five fit 8192 bytes. Runnable fixture tests create/load a skill, execute a standalone tool with later-row preflight, open a portable agent, and connect/call one exact MCP tool while an inactive server stays inert. Focused 30/30, full check 325/325, package 2/2 passed.
 ### Commit
 `docs: ship complete Raw agent customization skills`
 
@@ -199,6 +201,7 @@ Implementation review is required; verdict must be APPROVE.
 - Installed examples actually create a skill, tool, portable agent and exact MCP selection outside the checkout; provider/MCP/ACP/session regressions remain green. Historical plans/evidence remain historical.
 
 ## Progress Log
+- 2026-09-25: Phase 3 complete. Shipped `create_skill`, `create_tool`, `create_agent` and `add_mcp` with typed contracts, actual assets and verification procedures. Their documented examples run in temporary directories; focused 30/30, full check 325/325, package 2/2 passed; implementation self-review APPROVE.
 - 2026-09-25: During Phase 3 source review, corrected the Phase 2 config skill's policy precedence: the last matching rule wins, as `ToolRegistry.effect` implements. Added a content regression assertion and regenerated the forkable copy; affected focused tests, full 320/320 and package 2/2 passed; repair review APPROVE.
 - 2026-09-25: Phase 2 complete. Added package-owned `builtin/` skill resolution and source-derived installed/forkable copies, authored the detailed 7870-byte `configure_raw` reference, and tested linked visibility plus packed-consumer validation. Focused 14/14, full check 320/320, package 2/2; implementation self-review APPROVE.
 - 2026-09-25: Phase 1 complete. Added red agent-contract/schema tests, renamed config/CLI/provider/session/ACP surfaces, rejected v3, and updated current docs. Focused 80/80, full check 318/318, package 2/2 passed; implementation self-review APPROVE. Backed up personal config, renamed its local agent to raw while retaining DeepSeek as default, verified preserved model/MCP/prompt/credential settings, cleared two v3 test sessions and the older v2 test archive after zero active-owner/process checks, and created an empty v4 store.
