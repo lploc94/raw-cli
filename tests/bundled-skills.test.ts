@@ -32,6 +32,7 @@ test("installed configure_raw skill is selected only and returned by linked tool
     for (const term of ["default_agent", "models", "agents", "system_prompt_file", "tools.use", "skills.use", "mcp.servers", "compact.trigger_tokens", "--agent", "RAW_AGENT", "validate", "resume"]) {
       assert.ok(markdown.includes(term), `missing ${term}`);
     }
+    assert.match(markdown, /last matching rule wins/);
     assert.equal(markdown, readFileSync(join("dist", "skills", "builtin", "configure_raw", "SKILL.md"), "utf8"));
     const example = markdown.match(/```json\n([\s\S]*?)\n```/)?.[1];
     assert.ok(example);
