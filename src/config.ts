@@ -6,6 +6,7 @@ import { resolveSystemPrompt } from "./llm/prompt.js";
 import type { ApiMethod, CacheOptions, ProfileRequestOptions, ProviderName, ProviderProfile } from "./llm/types.js";
 import type { McpServerConfig } from "./tools/mcp-client.js";
 import type { ToolPolicyRule } from "./tools/registry.js";
+import { compileWhen } from "./tools/policy.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -304,9 +305,20 @@ function toolSpec(raw: unknown, where: string): { ids: readonly string[]; rules:
   const rules = value.rules.map((rawRule, index) => {
     const ruleWhere = `${where}.rules[${index}]`;
     const rule = object(rawRule, ruleWhere);
-    keys(rule, ["match", "effect"], ruleWhere);
-    return { match: string(rule.match, ruleWhere + ".match"),
-      effect: enumValue(rule.effect, new Set<"allow" | "ask" | "deny">(["allow", "ask", "deny"]), ruleWhere + ".effect") };
+    keys(rule, ["match", "effect", "when"], ruleWhere);
+    const match = string(rule.match, ruleWhere + ".match");
+    if (match.length > 256) throw new Error(ruleWhere + ".match is too long");
+    const effect = enumValue(rule.effect, new Set<"allow" | "ask" | "deny">(["allow", "ask", "deny"]), ruleWhere + ".effect");
+    let when: ToolPolicyRule["when"];
+    if (rule.when !== undefined) {
+      if (effect !== "ask") throw new Error(ruleWhere + " conditional effect must be ask");
+      const predicate = object(rule.when, ruleWhere + ".when");
+      keys(predicate, ["any", "regex"], ruleWhere + ".when");
+      when = { any: string(predicate.any, ruleWhere + ".when.any"),
+        regex: string(predicate.regex, ruleWhere + ".when.regex") };
+      compileWhen(when);
+    }
+    return { match, effect, ...(when ? { when } : {}) };
   });
   return { ids, rules };
 }
@@ -607,7 +619,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     try { profilePrompt = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
     catch { throw new Error(`invalid UTF-8 system prompt file: ${promptPath}`); }
   }
-  const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule })));
+  const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule,
+    ...(rule.when ? { when: Object.freeze({ ...rule.when }) } : {}) })));
   return Object.freeze({
     ...(selected === undefined ? {} : { profile: selected }),
     systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? profilePrompt ?? resolveSystemPrompt(undefined, undefined),

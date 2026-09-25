@@ -4,6 +4,8 @@ import writeManifest from "./bundled/write_file/tool.json" with { type: "json" }
 import bashManifest from "./bundled/bash/tool.json" with { type: "json" };
 import { capResult, errorResult } from "./results.js";
 import type { ToolResult } from "./types.js";
+import { bindWhenToSchema, compileWhen, matchesWhen, type CompiledWhen, type ToolPolicyWhen } from "./policy.js";
+import { RE2JS } from "re2js";
 
 export interface ToolDefinition {
   readonly name: string;
@@ -23,11 +25,11 @@ export interface ToolRegistration extends ToolDefinition {
   validateArgs?: (args: unknown) => string | undefined;
 }
 
-export interface ToolPolicyRule { readonly match: string; readonly effect: "allow" | "ask" | "deny" }
+export interface ToolPolicyRule { readonly match: string; readonly effect: "allow" | "ask" | "deny"; readonly when?: ToolPolicyWhen }
 
-function matcher(pattern: string): RegExp {
+function matcher(pattern: string): RE2JS {
   const source = [...pattern].map((char) => char === "*" ? ".*" : char === "?" ? "." : char.replace(/[\\^$+?.()|{}\[\]]/g, "\\$&")).join("");
-  return new RegExp(`^(?:${source})(?![\\s\\S])`, "su");
+  return RE2JS.compile(source, RE2JS.DOTALL);
 }
 
 function deepFreeze<T>(value: T): T {
@@ -59,21 +61,37 @@ function validate(definition: ToolDefinition, value: unknown): string | undefine
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolRegistration>();
-  private readonly rules: readonly { match: RegExp; effect: ToolPolicyRule["effect"] }[];
+  private readonly rules: readonly { match: RE2JS; effect: ToolPolicyRule["effect"]; when?: CompiledWhen }[];
 
   constructor(rules: readonly ToolPolicyRule[] = []) {
-    this.rules = rules.map((rule) => ({ match: matcher(rule.match), effect: rule.effect }));
+    this.rules = rules.map((rule) => {
+      if (typeof rule.match !== "string" || !rule.match || rule.match.length > 256) throw new Error("tool policy match must be a bounded glob");
+      if (rule.when && rule.effect !== "ask") throw new Error("conditional tool policy effect must be ask");
+      return { match: matcher(rule.match), effect: rule.effect,
+        ...(rule.when ? { when: compileWhen(rule.when) } : {}) };
+    });
   }
 
-  private effect(tool: ToolRegistration): ToolPolicyRule["effect"] {
+  private effect(tool: ToolRegistration, args?: Record<string, unknown>): ToolPolicyRule["effect"] {
     const identity = tool.canonicalName ?? tool.name;
     let effect: ToolPolicyRule["effect"] = "allow";
-    for (const rule of this.rules) if (rule.match.test(identity)) effect = rule.effect;
+    for (const rule of this.rules) if (rule.match.matches(identity)
+      && (rule.when === undefined || (args !== undefined && matchesWhen(rule.when, args)))) effect = rule.effect;
     return effect;
   }
 
+  validateRegistrations(tools: readonly ToolRegistration[]): void {
+    const names = new Set<string>();
+    for (const tool of tools) {
+      if (this.tools.has(tool.name) || names.has(tool.name)) throw new Error(`duplicate tool: ${tool.name}`);
+      names.add(tool.name);
+      const identity = tool.canonicalName ?? tool.name;
+      for (const rule of this.rules) if (rule.when && rule.match.matches(identity)) bindWhenToSchema(rule.when, tool);
+    }
+  }
+
   register(tool: ToolRegistration): void {
-    if (this.tools.has(tool.name)) throw new Error(`duplicate tool: ${tool.name}`);
+    this.validateRegistrations([tool]);
     this.tools.set(tool.name, tool);
   }
 
@@ -89,10 +107,11 @@ export class ToolRegistry {
     const finish = (result: ToolResult) => capResult(result, context.maxOutputBytes);
     const tool = this.tools.get(name);
     if (!tool || (context.whitelist !== undefined && !context.whitelist.includes(name))) return finish(errorResult("tool_not_exposed", `tool unavailable: ${name}`));
-    const effect = this.effect(tool);
-    if (effect === "deny") return finish(errorResult("tool_denied", `tool denied: ${tool.canonicalName ?? name}`));
+    const visibility = this.effect(tool);
+    if (visibility === "deny") return finish(errorResult("tool_denied", `tool denied: ${tool.canonicalName ?? name}`));
     const invalid = tool.validateArgs ? tool.validateArgs(args) : validate(tool, args);
     if (invalid) return finish(errorResult("invalid_arguments", invalid));
+    const effect = this.effect(tool, args as Record<string, unknown>);
     if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
     if (effect === "ask" || context.autoApprove === false) {
       if (!context.approve) return finish(errorResult("approval_required", `approval required for ${name}`));

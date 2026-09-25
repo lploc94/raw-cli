@@ -332,6 +332,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
         if (available.has(alias) && existing.has(alias) && !activated.has(alias)) throw new Error(`duplicate MCP alias: ${alias}`);
       }
       const registrations = unique.filter((alias) => available.has(alias) && !activated.has(alias)).map((alias) => available.get(alias)!());
+      registry.validateRegistrations(registrations);
       for (const registration of registrations) { registry.register(registration); activated.add(registration.name); }
       const visible = new Set(registry.definitions().map((item) => item.name));
       for (const registration of registrations) if (visible.has(registration.name)) {

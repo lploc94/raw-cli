@@ -93,3 +93,15 @@ test("startup rejects a selected unknown server, missing plugin, and image tool 
   try { assert.deepEqual(empty.registry.definitions(), []); }
   finally { await empty.mcp.close(); }
 });
+
+test("conditional policy paths incompatible with a selected schema fail before inference", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-profile-policy-bind-"));
+  const configPath = join(cwd, "config.json");
+  await writeFile(configPath, JSON.stringify({ default_profile: "p", models: { m: {
+    provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, profiles: { p: {
+      model: "m", tools: { use: ["builtin/bash"], rules: [{ match: "builtin/bash", effect: "ask",
+        when: { any: "commands[*].missing", regex: "rm" } }] },
+    } } }));
+  const runtime = await loadConfig({ configPath, env: {} });
+  await assert.rejects(createRuntimeTools({ runtime, cwd }), /when\.any path.*schema/);
+});

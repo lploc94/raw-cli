@@ -101,8 +101,8 @@ async function run(): Promise<void> {
       const selectedSkills = data.skills && typeof data.skills === "object" && !Array.isArray(data.skills)
         ? (data.skills as { use?: string[] }).use ?? [] : [];
       const policy = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
-        ? (data.tools as { rules?: Array<{ match: string; effect: string }> }).rules ?? [] : [];
-      const rules = policy.map((rule) => `${rule.effect}:${rule.match}`).join(",");
+        ? (data.tools as { rules?: Array<{ match: string; effect: string; when?: { any: string; regex: string } }> }).rules ?? [] : [];
+      const rules = policy.map((rule) => `${rule.effect}:${rule.match}${rule.when ? `:${JSON.stringify(rule.when)}` : ""}`).join(",");
       const compact = data.compact && typeof data.compact === "object" && !Array.isArray(data.compact)
         ? data.compact as Record<string, unknown> : {};
       process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`

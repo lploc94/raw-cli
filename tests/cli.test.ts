@@ -216,6 +216,34 @@ test("explicit profile ask fails closed in headless mode even with -y", async ()
   } finally { await fixture.close(); }
 });
 
+test("conditional Bash ask leaves safe headless commands automatic and gates rm with -y", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-conditional-"));
+  const marker = join(root, "protected.txt");
+  await writeFile(marker, "keep");
+  const fixture = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "safe", type: "function", function: {
+      name: "bash", arguments: '{"commands":[{"command":"printf safe"}]}' } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "safe done" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "danger", type: "function", function: {
+      name: "bash", arguments: '{"commands":[{"command":"rm -f protected.txt"}]}' } }] }, "tool_calls"), openAiDone] },
+  ]);
+  try {
+    const configPath = testConfig("openai", "fixture", fixture.url);
+    const document = JSON.parse(await readFile(configPath, "utf8"));
+    document.profiles.fixture.tools.rules = [{ match: "builtin/bash", effect: "ask",
+      when: { any: "commands[*].command", regex: String.raw`(^|[;&|()\n])\s*(sudo\s+)?(/usr/bin/|/bin/)?rm(\s|$)` } }];
+    await writeFile(configPath, JSON.stringify(document));
+    const env = { ...process.env, OPENAI_API_KEY: "key" };
+    const safe = await raw(["--config", configPath, "-y", "safe"], { cwd: root, env });
+    assert.equal(safe.code, 0, safe.stderr);
+    assert.doesNotMatch(safe.stderr, /approval required/);
+    const danger = await raw(["--config", configPath, "-y", "danger"], { cwd: root, env });
+    assert.equal(danger.code, 2, danger.stderr);
+    assert.match(danger.stderr, /approval required/);
+    assert.equal(await readFile(marker, "utf8"), "keep");
+  } finally { await fixture.close(); }
+});
+
 test("explicit profile ask prompts once in a TTY and -y does not bypass it", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-cli-ask-tty-"));
   const fixture = await startMockProvider([

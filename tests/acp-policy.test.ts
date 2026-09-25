@@ -6,7 +6,7 @@ import { createAcpServer } from "../src/acp/methods.js";
 import { loadConfig } from "../src/config.js";
 import { testConfig } from "./fixtures/config.js";
 
-function policyConfig(rules: Array<{ match: string; effect: string }>): string {
+function policyConfig(rules: Array<{ match: string; effect: string; when?: { any: string; regex: string } }>): string {
   const path = testConfig("ollama");
   const document = JSON.parse(readFileSync(path, "utf8"));
   document.profiles.fixture.tools = { ...document.profiles.fixture.tools, rules };
@@ -110,4 +110,73 @@ test("ACP names with line breaks cannot bypass broad deny or ask rules", async (
       assert.equal(reverseCalls, 0);
     } finally { connection.close(); await server.close(); }
   }
+});
+
+test("ACP configure binds conditional policy to a later activated MCP tool", async () => {
+  const path = policyConfig([{ match: "mcp/browser/selected", effect: "ask", when: { any: "value", regex: "rm" } }]);
+  const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
+  let alias = "";
+  let permissions = 0;
+  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+    const last = request.messages.at(-1);
+    if (last?.role === "tool") return { text: "done", toolCalls: [], finishReason: "stop" };
+    const user = last?.role === "user" ? JSON.stringify(last.content) : "";
+    return { text: "", toolCalls: [{ id: user.includes("danger") ? "danger" : "safe", name: alias,
+      arguments: { value: user.includes("danger") ? "rm -f x" : "safe" } }], finishReason: "tool_calls" };
+  } }) });
+  const peer = client({ name: "conditional-mcp" });
+  peer.onRequest("session/request_permission", () => { permissions++; return { outcome: { outcome: "selected", optionId: "deny" } }; });
+  const connection = peer.connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
+      _meta: { raw: { runtimeInfo: true, sessionConfigure: true } } });
+    const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [{
+      name: "browser", command: process.execPath, args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: [],
+    }] });
+    const info = await connection.agent.request<{ mcpCatalog: Array<{ originalName: string; alias: string; exposed: boolean }> }>("_raw/runtime/info", { sessionId });
+    const selected = info.mcpCatalog.find((item) => item.originalName === "selected");
+    assert.ok(selected);
+    assert.equal(selected.exposed, false);
+    alias = selected.alias;
+    await connection.agent.request("_raw/session/configure", { sessionId, tools: [alias] });
+    assert.equal((await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "safe" }] })).stopReason, "end_turn");
+    assert.equal(permissions, 0);
+    assert.equal((await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "danger" }] })).stopReason, "end_turn");
+    assert.equal(permissions, 1);
+  } finally { connection.close(); await server.close(); }
+});
+
+test("ACP reverse tool conditional ask inspects nested typed arguments", async () => {
+  const path = policyConfig([{ match: "acp:runner", effect: "ask", when: { any: "payload.command", regex: "rm" } }]);
+  const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
+  let alias = "";
+  let permissions = 0;
+  let reverseCalls = 0;
+  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {
+    const last = request.messages.at(-1);
+    if (last?.role === "tool") return { text: "done", toolCalls: [], finishReason: "stop" };
+    const user = last?.role === "user" ? JSON.stringify(last.content) : "";
+    return { text: "", toolCalls: [{ id: "call", name: alias,
+      arguments: { payload: { command: user.includes("danger") ? "rm x" : "printf safe" } } }], finishReason: "tool_calls" };
+  } }) });
+  const peer = client({ name: "conditional-reverse" });
+  peer.onRequest("session/request_permission", () => { permissions++; return { outcome: { outcome: "selected", optionId: "deny" } }; });
+  peer.onRequest("_raw/tool/call", (params: unknown) => params as { toolId: string }, () => {
+    reverseCalls++; return { isError: false, content: [{ type: "text", text: "ran" }] };
+  });
+  const connection = peer.connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
+      _meta: { raw: { toolRegister: true, toolCall: true } } });
+    const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
+    alias = (await connection.agent.request<{ alias: string }>("_raw/tool/register", { sessionId, name: "runner", description: "runner",
+      inputSchema: { type: "object", properties: { payload: { type: "object", properties: { command: { type: "string" } } } } },
+    })).alias;
+    await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "safe" }] });
+    assert.equal(reverseCalls, 1);
+    assert.equal(permissions, 0);
+    await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "danger" }] });
+    assert.equal(reverseCalls, 1);
+    assert.equal(permissions, 1);
+  } finally { connection.close(); await server.close(); }
 });
