@@ -15,6 +15,7 @@ import { startMockProvider } from "./fixtures/mock-provider.js";
 import type { ProviderRequest } from "../src/llm/types.js";
 
 const configHome = mkdtempSync(join(tmpdir(), "raw-acp-test-config-"));
+process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-acp-test-state-"));
 const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
 
 test("runtime info exposes selected model/method/vision/MCP/policy without credentials", async () => {

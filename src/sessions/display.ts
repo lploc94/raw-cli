@@ -1,7 +1,8 @@
 import type { ToolResult } from "../tools/types.js";
 import type { RunEvent } from "../agent.js";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { ContentBlock, SessionUpdate } from "@agentclientprotocol/sdk";
 import { renderUserInput } from "../llm/types.js";
+import type { UserInput } from "../llm/types.js";
 import type { HistoryItem } from "./store.js";
 
 const RESULT_PREVIEW_CHARS = 2000;
@@ -106,4 +107,34 @@ export function renderStoredHistory(item: HistoryItem): string {
     return `raw: ${String((update.content as { text?: string } | undefined)?.text ?? "")}`;
   }
   return JSON.stringify(payload);
+}
+
+export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {
+  const payload = item.payload;
+  if (payload.update && typeof payload.update === "object") return [payload.update as SessionUpdate];
+  if (item.kind === "user") {
+    const input = payload.input as UserInput;
+    const blocks = typeof input === "string" ? [{ type: "text" as const, text: input }] : input;
+    return blocks.map((block) => ({ sessionUpdate: "user_message_chunk", content: block as ContentBlock }));
+  }
+  if (item.kind === "assistant") return [{ sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: String(payload.text ?? "") } }];
+  if (item.kind === "reasoning" || item.kind === "status") return [{ sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: String(payload.text ?? "") } }];
+  if (item.kind === "tool_call") {
+    let rawInput: unknown = payload.arguments;
+    if (typeof rawInput === "string") try { rawInput = JSON.parse(rawInput); } catch { /* retain displayed text */ }
+    return [{ sessionUpdate: "tool_call", toolCallId: String(payload.id), title: String(payload.name),
+      name: String(payload.name), kind: "execute", status: payload.started === false ? "failed" : "pending", rawInput }];
+  }
+  if (item.kind === "tool_result") {
+    const nested = payload.result && typeof payload.result === "object" && !Array.isArray(payload.result)
+      ? payload.result as Record<string, unknown> : undefined;
+    const result = nested ?? payload;
+    const failed = result.isError === true || (typeof result.exitCode === "number" && result.exitCode !== 0);
+    return [{ sessionUpdate: "tool_call_update", toolCallId: String(payload.id), status: failed ? "failed" : "completed",
+      rawOutput: nested ?? { isError: failed, code: payload.code, exitCode: payload.exitCode,
+        truncated: payload.truncated, preview: payload.preview } }];
+  }
+  return [];
 }

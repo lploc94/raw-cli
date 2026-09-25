@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, PROTOCOL_VERSION, type ClientConnection, type ContentBlock,
-  type McpServer, type SessionNotification, type RequestPermissionRequest, type RequestPermissionResponse } from "@agentclientprotocol/sdk";
+  type McpServer, type SessionNotification, type RequestPermissionRequest, type RequestPermissionResponse,
+  type ListSessionsResponse } from "@agentclientprotocol/sdk";
 import { createWebSocketStream, type WebSocketConstructor } from "@agentclientprotocol/sdk/experimental/ws-client";
 import WebSocket from "ws";
 
@@ -24,6 +25,10 @@ export interface AcpParentClient {
   readonly pid?: number;
   initializeResult: unknown;
   newSession(cwd: string, mcpServers?: McpServer[]): Promise<string>;
+  listSessions(cwd?: string, cursor?: string): Promise<ListSessionsResponse>;
+  loadSession(sessionId: string, cwd: string, mcpServers?: McpServer[]): Promise<void>;
+  resumeSession(sessionId: string, cwd: string, mcpServers?: McpServer[]): Promise<void>;
+  deleteSession(sessionId: string): Promise<void>;
   prompt(sessionId: string, prompt: string | ContentBlock[]): Promise<{ stopReason: string }>;
   cancel(sessionId: string): Promise<void>;
   registerTool(sessionId: string, name: string, description: string, inputSchema: Record<string, unknown>, handler: ParentToolHandler): Promise<{ toolId: string; alias: string; schemaRevision: number }>;
@@ -98,6 +103,15 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
     ...(child?.pid !== undefined ? { pid: child.pid } : {}),
     initializeResult,
     newSession: async (cwd, mcpServers = []) => (await connection.agent.request("session/new", { cwd, mcpServers })).sessionId,
+    listSessions: (cwd, cursor) => connection.agent.request("session/list", {
+      ...(cwd === undefined ? {} : { cwd }), ...(cursor === undefined ? {} : { cursor }) }),
+    loadSession: async (sessionId, cwd, mcpServers = []) => {
+      await connection.agent.request("session/load", { sessionId, cwd, mcpServers });
+    },
+    resumeSession: async (sessionId, cwd, mcpServers = []) => {
+      await connection.agent.request("session/resume", { sessionId, cwd, mcpServers });
+    },
+    deleteSession: async (sessionId) => { await connection.agent.request("session/delete", { sessionId }); },
     prompt: (sessionId, prompt) => connection.agent.request("session/prompt", { sessionId,
       prompt: typeof prompt === "string" ? [{ type: "text", text: prompt }] : prompt }),
     cancel: (sessionId) => connection.agent.notify("session/cancel", { sessionId }),

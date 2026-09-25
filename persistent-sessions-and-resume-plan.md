@@ -172,7 +172,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 
 ## Phase 4: Standard ACP persistent session lifecycle
 ### Status
-pending
+complete
 ### Goal
 Let an IDE or parent agent list, load/replay, resume, and delete persisted sessions through standard ACP.
 ### Current behavior and gap
@@ -196,10 +196,10 @@ Close the first ACP process and create a new server object: `session/load` must 
 ### Implementation obligations
 Use SDK methods and capabilities rather than custom raw stand-ins; validate peer/cwd ownership; reconnect MCP; keep standard live update order; close and release resources on every error path.
 ### Acceptance criteria
-- [ ] AC-4.1: Standard ACP client lists, pages, loads with faithful replay of visible raw tool fields, resumes without replay, and deletes persisted sessions across process restart — proven by session-acp tests.
-- [ ] AC-4.2: Mismatched cwd, concurrent owner, expired/unknown ID, and disconnected peer produce bounded explicit errors and no tool execution — proven by ACP tests.
-- [ ] AC-4.3: Existing cancel, permission, injected-tool, and transport behavior still pass with persistence — proven by ACP regression suite.
-- [ ] AC-4.4: A saved `_raw/session/configure` whitelist survives restart without exposing formerly excluded tools; operation cancel retains writer ownership until close/disconnect — proven by ACP restart/concurrency tests.
+- [x] AC-4.1: Standard ACP client lists, pages, loads with faithful replay of visible raw tool fields, resumes without replay, and deletes persisted sessions across process restart — proven by session-acp tests.
+- [x] AC-4.2: Mismatched cwd, concurrent owner, expired/unknown ID, and disconnected peer produce bounded explicit errors and no tool execution — proven by ACP tests.
+- [x] AC-4.3: Existing cancel, permission, injected-tool, and transport behavior still pass with persistence — proven by ACP regression suite.
+- [x] AC-4.4: A saved `_raw/session/configure` whitelist survives restart without exposing formerly excluded tools; operation cancel retains writer ownership until close/disconnect — proven by ACP restart/concurrency tests.
 ### Focused verification
 `node --import tsx --test tests/session-acp.test.ts tests/acp.test.ts tests/acp-transport.test.ts`
 ### Phase gates
@@ -255,6 +255,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 - All phase acceptance checks, required reviews, test/CI/package gates, documentation, and commits are complete.
 
 ## Progress Log
+- 2026-09-25: Phase 4 complete. Standard ACP list/load/resume/delete now use the global session store while live runtimes remain peer-owned. Load replays ordered visible history, including long raw tool fields; resume does not replay. Stored MCP selections survive restart, unavailable reverse callbacks are dropped with a cache boundary, and cancel retains ownership. Tests cover stdio/WebSocket parity, pagination, expiry, busy peers, early MCP claim, replay concurrency, and retained-schema validation. `npm run typecheck && npm test` passed (262 tests), `npm run test:package` passed. GPT-6 Astra returned APPROVE after three P2 fixes.
 - 2026-09-25: Phase 3 complete. Added saved CLI one-shot/REPL sessions, workspace-scoped continue, explicit cross-workspace resume, list/show/delete/stats commands, bounded cursors, and library session APIs. Spawned process tests cover restart, paging, `/clear`, SIGINT/SIGTERM ownership, and complete Bash arguments after compact. Fixed crash-recovery display of `outcome_unknown` after Astra review; regression failed before the fix and passed after. `npm run typecheck && npm test` passed (253 tests), `npm run test:package` passed, and GPT-6 Astra returned APPROVE.
 - 2026-09-25: Phase 2 complete. Agent transitions now commit user/assistant/tool state and visible projections, restore exact active context and selected schema, and recover pending calls without replay. Large payloads use private checksum-verified files with reference tracking; compact retains display history and reclaims model-only detail. Focused verification passed; `npm run typecheck && npm test` passed (245 tests), as did `npm run test:package`. GPT-6 Astra reviewed three rounds and returned APPROVE after fixes for reclamation/republication, JSON prototype safety, and persistence error reporting.
 - 2026-09-25: Phase 1 complete. Added global private SQLite store, strict canonical retention config, stable IDs, bounded indexed cursors and history APIs. TDD red evidence covered missing store/config exports and three Astra review defects; the latter were fixed with regression tests. `npm run typecheck && npm test` passed (222 tests); `npm run test:package` passed after preserving `node:sqlite` in bundles. GPT-6 Astra final review: APPROVE, three findings resolved.

@@ -1,6 +1,8 @@
 import type { ModelMessage } from "../llm/types.js";
 import type { StoredAgentState } from "./store.js";
 
+export function isEphemeralPeerAlias(name: string): boolean { return /^raw_[A-Za-z0-9_-]+_[a-f0-9]{12}$/.test(name); }
+
 export function validateStoredAgentState(state: StoredAgentState): void {
   if (!state.cacheKey || !Number.isSafeInteger(state.schemaRevision) || state.schemaRevision < 1
     || !Number.isFinite(state.tokenCalibration) || state.tokenCalibration < 1

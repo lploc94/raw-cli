@@ -17,6 +17,7 @@ import { loadConfig as loadConfigActual } from "../src/config.js";
 import { testConfig } from "./fixtures/config.js";
 
 const configHome = mkdtempSync(join(tmpdir(), "raw-acp-transport-test-config-"));
+process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-acp-transport-test-state-"));
 const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
 
 test("T-07a: independent ACP SDK client talks to raw daemon with text, resource-only and mixed prompts", async () => {
@@ -36,7 +37,7 @@ test("T-07a: independent ACP SDK client talks to raw daemon with text, resource-
   try {
     const init = await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     assert.equal(init.protocolVersion, 1);
-    assert.equal(init.agentCapabilities?.loadSession, undefined);
+    assert.equal(init.agentCapabilities?.loadSession, true);
     assert.equal(init.agentCapabilities?.promptCapabilities?.image, undefined);
     const session = await connection.agent.request("session/new", { cwd, mcpServers: [] });
     const link = { type: "resource_link" as const, uri: "https://example.test/doc", name: "api-doc", title: "API docs",
@@ -65,6 +66,36 @@ test("T-07a: independent ACP SDK client talks to raw daemon with text, resource-
     if (child.exitCode === null) child.kill("SIGTERM");
     await fixture.close();
   }
+});
+
+test("standard saved-session transcript crosses stdio and WebSocket peers", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-acp-cross-transport-"));
+  const fixture = await startMockProvider([{ frames: [openAiFrame({ content: "transport-sentinel" }, "stop"), openAiDone] }]);
+  const config = testConfig("openai", "fixture", fixture.url);
+  const liveUpdates: string[] = [];
+  const first = await createAcpClient({ command: process.execPath,
+    args: ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"), "--acp", "--stdio", "--config", config],
+    env: { ...process.env, OPENAI_API_KEY: "key" },
+    onUpdate: ({ update }) => { if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") liveUpdates.push(update.content.text); } });
+  let id!: string;
+  try {
+    id = await first.newSession(cwd);
+    assert.equal((await first.prompt(id, "transport question")).stopReason, "end_turn");
+    assert.equal(liveUpdates.join(""), "transport-sentinel");
+  } finally { await first.close(); }
+  const runtime = await loadConfig({ flags: { configPath: config }, env: { OPENAI_API_KEY: "key" }, requireModel: true });
+  const listener = await serveAcpWebSocket({ host: "127.0.0.1", port: 0,
+    serverFactory: () => createAcpServer({ runtime, mcpServers: {} }) });
+  const replayUpdates: string[] = [];
+  try {
+    const second = await createAcpClient({ url: `ws://127.0.0.1:${listener.port}/`,
+      onUpdate: ({ update }) => { if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") replayUpdates.push(update.content.text); } });
+    try {
+      assert.equal((await second.listSessions(cwd)).sessions[0]?.sessionId, id);
+      await second.loadSession(id, cwd);
+      assert.equal(replayUpdates.join(""), liveUpdates.join(""));
+    } finally { await second.close(); }
+  } finally { await listener.close(); await fixture.close(); }
 });
 
 test("T-07b: malformed stdio JSON produces one parse error frame and no diagnostic stdout", () => {

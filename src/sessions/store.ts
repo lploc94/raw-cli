@@ -9,6 +9,7 @@ import type { ModelMessage, ProviderProfile, UserInput } from "../llm/types.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import { errorResult } from "../tools/results.js";
 import { initializeSessionSchema } from "./schema.js";
+import { isEphemeralPeerAlias } from "./restore.js";
 
 export interface SessionStoreOptions {
   env?: NodeJS.ProcessEnv;
@@ -71,6 +72,7 @@ export interface AgentIdentity {
   toolDefinitions: readonly ToolDefinition[];
   selectedTools: readonly string[] | null;
   cacheKey: string;
+  allowPeerToolDrop?: boolean;
 }
 export interface StoredAgentState {
   messages: ModelMessage[];
@@ -128,6 +130,12 @@ function cursorData(value: string, kind: "sessions" | "history", scope: string):
 function makeCursor(kind: "sessions" | "history", scope: string, position: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify({ v: 1, kind, scope, ...position })).toString("base64url");
 }
+
+function nonPeerSchemaDigest(definitions: readonly ToolDefinition[]): string {
+  return createHash("sha256").update(JSON.stringify(definitions.filter((item) => !isEphemeralPeerAlias(item.name)))).digest("hex");
+}
+
+function nonPeerSchemaKey(sessionId: string): string { return `non_peer_schema:${sessionId}`; }
 
 function pathForState(options: SessionStoreOptions): string {
   const env = options.env ?? process.env;
@@ -266,12 +274,30 @@ export class SessionStore {
           .run(identity.profile.name, identity.profile.model, identity.profile.provider, identity.profile.method,
             endpointHash, identity.system, row.cache_key === null ? identity.cacheKey : String(row.cache_key),
             JSON.stringify(identity.selectedTools), digest, runtimeDigest, sessionId);
-      } else if (row.profile_name !== identity.profile.name || row.model_id !== identity.profile.model
-        || row.provider !== identity.profile.provider || row.method !== identity.profile.method
-        || row.endpoint !== endpointHash || row.system_prompt !== identity.system || row.tool_schema_digest !== digest
-        || row.runtime_digest !== runtimeDigest
-        || row.selected_tools_json !== JSON.stringify(identity.selectedTools)) {
-        throw new Error("session runtime or tool schema changed; resume requires the saved profile and tool selection");
+        this.database.prepare("INSERT INTO store_meta(key, value) VALUES (?, ?)")
+          .run(nonPeerSchemaKey(sessionId), nonPeerSchemaDigest(identity.toolDefinitions));
+      } else {
+        if (row.profile_name !== identity.profile.name || row.model_id !== identity.profile.model
+          || row.provider !== identity.profile.provider || row.method !== identity.profile.method
+          || row.endpoint !== endpointHash || row.system_prompt !== identity.system || row.runtime_digest !== runtimeDigest) {
+          throw new Error("session runtime or tool schema changed; resume requires the saved profile and tool selection");
+        }
+        const oldSelection = JSON.parse(String(row.selected_tools_json)) as readonly string[] | null;
+        const newSelection = identity.selectedTools;
+        const droppedPeerTools = identity.allowPeerToolDrop && Array.isArray(oldSelection) && Array.isArray(newSelection)
+          && oldSelection.length > newSelection.length
+          && JSON.stringify(oldSelection.filter((name) => newSelection.includes(name))) === JSON.stringify(newSelection)
+          && oldSelection.filter((name) => !newSelection.includes(name)).every(isEphemeralPeerAlias);
+        if (droppedPeerTools) {
+          const savedDigest = this.database.prepare("SELECT value FROM store_meta WHERE key = ?").get(nonPeerSchemaKey(sessionId))?.value;
+          if (savedDigest !== nonPeerSchemaDigest(identity.toolDefinitions)) {
+            throw new Error("session retained tool schema changed");
+          }
+          this.database.prepare(`UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, schema_revision = schema_revision + 1,
+            cache_key = ? WHERE id = ?`).run(JSON.stringify(newSelection), digest, randomUUID(), sessionId);
+        } else if (row.tool_schema_digest !== digest || row.selected_tools_json !== JSON.stringify(newSelection)) {
+          throw new Error("session runtime or tool schema changed; resume requires the saved profile and tool selection");
+        }
       }
     });
     this.recoverInterruptedCalls(sessionId, owner);
@@ -320,6 +346,8 @@ export class SessionStore {
       const digest = createHash("sha256").update(JSON.stringify(definitions)).digest("hex");
       this.database.prepare("UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, schema_revision = ? WHERE id = ?")
         .run(JSON.stringify(selection), digest, revision, sessionId);
+      this.database.prepare("INSERT INTO store_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run(nonPeerSchemaKey(sessionId), nonPeerSchemaDigest(definitions));
       this.renewSession(sessionId, owner);
     });
   }
@@ -663,6 +691,23 @@ export class SessionStore {
     return { items, ...(hasMore && oldest ? { nextCursor: makeCursor("history", scope, { sequence: oldest.sequence }) } : {}) };
   }
 
+  async scanSessionHistory(sessionId: string, visit: (item: HistoryItem) => Promise<void>): Promise<void> {
+    if (!this.getSession(sessionId)) throw new Error("session not found or expired");
+    let after = 0;
+    for (;;) {
+      const rows = this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
+        WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT 100`).all(sessionId, after);
+      if (!rows.length) return;
+      for (const row of rows) {
+        const item: HistoryItem = { sessionId: String(row.session_id), sequence: Number(row.sequence),
+          createdAt: Number(row.created_at), kind: String(row.kind),
+          payload: this.decodeStored(String(row.payload_json)) as Record<string, unknown>, status: String(row.status) };
+        await visit(item);
+        after = item.sequence;
+      }
+    }
+  }
+
   deleteSession(id: string): void {
     const deleted = this.transaction(() => {
       const row = this.database.prepare("SELECT owner_token FROM sessions WHERE id = ?").get(id);
@@ -675,6 +720,7 @@ export class SessionStore {
         this.dropPayloadReference(String(item.payload_json));
       }
       this.database.prepare("DELETE FROM sessions WHERE id = ?").run(id);
+      this.database.prepare("DELETE FROM store_meta WHERE key = ?").run(nonPeerSchemaKey(id));
       return true;
     });
     if (deleted) {

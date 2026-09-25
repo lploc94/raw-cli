@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { testConfig } from "./fixtures/config.js";
+import { mkdtempSync } from "node:fs";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createAcpClient } from "../src/acp/client.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+
+process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-acp-client-test-state-"));
 
 test("T-07e: parent client helper can be constructed with a stdio child launch contract", async () => {
   const parent = await createAcpClient({ command: process.execPath, args: ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio",

@@ -1,12 +1,14 @@
 import { randomUUID, createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { agent, PROTOCOL_VERSION, RequestError, type AgentApp, type AgentConnection,
   type AgentContext, type ContentBlock, type McpServer } from "@agentclientprotocol/sdk";
 import { createAgent, type AgentSession, type RunEvent } from "../agent.js";
-import { acpUpdate } from "../sessions/display.js";
+import { acpUpdate, storedAcpUpdates } from "../sessions/display.js";
+import { openSessionStore, type SessionOwner, type SessionStoreOptions } from "../sessions/store.js";
+import { isEphemeralPeerAlias } from "../sessions/restore.js";
 import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter, ProviderProfile, UserBlock } from "../llm/types.js";
@@ -21,6 +23,7 @@ export interface AcpServerOptions {
   runtime: RuntimeConfig;
   providerFactory?: (profile: Readonly<ProviderProfile>) => ProviderAdapter;
   mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  storeOptions?: SessionStoreOptions;
 }
 
 interface SessionRecord {
@@ -29,6 +32,7 @@ interface SessionRecord {
   registry: ToolRegistry;
   mcp: McpConnection;
   registered: Map<string, string>;
+  loading: boolean;
 }
 
 export interface AcpServer {
@@ -128,6 +132,7 @@ function reverseAlias(name: string, toolId: string): string {
 
 export function createAcpServer(options: AcpServerOptions): AcpServer {
   const app = agent({ name: "raw-cli" });
+  const store = openSessionStore(options.storeOptions);
   const sessions = new Map<string, SessionRecord>();
   const providerFactory = options.providerFactory ?? createProvider;
   const configuredMcp = options.mcpServers ?? options.runtime.mcpServers;
@@ -149,6 +154,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       }));
       await Promise.all([activeCleanup, Promise.allSettled([...pendingCreations])]);
       sessions.clear();
+      store.close();
       connection?.close();
     })();
     return closing;
@@ -156,10 +162,96 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   const getSession = (id: string): SessionRecord => {
     const session = sessions.get(id);
     if (!session) throw rawError(rawErrors.unknownSession, "unknown session");
+    if (session.loading) throw rawError(rawErrors.busy, "session is busy loading history");
     return session;
   };
   const requireCapability = (flag: RawCapability) => {
     if (!peerRaw[flag]) throw rawError(rawErrors.capability, `raw ${flag} capability was not negotiated`);
+  };
+  const validCwd = (cwd: string): string => {
+    if (!isAbsolute(cwd)) throw RequestError.invalidParams(undefined, "cwd must be absolute");
+    try {
+      if (!statSync(cwd).isDirectory()) throw new Error("not a directory");
+      return realpathSync(cwd);
+    } catch { throw RequestError.invalidParams(undefined, "cwd must be an existing directory"); }
+  };
+  const startSession = (cwd: string, mcpServers: readonly McpServer[], resumeId?: string,
+    loading = false): Promise<{ sessionId: string }> => {
+    if (!initialized) throw RequestError.invalidRequest(undefined, "initialize first");
+    const canonicalCwd = validCwd(cwd);
+    if (!options.runtime.profile) throw rawError(rawErrors.upstream, "provider and model are required");
+    const profile = options.runtime.profile;
+    if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
+    const saved = resumeId === undefined ? undefined : store.getSession(resumeId);
+    if (resumeId !== undefined) {
+      if (!saved) throw rawError(rawErrors.unknownSession, "unknown or expired session");
+      if (realpathSync(saved.cwd) !== canonicalCwd) throw RequestError.invalidParams(undefined, "session cwd differs from saved cwd");
+      if (saved.configPath !== options.runtime.configPath || saved.profileName !== profile.name) {
+        throw RequestError.invalidParams(undefined, "session config/profile differs from saved identity");
+      }
+      if (sessions.has(resumeId)) throw rawError(rawErrors.busy, "session is already attached to this peer");
+    }
+    let claimed: SessionOwner | undefined;
+    if (saved) {
+      try { claimed = store.claimSession(saved.id); }
+      catch (error) {
+        if (error instanceof Error && /busy/i.test(error.message)) throw rawError(rawErrors.busy, "session is busy");
+        if (error instanceof Error && /not found|expired/i.test(error.message)) throw rawError(rawErrors.unknownSession, "unknown or expired session");
+        throw error;
+      }
+    }
+    const creation = (async () => {
+      const registry = createToolRegistry(options.runtime.toolRules, profile.vision === true);
+      let mcp: McpConnection | undefined;
+      let id: string | undefined;
+      let created = false;
+      try {
+        mcp = await connectMcpServers({ servers: sessionMcpServers(mcpServers, configuredMcp), registry,
+          cwd, timeoutMs: options.runtime.requestTimeoutMs, signal: startupController.signal });
+        if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
+        if (saved) {
+          id = saved.id;
+          const selection = store.getStoredSelection(id);
+          if (selection) mcp.activate(selection.filter((name) => !isEphemeralPeerAlias(name)));
+        } else {
+          id = store.createSession({ cwd, title: "New session", profileName: profile.name,
+            configPath: options.runtime.configPath, modelId: profile.model, provider: profile.provider,
+            method: profile.method, ...(profile.baseUrl === undefined ? {} : { endpoint: profile.baseUrl }),
+            systemPrompt: options.runtime.systemPrompt }).id;
+          created = true;
+        }
+        const sessionId = id;
+        const agentSession = createAgent({ provider: providerFactory(profile), registry,
+          cwd, system: options.runtime.systemPrompt,
+          maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
+          requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
+          persistence: { store, sessionId, surface: "acp", ...(claimed ? { owner: claimed } : {}) },
+          approve: async (name, args, signal, toolCallId) => {
+            if (!peer) throw rawError(rawErrors.upstream, "ACP client disconnected");
+            const response = await withAbort(peer.request("session/request_permission", {
+              sessionId, toolCall: { toolCallId: toolCallId ?? randomUUID(), title: name, name, status: "pending", rawInput: args },
+              options: [{ optionId: "allow", name: "Allow once", kind: "allow_once" },
+                { optionId: "deny", name: "Deny", kind: "reject_once" }],
+            }, { ...(signal ? { cancellationSignal: signal } : {}) }), signal);
+            return response.outcome.outcome === "selected" && response.outcome.optionId === "allow";
+          },
+        });
+        if (startupController.signal.aborted) { await agentSession.close(); throw rawError(rawErrors.cancelled, "connection closed"); }
+        sessions.set(sessionId, { id: sessionId, agent: agentSession, registry, mcp, registered: new Map(), loading });
+        return { sessionId };
+      } catch (error) {
+        await mcp?.close();
+        if (saved && claimed) store.releaseSession(saved.id, claimed);
+        if (created && id) store.deleteSession(id);
+        if (error instanceof Error && /busy|ownership/i.test(error.message)) throw rawError(rawErrors.busy, "session is busy");
+        if (error instanceof Error && /unknown MCP alias|tool schema changed|tool selection differs|session runtime/i.test(error.message)) {
+          throw RequestError.invalidParams(undefined, "saved tool selection or runtime schema differs");
+        }
+        throw error;
+      }
+    })();
+    pendingCreations.add(creation);
+    return creation.finally(() => { pendingCreations.delete(creation); });
   };
   app.onConnect((connected) => {
     if (connection) { connected.close(); return; }
@@ -171,48 +263,46 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     peerRaw = rawCapabilities(params._meta);
     initialized = true;
     return { protocolVersion: PROTOCOL_VERSION, agentInfo: { name: "raw-cli", version: "0.1.0" },
-      agentCapabilities: { mcpCapabilities: { http: true, sse: true } },
+      agentCapabilities: { mcpCapabilities: { http: true, sse: true }, loadSession: true,
+        sessionCapabilities: { list: {}, resume: {}, delete: {} } },
       authMethods: [],
       _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true,
         toolCall: true, sessionCompact: true, toolCancel: true } } };
   });
-  app.onRequest("session/new", async ({ params }) => {
+  app.onRequest("session/new", ({ params }) => startSession(params.cwd, params.mcpServers));
+  app.onRequest("session/list", ({ params }) => {
     if (!initialized) throw RequestError.invalidRequest(undefined, "initialize first");
-    if (!isAbsolute(params.cwd)) throw RequestError.invalidParams(undefined, "cwd must be absolute");
-    try { if (!statSync(params.cwd).isDirectory()) throw new Error("not a directory"); }
-    catch { throw RequestError.invalidParams(undefined, "cwd must be an existing directory"); }
-    if (!options.runtime.profile) throw rawError(rawErrors.upstream, "provider and model are required");
-    const profile = options.runtime.profile;
-    if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
-    const creation = (async () => {
-      const id = randomUUID();
-      const registry = createToolRegistry(options.runtime.toolRules, options.runtime.profile?.vision === true);
-      const mcp = await connectMcpServers({ servers: sessionMcpServers(params.mcpServers, configuredMcp), registry,
-        cwd: params.cwd, timeoutMs: options.runtime.requestTimeoutMs, signal: startupController.signal });
-      try {
-      if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
-      const agentSession = createAgent({ provider: providerFactory(profile), registry,
-        cwd: params.cwd, system: options.runtime.systemPrompt,
-        maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
-        requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
-        approve: async (name, args, signal, toolCallId) => {
-          if (!peer) throw rawError(rawErrors.upstream, "ACP client disconnected");
-          const response = await withAbort(peer.request("session/request_permission", {
-            sessionId: id, toolCall: { toolCallId: toolCallId ?? randomUUID(), title: name, name, status: "pending", rawInput: args },
-            options: [{ optionId: "allow", name: "Allow once", kind: "allow_once" },
-              { optionId: "deny", name: "Deny", kind: "reject_once" }],
-          }, { ...(signal ? { cancellationSignal: signal } : {}) }), signal);
-          return response.outcome.outcome === "selected" && response.outcome.optionId === "allow";
-        },
+    if (params.cwd != null) validCwd(params.cwd);
+    let page;
+    try { page = store.listSessions({ ...(params.cwd == null ? {} : { cwd: params.cwd }),
+      ...(params.cursor == null ? {} : { before: params.cursor }) }); }
+    catch { throw RequestError.invalidParams(undefined, "invalid session list cursor or cwd"); }
+    return { sessions: page.items.map((item) => ({ sessionId: item.id, cwd: item.cwd, title: item.title,
+      updatedAt: new Date(item.updatedAt).toISOString() })),
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+  });
+  app.onRequest("session/resume", ({ params }) => startSession(params.cwd, params.mcpServers ?? [], params.sessionId).then(() => ({})));
+  app.onRequest("session/load", async ({ params, client }) => {
+    await startSession(params.cwd, params.mcpServers, params.sessionId, true);
+    try {
+      await store.scanSessionHistory(params.sessionId, async (item) => {
+        for (const update of storedAcpUpdates(item)) await client.notify("session/update", { sessionId: params.sessionId, update });
       });
-      if (startupController.signal.aborted) { await agentSession.close(); throw rawError(rawErrors.cancelled, "connection closed"); }
-      sessions.set(id, { id, agent: agentSession, registry, mcp, registered: new Map() });
-      return { sessionId: id };
-      } catch (error) { await mcp.close(); throw error; }
-    })();
-    pendingCreations.add(creation);
-    try { return await creation; }
-    finally { pendingCreations.delete(creation); }
+      const session = sessions.get(params.sessionId);
+      if (session) session.loading = false;
+      return {};
+    } catch (error) {
+      const session = sessions.get(params.sessionId);
+      if (session) { sessions.delete(params.sessionId); await session.agent.close(); await session.mcp.close(); }
+      throw error;
+    }
+  });
+  app.onRequest("session/delete", ({ params }) => {
+    if (!initialized) throw RequestError.invalidRequest(undefined, "initialize first");
+    if (!store.getSession(params.sessionId)) throw rawError(rawErrors.unknownSession, "unknown or expired session");
+    try { store.deleteSession(params.sessionId); }
+    catch { throw rawError(rawErrors.busy, "session is busy"); }
+    return {};
   });
   app.onRequest("session/prompt", async ({ params, client }) => {
     const session = getSession(params.sessionId);

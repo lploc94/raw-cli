@@ -9,7 +9,7 @@ import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import type { ToolResult } from "./tools/types.js";
 import type { SessionOwner, SessionStore } from "./sessions/store.js";
-import { validateStoredAgentState } from "./sessions/restore.js";
+import { isEphemeralPeerAlias, validateStoredAgentState } from "./sessions/restore.js";
 import { acpUpdate, resultPreview, toolArguments } from "./sessions/display.js";
 import type { AgentMetadata, VisibleRecord } from "./sessions/store.js";
 
@@ -47,7 +47,7 @@ export interface AgentOptions {
   approve?: ToolContext["approve"];
   whitelist?: readonly string[];
   compact?: Readonly<CompactSettings>;
-  persistence?: { store: SessionStore; sessionId: string; surface: "cli" | "acp" };
+  persistence?: { store: SessionStore; sessionId: string; surface: "cli" | "acp"; owner?: SessionOwner };
 }
 
 export class AgentSession {
@@ -102,7 +102,7 @@ export class AgentSession {
     this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
     if (options.persistence) {
       const { store, sessionId, surface } = options.persistence;
-      const owner = store.claimSession(sessionId);
+      const owner = options.persistence.owner ?? store.claimSession(sessionId);
       try {
         const savedSelection = store.getStoredSelection(sessionId);
         if (savedSelection !== undefined) {
@@ -110,12 +110,18 @@ export class AgentSession {
             throw new Error("explicit tool selection differs from saved session");
           }
           if (savedSelection === null) delete this.options.whitelist;
-          else this.options.whitelist = [...savedSelection];
+          else {
+            const known = new Set(this.options.registry.definitions().map((item) => item.name));
+            this.options.whitelist = surface === "acp"
+              ? savedSelection.filter((name) => known.has(name) || !isEphemeralPeerAlias(name))
+              : [...savedSelection];
+          }
           this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
         }
         const saved = store.initializeAgent(sessionId, owner, {
           cwd: this.options.cwd, system: this.options.system, profile: this.options.provider.profile,
           toolDefinitions: this.schemaView, selectedTools: this.options.whitelist ?? null, cacheKey: this.cacheKey,
+          allowPeerToolDrop: surface === "acp",
         });
         validateStoredAgentState(saved);
         this.messages = structuredClone(saved.messages);
