@@ -81,6 +81,8 @@ APPROVE — self-reviewed owned API, ACP and persistence diff against the rename
 `refactor: rename Raw profiles to agents`
 
 ## Phase 2: Add packaged built-in skills and the full config skill
+### Status
+complete
 ### Goal
 Establish the installed `builtin/` skill namespace and ship a complete, usable `configure_raw` reference using the new agent vocabulary.
 ### Current behavior and gap
@@ -104,15 +106,15 @@ Source file existence or keyword assertions are insufficient: the installed asse
 ### Implementation obligations
 Add `builtin/` ID/root support, source-derived build/package copies in `dist/skills/builtin` and `examples/skills`, the detailed config skill, and aligned docs. Preserve explicit selection and existing loader limits.
 ### Acceptance criteria
-- [ ] AC-2.1: Installed `builtin/configure_raw` loads only after selection through linked list/load results, independent of checkout/cwd/XDG/config location — proven by packed-consumer test.
-- [ ] AC-2.2: Built-in/local/agent selection shares strict manifest, containment, duplicate and byte-cap behavior; unselected invalid assets remain inert — proven by loader tests.
-- [ ] AC-2.3: The config skill has the actual typed schema, constraints, task-to-field guide, runnable examples and validation/resume instructions within the default cap — proven by fixture execution and code-grounded review.
+- [x] AC-2.1: Installed `builtin/configure_raw` loads only after selection through linked list/load results, independent of checkout/cwd/XDG/config location — proven by packed-consumer test.
+- [x] AC-2.2: Built-in/local/agent selection shares strict manifest, containment, duplicate and byte-cap behavior; unselected invalid assets remain inert — proven by loader tests.
+- [x] AC-2.3: The config skill has the actual typed schema, constraints, task-to-field guide, runnable examples and validation/resume instructions within the default cap — proven by fixture execution and code-grounded review.
 ### Focused verification
 `npm run build && node --import tsx --test tests/bundled-skills.test.ts tests/skill-tools.test.ts tests/config.test.ts`
 ### Phase gates
 `npm run check && npm run test:package && git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — self-reviewed the shared loader, package-root behavior and installed package assets. A selected malformed built-in manifest, symlink escape, duplicate cross-root name and output cap fail closed; unselected assets stay inert. The 7870-byte config body matches the validator and its JSON example parses through `loadConfig`. Focused 14/14, full check 320/320 and package 2/2 passed.
 ### Commit
 `feat: load packaged Raw skills and ship config reference`
 
@@ -197,6 +199,7 @@ Implementation review is required; verdict must be APPROVE.
 - Installed examples actually create a skill, tool, portable agent and exact MCP selection outside the checkout; provider/MCP/ACP/session regressions remain green. Historical plans/evidence remain historical.
 
 ## Progress Log
+- 2026-09-25: Phase 2 complete. Added package-owned `builtin/` skill resolution and source-derived installed/forkable copies, authored the detailed 7870-byte `configure_raw` reference, and tested linked visibility plus packed-consumer validation. Focused 14/14, full check 320/320, package 2/2; implementation self-review APPROVE.
 - 2026-09-25: Phase 1 complete. Added red agent-contract/schema tests, renamed config/CLI/provider/session/ACP surfaces, rejected v3, and updated current docs. Focused 80/80, full check 318/318, package 2/2 passed; implementation self-review APPROVE. Backed up personal config, renamed its local agent to raw while retaining DeepSeek as default, verified preserved model/MCP/prompt/credential settings, cleared two v3 test sessions and the older v2 test archive after zero active-owner/process checks, and created an empty v4 store.
 - 2026-09-25: Plan self-review APPROVE: checked rename mapping, current source paths and tests, model/provider distinction, standard ACP boundary, schema-v4 reset without migration, 4 ordered phases/15 criteria, package-independent skill examples, and personal config preservation. Clarified fresh-init `raw` default, configurable selection without `--agent`, and this machine's preserved `deepseek` default. Implementation awaits approval of the amended plan.
 - 2026-09-25: User added a breaking `profile` → `agent` concept rename and explicitly authorized clearing saved test sessions; no migration/backward compatibility. CTXE Ready/fresh routed config/CLI/runtime/provider/session/ACP surfaces. The former three-phase plan at `8a36fa1` was amended into four phases with the rename first. No application code or personal config/state changed in this planning turn.

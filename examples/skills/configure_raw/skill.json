@@ -1,0 +1,7 @@
+{
+  "api_version": 1,
+  "id": "configure_raw",
+  "version": "1.0.0",
+  "name": "configure_raw",
+  "description": "Edit and validate Raw's strict JSON config: models, agents, prompts, tools, skills, MCP, policies, limits and resume behavior."
+}

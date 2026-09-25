@@ -18,6 +18,7 @@
   "files": [
     "dist",
     "examples/tools",
+    "examples/skills",
     "examples/agents",
     "README.md"
   ],
@@ -27,7 +28,7 @@
     "test:phase": "node scripts/test-phase.mjs",
     "test:overhead": "node --import tsx scripts/overhead.mjs",
     "test:package": "npm run build && node --import tsx --test tests/package.test.ts tests/package-agent.test.ts",
-    "build": "tsup && tsup --config tsup.tools.config.ts && node scripts/copy-tool-manifests.mjs && node scripts/build-tool-examples.mjs",
+    "build": "tsup && tsup --config tsup.tools.config.ts && node scripts/copy-tool-manifests.mjs && node scripts/build-tool-examples.mjs && node scripts/copy-bundled-skills.mjs",
     "check": "npm run typecheck && npm test"
   },
   "dependencies": {

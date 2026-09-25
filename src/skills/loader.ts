@@ -2,6 +2,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
+import { packageRoot } from "../package-root.js";
 import type { SelectedSkill } from "./contract.js";
 
 export interface LoadSelectedSkillsOptions {
@@ -60,17 +61,18 @@ export async function loadSelectedSkills(options: LoadSelectedSkillsOptions): Pr
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const globalBase = env.XDG_CONFIG_HOME ? resolve(cwd, env.XDG_CONFIG_HOME) : join(options.home ?? homedir(), ".config");
-  const roots = { local: join(options.globalConfigRoot ?? join(globalBase, "raw"), "skills"),
+  const roots = { builtin: join(packageRoot(), "dist", "skills", "builtin"),
+    local: join(options.globalConfigRoot ?? join(globalBase, "raw"), "skills"),
     agent: join(dirname(resolve(cwd, options.configPath)), "skills") };
   const seenIds = new Set<string>();
   const seenNames = new Set<string>();
   const skills: SelectedSkill[] = [];
   for (const id of options.selectedIds) {
-    const match = /^(local|agent)\/([a-z][a-z0-9_-]*)$/.exec(id);
+    const match = /^(builtin|local|agent)\/([a-z][a-z0-9_-]*)$/.exec(id);
     if (!match) throw new Error(`invalid skill id: ${id}`);
     if (seenIds.has(id)) throw new Error(`duplicate skill id: ${id}`);
     seenIds.add(id);
-    const root = roots[match[1] as "local" | "agent"];
+    const root = roots[match[1] as "builtin" | "local" | "agent"];
     let realRoot: string;
     let realFolder: string;
     let realManifest: string;

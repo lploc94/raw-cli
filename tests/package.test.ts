@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { testConfig } from "./fixtures/config.js";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -40,6 +40,11 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     await access(join(example, "index.mjs"));
   }
   await access(join(consumer, "node_modules", "raw-cli", "examples", "agents", "project-helper", "raw.json"));
+  const packagedSkill = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", "configure_raw");
+  await access(join(packagedSkill, "skill.json"));
+  const skillBody = await readFile(join(packagedSkill, "SKILL.md"), "utf8");
+  assert.ok(skillBody.length > 5000);
+  assert.equal(skillBody, await readFile(join(consumer, "node_modules", "raw-cli", "examples", "skills", "configure_raw", "SKILL.md"), "utf8"));
   for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill"]) {
     const folder = join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", name);
     const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8")) as { id: string; entry: string; input_schema: { type: string } };
@@ -65,6 +70,35 @@ const tools = await loadToolPlugins({ selectedIds: ["builtin/read_file"], config
 if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new Error("installed bundled root failed");
 `], consumer, { ...process.env });
   assert.equal(installedLoader.code, 0, installedLoader.stderr);
+  const installedSkillLoader = await run(process.execPath, ["--input-type=module", "--eval", `
+import { loadSelectedSkills } from "raw-cli";
+const selected = await loadSelectedSkills({ selectedIds: ["builtin/configure_raw"], configPath: "ignored.json", maxOutputBytes: 8192 });
+if (selected.length !== 1 || selected[0].name !== "configure_raw" || !selected[0].markdown.includes("default_agent")) throw new Error("installed skill root failed");
+`], consumer, { ...process.env, XDG_CONFIG_HOME: join(root, "other-config") });
+  assert.equal(installedSkillLoader.code, 0, installedSkillLoader.stderr);
+  const builtinProbe = async (ids: string[], xdg = join(root, "other-config")) => run(process.execPath,
+    ["--input-type=module", "--eval", `import { loadSelectedSkills } from "raw-cli";
+try { await loadSelectedSkills({ selectedIds: ${JSON.stringify(ids)}, configPath: "ignored.json", maxOutputBytes: 8192 }); }
+catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], consumer,
+    { ...process.env, XDG_CONFIG_HOME: xdg });
+  const manifestPath = join(packagedSkill, "skill.json");
+  const originalManifest = await readFile(manifestPath, "utf8");
+  await writeFile(manifestPath, "{broken");
+  assert.match((await builtinProbe(["builtin/configure_raw"])).stderr, /invalid skill manifest JSON/);
+  await writeFile(manifestPath, originalManifest);
+  const outside = join(root, "outside-skill.md");
+  await writeFile(outside, "outside");
+  const markdownPath = join(packagedSkill, "SKILL.md");
+  await unlink(markdownPath);
+  await symlink(outside, markdownPath);
+  assert.match((await builtinProbe(["builtin/configure_raw"])).stderr, /escapes folder/);
+  await unlink(markdownPath);
+  await writeFile(markdownPath, skillBody);
+  const duplicateRoot = join(root, "other-config", "raw", "skills", "duplicate");
+  await mkdir(duplicateRoot, { recursive: true });
+  await writeFile(join(duplicateRoot, "skill.json"), JSON.stringify({ api_version: 1, id: "duplicate", version: "1.0.0", name: "configure_raw", description: "Duplicate" }));
+  await writeFile(join(duplicateRoot, "SKILL.md"), "duplicate");
+  assert.match((await builtinProbe(["builtin/configure_raw", "local/duplicate"])).stderr, /duplicate skill name/);
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);

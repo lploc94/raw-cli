@@ -331,7 +331,7 @@ function skillSpec(raw: unknown, where: string): readonly string[] {
   if (!Array.isArray(value.use)) throw new Error(where + ".use must be an array");
   const ids = value.use.map((id, index) => {
     const name = string(id, `${where}.use[${index}]`);
-    if (!/^(?:local|agent)\/[a-z][a-z0-9_-]*$/.test(name)) throw new Error(`invalid skill id: ${name}`);
+    if (!/^(?:builtin|local|agent)\/[a-z][a-z0-9_-]*$/.test(name)) throw new Error(`invalid skill id: ${name}`);
     return name;
   });
   if (new Set(ids).size !== ids.length) throw new Error(where + ".use contains duplicate IDs");

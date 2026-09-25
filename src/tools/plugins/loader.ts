@@ -2,11 +2,11 @@ import AjvDraft7 from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { packageRoot } from "../../package-root.js";
 import type { ToolContext } from "../primitives.js";
 import type { ToolRegistration } from "../registry.js";
 import type { ToolManifest, ToolPlugin } from "./contract.js";
@@ -23,16 +23,6 @@ export interface LoadToolPluginsOptions {
   cwd?: string;
   globalConfigRoot?: string;
   skills?: readonly SelectedSkill[];
-}
-
-function packageRoot(): string {
-  let directory = dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    if (existsSync(join(directory, "package.json"))) return directory;
-    const parent = dirname(directory);
-    if (parent === directory) throw new Error("Raw package root not found");
-    directory = parent;
-  }
 }
 
 export function bundledToolsRoot(): string {
