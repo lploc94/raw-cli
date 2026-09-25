@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -52,6 +52,16 @@ export interface HistoryItem {
 }
 
 export interface Page<T> { items: T[]; nextCursor?: string }
+export interface SessionStorageStats {
+  workspaces: number;
+  sessions: number;
+  historyItems: number;
+  modelMessages: number;
+  payloadFiles: number;
+  databaseBytes: number;
+  walBytes: number;
+  payloadBytes: number;
+}
 
 export interface SessionOwner { token: string; generation: number }
 export interface AgentIdentity {
@@ -205,6 +215,28 @@ export class SessionStore {
   releaseSession(sessionId: string, owner: SessionOwner): void {
     this.database.prepare("UPDATE sessions SET owner_token = NULL, lease_until = NULL WHERE id = ? AND owner_token = ? AND owner_generation = ?")
       .run(sessionId, owner.token, owner.generation);
+  }
+
+  setTitleFromPrompt(sessionId: string, owner: SessionOwner, prompt: string): void {
+    const title = prompt.trim().replace(/\s+/g, " ").slice(0, 80) || "New session";
+    this.transaction(() => {
+      this.ownerRow(sessionId, owner);
+      this.database.prepare("UPDATE sessions SET title = ? WHERE id = ? AND title = 'New session'").run(title, sessionId);
+    });
+  }
+
+  storageStats(): SessionStorageStats {
+    const count = (table: string): number => Number(this.database.prepare(`SELECT count(*) AS n FROM ${table}`).get()?.n);
+    const bytes = (path: string): number => {
+      try { return statSync(path).size; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0; throw error; }
+    };
+    return {
+      workspaces: count("workspaces"), sessions: count("sessions"), historyItems: count("history"),
+      modelMessages: count("model_context"), payloadFiles: count("payloads"),
+      databaseBytes: bytes(this.path), walBytes: bytes(`${this.path}-wal`),
+      payloadBytes: Number(this.database.prepare("SELECT coalesce(sum(byte_length), 0) AS n FROM payloads").get()?.n),
+    };
   }
 
   getStoredSelection(sessionId: string): readonly string[] | null | undefined {

@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { testConfig } from "./fixtures/config.js";
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+
+const stateHome = mkdtempSync(join(tmpdir(), "raw-repl-test-state-"));
 
 function answer(text: string) { return { frames: [openAiFrame({ content: text }, "stop"), openAiDone] }; }
 
@@ -21,7 +26,7 @@ test("T-08c: REPL retains turns, compact costs one request, stats/clear cost zer
   ]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "bin/raw.ts",
     "--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
-  { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
+  { cwd: process.cwd(), env: { ...process.env, XDG_STATE_HOME: stateHome, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (part: string) => { stdout += part; });
@@ -58,7 +63,7 @@ test("T-08 review: REPL preserves adjacent lines delivered in one stdin chunk", 
   const fixture = await startMockProvider([answer("batched-answer")]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "bin/raw.ts",
     "--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
-  { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
+  { cwd: process.cwd(), env: { ...process.env, XDG_STATE_HOME: stateHome, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (part: string) => { stdout += part; });

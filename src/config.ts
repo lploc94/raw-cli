@@ -21,15 +21,21 @@ export interface RawFlags {
   autoApprove?: boolean;
   host?: string;
   port?: number;
+  continue?: boolean;
+  resumeId?: string;
+  allSessions?: boolean;
+  before?: string;
 }
 
-export type CliCommand = "help" | "version" | "config-init" | "config-list" | "task" | "interactive" | "acp";
+export type CliCommand = "help" | "version" | "config-init" | "config-list" | "task" | "interactive" | "acp"
+  | "sessions-list" | "sessions-show" | "sessions-delete" | "sessions-stats";
 
 export interface CliArgs {
   command: CliCommand;
   task?: string;
   flags: RawFlags;
   acpTransport?: "stdio" | "ws";
+  sessionId?: string;
 }
 
 export interface CompactSettings {
@@ -613,6 +619,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     "--profile": "profile", "--config": "configPath", "--system-prompt": "systemPrompt",
     "--max-steps": "maxSteps", "--max-output-bytes": "maxOutputBytes",
     "--request-timeout-ms": "requestTimeoutMs", "--host": "host", "--port": "port",
+    "--resume": "resumeId", "--before": "before",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -622,6 +629,13 @@ export function parseCliArgs(argv: string[]): CliArgs {
     if (arg === "--help" || arg === "-h") { help = true; continue; }
     if (arg === "--version" || arg === "-V") { version = true; continue; }
     if (arg === "--interactive") { interactive = true; continue; }
+    if (arg === "--continue" || arg === "--all") {
+      if (seen.has(arg)) throw new Error(`duplicate option ${arg}`);
+      seen.add(arg);
+      if (arg === "--continue") flags.continue = true;
+      else flags.allSessions = true;
+      continue;
+    }
     if (arg === "--acp") { acp = true; continue; }
     if (arg === "--stdio" || arg === "--ws") {
       if (acpTransport) throw new Error("--stdio and --ws are mutually exclusive");
@@ -647,6 +661,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
         if (key === "configPath") flags.configPath = next;
         if (key === "systemPrompt") flags.systemPrompt = next;
         if (key === "host") flags.host = next;
+        if (key === "resumeId") flags.resumeId = next;
+        if (key === "before") flags.before = next;
       }
       continue;
     }
@@ -655,12 +671,31 @@ export function parseCliArgs(argv: string[]): CliArgs {
   }
   if (help) return { command: "help", flags };
   if (version) return { command: "version", flags };
+  if (flags.continue && flags.resumeId) throw new Error("--continue and --resume are mutually exclusive");
+  if (positional[0] === "sessions") {
+    if (interactive || acp || acpTransport || flags.host || flags.port || flags.continue || flags.resumeId
+      || flags.profile || flags.configPath || flags.systemPrompt || flags.maxSteps || flags.maxOutputBytes
+      || flags.requestTimeoutMs || flags.autoApprove) throw new Error("sessions cannot be combined with run options");
+    if (positional.length === 1) return { command: "sessions-list", flags };
+    if (positional[1] === "show" && positional.length === 3 && !flags.allSessions) {
+      return { command: "sessions-show", flags, sessionId: positional[2]! };
+    }
+    if (positional[1] === "delete" && positional.length === 3 && !flags.allSessions && !flags.before) {
+      return { command: "sessions-delete", flags, sessionId: positional[2]! };
+    }
+    if (positional[1] === "stats" && positional.length === 2 && !flags.allSessions && !flags.before) {
+      return { command: "sessions-stats", flags };
+    }
+    throw new Error("sessions requires list, show ID, delete ID, or stats");
+  }
+  if (flags.allSessions || flags.before) throw new Error("--all and --before require sessions");
   if (positional[0] === "config") {
-    if (positional.length !== 2 || (positional[1] !== "init" && positional[1] !== "list") || interactive || acp) throw new Error("config requires init or list");
+    if (positional.length !== 2 || (positional[1] !== "init" && positional[1] !== "list") || interactive || acp
+      || flags.continue || flags.resumeId) throw new Error("config requires init or list");
     return { command: positional[1] === "init" ? "config-init" : "config-list", flags };
   }
   if (acp) {
-    if (interactive || positional.length) throw new Error("--acp cannot be combined with a task or --interactive");
+    if (interactive || positional.length || flags.continue || flags.resumeId) throw new Error("--acp cannot be combined with a task, resume, or --interactive");
     return { command: "acp", flags, acpTransport: acpTransport ?? "stdio" };
   }
   if (acpTransport || flags.host || flags.port) throw new Error("ACP transport options require --acp");

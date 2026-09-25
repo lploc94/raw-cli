@@ -133,7 +133,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 
 ## Phase 3: CLI session list, resume, and terminal history
 ### Status
-pending
+complete
 ### Goal
 Give local users explicit session discovery, resume, history paging, and deletion without a resident daemon.
 ### Current behavior and gap
@@ -157,10 +157,10 @@ Two workspaces with different latest sessions must prove `--continue` selects th
 ### Implementation obligations
 Select/configure before MCP connection; reopen runtime resources on resume; release ownership/clients in `finally`; keep commands read-only where appropriate. `show` faithfully renders stored visible content, including complete Bash arguments; list metadata and diagnostic errors must not expose credentials that were never part of visible history.
 ### Acceptance criteria
-- [ ] AC-3.1: One-shot/REPL sessions can be listed and resumed in another process, with stored cwd/profile/model context — proven by spawned CLI tests.
-- [ ] AC-3.2: CLI session-list and newest-20 history cursors traverse all stored entries; `show` reproduces long previously displayed Bash arguments after compact/restart, an ID found beyond the first list page resumes, and `--continue` is workspace-scoped — proven by CLI/store tests.
-- [ ] AC-3.3: `/clear` leaves old session visible and starts a new ID; explicit deletion removes only an inactive selected session — proven by REPL/CLI tests.
-- [ ] AC-3.4: SIGINT during a REPL operation cancels only that operation, rejects a competing writer, and allows another prompt in the original REPL; SIGTERM/exit then release ownership/MCP resources without dropping committed messages — proven by process tests.
+- [x] AC-3.1: One-shot/REPL sessions can be listed and resumed in another process, with stored cwd/profile/model context — proven by spawned CLI tests.
+- [x] AC-3.2: CLI session-list and newest-20 history cursors traverse all stored entries; `show` reproduces long previously displayed Bash arguments after compact/restart, an ID found beyond the first list page resumes, and `--continue` is workspace-scoped — proven by CLI/store tests.
+- [x] AC-3.3: `/clear` leaves old session visible and starts a new ID; explicit deletion removes only an inactive selected session — proven by REPL/CLI tests.
+- [x] AC-3.4: SIGINT during a REPL operation cancels only that operation, rejects a competing writer, and allows another prompt in the original REPL; SIGTERM/exit then release ownership/MCP resources without dropping committed messages — proven by process tests.
 ### Focused verification
 `node --import tsx --test tests/session-cli.test.ts tests/repl.test.ts tests/cli.test.ts`
 ### Phase gates
@@ -255,6 +255,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 - All phase acceptance checks, required reviews, test/CI/package gates, documentation, and commits are complete.
 
 ## Progress Log
+- 2026-09-25: Phase 3 complete. Added saved CLI one-shot/REPL sessions, workspace-scoped continue, explicit cross-workspace resume, list/show/delete/stats commands, bounded cursors, and library session APIs. Spawned process tests cover restart, paging, `/clear`, SIGINT/SIGTERM ownership, and complete Bash arguments after compact. Fixed crash-recovery display of `outcome_unknown` after Astra review; regression failed before the fix and passed after. `npm run typecheck && npm test` passed (253 tests), `npm run test:package` passed, and GPT-6 Astra returned APPROVE.
 - 2026-09-25: Phase 2 complete. Agent transitions now commit user/assistant/tool state and visible projections, restore exact active context and selected schema, and recover pending calls without replay. Large payloads use private checksum-verified files with reference tracking; compact retains display history and reclaims model-only detail. Focused verification passed; `npm run typecheck && npm test` passed (245 tests), as did `npm run test:package`. GPT-6 Astra reviewed three rounds and returned APPROVE after fixes for reclamation/republication, JSON prototype safety, and persistence error reporting.
 - 2026-09-25: Phase 1 complete. Added global private SQLite store, strict canonical retention config, stable IDs, bounded indexed cursors and history APIs. TDD red evidence covered missing store/config exports and three Astra review defects; the latter were fixed with regression tests. `npm run typecheck && npm test` passed (222 tests); `npm run test:package` passed after preserving `node:sqlite` in bundles. GPT-6 Astra final review: APPROVE, three findings resolved.
 - 2026-09-25: Created plan from current conversation and CTXE-anchored repository evidence. No production implementation started. Awaiting user approval of the plan before `$loop-implement`.

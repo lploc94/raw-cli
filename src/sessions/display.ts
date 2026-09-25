@@ -1,6 +1,8 @@
 import type { ToolResult } from "../tools/types.js";
 import type { RunEvent } from "../agent.js";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { renderUserInput } from "../llm/types.js";
+import type { HistoryItem } from "./store.js";
 
 const RESULT_PREVIEW_CHARS = 2000;
 const RESULT_PREVIEW_LINES = 9; // The result header is the tenth displayed line.
@@ -65,4 +67,43 @@ export function acpUpdate(event: RunEvent): SessionUpdate | undefined {
   if (event.type === "compact_end") return { sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compact ${event.result.status}.` } };
   return undefined;
+}
+
+export function renderStoredHistory(item: HistoryItem): string {
+  const payload = item.payload;
+  if (item.kind === "user") return `user: ${renderUserInput(payload.input as Parameters<typeof renderUserInput>[0])}`;
+  if (item.kind === "assistant") {
+    const update = payload.update as { content?: { text?: string } } | undefined;
+    return String(update?.content?.text ?? payload.text ?? "");
+  }
+  if (item.kind === "reasoning") return `raw: thinking\n${String(payload.text ?? "")}`;
+  if (item.kind === "status") return String(payload.text ?? "");
+  if (item.kind === "tool_call" && !payload.update) {
+    return `raw: ${payload.started === false ? "⚠ " : ""}${String(payload.name)} ${String(payload.arguments)}`;
+  }
+  if (item.kind === "tool_result" && !payload.update) {
+    const nested = payload.result && typeof payload.result === "object" && !Array.isArray(payload.result)
+      && Array.isArray((payload.result as Record<string, unknown>).content) ? payload.result as ToolResult : undefined;
+    const failed = (nested?.isError ?? payload.isError) === true
+      || (typeof (nested?.exitCode ?? payload.exitCode) === "number" && (nested?.exitCode ?? payload.exitCode) !== 0);
+    const exitCode = nested?.exitCode ?? payload.exitCode;
+    const code = nested?.code ?? payload.code;
+    const truncated = nested?.truncated ?? payload.truncated;
+    const meta = [
+      ...(typeof exitCode === "number" ? [`exit ${exitCode}`] : []),
+      ...(typeof code === "string" ? [code] : []),
+      ...(truncated ? ["model output capped"] : []),
+    ];
+    const preview = nested ? resultPreview(String(payload.name), nested) : String(payload.preview ?? "");
+    return `raw: ${failed ? "✗" : "↳"} ${String(payload.name)} result${meta.length ? ` (${meta.join(", ")})` : ""}${preview ? `\n${preview}` : " (empty)"}`;
+  }
+  const update = payload.update as Record<string, unknown> | undefined;
+  if (update?.sessionUpdate === "tool_call") return `raw: ${String(update.name ?? update.title)} ${JSON.stringify(update.rawInput)}`;
+  if (update?.sessionUpdate === "tool_call_update") {
+    return `raw: ${String(update.toolCallId)} ${String(update.status)}${update.rawOutput === undefined ? "" : `\n${JSON.stringify(update.rawOutput)}`}`;
+  }
+  if (update?.sessionUpdate === "agent_thought_chunk") {
+    return `raw: ${String((update.content as { text?: string } | undefined)?.text ?? "")}`;
+  }
+  return JSON.stringify(payload);
 }

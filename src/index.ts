@@ -32,3 +32,5 @@ export { serveAcpStdio, serveAcpWebSocket } from "./acp/transport.js";
 export type { AcpWsListener } from "./acp/transport.js";
 export { openSessionStore, sessionStorePath, SessionStore } from "./sessions/store.js";
 export type { CreateSessionOptions, HistoryItem, Page, SessionStoreOptions, SessionSummary } from "./sessions/store.js";
+export { listSessions, getSessionHistory, resumeSession, deleteSession } from "./sessions/api.js";
+export type { SessionPageOptions, SessionHistoryOptions, SessionIdOptions, ResumeSessionOptions, ResumedSession } from "./sessions/api.js";

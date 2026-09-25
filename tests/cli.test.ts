@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "raw-cli-test-config-"));
+process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-cli-test-state-"));
 
 async function raw(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {}) {
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"), ...args], {

@@ -4,6 +4,8 @@ import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { connectMcpServers, type McpServerConfig } from "./tools/mcp-client.js";
 import { createToolRegistry } from "./tools/registry.js";
+import { renderStoredHistory } from "./sessions/display.js";
+import type { SessionStore, SessionSummary } from "./sessions/store.js";
 
 export { resultPreview } from "./sessions/display.js";
 import { resultPreview, toolArguments } from "./sessions/display.js";
@@ -138,9 +140,10 @@ async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, 
   return answer !== undefined && /^(?:y|yes)$/i.test(answer.trim());
 }
 
-export async function runCli(runtime: RuntimeConfig, task: string | undefined, mcpServers: Readonly<Record<string, McpServerConfig>>): Promise<number> {
+export async function runCli(runtime: RuntimeConfig, task: string | undefined, mcpServers: Readonly<Record<string, McpServerConfig>>,
+  store: SessionStore, selected?: SessionSummary): Promise<number> {
   if (!runtime.profile) throw new Error("provider and model are required");
-  const cwd = process.cwd();
+  const cwd = selected?.cwd ?? process.cwd();
   const provider = createProvider(runtime.profile);
   const startupController = new AbortController();
   let startupCancelled = false;
@@ -165,10 +168,21 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   const lines = rl ? lineQueue(rl) : undefined;
   let closed = false;
   let cancelledWhileIdle = false;
-  const session = createAgent({ provider, registry: mcp.registry,
+  const createSavedSession = (title: string) => store.createSession({ cwd, title,
+    profileName: runtime.profile!.name, configPath: runtime.configPath, modelId: runtime.profile!.model,
+    provider: runtime.profile!.provider, method: runtime.profile!.method,
+    ...(runtime.profile!.baseUrl ? { endpoint: runtime.profile!.baseUrl } : {}),
+    systemPrompt: runtime.systemPrompt });
+  const createRuntimeAgent = (id: string) => createAgent({ provider, registry: mcp.registry,
     cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
     requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
+    persistence: { store, sessionId: id, surface: "cli" },
     ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal) } : {}) });
+  let session: AgentSession;
+  try {
+    const record = selected ?? createSavedSession(task?.trim().replace(/\s+/g, " ").slice(0, 80) || "New session");
+    session = createRuntimeAgent(record.id);
+  } catch (error) { rl?.close(); await mcp.close(); throw error; }
   const interrupt = () => {
     if (session.abort()) { process.stderr.write("\nraw: cancelled\n"); return; }
     cancelledWhileIdle = true;
@@ -186,6 +200,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   try {
     if (task !== undefined) return statusCode(await textRun(session, task));
     if (!rl || !lines) throw new Error("interactive input unavailable");
+    if (selected) for (const item of store.getSessionHistory({ sessionId: selected.id }).items) {
+      process.stdout.write(`${renderStoredHistory(item)}\n`);
+    }
     while (!closed) {
       process.stdout.write("> ");
       const line = await lines.next();
@@ -193,7 +210,12 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
       if (closed) break;
       if (!line.trim()) continue;
       if (line === "/exit") break;
-      if (line === "/clear") { session.clear(); process.stderr.write("raw: conversation cleared\n"); continue; }
+      if (line === "/clear") {
+        await session.close();
+        session = createRuntimeAgent(createSavedSession("New session").id);
+        process.stderr.write("raw: conversation cleared\n");
+        continue;
+      }
       if (line === "/stats") { process.stderr.write(`${JSON.stringify(session.stats())}\n`); continue; }
       if (line === "/compact") {
         try {

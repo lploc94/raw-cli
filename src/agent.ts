@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import type { CompactSettings } from "./config.js";
-import type { ModelMessage, ModelToolCall, ProviderAdapter, UserInput } from "./llm/types.js";
+import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import { createToolRegistry, type ToolDefinition, type ToolRegistry } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
@@ -398,7 +398,10 @@ export class AgentSession {
     try {
       this.commitMessage({ role: "user", content: structuredClone(input) }, firstTask ? { originalTask: input } : {},
         [{ kind: "user", payload: { input: structuredClone(input) } }]);
-      if (firstTask) this.originalTask = structuredClone(input);
+      if (firstTask) {
+        this.originalTask = structuredClone(input);
+        this.durable((store, sessionId, owner) => store.setTitleFromPrompt(sessionId, owner, renderUserInput(input)));
+      }
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
         let requestEstimate = 0;
