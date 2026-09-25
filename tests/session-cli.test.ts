@@ -59,6 +59,8 @@ test("one-shot session lists, resumes in another process, pages history, and del
     assert.equal(listed.code, 0, listed.stderr);
     const id = listed.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)?.[0];
     assert.ok(id);
+    assert.match(first.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
+    assert.doesNotMatch(first.stderr, /raw: session usage:/);
     assert.match(listed.stdout, /first task/);
     const noTask = await raw(["--resume", id], a, env, "/exit\n");
     assert.equal(noTask.code, 0, noTask.stderr);
@@ -67,6 +69,7 @@ test("one-shot session lists, resumes in another process, pages history, and del
     const continued = await raw(["--continue", "second task"], a, env);
     assert.equal(continued.code, 0, continued.stderr);
     assert.equal(continued.stdout, "second-answer\n");
+    assert.match(continued.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
     assert.match(JSON.stringify(provider.requests[1]?.body), /first-answer/);
     const shown = await raw(["sessions", "show", id], a, env);
     assert.equal(shown.code, 0, shown.stderr);
@@ -74,6 +77,7 @@ test("one-shot session lists, resumes in another process, pages history, and del
     const explicit = await raw(["--resume", id, "third task"], b, env);
     assert.equal(explicit.code, 0, explicit.stderr);
     assert.equal(explicit.stdout, "third-answer\n");
+    assert.match(explicit.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
     assert.match(explicit.stderr, /resuming in/);
     assert.ok(explicit.stderr.includes(a));
     assert.match(JSON.stringify(provider.requests[2]?.body), /second-answer/);
@@ -85,6 +89,22 @@ test("one-shot session lists, resumes in another process, pages history, and del
     const store = openSessionStore({ env });
     try { assert.equal(store.getSession(id), undefined); }
     finally { store.close(); }
+  } finally { await provider.close(); }
+});
+
+test("one-shot footer shows reported session token usage without inventing cache misses", async () => {
+  const { a, env } = fixture();
+  const usage = { prompt_tokens: 120, completion_tokens: 24, prompt_tokens_details: { cached_tokens: 80 } };
+  const usageFrame = `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1,
+    model: "fixture", choices: [], usage })}\n\n`;
+  const provider = await startMockProvider([{ frames: [openAiFrame({ content: "measured-answer" }, "stop"), usageFrame, openAiDone] }]);
+  try {
+    const result = await raw(["--config", testConfig("openai", "fixture", provider.url), "measure"], a, env);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "measured-answer\n");
+    assert.match(result.stderr, /raw: session usage: 1 request, 120 input \/ 24 output tokens, 80 cache-read tokens/);
+    assert.doesNotMatch(result.stderr, /cache miss/i);
+    assert.match(result.stderr, /raw: continue: raw --resume [0-9a-f-]+ "query"/);
   } finally { await provider.close(); }
 });
 

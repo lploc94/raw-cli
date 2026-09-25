@@ -156,7 +156,7 @@ test("tool result preview keeps head and tail within 2000 characters and 10 line
     assert.equal(result.stdout, "Done\n");
     const start = result.stderr.indexOf("raw: ↳ bash result");
     assert.ok(start >= 0);
-    const lines = result.stderr.slice(start).trimEnd().split("\n");
+    const lines = result.stderr.slice(start).split(/\nraw: (?:session usage:|continue:)/, 1)[0]!.trimEnd().split("\n");
     assert.ok(lines.length <= 10, `preview used ${lines.length} lines`);
     const preview = lines.slice(1).join("\n");
     assert.ok(Array.from(preview).length <= 2000);

@@ -180,8 +180,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
     persistence: { store, sessionId: id, surface: "cli" },
     ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal) } : {}) });
   let session: AgentSession;
+  let record: SessionSummary;
   try {
-    const record = selected ?? createSavedSession(task?.trim().replace(/\s+/g, " ").slice(0, 80) || "New session");
+    record = selected ?? createSavedSession(task?.trim().replace(/\s+/g, " ").slice(0, 80) || "New session");
     session = createRuntimeAgent(record.id);
   } catch (error) { rl?.close(); await mcp.close(); throw error; }
   const interrupt = () => {
@@ -199,7 +200,24 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   rl?.on("SIGINT", interrupt);
   rl?.on("close", onClose);
   try {
-    if (task !== undefined) return statusCode(await textRun(session, task));
+    if (task !== undefined) {
+      const result = await textRun(session, task);
+      const code = statusCode(result);
+      if (result.status === "completed") {
+        const stats = session.stats();
+        const usage: string[] = [];
+        if (stats.requests > 0 && stats.inputCoverage === stats.requests && stats.outputCoverage === stats.requests) {
+          usage.push(`${stats.inputTokensKnown} input / ${stats.outputTokensKnown} output tokens`);
+        } else {
+          if (stats.requests > 0 && stats.inputCoverage === stats.requests) usage.push(`${stats.inputTokensKnown} input tokens`);
+          if (stats.requests > 0 && stats.outputCoverage === stats.requests) usage.push(`${stats.outputTokensKnown} output tokens`);
+        }
+        if (stats.requests > 0 && stats.cacheRatioCoverage === stats.requests) usage.push(`${stats.cacheReadTokensKnown} cache-read tokens`);
+        if (usage.length) process.stderr.write(`raw: session usage: ${stats.requests} request${stats.requests === 1 ? "" : "s"}, ${usage.join(", ")}\n`);
+        process.stderr.write(`raw: continue: raw --resume ${record.id} "query"\n`);
+      }
+      return code;
+    }
     if (!rl || !lines) throw new Error("interactive input unavailable");
     if (selected) for (const item of store.getSessionHistory({ sessionId: selected.id }).items) {
       process.stdout.write(`${renderStoredHistory(item)}\n`);
