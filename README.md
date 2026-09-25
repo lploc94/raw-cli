@@ -1,6 +1,6 @@
 # raw-cli
 
-`raw` is a local coding agent for models with limited context. Its default system prompt covers general task behavior; the tool definitions explain how to use each tool. A text-only model sees three built-in tools: `read_file`, `write_file`, and `bash`. A model configured with `vision: true` also sees `view_image`. Selected MCP servers can add external tools. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
+`raw` is a local coding agent for models with limited context. Each profile selects an ordered set of tools and can supply a system prompt and skills. Raw ships six tools as editable plugins: `read_file`, `write_file`, `bash`, `view_image`, `list_skills`, and `load_skill`. Tools and skills can also live in the user's config directory or beside a selected agent config. Selected MCP tools remain available. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
 
 ## Install and run
 
@@ -52,9 +52,10 @@ Tool calls run automatically in terminal, headless and ACP modes, using your OS 
     }
   },
   "profiles": {
-    "local": { "model": "local" },
+    "local": { "model": "local", "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"] } },
     "deepseek": {
       "model": "flash",
+      "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"] },
       "request": { "thinking": "enabled", "reasoning_effort": "high", "max_output_tokens": 4096 },
       "compact": { "trigger_tokens": 800000, "keep_recent_turns": 2, "max_output_tokens": 512 }
     }
@@ -66,7 +67,7 @@ Tool calls run automatically in terminal, headless and ACP modes, using your OS 
 
 ## Tools, images and MCP
 
-For a vision-capable model, set `models.<alias>.vision` to `true`, then ask `raw "Explain screenshot.png"`; the model can call `view_image` with the path. There is no image flag. A text-only model can instead call an external MCP vision-to-text server that returns a description. Search likewise comes from a selected MCP tool returning text.
+For a vision-capable model, set `models.<alias>.vision` to `true` and add `builtin/view_image` to `tools.use`, then ask `raw "Explain screenshot.png"`; the model can call `view_image` with the path. There is no image flag. A text-only model can instead call an external MCP vision-to-text server that returns a description. Search likewise comes from a selected MCP tool returning text.
 
 MCP lives in the same config file. Only servers selected by the active profile are started, and only selected tools enter its model schema:
 
@@ -78,12 +79,14 @@ MCP lives in the same config file. Only servers selected by the active profile a
     }
   },
   "profiles": {
-    "research": { "model": "flash", "mcp": { "search": ["web_search"] } }
+    "research": { "model": "flash", "tools": { "use": ["builtin/read_file", "mcp/search/web_search"] } }
   }
 }
 ```
 
-Merge these fields into a complete config with `models` and `default_profile`. Local stdio and remote Streamable HTTP MCP transports are supported; see [MCP](docs/mcp.md). Profile `tools.rules` matches built-ins, MCP identities (`mcp:server/tool`) and ACP-injected identities (`acp:name`) with ordered `allow`, `ask`, and `deny` effects; see [tools](docs/tools.md).
+Merge these fields into a complete config with `models` and `default_profile`. Local stdio and remote Streamable HTTP MCP transports are supported; see [MCP](docs/mcp.md). Profile `tools.rules` matches bundled, local, MCP (`mcp/server/tool`), and ACP (`acp:name`) identities with ordered `allow`, `ask`, and `deny` effects. A conditional `ask` can inspect `commands[*].command`, so only matching Bash `rm` calls prompt; see [tools](docs/tools.md).
+
+The npm package includes forkable [tool examples](examples/tools/) and a complete [project helper agent](examples/agents/project-helper/) with `raw.json`, `prompt.md`, `tools/`, and `skills/`. Copy the agent directory anywhere, edit its model ID, endpoint, and credentials for the recipient, and run `raw --config /path/to/project-helper/raw.json --profile project "task"`. Its `agent/` references resolve beside the copied config. To fork a shipped tool globally, copy `examples/tools/bash/` to `~/.config/raw/tools/my_bash/`, change the manifest `id` and `name`, and select `local/my_bash` in a profile. See [configuration](docs/configuration.md), [tools](docs/tools.md), and [skills](docs/skills.md).
 
 The three built-ins each accept an ordered batch of up to 16 entries: `read_file({"files":[...]})`, `write_file({"operations":[...]})`, and `bash({"commands":[...]})`. Reads can select full files or 1-based line ranges. A large full read returns complete leading lines with `next_line` for paging. Writes support overwrite, append, unique text replacement, and SHA-256 guarded line replacement. Bash continues after a nonzero exit and stops on timeout or abort. All batch rows share the configured model-facing `maxOutputBytes` limit; terminal previews separately show at most 2,000 characters and 10 lines. See [tool contracts](docs/tools.md).
 
@@ -91,7 +94,7 @@ The three built-ins each accept an ordered batch of up to 16 entries: `read_file
 
 The REPL saves turns across process restarts. Use `raw --continue` for the latest session in this workspace, `raw --resume ID` for a specific saved cwd, and `raw sessions show ID --before CURSOR` to page older visible history. Host commands are `/compact`, `/clear`, `/stats`, and `/exit`; `/clear` starts a new saved session. Without `compact.trigger_tokens`, compaction is manual. With it, Raw estimates the complete next request, emits visible compact progress, and sends bounded summary requests to the selected model when the threshold is reached. It excludes image base64 from summary prompts and retains a stable main cache key until a deliberate compact boundary. Cache reuse depends on the upstream service; a cache hit is only claimed when its usage counters report one. See [CLI sessions](docs/cli.md) and [context and cache](docs/context.md).
 
-`--system-prompt` or `RAW_SYSTEM_PROMPT` replaces the minimal prompt literally. `--max-steps` defaults to 25 inference requests, `--max-output-bytes` to 8192 text bytes per tool result, and `--request-timeout-ms` to 120000. Use `raw --help` for flags and exit codes.
+`--system-prompt` or `RAW_SYSTEM_PROMPT` overrides a profile's `system_prompt` or `system_prompt_file`, then Raw's default. `--max-steps` defaults to 25 inference requests, `--max-output-bytes` to 8192 text bytes per tool result, and `--request-timeout-ms` to 120000. Use `raw --help` for flags and exit codes.
 
 ## ACP and development
 

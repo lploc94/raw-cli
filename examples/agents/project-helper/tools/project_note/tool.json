@@ -1,0 +1,14 @@
+{
+  "api_version": 1,
+  "id": "project_note",
+  "version": "1.0.0",
+  "name": "project_note",
+  "description": "Return a short note about the current project directory.",
+  "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "entry": "./index.mjs"
+}

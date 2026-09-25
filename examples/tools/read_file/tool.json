@@ -1,0 +1,56 @@
+{
+  "api_version": 1,
+  "id": "read_file",
+  "version": "1.0.0",
+  "name": "read_file",
+  "description": "Read 1-16 UTF-8 files in one call. Example: {\"files\":[{\"path\":\"README.md\"}]}. Results correspond to files by zero-based index. Relative paths use the session cwd. With only path, request the whole file. For lines, start_line is 1-based and defaults to 1; use inclusive end_line or max_lines, never both. A start past EOF returns empty text. Each ok or partial result reports the actual line range, eof, text, and sha256 of the exact returned file bytes, including original line endings and BOM. If a read exceeds the shared output budget or max_bytes, it returns complete leading lines with status partial and next_line; read again with start_line=next_line. If the first selected line cannot fit, status is line_too_large; a limit too small for result metadata may return budget_exhausted. A file error does not stop later entries.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "files": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "description": "Array of file selection objects; return rows follow this order.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path, absolute or relative to the session cwd."
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "First 1-based line; omit for a full read. Defaults to 1 for a range."
+            },
+            "end_line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Inclusive last line; do not combine with max_lines."
+            },
+            "max_lines": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum complete lines from start_line; do not combine with end_line."
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Optional byte cap for this serialized success row, including JSON framing."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "files"
+    ],
+    "additionalProperties": false
+  },
+  "entry": "./index.mjs"
+}

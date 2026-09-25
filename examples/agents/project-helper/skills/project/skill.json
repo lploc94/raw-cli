@@ -1,0 +1,7 @@
+{
+  "api_version": 1,
+  "id": "project",
+  "version": "1.0.0",
+  "name": "project",
+  "description": "Project inspection and reporting steps"
+}

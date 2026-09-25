@@ -56,6 +56,56 @@ cache retains mode, key, retention and backend controls where the provider/metho
 
 An `ask` rule can add `when.any` and `when.regex` to inspect selected string arguments after validation. For Bash batches, use `commands[*].command`; the RE2JS pattern is unanchored and any matching command asks once before the batch starts. Invalid paths or patterns fail early. See [tools](tools.md) for a direct `rm` example and the limits of text matching.
 
+The packaged `examples/agents/project-helper/` is a complete config-relative
+agent: copy the whole folder, edit its `raw.json` model ID and endpoint for the
+recipient, and run `raw --config /path/to/project-helper/raw.json --profile
+project "task"` from any workspace. `prompt.md`, `tools/project_note/`, and
+`skills/project/` resolve beside `raw.json`, independent of the checkout or
+sender's home directory. Credentials come from the recipient's environment or
+model config. This example selects bundled, config-local, and skill tools and
+gates only Bash command strings matching its `rm` policy. A profile that also
+needs a global fork or MCP tool can add `local/my_tool` or
+`mcp/search/web_search` to the same `tools.use` list after installing that
+folder or configuring that server.
+
+For an agent using every source type, this is a complete profile example after
+you provide the named local fork and MCP server. It uses a file prompt; replace
+`system_prompt_file` with `system_prompt` for literal inline text. The Bash
+rule asks for matching `rm` command strings; other Bash calls run directly.
+
+```json
+{
+  "default_profile": "project",
+  "models": {
+    "local": {
+      "provider": "ollama",
+      "method": "openai-chat-completions",
+      "model_id": "YOUR_INSTALLED_MODEL",
+      "base_url": "http://127.0.0.1:11434/v1"
+    }
+  },
+  "mcp": {
+    "servers": {
+      "search": { "transport": "stdio", "command": "YOUR_SEARCH_SERVER", "args": [] }
+    }
+  },
+  "profiles": {
+    "project": {
+      "model": "local",
+      "system_prompt_file": "prompt.md",
+      "tools": {
+        "use": ["builtin/read_file", "builtin/bash", "local/my_tool", "agent/project_note", "mcp/search/web_search", "builtin/list_skills", "builtin/load_skill"],
+        "rules": [{
+          "match": "builtin/bash", "effect": "ask",
+          "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)" }
+        }]
+      },
+      "skills": { "use": ["agent/project"] }
+    }
+  }
+}
+```
+
 For example, add `"trigger_tokens": 800000` to the DeepSeek profile's `compact` object above to enable automatic compaction for its declared 1048576-token context. Raw uses a conservative serialized-request estimate and checks the full request after compact; the exact context usage remains provider-specific.
 
 raw config init writes this schema once with mode 0600. raw config list displays profile name, model alias, upstream model_id, provider, method, sanitized endpoint, vision, selected tool IDs, tool rules and compact trigger. It never displays api_key, resolved environment values, or prompt text.

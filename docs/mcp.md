@@ -21,3 +21,9 @@ The official MCP SDK owns connections and paginated discovery. Raw applies the c
 Text and structured JSON results remain typed. MCP image blocks are separate from MCP vision-to-text: a text-only model can call a vision server that performs image processing itself and returns a text description. Image blocks are passed as typed content by adapters that support them. Unsupported MIME, malformed base64, oversize messages and resource links return explicit errors; Raw does not fetch returned resource URLs.
 
 MCP tools can add browser, search, OCR or managed-process capabilities. The selected server and its own credentials execute those operations; the model receives the returned text or supported typed result. Bash remains a one-shot tool with the user's full OS permissions.
+
+The packaged `examples/agents/project-helper/raw.json` uses only bundled and
+config-local assets so it can be copied without an MCP server. To extend it,
+declare `mcp.servers.search` in that file and add `mcp/search/web_search` to
+the profile's ordered `tools.use` list. The recipient must provide the server
+command or URL and any credentials it requires.

@@ -2,6 +2,20 @@
 
 ## Bundled plugin contract
 
+The installed package also includes `examples/tools/<name>/` copies of all six
+bundled plugins. Copy a folder to `$XDG_CONFIG_HOME/raw/tools/<new-id>/`, edit
+its `tool.json` (`id` must match the new folder), then select `local/<new-id>`
+in `tools.use`. These generated `.mjs` files run directly; rebuild Raw only
+when changing its TypeScript source. A fork runs with the user's full OS
+permissions, so inspect its handler and keep semantic `validateArgs` checks
+when changing a batch tool.
+
+`examples/agents/project-helper/` is a complete copyable directory with
+`raw.json`, `prompt.md`, `tools/`, and `skills/`. Copy it anywhere, set the
+recipient's model ID, endpoint, and credentials, and run
+`raw --config /path/to/project-helper/raw.json --profile project "task"`.
+Its `agent/` IDs resolve beside that copied config file.
+
 The six shipped tools live in package-owned folders under
 `dist/tools/builtin/<name>/`. Each folder contains an editable `tool.json` and a
 standalone `index.mjs`. The manifest declares `api_version: 1`, `id`, `version`,

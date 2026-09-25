@@ -1,0 +1,24 @@
+{
+  "default_profile": "project",
+  "models": {
+    "local": {
+      "provider": "ollama",
+      "method": "openai-chat-completions",
+      "model_id": "YOUR_INSTALLED_MODEL",
+      "base_url": "http://127.0.0.1:11434/v1"
+    }
+  },
+  "profiles": {
+    "project": {
+      "model": "local",
+      "system_prompt_file": "prompt.md",
+      "tools": {
+        "use": ["builtin/read_file", "builtin/bash", "agent/project_note", "builtin/list_skills", "builtin/load_skill"],
+        "rules": [
+          { "match": "builtin/bash", "effect": "ask", "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)" } }
+        ]
+      },
+      "skills": { "use": ["agent/project"] }
+    }
+  }
+}

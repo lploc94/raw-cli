@@ -1,0 +1,21 @@
+{
+  "api_version": 1,
+  "id": "view_image",
+  "version": "1.0.0",
+  "name": "view_image",
+  "description": "Read a local PNG or JPEG when visual details matter. The result is a native image block for you to inspect, not a text description; use it for screenshots, diagrams, or photos. Relative paths use the session cwd. Files over 16 MiB and unsupported or invalid formats return an error.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute image path or path relative to the session cwd."
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "additionalProperties": false
+  },
+  "entry": "./index.mjs"
+}

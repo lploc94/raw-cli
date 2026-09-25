@@ -50,6 +50,7 @@ REPL: /compact, /clear, /stats, /exit
 Config: models define access paths; profiles select a model, prompt, tools and policy.
 Vision: a model with vision=true may select builtin/view_image.
 Skills: profiles may select local or config-adjacent skills and both bundled skill tools.
+Examples: installed examples/tools/ can be forked; examples/agents/project-helper/ is copyable.
 Compact: profile compact.trigger_tokens enables automatic compaction.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 `;

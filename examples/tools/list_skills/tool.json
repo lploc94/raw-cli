@@ -1,0 +1,14 @@
+{
+  "api_version": 1,
+  "id": "list_skills",
+  "version": "1.0.0",
+  "name": "list_skills",
+  "description": "List the names and short descriptions of skills selected for this agent. Call load_skill with one listed name to read its full instructions. The catalog is returned as a tool result; it is not part of the initial system prompt.",
+  "input_schema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "entry": "./index.mjs"
+}

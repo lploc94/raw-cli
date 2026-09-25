@@ -1,0 +1,16 @@
+{
+  "api_version": 1,
+  "id": "load_skill",
+  "version": "1.0.0",
+  "name": "load_skill",
+  "description": "Load the full Markdown instructions for one skill selected for this agent. Use list_skills to find a valid name. The complete Markdown arrives in this call's tool result at the end of the conversation.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "minLength": 1, "description": "Exact selected skill name returned by list_skills." }
+    },
+    "required": ["name"],
+    "additionalProperties": false
+  },
+  "entry": "./index.mjs"
+}
