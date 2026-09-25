@@ -5,6 +5,7 @@ import { createProvider } from "./llm/client.js";
 import { connectMcpServers, type McpServerConfig } from "./tools/mcp-client.js";
 import { createToolRegistry } from "./tools/registry.js";
 import { renderStoredHistory } from "./sessions/display.js";
+import { runSessionMaintenance } from "./sessions/maintenance.js";
 import type { SessionStore, SessionSummary } from "./sessions/store.js";
 
 export { resultPreview } from "./sessions/display.js";
@@ -204,6 +205,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
       process.stdout.write(`${renderStoredHistory(item)}\n`);
     }
     while (!closed) {
+      try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
+      catch { process.stderr.write("raw: session maintenance deferred\n"); }
       process.stdout.write("> ");
       const line = await lines.next();
       if (line === undefined) break;

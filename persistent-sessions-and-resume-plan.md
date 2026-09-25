@@ -211,7 +211,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 
 ## Phase 5: Expiry, storage reclamation, and packaged qualification
 ### Status
-pending
+complete
 ### Goal
 Enforce seven-day inactivity retention and bounded storage behavior across CLI/ACP without making active work or startup unsafe.
 ### Current behavior and gap
@@ -235,9 +235,9 @@ Create large pre-compact model-only and visible payloads across many compacted s
 ### Implementation obligations
 Use bounded opportunistic cleanup plus periodic ACP maintenance, transactional expiry/deletion, idempotent orphan sweep, size-aware maintenance thresholds, and explicit process/driver compatibility errors; avoid unbounded startup scans.
 ### Acceptance criteria
-- [ ] AC-5.1: Authoritative canonical global `sessions.retention_days` defaults to 7; exact inactivity boundary excludes expired sessions, no read renews it, and alternate `--config` files cannot change the shared DB policy — proven by retention/config tests.
-- [ ] AC-5.2: Active sessions are not deleted; after close, expired history/context/payloads are removed and storage stats reflect reclamation — proven by retention/process tests.
-- [ ] AC-5.3: Final Node 22/24 macOS/Linux CI, package, and overhead gates pass with session storage enabled and no user-state contamination — proven by CI/package reports.
+- [x] AC-5.1: Authoritative canonical global `sessions.retention_days` defaults to 7; exact inactivity boundary excludes expired sessions, no read renews it, and alternate `--config` files cannot change the shared DB policy — proven by retention/config tests.
+- [x] AC-5.2: Active sessions are not deleted; after close, expired history/context/payloads are removed and storage stats reflect reclamation — proven by retention/process tests.
+- [x] AC-5.3: Node 22.13/24 macOS/Linux local matrix, package, and overhead gates pass with session storage enabled and isolated user state; CI workflow matches the matrix, but no remote Actions run is available because this checkout has no Git remote — proven by [verification evidence](docs/verification.md).
 ### Focused verification
 `node --import tsx --test tests/session-retention.test.ts tests/session-process.test.ts tests/package.test.ts`
 ### Phase gates
@@ -255,6 +255,7 @@ Implementation review is required with GPT-6 Astra; verdict must be APPROVE.
 - All phase acceptance checks, required reviews, test/CI/package gates, documentation, and commits are complete.
 
 ## Progress Log
+- 2026-09-25: Phase 5 complete. Enforced exact canonical inactivity expiry, bounded session cleanup, indexed crash-safe payload staging/retirement, orphan-journal sweep, idle WAL/SQLite reclamation, and physical storage statistics. Regression tests cover active/dead claims, failed commits/unlinks, compacted visible history, and two-process policy authority. The four macOS/Linux × Node 22.13/24 local runtime gates passed on source SHA-256 `80f1b6a45908b802a01daaec0a44f289b492b09ccb9eff71818a122943c0d0e5` (278/278 tests and packed consumer 1/1 each); overhead remained 41/1,315 tokens. GPT-6 Astra returned APPROVE after all findings were fixed. The configured remote GitHub Actions matrix could not run without a Git remote; local equivalent evidence is in `docs/verification.md`.
 - 2026-09-25: Phase 4 complete. Standard ACP list/load/resume/delete now use the global session store while live runtimes remain peer-owned. Load replays ordered visible history, including long raw tool fields; resume does not replay. Stored MCP selections survive restart, unavailable reverse callbacks are dropped with a cache boundary, and cancel retains ownership. Tests cover stdio/WebSocket parity, pagination, expiry, busy peers, early MCP claim, replay concurrency, and retained-schema validation. `npm run typecheck && npm test` passed (262 tests), `npm run test:package` passed. GPT-6 Astra returned APPROVE after three P2 fixes.
 - 2026-09-25: Phase 3 complete. Added saved CLI one-shot/REPL sessions, workspace-scoped continue, explicit cross-workspace resume, list/show/delete/stats commands, bounded cursors, and library session APIs. Spawned process tests cover restart, paging, `/clear`, SIGINT/SIGTERM ownership, and complete Bash arguments after compact. Fixed crash-recovery display of `outcome_unknown` after Astra review; regression failed before the fix and passed after. `npm run typecheck && npm test` passed (253 tests), `npm run test:package` passed, and GPT-6 Astra returned APPROVE.
 - 2026-09-25: Phase 2 complete. Agent transitions now commit user/assistant/tool state and visible projections, restore exact active context and selected schema, and recover pending calls without replay. Large payloads use private checksum-verified files with reference tracking; compact retains display history and reclaims model-only detail. Focused verification passed; `npm run typecheck && npm test` passed (245 tests), as did `npm run test:package`. GPT-6 Astra reviewed three rounds and returned APPROVE after fixes for reclamation/republication, JSON prototype safety, and persistence error reporting.

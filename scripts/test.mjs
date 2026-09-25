@@ -10,7 +10,7 @@ const files = readdirSync(new URL("../tests/", import.meta.url))
 
 const required = ["config", "prompt", "foundation-cli", "primitives", "registry", "overhead", "providers",
   "provider-content", "agent", "agent-lifecycle", "compact", "cache", "usage", "mcp", "mcp-content",
-  "acp", "acp-client", "acp-transport", "cli", "repl", "package", "session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp"]
+  "acp", "acp-client", "acp-transport", "cli", "repl", "package", "session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp", "session-retention"]
   .map((name) => `tests/${name}.test.ts`);
 const missing = required.filter((file) => !files.includes(file));
 

@@ -288,11 +288,13 @@ export class AgentSession {
       return Promise.reject(new Error("invalid compaction settings"));
     }
     this.currentState = "compacting";
+    this.heartbeat?.ref();
     const controller = new AbortController();
     this.controller = controller;
     const task = this.compactWork(options.provider ?? this.options.provider, keepRecentTurns, maxOutputTokens, controller).finally(() => {
       this.controller = undefined;
       this.activeCompact = undefined;
+      this.heartbeat?.unref();
       if (this.currentState !== "closing" && this.currentState !== "closed") this.currentState = "idle";
     });
     this.activeCompact = task;
@@ -304,11 +306,13 @@ export class AgentSession {
     if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
     if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
     this.currentState = "running";
+    this.heartbeat?.ref();
     const controller = new AbortController();
     this.controller = controller;
     const running = this.execute(input, controller, onEvent).finally(() => {
       this.controller = undefined;
       this.activeRun = undefined;
+      this.heartbeat?.unref();
       if (this.currentState !== "closing" && this.currentState !== "closed") this.currentState = "idle";
     });
     this.activeRun = running;

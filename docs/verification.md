@@ -1,5 +1,18 @@
 # Verification matrix
 
+## Persistent-session qualification
+
+On 2026-09-25, the persistent-session implementation passed the same source manifest SHA-256 `80f1b6a45908b802a01daaec0a44f289b492b09ccb9eff71818a122943c0d0e5` on macOS and Linux with Node 22.13.0 and 24.21.0. Each runtime ran `scripts/verify-runtime.mjs`: `npm run check` (278/278), `npm run test:overhead` (41 prompt tokens, 1,315 combined prompt/tool tokens, three built-ins), and `npm run test:package` (1/1). The packed consumer creates and resumes sessions across processes, pages visible history, runs standard ACP list/load/resume/delete, and typechecks public imports. Tests use isolated `XDG_STATE_HOME` fixtures; the real user state store is not opened. Retention tests cover the exact inactivity cutoff, active writer protection, crash-safe payload staging and retirement, SQLite free-space reclamation, and canonical policy changes in a long-lived ACP process.
+
+| Platform | Node | Full suite | Package | Source SHA-256 |
+|---|---|---:|---:|---|
+| macOS | 22.13.0 | 278/278 | 1/1 | `80f1b6a4…43c0d0e5` |
+| macOS | 24.21.0 | 278/278 | 1/1 | `80f1b6a4…43c0d0e5` |
+| Linux, Colima container | 22.13.0 | 278/278 | 1/1 | `80f1b6a4…43c0d0e5` |
+| Linux, Colima container | 24.21.0 | 278/278 | 1/1 | `80f1b6a4…43c0d0e5` |
+
+The Linux containers used `node:22.13.0` image digest `sha256:fa54405993eaa6bab6b6e460f5f3e945a2e2f07942ba31c0e297a7d9c2041f62` and `node:24.21.0` digest `sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4`, with a fresh `npm ci` in each isolated source copy. The packed tarball is 126,826 bytes, SHA-256 `4b499fdbbc64fbb0e6d4d228d809f32df3a77b974d87179b04ca9bce70d96b4e`. GPT-6 Astra returned APPROVE after crash-window and bounded-sweep regressions, with 47/47 focused tests. The GitHub Actions workflow configures the same OS/Node matrix, but no remote run was possible because this checkout has no Git remote; the table records local executable qualification, not an Actions result.
+
 This record distinguishes local executable evidence from configured CI and unrun external integrations. The current configuration contract and six-phase review record are in [the redesign plan](../redesign-model-profile-configuration-plan.md). The original scaffold qualification remains in [the build plan](../build-raw-cli-plan.md) and `docs/evidence/phase-*.md`; its matrix below is historical baseline evidence.
 
 ## Configuration redesign qualification

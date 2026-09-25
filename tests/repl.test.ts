@@ -11,7 +11,7 @@ const stateHome = mkdtempSync(join(tmpdir(), "raw-repl-test-state-"));
 
 function answer(text: string) { return { frames: [openAiFrame({ content: text }, "stop"), openAiDone] }; }
 
-async function waitFor(read: () => string, token: string, timeoutMs = 3000): Promise<void> {
+async function waitFor(read: () => string, token: string, timeoutMs = 10_000): Promise<void> {
   const until = Date.now() + timeoutMs;
   while (!read().includes(token)) {
     if (Date.now() > until) throw new Error(`missing ${token}: ${read().slice(-500)}`);

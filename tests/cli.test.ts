@@ -369,14 +369,14 @@ test("T-08b: Ctrl-C during an active PTY tool aborts it and exits 130", async ()
 test("T-08b: REPL Ctrl-C aborts active work, then Ctrl-C while idle exits", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-cli-repl-cancel-"));
   const fixture = await startMockProvider([{ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "shell", type: "function", function: {
-    name: "bash", arguments: JSON.stringify({ commands: [{ command: `sleep 0.5; printf late > ${join(root, "marker")}` }] }),
+    name: "bash", arguments: JSON.stringify({ commands: [{ command: `sleep 1.5; printf late > ${join(root, "marker")}` }] }),
   } }] }, "tool_calls"), openAiDone] }]);
   const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
     await waitFor(output, "> ");
     child.stdin.write("run shell\n");
-    await waitFor(output, "raw: bash");
+    await waitFor(output, join(root, "marker"));
     child.stdin.write("\x03");
     await waitFor(output, "raw: cancelled");
     const until = Date.now() + 3000;
@@ -387,7 +387,7 @@ test("T-08b: REPL Ctrl-C aborts active work, then Ctrl-C while idle exits", asyn
     child.stdin.write("\x03");
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 130, output());
-    await new Promise((resolve) => setTimeout(resolve, 650));
+    await new Promise((resolve) => setTimeout(resolve, 1650));
     await assert.rejects(access(join(root, "marker")));
   } finally { child.kill("SIGTERM"); await fixture.close(); }
 });

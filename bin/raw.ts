@@ -6,6 +6,7 @@ import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
 import { runCli } from "../src/cli.js";
 import { renderStoredHistory } from "../src/sessions/display.js";
 import { openSessionStore } from "../src/sessions/store.js";
+import { runSessionMaintenance } from "../src/sessions/maintenance.js";
 
 const version = "0.1.0";
 class InputError extends Error {}
@@ -126,6 +127,8 @@ async function run(): Promise<void> {
   }
   const store = input(() => openSessionStore());
   try {
+    try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
+    catch { process.stderr.write("raw: session maintenance deferred\n"); }
     if (parsed.command.startsWith("sessions-")) {
       if (parsed.command === "sessions-list") {
         const page = input(() => store.listSessions({ ...(parsed.flags.allSessions ? {} : { cwd: process.cwd() }),
@@ -168,7 +171,11 @@ async function run(): Promise<void> {
     } else runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true }));
     process.exitCode = await runCli(runtime, parsed.command === "task" ? parsed.task : undefined,
       runtime.mcpServers, store, selected);
-  } finally { store.close(); }
+  } finally {
+    try { runSessionMaintenance(store); }
+    catch { process.stderr.write("raw: session maintenance deferred\n"); }
+    store.close();
+  }
 }
 
 void run().catch((error) => {

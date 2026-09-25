@@ -84,7 +84,17 @@ test("abort kills owned shell descendants and leaves unrelated processes running
     ? (result.content[0].value as { results: Array<{ status: string }> }).results[0]?.status : "", "aborted");
   await otherExited;
   await new Promise((resolve) => setTimeout(resolve, 250));
-  assert.throws(() => process.kill(ownedPid, 0), "owned descendant exited");
+  let ownedRunning = false;
+  try { process.kill(ownedPid, 0); ownedRunning = true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  if (ownedRunning && process.platform === "linux") {
+    const status = await readFile(`/proc/${ownedPid}/stat`, "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    });
+    ownedRunning = status ? status.slice(status.lastIndexOf(")") + 2, status.lastIndexOf(")") + 3) !== "Z" : false;
+  }
+  assert.equal(ownedRunning, false, "owned descendant exited or is a harmless Linux zombie");
   await assert.rejects(access(marker));
   await assert.rejects(access(marker + ".parent"));
   assert.equal(await readFile(unrelated, "utf8"), "ok");

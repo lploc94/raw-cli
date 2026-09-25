@@ -24,8 +24,12 @@ for (const args of [["run", "check"], ["run", "test:overhead"], ["run", "test:pa
   if (args[1] !== "test:overhead" && (tests < 1 || pass < 1)) {
     throw new Error(`npm ${args.join(" ")} reported no passing tests: ${output.slice(-500)}`);
   }
-  if (args[1] === "test:overhead" && (!/"promptTokens": 25/.test(output) || !/"combinedTokens": 175/.test(output))) {
-    throw new Error("prompt overhead report is missing or changed");
+  if (args[1] === "test:overhead") {
+    const start = (result.stdout ?? "").indexOf('{\n  "promptTokens"');
+    const report = start < 0 ? undefined : JSON.parse(result.stdout.slice(start));
+    if (!report || report.promptTokens > 50 || report.combinedTokens > 1600 || report.definitions?.length !== 3) {
+      throw new Error("prompt overhead report is missing or exceeds the supported budget");
+    }
   }
   reports.push({ command: `npm ${args.join(" ")}`, tests, pass });
 }

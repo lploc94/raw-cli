@@ -6,6 +6,10 @@ export const SESSION_SCHEMA_VERSION = 2;
 export function initializeSessionSchema(database: DatabaseSync): void {
   database.exec("PRAGMA foreign_keys = ON");
   database.exec("PRAGMA busy_timeout = 5000");
+  if (Number(database.prepare("PRAGMA user_version").get()?.user_version) === 0
+    && !database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1").get()) {
+    database.exec("PRAGMA auto_vacuum = INCREMENTAL");
+  }
   database.exec("BEGIN IMMEDIATE");
   try {
     const version = Number(database.prepare("PRAGMA user_version").get()?.user_version);
@@ -80,6 +84,12 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       PRAGMA user_version = 2;
     `);
     }
+    database.exec("CREATE INDEX IF NOT EXISTS payloads_relative_path ON payloads(relative_path)");
+    database.exec(`CREATE TABLE IF NOT EXISTS staged_payloads (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_token TEXT NOT NULL,
+      relative_path TEXT NOT NULL UNIQUE
+    )`);
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");

@@ -28,8 +28,8 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   const tarball = join(root, (JSON.parse(pack.stdout) as Array<{ filename: string }>)[0]!.filename);
   const consumer = join(root, "consumer");
   await mkdir(consumer);
-  await writeFile(join(consumer, "package.json"), '{"name":"raw-consumer","private":true,"type":"module","devDependencies":{"@types/node":"24.10.1"}}\n');
-  const install = spawnSync("npm", ["install", "--offline", "--legacy-peer-deps", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+  await writeFile(join(consumer, "package.json"), '{"name":"raw-consumer","private":true,"type":"module"}\n');
+  const install = spawnSync("npm", ["install", "--prefer-offline", "--legacy-peer-deps", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
     { cwd: consumer, encoding: "utf8" });
   assert.equal(install.status, 0, install.stderr);
   const bin = join(consumer, "node_modules", ".bin", "raw");
@@ -60,7 +60,10 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
       name: "view_image", arguments: '{"path":"installed.jpg"}',
     } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "installed-image-done" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "installed-session-first" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "installed-session-second" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "installed-acp-done" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "installed-acp-resumed" }, "stop"), openAiDone] },
   ]);
   try {
     const configPath = testConfig("openai", "fixture", fixture.url);
@@ -97,17 +100,51 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     assert.ok(JSON.stringify(fixture.requests[5]?.body).includes(jpeg.toString("base64")));
     assert.match(JSON.stringify(fixture.requests[5]?.body), /image_url/);
 
+    const saved = await run(bin, [...args, "installed first"], consumer, env);
+    assert.equal(saved.code, 0, saved.stderr);
+    assert.equal(saved.stdout, "installed-session-first\n");
+    const listed = await run(bin, ["sessions"], consumer, env);
+    assert.equal(listed.code, 0, listed.stderr);
+    const sessionId = listed.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)?.[0];
+    assert.ok(sessionId);
+    const resumed = await run(bin, ["--resume", sessionId, "installed followup"], consumer, env);
+    assert.equal(resumed.code, 0, resumed.stderr);
+    assert.equal(resumed.stdout, "installed-session-second\n");
+    assert.match(JSON.stringify(fixture.requests[7]?.body), /installed-session-first/);
+    const shown = await run(bin, ["sessions", "show", sessionId], consumer, env);
+    assert.equal(shown.code, 0, shown.stderr);
+    assert.match(shown.stdout, /installed-session-first/);
+    const stats = await run(bin, ["sessions", "stats"], consumer, env);
+    assert.equal(stats.code, 0, stats.stderr);
+    assert.ok((JSON.parse(stats.stdout) as { databaseBytes: number }).databaseBytes > 0);
+
     const parentScript = `import { createAcpClient, createToolRegistry } from "raw-cli";
-const parent = await createAcpClient({ command: ${JSON.stringify(bin)}, args: ${JSON.stringify(["--acp", "--stdio", ...args])} });
-try { const id = await parent.newSession(process.cwd()); const answer = await parent.prompt(id, "ACP installed");
-if (answer.stopReason !== "end_turn" || createToolRegistry().definitions().length !== 3) process.exitCode = 1;
-else process.stdout.write("installed-parent-ok\\n"); } finally { await parent.close(); }`;
+const options = { command: ${JSON.stringify(bin)}, args: ${JSON.stringify(["--acp", "--stdio", ...args])} };
+let id;
+const first = await createAcpClient(options);
+try { id = await first.newSession(process.cwd()); const answer = await first.prompt(id, "ACP installed");
+if (answer.stopReason !== "end_turn" || createToolRegistry().definitions().length !== 3) throw new Error("initial ACP failed");
+} finally { await first.close(); }
+const replay = [];
+const second = await createAcpClient({ ...options, onUpdate: ({ update }) => replay.push(update) });
+try { if (!(await second.listSessions(process.cwd())).sessions.some(item => item.sessionId === id)) throw new Error("ACP list failed");
+await second.loadSession(id, process.cwd());
+if (!JSON.stringify(replay).includes("installed-acp-done")) throw new Error("ACP replay failed");
+} finally { await second.close(); }
+const third = await createAcpClient(options);
+try { await third.resumeSession(id, process.cwd());
+if ((await third.prompt(id, "ACP resumed")).stopReason !== "end_turn") throw new Error("ACP resume failed");
+} finally { await third.close(); }
+const fourth = await createAcpClient(options);
+try { await fourth.deleteSession(id); } finally { await fourth.close(); }
+process.stdout.write("installed-parent-ok\\n");`;
     const parent = await run(process.execPath, ["--input-type=module", "--eval", parentScript], consumer, env);
     assert.equal(parent.code, 0, parent.stderr);
     assert.match(parent.stdout, /installed-parent-ok/);
-    assert.match(JSON.stringify(fixture.requests[6]?.body), /ACP installed/);
+    assert.match(JSON.stringify(fixture.requests[8]?.body), /ACP installed/);
+    assert.match(JSON.stringify(fixture.requests[9]?.body), /ACP resumed/);
 
-    await writeFile(join(consumer, "consumer.ts"), 'import { createToolRegistry, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst names: string[] = createToolRegistry().definitions().map(tool => tool.name);\nvoid options; void compact; void input; void method; void names;\n');
+    await writeFile(join(consumer, "consumer.ts"), 'import { createToolRegistry, listSessions, getSessionHistory, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod, type SessionHistoryOptions } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst history: SessionHistoryOptions | undefined = undefined;\nconst names: string[] = createToolRegistry().definitions().map(tool => tool.name);\nvoid options; void compact; void input; void method; void history; void names; void listSessions; void getSessionHistory;\n');
     const tsc = spawnSync(process.execPath, [join(repo, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck",
       "--target", "esnext", "--module", "nodenext", "--moduleResolution", "nodenext",
       "--typeRoots", join(repo, "node_modules/@types"), "consumer.ts"], { cwd: consumer, encoding: "utf8" });

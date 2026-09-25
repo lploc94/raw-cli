@@ -9,6 +9,7 @@ import { createAgent, type AgentSession, type RunEvent } from "../agent.js";
 import { acpUpdate, storedAcpUpdates } from "../sessions/display.js";
 import { openSessionStore, type SessionOwner, type SessionStoreOptions } from "../sessions/store.js";
 import { isEphemeralPeerAlias } from "../sessions/restore.js";
+import { runSessionMaintenance } from "../sessions/maintenance.js";
 import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter, ProviderProfile, UserBlock } from "../llm/types.js";
@@ -133,6 +134,8 @@ function reverseAlias(name: string, toolId: string): string {
 export function createAcpServer(options: AcpServerOptions): AcpServer {
   const app = agent({ name: "raw-cli" });
   const store = openSessionStore(options.storeOptions);
+  try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
+  catch { process.stderr.write("raw: session maintenance deferred\n"); }
   const sessions = new Map<string, SessionRecord>();
   const providerFactory = options.providerFactory ?? createProvider;
   const configuredMcp = options.mcpServers ?? options.runtime.mcpServers;
@@ -143,9 +146,16 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   let closing: Promise<void> | undefined;
   const startupController = new AbortController();
   const pendingCreations = new Set<Promise<unknown>>();
+  const maintenanceTimer = setInterval(() => {
+    if (closing || [...sessions.values()].some((session) => session.loading || session.agent.state !== "idle")) return;
+    try { runSessionMaintenance(store); }
+    catch { process.stderr.write("raw: session maintenance deferred\n"); }
+  }, 60_000);
+  maintenanceTimer.unref();
   const close = (): Promise<void> => {
     if (closing) return closing;
     startupController.abort();
+    clearInterval(maintenanceTimer);
     closing = (async () => {
       for (const session of sessions.values()) session.agent.abort();
       const activeCleanup = Promise.allSettled([...sessions.values()].map(async (session) => {
@@ -154,6 +164,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       }));
       await Promise.all([activeCleanup, Promise.allSettled([...pendingCreations])]);
       sessions.clear();
+      try { runSessionMaintenance(store); }
+      catch { process.stderr.write("raw: session maintenance deferred\n"); }
       store.close();
       connection?.close();
     })();
@@ -317,6 +329,10 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         .catch((error: unknown) => { updateError = error; session.agent.abort(); });
     });
     await updateChain;
+    if (!closing) {
+      try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
+      catch { process.stderr.write("raw: session maintenance deferred\n"); }
+    }
     if (updateError) throw rawError(rawErrors.upstream, "session update delivery failed");
     if (result.status === "error") throw rawError(rawErrors.upstream, "agent provider failed");
     return { stopReason: result.status === "completed" ? "end_turn" as const

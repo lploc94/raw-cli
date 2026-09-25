@@ -19,6 +19,8 @@ import { testConfig } from "./fixtures/config.js";
 const configHome = mkdtempSync(join(tmpdir(), "raw-acp-transport-test-config-"));
 process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-acp-transport-test-state-"));
 const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
+const assertNoAcpDiagnostics = (stderr: string) => assert.equal(stderr.replace(
+  /\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature[^\n]*\n\(Use `node --trace-warnings[^\n]*\n/g, ""), "");
 
 test("T-07a: independent ACP SDK client talks to raw daemon with text, resource-only and mixed prompts", async () => {
   const fixture = await startMockProvider(Array.from({ length: 3 }, () => ({ frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] })));
@@ -102,7 +104,7 @@ test("T-07b: malformed stdio JSON produces one parse error frame and no diagnost
   const child = spawnSync(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("ollama"), "-y"],
     { cwd: process.cwd(), input: "{bad json}\n", encoding: "utf8", timeout: 3000 });
   assert.equal(child.status, 0);
-  assert.equal(child.stderr, "");
+  assertNoAcpDiagnostics(child.stderr);
   assert.deepEqual(child.stdout.trim().split("\n").map((line) => JSON.parse(line)),
     [{ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }]);
 });
@@ -189,7 +191,7 @@ test("T-07b: stdio handles split/coalesced JSON-RPC frames, notifications, inval
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 4, method: "session/prompt", params: { sessionId: "missing", prompt: [{ type: "text", text: "hi" }] } })}\n`);
     assert.equal((await wait(4)).error?.code, -32001);
     assert.equal(lines.length, 0);
-    assert.equal(stderr, "");
+    assertNoAcpDiagnostics(stderr);
   } finally { rl.close(); child.stdin.end(); if (child.exitCode === null) child.kill("SIGTERM"); }
 });
 
@@ -218,6 +220,6 @@ test("T-07a: standard session/new MCP server is an explicit selection and execut
     responses.push({ frames: [openAiFrame({ content: "done" }, "stop"), openAiDone] });
     assert.equal((await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "use browser" }] })).stopReason, "end_turn");
     assert.match(JSON.stringify((fixture.requests[2]?.body as { messages: unknown[] }).messages), /IDE:selected:from-ide/);
-    assert.equal(stderr, "");
+    assertNoAcpDiagnostics(stderr);
   } finally { connection.close(); child.stdin.end(); if (child.exitCode === null) child.kill("SIGTERM"); await fixture.close(); }
 });

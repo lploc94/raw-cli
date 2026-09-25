@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -7,6 +7,7 @@ import { client, PROTOCOL_VERSION, type SessionUpdate } from "@agentclientprotoc
 import { createAcpServer } from "../src/acp/methods.js";
 import { loadConfig } from "../src/config.js";
 import type { ProviderRequest } from "../src/llm/types.js";
+import { openSessionStore } from "../src/sessions/store.js";
 import { testConfig } from "./fixtures/config.js";
 
 test("standard ACP list, load replay, resume without replay, and delete survive server restart", async () => {
@@ -150,6 +151,82 @@ test("ACP rejects an expired ID without contacting a provider", async () => {
     await assert.rejects(connection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] }), /unknown|expired/i);
     assert.equal(providers, 1);
   } finally { connection.close(); await second.close(); }
+});
+
+test("a long-lived ACP peer re-reads canonical retention after a config change", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-session-acp-policy-"));
+  const configHome = join(root, "config");
+  mkdirSync(join(configHome, "raw"), { recursive: true });
+  const canonical = join(configHome, "raw", "config.json");
+  writeFileSync(canonical, '{"sessions":{"retention_days":7}}');
+  let now = 1_800_000_000_000;
+  const storeOptions = { env: { ...process.env, XDG_STATE_HOME: root, XDG_CONFIG_HOME: configHome }, now: () => now };
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: storeOptions.env, requireModel: true });
+  const server = createAcpServer({ runtime, mcpServers: {}, storeOptions,
+    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+  const connection = client({ name: "policy-reload" }).connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    const id = (await connection.agent.request("session/new", { cwd: root, mcpServers: [] })).sessionId;
+    now += 2 * 86_400_000;
+    assert.equal((await connection.agent.request("session/list", { cwd: root })).sessions[0]?.sessionId, id);
+    writeFileSync(canonical, '{"sessions":{"retention_days":1}}');
+    assert.equal((await connection.agent.request("session/list", { cwd: root })).sessions.length, 0);
+  } finally { connection.close(); await server.close(); }
+});
+
+test("ACP shutdown reclaims expired pages after releasing its session claim", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-session-acp-reclaim-"));
+  const state = mkdtempSync(join(tmpdir(), "raw-session-acp-reclaim-state-"));
+  let now = 1_800_000_000_000;
+  const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state }, now: () => now };
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
+  const seed = openSessionStore(storeOptions);
+  const expired = seed.createSession({ cwd: root, title: "expired" }).id;
+  for (let index = 0; index < 80; index++) seed.appendHistory({ sessionId: expired, kind: "status",
+    payload: { text: `large-${index}-` + "x".repeat(50_000) } });
+  now += 8 * 86_400_000;
+  const recent = seed.createSession({ cwd: root, title: "recent", configPath: runtime.configPath,
+    profileName: runtime.profile!.name }).id;
+  seed.close();
+  const server = createAcpServer({ runtime, mcpServers: {}, storeOptions,
+    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+  const connection = client({ name: "reclaim" }).connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    await connection.agent.request("session/resume", { sessionId: recent, cwd: root, mcpServers: [] });
+  } finally { connection.close(); await server.close(); }
+  const check = openSessionStore(storeOptions);
+  try {
+    assert.equal(Number(check.database.prepare("PRAGMA freelist_count").get()?.freelist_count), 0);
+    assert.ok(check.getSession(recent));
+  } finally { check.close(); }
+});
+
+test("ACP reports maintenance contention as busy", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-session-acp-maintenance-"));
+  const state = mkdtempSync(join(tmpdir(), "raw-session-acp-maintenance-state-"));
+  const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
+  const seed = openSessionStore(storeOptions);
+  const id = seed.createSession({ cwd: root, title: "fenced", configPath: runtime.configPath,
+    profileName: runtime.profile!.name }).id;
+  seed.database.prepare("INSERT INTO store_meta(key, value) VALUES ('maintenance_owner', ?)").run(`${process.pid}-test`);
+  const server = createAcpServer({ runtime, mcpServers: {}, storeOptions,
+    providerFactory: () => ({ profile: runtime.profile!, generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
+  const connection = client({ name: "maintenance" }).connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    await assert.rejects(connection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] }),
+      (error: unknown) => error instanceof Error && /busy/i.test(error.message) && !/internal error/i.test(error.message));
+    await assert.rejects(connection.agent.request("session/new", { cwd: root, mcpServers: [] }),
+      (error: unknown) => error instanceof Error && /busy/i.test(error.message) && !/internal error/i.test(error.message));
+  } finally {
+    connection.close();
+    await server.close();
+    seed.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner'").run();
+    seed.close();
+  }
 });
 
 test("ACP configured MCP alias survives restart and missing alias fails closed", async () => {

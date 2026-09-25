@@ -62,6 +62,7 @@ export interface SessionStorageStats {
   databaseBytes: number;
   walBytes: number;
   payloadBytes: number;
+  heavySessions: Array<{ id: string; historyItems: number; modelMessages: number; encodedBytes: number; payloadBytes: number; totalBytes: number }>;
 }
 
 export interface SessionOwner { token: string; generation: number }
@@ -200,8 +201,16 @@ export class SessionStore {
     catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
   }
 
+  private assertMaintenanceIdle(): void {
+    const maintenance = this.database.prepare("SELECT value FROM store_meta WHERE key = 'maintenance_owner'").get()?.value;
+    if (maintenance === undefined) return;
+    if (this.ownerAlive(String(maintenance))) throw new Error("session store is busy with maintenance");
+    this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner'").run();
+  }
+
   claimSession(sessionId: string): SessionOwner {
     return this.transaction(() => {
+      this.assertMaintenanceIdle();
       const row = this.database.prepare("SELECT owner_token, owner_generation, lease_until, updated_at FROM sessions WHERE id = ?").get(sessionId);
       if (!row || Number(row.updated_at) <= this.cutoff()) throw new Error("session not found or expired");
       if (row.owner_token !== null && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)))) {
@@ -239,11 +248,44 @@ export class SessionStore {
       try { return statSync(path).size; }
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0; throw error; }
     };
+    let payloadFiles = 0;
+    let payloadBytes = 0;
+    const payloadRoot = join(dirname(this.path), "payloads");
+    if (existsSync(payloadRoot)) for (const owner of readdirSync(payloadRoot, { withFileTypes: true })) {
+      if (!owner.isDirectory()) continue;
+      for (const entry of readdirSync(join(payloadRoot, owner.name), { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const path = join(payloadRoot, owner.name, entry.name);
+        try { payloadBytes += statSync(path).size; payloadFiles++; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+    }
+    const heavy = new Map<string, { id: string; historyItems: number; modelMessages: number; encodedBytes: number; refs: Set<string> }>();
+    for (const row of this.database.prepare("SELECT id FROM sessions").all()) {
+      const id = String(row.id);
+      heavy.set(id, { id, historyItems: 0, modelMessages: 0, encodedBytes: 0, refs: new Set() });
+    }
+    for (const [table, counter] of [["history", "historyItems"], ["model_context", "modelMessages"]] as const) {
+      for (const row of this.database.prepare(`SELECT session_id, payload_json FROM ${table}`).all()) {
+        const item = heavy.get(String(row.session_id));
+        if (!item) continue;
+        item[counter]++;
+        const encoded = String(row.payload_json);
+        item.encodedBytes += Buffer.byteLength(encoded);
+        for (const id of this.payloadIds(encoded)) item.refs.add(id);
+      }
+    }
+    const payloadSize = this.database.prepare("SELECT byte_length FROM payloads WHERE id = ?");
+    const heavySessions = [...heavy.values()].map((item) => {
+      const referencedBytes = [...item.refs].reduce((sum, id) => sum + Number(payloadSize.get(id)?.byte_length ?? 0), 0);
+      return { id: item.id, historyItems: item.historyItems, modelMessages: item.modelMessages,
+        encodedBytes: item.encodedBytes, payloadBytes: referencedBytes, totalBytes: item.encodedBytes + referencedBytes };
+    }).sort((a, b) => b.totalBytes - a.totalBytes || a.id.localeCompare(b.id)).slice(0, 10);
     return {
       workspaces: count("workspaces"), sessions: count("sessions"), historyItems: count("history"),
-      modelMessages: count("model_context"), payloadFiles: count("payloads"),
+      modelMessages: count("model_context"), payloadFiles,
       databaseBytes: bytes(this.path), walBytes: bytes(`${this.path}-wal`),
-      payloadBytes: Number(this.database.prepare("SELECT coalesce(sum(byte_length), 0) AS n FROM payloads").get()?.n),
+      payloadBytes, heavySessions,
     };
   }
 
@@ -356,6 +398,8 @@ export class SessionStore {
     const byteLength = Buffer.byteLength(json, "utf8");
     const id = createHash("sha256").update(json).digest("hex");
     const relativePath = join("payloads", owner.token, `${id}-${randomUUID()}.json`);
+    this.database.prepare("INSERT INTO staged_payloads(owner_token, relative_path) VALUES (?, ?)")
+      .run(owner.token, relativePath);
     const directory = dirname(join(dirname(this.path), relativePath));
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     chmodSync(directory, 0o700);
@@ -401,6 +445,9 @@ export class SessionStore {
       this.database.prepare("INSERT OR IGNORE INTO payloads(id, relative_path, byte_length, ref_count) VALUES (?, ?, ?, 0)")
         .run(id, relativePath, byteLength);
       this.database.prepare("UPDATE payloads SET ref_count = ref_count + 1 WHERE id = ?").run(id);
+      if (this.database.prepare("SELECT relative_path FROM payloads WHERE id = ?").get(id)?.relative_path === relativePath) {
+        this.database.prepare("DELETE FROM staged_payloads WHERE relative_path = ?").run(relativePath);
+      }
     }
   }
 
@@ -455,10 +502,17 @@ export class SessionStore {
   }
 
   private reclaimUnreferencedPayloads(): void {
-    const stale = this.transaction(() => this.database.prepare("DELETE FROM payloads WHERE ref_count <= 0 RETURNING relative_path").all());
+    const stale = this.transaction(() => {
+      const rows = this.database.prepare("DELETE FROM payloads WHERE ref_count <= 0 RETURNING relative_path").all();
+      const journal = this.database.prepare("INSERT OR IGNORE INTO staged_payloads(owner_token, relative_path) VALUES (?, ?)");
+      for (const row of rows) journal.run("reclaim", String(row.relative_path));
+      return rows;
+    });
     for (const row of stale) {
-      try { unlinkSync(join(dirname(this.path), String(row.relative_path))); }
+      const relativePath = String(row.relative_path);
+      try { unlinkSync(join(dirname(this.path), relativePath)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      this.database.prepare("DELETE FROM staged_payloads WHERE relative_path = ?").run(relativePath);
     }
   }
 
@@ -466,30 +520,50 @@ export class SessionStore {
     for (const value of values) for (const payload of value.payloads) {
       const row = this.database.prepare("SELECT relative_path FROM payloads WHERE id = ?").get(payload.id);
       if (row?.relative_path === payload.relativePath) continue;
-      try { unlinkSync(join(dirname(this.path), payload.relativePath)); }
-      catch { /* A staged duplicate is an orphan; maintenance can remove it later. */ }
+      try {
+        unlinkSync(join(dirname(this.path), payload.relativePath));
+        this.database.prepare("DELETE FROM staged_payloads WHERE relative_path = ?").run(payload.relativePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          this.database.prepare("DELETE FROM staged_payloads WHERE relative_path = ?").run(payload.relativePath);
+        }
+        // Any other failed deletion remains in the journal for idle maintenance.
+      }
     }
   }
 
-  sweepOrphans(): number {
-    const payloadRoot = join(dirname(this.path), "payloads");
-    if (!existsSync(payloadRoot)) return 0;
+  sweepOrphans(maxEntries = 100): number {
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 1000) {
+      throw new Error("orphan scan limit must be 1 to 1000");
+    }
+    const cursorKey = "orphan_scan_cursor";
+    const saved = Number(this.database.prepare("SELECT value FROM store_meta WHERE key = ?").get(cursorKey)?.value ?? 0);
+    const cursor = Number.isSafeInteger(saved) && saved >= 0 ? saved : 0;
+    const query = this.database.prepare(`SELECT sequence, owner_token, relative_path FROM staged_payloads
+      WHERE sequence > ? ORDER BY sequence LIMIT ?`);
+    let rows = query.all(cursor, maxEntries);
+    if (!rows.length && cursor > 0) rows = query.all(0, maxEntries);
+    if (!rows.length) return 0;
     let removed = 0;
-    for (const ownerDir of readdirSync(payloadRoot, { withFileTypes: true })) {
-      if (!ownerDir.isDirectory()) continue;
-      const token = ownerDir.name;
+    for (const row of rows) {
+      const token = String(row.owner_token);
+      const relativePath = String(row.relative_path);
       const active = this.database.prepare("SELECT 1 FROM sessions WHERE owner_token = ? LIMIT 1").get(token);
       if (active && this.ownerAlive(token)) continue;
-      const directory = join(payloadRoot, token);
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        if (!entry.isFile()) continue;
-        const relativePath = join("payloads", token, entry.name);
-        if (this.database.prepare("SELECT 1 FROM payloads WHERE relative_path = ?").get(relativePath)) continue;
-        unlinkSync(join(directory, entry.name));
-        removed++;
+      const referenced = this.database.prepare("SELECT 1 FROM payloads WHERE relative_path = ?").get(relativePath);
+      if (!referenced) {
+        const absolutePath = join(dirname(this.path), relativePath);
+        try { unlinkSync(absolutePath); removed++; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        try { rmdirSync(dirname(absolutePath)); }
+        catch (error) {
+          if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+        }
       }
-      if (!readdirSync(directory).length) rmdirSync(directory);
+      this.database.prepare("DELETE FROM staged_payloads WHERE sequence = ?").run(Number(row.sequence));
     }
+    this.database.prepare("INSERT INTO store_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(cursorKey, String(rows.at(-1)!.sequence));
     return removed;
   }
 
@@ -615,6 +689,7 @@ export class SessionStore {
     if (!Number.isSafeInteger(timestamp)) throw new Error("invalid session clock");
     const id = randomUUID();
     return this.transaction(() => {
+      this.assertMaintenanceIdle();
       const workspace = this.database.prepare("SELECT id FROM workspaces WHERE canonical_path = ?").get(canonical);
       const workspaceId = workspace ? String(workspace.id) : randomUUID();
       if (!workspace) this.database.prepare("INSERT INTO workspaces(id, canonical_path, display_path) VALUES (?, ?, ?)").run(workspaceId, canonical, resolve(options.cwd));
@@ -726,6 +801,108 @@ export class SessionStore {
     if (deleted) {
       try { this.reclaimUnreferencedPayloads(); }
       catch { /* The deletion committed; idle maintenance will retry reclamation. */ }
+    }
+  }
+
+  cleanupExpired(maxSessions = 20): number {
+    if (!Number.isSafeInteger(maxSessions) || maxSessions < 1 || maxSessions > 100) throw new Error("cleanup limit must be 1 to 100");
+    const cursorKey = "expiry_scan_cursor";
+    let cursor: { updatedAt: number; id: string } | undefined;
+    try {
+      const saved = this.database.prepare("SELECT value FROM store_meta WHERE key = ?").get(cursorKey)?.value;
+      if (saved !== undefined) {
+        const parsed = JSON.parse(String(saved)) as { updatedAt?: unknown; id?: unknown };
+        if (Number.isSafeInteger(parsed.updatedAt) && typeof parsed.id === "string") {
+          cursor = { updatedAt: parsed.updatedAt as number, id: parsed.id };
+        }
+      }
+    } catch { /* A malformed maintenance cursor restarts the bounded scan. */ }
+    const rows = cursor
+      ? this.database.prepare(`SELECT id, updated_at, owner_token, owner_generation FROM sessions
+        WHERE updated_at <= ? AND (updated_at, id) > (?, ?) ORDER BY updated_at ASC, id ASC LIMIT ?`)
+        .all(this.cutoff(), cursor.updatedAt, cursor.id, maxSessions * 5)
+      : this.database.prepare(`SELECT id, updated_at, owner_token, owner_generation FROM sessions
+        WHERE updated_at <= ? ORDER BY updated_at ASC, id ASC LIMIT ?`).all(this.cutoff(), maxSessions * 5);
+    if (!rows.length) {
+      if (cursor) this.database.prepare("DELETE FROM store_meta WHERE key = ?").run(cursorKey);
+      return 0;
+    }
+    let deleted = 0;
+    let lastVisited: { updatedAt: number; id: string } | undefined;
+    for (const row of rows) {
+      if (deleted >= maxSessions) break;
+      const id = String(row.id);
+      lastVisited = { updatedAt: Number(row.updated_at), id };
+      if (row.owner_token !== null) {
+        const token = String(row.owner_token);
+        if (this.ownerAlive(token)) continue;
+        const released = this.database.prepare(`UPDATE sessions SET owner_token = NULL, lease_until = NULL
+          WHERE id = ? AND owner_token = ? AND owner_generation = ?`).run(id, token, Number(row.owner_generation));
+        if (released.changes !== 1) continue;
+      }
+      try { this.deleteSession(id); deleted++; }
+      catch (error) {
+        if (!(error instanceof Error) || !/busy/.test(error.message)) throw error;
+      }
+    }
+    if (rows.length < maxSessions * 5 && deleted < maxSessions) {
+      this.database.prepare("DELETE FROM store_meta WHERE key = ?").run(cursorKey);
+    } else if (lastVisited) this.database.prepare("INSERT INTO store_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(cursorKey, JSON.stringify(lastVisited));
+    return deleted;
+  }
+
+  reclaimIdleStorage(maxPages = 1024): { checkpointed: boolean; pagesReclaimed: number } {
+    if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 8192) throw new Error("reclaim page limit must be 1 to 8192");
+    const freePages = Number(this.database.prepare("PRAGMA freelist_count").get()?.freelist_count);
+    const pageBytes = Number(this.database.prepare("PRAGMA page_size").get()?.page_size);
+    const pendingWalBytes = (() => { try { return statSync(`${this.path}-wal`).size; } catch { return 0; } })();
+    if (freePages * pageBytes < 1_048_576 && pendingWalBytes < 1_048_576
+      && !this.database.prepare("SELECT 1 FROM payloads WHERE ref_count <= 0 LIMIT 1").get()) {
+      return { checkpointed: false, pagesReclaimed: 0 };
+    }
+    const token = `${process.pid}-${randomUUID()}`;
+    const acquired = this.transaction(() => {
+      const current = this.database.prepare("SELECT value FROM store_meta WHERE key = 'maintenance_owner'").get()?.value;
+      if (current !== undefined) {
+        if (this.ownerAlive(String(current))) return false;
+        this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner'").run();
+      }
+      const claims = this.database.prepare(`SELECT id, owner_token, owner_generation FROM sessions
+        WHERE owner_token IS NOT NULL LIMIT 100`).all();
+      for (const row of claims) {
+        const ownerToken = String(row.owner_token);
+        if (this.ownerAlive(ownerToken)) return false;
+        this.database.prepare(`UPDATE sessions SET owner_token = NULL, lease_until = NULL
+          WHERE id = ? AND owner_token = ? AND owner_generation = ?`)
+          .run(String(row.id), ownerToken, Number(row.owner_generation));
+      }
+      if (this.database.prepare("SELECT 1 FROM sessions WHERE owner_token IS NOT NULL LIMIT 1").get()) return false;
+      this.database.prepare("INSERT INTO store_meta(key, value) VALUES ('maintenance_owner', ?)").run(token);
+      return true;
+    });
+    if (!acquired) return { checkpointed: false, pagesReclaimed: 0 };
+    try {
+      this.reclaimUnreferencedPayloads();
+      const before = Number(this.database.prepare("PRAGMA freelist_count").get()?.freelist_count);
+      const pageSize = Number(this.database.prepare("PRAGMA page_size").get()?.page_size);
+      const walBytes = (() => { try { return statSync(`${this.path}-wal`).size; } catch { return 0; } })();
+      if (before * pageSize < 1_048_576 && walBytes < 1_048_576) return { checkpointed: false, pagesReclaimed: 0 };
+      const checkpoint = this.database.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+      if (Number(checkpoint?.busy) !== 0) return { checkpointed: false, pagesReclaimed: 0 };
+      if (before * pageSize >= 1_048_576) {
+        const mode = Number(this.database.prepare("PRAGMA auto_vacuum").get()?.auto_vacuum);
+        if (mode === 2) this.database.exec(`PRAGMA incremental_vacuum(${Math.min(before, maxPages)})`);
+        else {
+          this.database.exec("PRAGMA auto_vacuum = INCREMENTAL");
+          this.database.exec("VACUUM");
+        }
+      }
+      const finalCheckpoint = this.database.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+      const after = Number(this.database.prepare("PRAGMA freelist_count").get()?.freelist_count);
+      return { checkpointed: Number(finalCheckpoint?.busy) === 0, pagesReclaimed: Math.max(0, before - after) };
+    } finally {
+      this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner' AND value = ?").run(token);
     }
   }
 }
