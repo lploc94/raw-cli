@@ -2,7 +2,7 @@
 
 ## Bundled plugin contract
 
-The four shipped tools live in package-owned folders under
+The six shipped tools live in package-owned folders under
 `dist/tools/builtin/<name>/`. Each folder contains an editable `tool.json` and a
 standalone `index.mjs`. The manifest declares `api_version: 1`, `id`, `version`,
 `name`, `description`, `input_schema`, and `entry: "./index.mjs"`. The entry
@@ -44,6 +44,8 @@ Local modules run with the invoking OS account's full permissions. No plugin
 sandbox is implied.
 
 The starter profile selects exactly three tools: `builtin/read_file`, `builtin/write_file`, and `builtin/bash`. Other profiles choose their own ordered `tools.use` list, including an empty list. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
+
+The other two shipped plugins, `builtin/list_skills` and `builtin/load_skill`, expose only profile-selected skills on demand. See [skills](skills.md) for the manifest, selection, and linked-result behavior.
 
 | Tool | Required input | Optional input | Action |
 |---|---|---|---|

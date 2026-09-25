@@ -53,10 +53,12 @@ export interface RuntimeConfig {
   readonly autoApprove: boolean;
   readonly compact: Readonly<CompactSettings>;
   readonly configPath: string;
+  readonly globalConfigRoot: string;
   readonly sessionsRetentionDays: number;
   readonly mcpServers: Readonly<Record<string, McpServerConfig>>;
   readonly availableMcpServers: Readonly<Record<string, McpServerConfig>>;
   readonly toolIds: readonly string[];
+  readonly skillIds: readonly string[];
   readonly toolRules: readonly ToolPolicyRule[];
   resolveCompactProfile(): Readonly<ProviderProfile>;
 }
@@ -232,6 +234,7 @@ interface ModelSpec {
 interface ProfileSpec {
   modelAlias: string;
   toolIds: readonly string[];
+  skillIds: readonly string[];
   systemPrompt?: string;
   systemPromptFile?: string;
   toolRules: readonly ToolPolicyRule[];
@@ -306,6 +309,20 @@ function toolSpec(raw: unknown, where: string): { ids: readonly string[]; rules:
       effect: enumValue(rule.effect, new Set<"allow" | "ask" | "deny">(["allow", "ask", "deny"]), ruleWhere + ".effect") };
   });
   return { ids, rules };
+}
+
+function skillSpec(raw: unknown, where: string): readonly string[] {
+  if (raw === undefined) return [];
+  const value = object(raw, where);
+  keys(value, ["use"], where);
+  if (!Array.isArray(value.use)) throw new Error(where + ".use must be an array");
+  const ids = value.use.map((id, index) => {
+    const name = string(id, `${where}.use[${index}]`);
+    if (!/^(?:local|agent)\/[a-z][a-z0-9_-]*$/.test(name)) throw new Error(`invalid skill id: ${name}`);
+    return name;
+  });
+  if (new Set(ids).size !== ids.length) throw new Error(where + ".use contains duplicate IDs");
+  return ids;
 }
 
 function endpoint(value: unknown, context: string): string {
@@ -441,14 +458,18 @@ function compactSpec(raw: unknown, where: string): CompactSettings {
 function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): ProfileSpec {
   const where = "profile " + name;
   const value = object(raw, where);
-  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "system_prompt", "system_prompt_file"], where);
+  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "system_prompt", "system_prompt_file"], where);
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
   const tools = toolSpec(value.tools, where + ".tools");
+  const skillIds = skillSpec(value.skills, where + ".skills");
+  if (skillIds.length && (!["builtin/list_skills", "builtin/load_skill"].every((id) => tools.ids.includes(id)))) {
+    throw new Error(where + " with skills.use requires builtin/list_skills and builtin/load_skill in tools.use");
+  }
   if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
   const result: ProfileSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact"),
-    toolIds: tools.ids, toolRules: tools.rules,
+    toolIds: tools.ids, skillIds, toolRules: tools.rules,
     ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
     ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
   if (value.request !== undefined) result.request = requestSpec(value.request, model, where + ".request");
@@ -596,10 +617,14 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     autoApprove: flags.autoApprove ?? true,
     compact,
     configPath: document.path,
+    globalConfigRoot: env.XDG_CONFIG_HOME
+      ? join(resolve(options.cwd ?? process.cwd(), env.XDG_CONFIG_HOME), "raw")
+      : join(options.home ?? homedir(), ".config", "raw"),
     sessionsRetentionDays,
     mcpServers: Object.freeze(mcpServers),
     availableMcpServers: Object.freeze(availableMcpServers),
     toolIds: Object.freeze([...(selectedSpec?.toolIds ?? [])]),
+    skillIds: Object.freeze([...(selectedSpec?.skillIds ?? [])]),
     toolRules,
     resolveCompactProfile() {
       if (!selected) throw new Error("profile is required for compact");

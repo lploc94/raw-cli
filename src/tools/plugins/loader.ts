@@ -9,8 +9,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ToolContext } from "../primitives.js";
 import type { ToolRegistration } from "../registry.js";
 import type { ToolManifest, ToolPlugin } from "./contract.js";
+import type { SelectedSkill } from "../../skills/contract.js";
 
-const bundledNames = new Set(["read_file", "write_file", "bash", "view_image"]);
+const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill"]);
 const manifestKeys = ["api_version", "id", "version", "name", "description", "input_schema", "entry"];
 
 export interface LoadToolPluginsOptions {
@@ -19,6 +20,8 @@ export interface LoadToolPluginsOptions {
   env?: NodeJS.ProcessEnv;
   home?: string;
   cwd?: string;
+  globalConfigRoot?: string;
+  skills?: readonly SelectedSkill[];
 }
 
 function packageRoot(): string {
@@ -117,7 +120,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const globalBase = env.XDG_CONFIG_HOME ? resolve(cwd, env.XDG_CONFIG_HOME) : join(options.home ?? homedir(), ".config");
-  const roots = { builtin: bundledToolsRoot(), local: join(globalBase, "raw", "tools"),
+  const roots = { builtin: bundledToolsRoot(), local: join(options.globalConfigRoot ?? join(globalBase, "raw"), "tools"),
     agent: join(dirname(resolve(cwd, options.configPath)), "tools") };
   const seenIds = new Set<string>();
   const seenNames = new Set<string>();
@@ -156,6 +159,8 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),
+          ...((item.id === "builtin/list_skills" || item.id === "builtin/load_skill") && options.skills
+            ? { skills: options.skills } : {}),
         };
         return (entry.handler as ToolRegistration["handler"])(args, pluginContext);
       },

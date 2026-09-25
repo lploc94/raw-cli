@@ -2,11 +2,14 @@ import type { RuntimeConfig } from "../../config.js";
 import { connectMcpServers, type McpConnection, type McpServerConfig } from "../mcp-client.js";
 import { ToolRegistry } from "../registry.js";
 import { loadToolPlugins } from "./loader.js";
+import { loadSelectedSkills } from "../../skills/loader.js";
+import type { SelectedSkill } from "../../skills/contract.js";
 
 export interface RuntimeTools {
   registry: ToolRegistry;
   mcp: McpConnection;
   selectedNames: readonly string[];
+  skills: readonly SelectedSkill[];
 }
 
 export async function createRuntimeTools(options: {
@@ -21,7 +24,14 @@ export async function createRuntimeTools(options: {
     throw new Error("builtin/view_image requires a vision model");
   }
   const localIds = runtime.toolIds.filter((id) => !id.startsWith("mcp/"));
-  const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd });
+  const skills = await loadSelectedSkills({ selectedIds: runtime.skillIds, configPath: runtime.configPath,
+    maxOutputBytes: runtime.maxOutputBytes, cwd, globalConfigRoot: runtime.globalConfigRoot });
+  if (runtime.toolIds.includes("builtin/list_skills")
+    && Buffer.byteLength(JSON.stringify({ skills: skills.map(({ name, description }) => ({ name, description })) })) > runtime.maxOutputBytes) {
+    throw new Error("selected skill catalog exceeds max_output_bytes");
+  }
+  const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills,
+    globalConfigRoot: runtime.globalConfigRoot });
   if (signal?.aborted) throw new Error("tool startup aborted");
   const registry = new ToolRegistry(runtime.toolRules);
   for (const plugin of plugins) registry.register(plugin.registration);
@@ -49,6 +59,6 @@ export async function createRuntimeTools(options: {
       }
     }
     if (new Set(names).size !== names.length) throw new Error("duplicate model-visible tool name");
-    return { registry, mcp, selectedNames: Object.freeze(names) };
+    return { registry, mcp, selectedNames: Object.freeze(names), skills };
   } catch (error) { await mcp.close(); throw error; }
 }

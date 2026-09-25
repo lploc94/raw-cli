@@ -49,6 +49,7 @@ Session options: --all (list all workspaces), --before CURSOR (older page)
 REPL: /compact, /clear, /stats, /exit
 Config: models define access paths; profiles select a model, prompt, tools and policy.
 Vision: a model with vision=true may select builtin/view_image.
+Skills: profiles may select local or config-adjacent skills and both bundled skill tools.
 Compact: profile compact.trigger_tokens enables automatic compaction.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 `;
@@ -97,13 +98,15 @@ async function run(): Promise<void> {
       const endpoint = typeof spec.base_url === "string" ? redact(spec.base_url) : "default endpoint";
       const selectedTools = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
         ? (data.tools as { use?: string[] }).use ?? [] : [];
+      const selectedSkills = data.skills && typeof data.skills === "object" && !Array.isArray(data.skills)
+        ? (data.skills as { use?: string[] }).use ?? [] : [];
       const policy = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
         ? (data.tools as { rules?: Array<{ match: string; effect: string }> }).rules ?? [] : [];
       const rules = policy.map((rule) => `${rule.effect}:${rule.match}`).join(",");
       const compact = data.compact && typeof data.compact === "object" && !Array.isArray(data.compact)
         ? data.compact as Record<string, unknown> : {};
       process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`
-        + `\tvision=${spec.vision === true}\ttools=${selectedTools.join(",") || "none"}\trules=${rules || "default-allow"}`
+        + `\tvision=${spec.vision === true}\ttools=${selectedTools.join(",") || "none"}\tskills=${selectedSkills.join(",") || "none"}\trules=${rules || "default-allow"}`
         + `\ttrigger=${compact.trigger_tokens ?? "manual"}\n`);
     }
     return;

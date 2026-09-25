@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { runBash } from "./process.js";
 import { errorResult, indexedResult, indexedResultFits, utf8Prefix, type IndexedResult } from "./results.js";
 import type { ToolResult } from "./types.js";
+import type { SelectedSkill } from "../skills/contract.js";
 
 export interface ToolContext {
   cwd: string;
@@ -15,6 +16,7 @@ export interface ToolContext {
   whitelist?: readonly string[];
   signal?: AbortSignal;
   bashPath?: string;
+  skills?: readonly SelectedSkill[];
 }
 
 export interface ReadFileSpec {
