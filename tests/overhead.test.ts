@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { countOverhead } from "../scripts/overhead.mjs";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 
 test("production prompt is minimal and built-in schema overhead is measurable", () => {
   const report = countOverhead();
@@ -33,7 +33,7 @@ test("model-facing tool definitions explain the required workflows", () => {
       }
     }
   }
-  const image = createToolRegistry([], true).definitions().find((definition) => definition.name === "view_image");
+  const image = createTestToolRegistry([], true).definitions().find((definition) => definition.name === "view_image");
   assert.match(image!.description, /native image block/);
   assert.equal(typeof (image!.inputSchema.properties!.path as { description?: string }).description, "string");
 });

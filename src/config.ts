@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
 import type { ApiMethod, CacheOptions, ProfileRequestOptions, ProviderName, ProviderProfile } from "./llm/types.js";
@@ -55,6 +55,8 @@ export interface RuntimeConfig {
   readonly configPath: string;
   readonly sessionsRetentionDays: number;
   readonly mcpServers: Readonly<Record<string, McpServerConfig>>;
+  readonly availableMcpServers: Readonly<Record<string, McpServerConfig>>;
+  readonly toolIds: readonly string[];
   readonly toolRules: readonly ToolPolicyRule[];
   resolveCompactProfile(): Readonly<ProviderProfile>;
 }
@@ -159,7 +161,7 @@ function sessionsSpec(raw: unknown): number {
   return value.retention_days === undefined ? 7 : positive(value.retention_days, "sessions.retention_days");
 }
 
-export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocument {
+function parseConfigDocument(options: LoadConfigOptions, validateProfiles: boolean): ConfigDocument {
   const path = configFilePath(options);
   let source: string;
   try {
@@ -180,14 +182,18 @@ export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocum
     throw new Error("sessions settings are allowed only in the canonical global config");
   }
   sessionsSpec(data.sessions);
-  validateDocument(data);
+  if (validateProfiles) validateDocument(data);
   return { path, data, exists: true };
+}
+
+export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocument {
+  return parseConfigDocument(options, true);
 }
 
 export function readSessionRetentionDays(options: LoadConfigOptions = {}): number {
   const { configPath: _path, flags, ...rest } = options;
   const { configPath: _flagPath, ...otherFlags } = flags ?? {};
-  const canonical = readConfigDocument({ ...rest, flags: otherFlags });
+  const canonical = parseConfigDocument({ ...rest, flags: otherFlags }, false);
   return sessionsSpec(canonical.data.sessions);
 }
 
@@ -225,7 +231,9 @@ interface ModelSpec {
 
 interface ProfileSpec {
   modelAlias: string;
-  mcp: Readonly<Record<string, "*" | readonly string[]>>;
+  toolIds: readonly string[];
+  systemPrompt?: string;
+  systemPromptFile?: string;
   toolRules: readonly ToolPolicyRule[];
   request?: ProfileRequestOptions;
   maxSteps?: number;
@@ -276,35 +284,28 @@ function mcpServersSpec(raw: unknown): Map<string, McpServerConfig> {
   return result;
 }
 
-function profileMcpSpec(raw: unknown, known: ReadonlyMap<string, McpServerConfig>, where: string): Record<string, "*" | readonly string[]> {
-  if (raw === undefined) return {};
-  const selected = object(raw, where);
-  const result: Record<string, "*" | readonly string[]> = Object.create(null);
-  for (const [name, selection] of Object.entries(selected)) {
-    if (!known.has(name)) throw new Error(where + " references unknown MCP server: " + name);
-    if (selection === "*") result[name] = "*";
-    else {
-      const names = strings(selection, where + "." + name);
-      if (new Set(names).size !== names.length) throw new Error(where + "." + name + " contains duplicate tools");
-      result[name] = names;
-    }
-  }
-  return result;
-}
-
-function toolRulesSpec(raw: unknown, where: string): readonly ToolPolicyRule[] {
-  if (raw === undefined) return [];
+function toolSpec(raw: unknown, where: string): { ids: readonly string[]; rules: readonly ToolPolicyRule[] } {
+  if (raw === undefined) throw new Error(where + ".use is required");
   const value = object(raw, where);
-  keys(value, ["rules"], where);
-  if (value.rules === undefined) return [];
+  keys(value, ["use", "rules"], where);
+  if (!Array.isArray(value.use)) throw new Error(where + ".use must be an array");
+  const ids = value.use.map((id, index) => {
+    const name = string(id, `${where}.use[${index}]`);
+    if (!/^(?:builtin|local|agent)\/[a-z][a-z0-9_-]*$/.test(name)
+      && !/^mcp\/[^/\s]+\/[^/\s]+$/.test(name)) throw new Error(`invalid tool id: ${name}`);
+    return name;
+  });
+  if (new Set(ids).size !== ids.length) throw new Error(where + ".use contains duplicate IDs");
+  if (value.rules === undefined) return { ids, rules: [] };
   if (!Array.isArray(value.rules)) throw new Error(where + ".rules must be an array");
-  return value.rules.map((rawRule, index) => {
+  const rules = value.rules.map((rawRule, index) => {
     const ruleWhere = `${where}.rules[${index}]`;
     const rule = object(rawRule, ruleWhere);
     keys(rule, ["match", "effect"], ruleWhere);
     return { match: string(rule.match, ruleWhere + ".match"),
       effect: enumValue(rule.effect, new Set<"allow" | "ask" | "deny">(["allow", "ask", "deny"]), ruleWhere + ".effect") };
   });
+  return { ids, rules };
 }
 
 function endpoint(value: unknown, context: string): string {
@@ -437,15 +438,19 @@ function compactSpec(raw: unknown, where: string): CompactSettings {
   };
 }
 
-function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>, servers: ReadonlyMap<string, McpServerConfig>): ProfileSpec {
+function profileSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): ProfileSpec {
   const where = "profile " + name;
   const value = object(raw, where);
-  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "mcp", "tools"], where);
+  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "system_prompt", "system_prompt_file"], where);
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
+  const tools = toolSpec(value.tools, where + ".tools");
+  if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
   const result: ProfileSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact"),
-    mcp: profileMcpSpec(value.mcp, servers, where + ".mcp"), toolRules: toolRulesSpec(value.tools, where + ".tools") };
+    toolIds: tools.ids, toolRules: tools.rules,
+    ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
+    ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
   if (value.request !== undefined) result.request = requestSpec(value.request, model, where + ".request");
   const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
   if (result.compact.triggerTokens !== undefined) {
@@ -481,7 +486,7 @@ function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; prof
   for (const [name, raw] of Object.entries(modelsData)) models.set(string(name, "model alias"), modelSpec(name, raw));
   const profilesData = root.profiles === undefined ? {} : object(root.profiles, "profiles");
   const profiles = new Map<string, ProfileSpec>();
-  for (const [name, raw] of Object.entries(profilesData)) profiles.set(string(name, "profile name"), profileSpec(name, raw, models, servers));
+  for (const [name, raw] of Object.entries(profilesData)) profiles.set(string(name, "profile name"), profileSpec(name, raw, models));
   const defaultName = root.default_profile === undefined ? undefined : string(root.default_profile, "default_profile");
   if (defaultName !== undefined && !profiles.has(defaultName)) throw new Error("unknown profile: " + defaultName);
   return { models, profiles, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
@@ -557,21 +562,34 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     throw new Error("profile is required");
   }
   const compact = Object.freeze(selectedSpec?.compact ?? compactSpec(undefined, "compact"));
+  const availableMcpServers: Record<string, McpServerConfig> = Object.create(null);
+  for (const [name, server] of parsed.servers) availableMcpServers[name] = Object.freeze({ ...server,
+    ...("args" in server && server.args ? { args: Object.freeze([...server.args]) } : {}),
+    ...("env" in server && server.env ? { env: Object.freeze({ ...server.env }) } : {}),
+    ...("headers" in server && server.headers ? { headers: Object.freeze({ ...server.headers }) } : {}),
+  });
   const mcpServers: Record<string, McpServerConfig> = Object.create(null);
-  for (const [name, selection] of Object.entries(selectedSpec?.mcp ?? {})) {
-    const server = parsed.servers.get(name);
-    if (!server) throw new Error("unknown MCP server: " + name);
-    mcpServers[name] = Object.freeze({ ...server,
-      ...("args" in server && server.args ? { args: Object.freeze([...server.args]) } : {}),
-      ...("env" in server && server.env ? { env: Object.freeze({ ...server.env }) } : {}),
-      ...("headers" in server && server.headers ? { headers: Object.freeze({ ...server.headers }) } : {}),
-      tools: selection === "*" ? "*" : Object.freeze([...selection]),
-    });
+  for (const id of selectedSpec?.toolIds ?? []) {
+    if (!id.startsWith("mcp/")) continue;
+    const [, name, tool] = id.split("/");
+    const server = availableMcpServers[name!];
+    if (!server) continue; // ACP session/new may provide this server at runtime.
+    const previous = mcpServers[name!]?.tools;
+    mcpServers[name!] = Object.freeze({ ...server, tools: Object.freeze([...(Array.isArray(previous) ? previous : []), tool!]) });
+  }
+  let profilePrompt = selectedSpec?.systemPrompt;
+  if (flags.systemPrompt === undefined && env.RAW_SYSTEM_PROMPT === undefined && selectedSpec?.systemPromptFile !== undefined) {
+    const promptPath = resolve(dirname(document.path), selectedSpec.systemPromptFile);
+    let bytes: Buffer;
+    try { bytes = readFileSync(promptPath); }
+    catch { throw new Error(`cannot read system prompt file: ${promptPath}`); }
+    try { profilePrompt = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch { throw new Error(`invalid UTF-8 system prompt file: ${promptPath}`); }
   }
   const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule })));
   return Object.freeze({
     ...(selected === undefined ? {} : { profile: selected }),
-    systemPrompt: resolveSystemPrompt(flags.systemPrompt, env.RAW_SYSTEM_PROMPT),
+    systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? profilePrompt ?? resolveSystemPrompt(undefined, undefined),
     maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, selectedSpec?.maxSteps, 25, "max-steps"),
     maxOutputBytes: numberOption(flags.maxOutputBytes, env.RAW_MAX_OUTPUT_BYTES, selectedSpec?.maxOutputBytes, 8192, "max-output-bytes"),
     requestTimeoutMs: numberOption(flags.requestTimeoutMs, env.RAW_REQUEST_TIMEOUT_MS, selectedSpec?.requestTimeoutMs, 120000, "request-timeout-ms"),
@@ -580,6 +598,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     configPath: document.path,
     sessionsRetentionDays,
     mcpServers: Object.freeze(mcpServers),
+    availableMcpServers: Object.freeze(availableMcpServers),
+    toolIds: Object.freeze([...(selectedSpec?.toolIds ?? [])]),
     toolRules,
     resolveCompactProfile() {
       if (!selected) throw new Error("profile is required for compact");

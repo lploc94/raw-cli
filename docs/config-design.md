@@ -7,7 +7,7 @@
 | Section | Owns | Does not own |
 |---|---|---|
 | `models.<alias>` | One exact upstream access path: service, API method, model ID, endpoint, selected credential source, context/output metadata, vision | Run-specific tool permissions or compact policy |
-| `profiles.<alias>` | One runnable selection of a model plus request controls, cache, compact, MCP selection, tool rules and limits | A second model or implicit mid-session fallback |
+| `profiles.<alias>` | One runnable selection of a model plus request controls, cache, compact, exact tool selection, system prompt, tool rules and limits | A second model or implicit mid-session fallback |
 | `mcp.servers.<name>` | An inert external connection definition | Model-facing exposure until a profile selects its tools |
 
 `provider` names the company or deployment (`deepseek`, `openai`, `anthropic`, `ollama`, or a custom gateway). `method` chooses the wire API and official SDK adapter: `openai-chat-completions`, `openai-responses`, `anthropic-messages`, or `google-generate-content`. `model_id` is sent upstream verbatim as the request's model value. A local alias such as `flash` is never substituted for it. Multiple profiles may refer to the same model, with different effort, output, cache, compact or tool policy.
@@ -16,9 +16,9 @@ An entry may use `api_key_env` or literal `api_key`, never both. Only the select
 
 ## Capability and tools
 
-Text and ordinary function/tool calling are assumed. `vision: true` on a model opts into the local `view_image` tool. It is omitted for a text-only model, leaving exactly `read_file`, `write_file`, and `bash` as the built-ins. The user can name an image path directly in a task; there is no CLI image flag. Native PNG/JPEG results are delivered through the selected method adapter. Search and external vision-to-text are supplied through selected MCP tools; a text-only model receives only their textual descriptions, not raw image bytes.
+Text and ordinary function/tool calling are assumed. `vision: true` on a model permits explicit selection of `builtin/view_image`; no tools are implicit. The user can name an image path directly in a task; there is no CLI image flag. Native PNG/JPEG results are delivered through the selected method adapter. Search and external vision-to-text are supplied through selected MCP tools; a text-only model receives only their textual descriptions, not raw image bytes.
 
-The `mcp.servers` map is separate from profile exposure. A profile's `mcp` map selects original tool names (`["web_search"]`) or all tools (`"*"`) from named servers. Unselected servers never start. Profile `tools.rules` is an ordered array of `{ "match": pattern, "effect": "allow" | "ask" | "deny" }`. Last matching rule wins; no match means `allow`. Built-in identities are tool names, MCP identities are `mcp:server/original_tool`, and ACP-injected identities are `acp:name`. `ask` requires a TTY or ACP permission channel and is never bypassed by `-y`. These rules select handlers; `cwd` and rules do not provide OS isolation. `bash` keeps the invoking user's full OS permissions.
+The `mcp.servers` map is separate from profile exposure. A profile's `tools.use` list selects exact `mcp/server/tool` IDs from named servers. Unselected servers never start. Profile `tools.rules` is an ordered array of `{ "match": pattern, "effect": "allow" | "ask" | "deny" }`. Last matching rule wins; no match means `allow`. Built-in identities are `builtin/name`, MCP identities are `mcp/server/original_tool`, and ACP-injected identities are `acp:name`. `ask` requires a TTY or ACP permission channel and is never bypassed by `-y`. These rules select handlers; `cwd` and rules do not provide OS isolation. `bash` keeps the invoking user's full OS permissions.
 
 ## Context and cache
 
@@ -46,7 +46,7 @@ The normal system/tool/history prefix and selected tool order remain stable acro
       "model": "flash",
       "request": { "thinking": "enabled", "reasoning_effort": "high", "max_output_tokens": 4096 },
       "compact": { "trigger_tokens": 800000, "keep_recent_turns": 2, "max_output_tokens": 512 },
-      "tools": { "rules": [{ "match": "mcp:unsafe/*", "effect": "deny" }] }
+      "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"], "rules": [{ "match": "mcp/unsafe/*", "effect": "deny" }] }
     }
   },
   "mcp": { "servers": {} }

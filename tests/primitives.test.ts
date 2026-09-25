@@ -4,13 +4,13 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 
 const context = (cwd: string, maxOutputBytes = 8192) => ({ cwd, maxOutputBytes, autoApprove: true });
 
 test("files resolve per session, create parents, accept empty content and surface errors", async () => {
   const [a, b] = await Promise.all([mkdtemp(join(tmpdir(), "raw-a-")), mkdtemp(join(tmpdir(), "raw-b-"))]);
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   await Promise.all([
     registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: "nested/item", content: "alpha" }] }, context(a)),
     registry.dispatch("write_file", { operations: [{ mode: "overwrite", path: "nested/item", content: "beta" }] }, context(b)),
@@ -42,7 +42,7 @@ test("files resolve per session, create parents, accept empty content and surfac
 
 test("bash preserves output channels, exit status and bounded UTF-8 while draining large pipes", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-bash-"));
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   const result = await registry.dispatch("bash", { commands: [{ command: "printf hi; printf err >&2; exit 7" }] }, context(cwd));
   const first = result.content[0]?.type === "json" ? (result.content[0].value as { results: Array<Record<string, unknown>> }).results[0] : undefined;
   assert.equal(first?.exit_code, 7);
@@ -71,7 +71,7 @@ test("abort kills owned shell descendants and leaves unrelated processes running
   const other = spawn(process.execPath, ["-e", "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'ok'), 900)", unrelated], { stdio: "ignore" });
   const otherExited = new Promise((resolve) => other.once("exit", resolve));
   const controller = new AbortController();
-  const task = createToolRegistry().dispatch("bash", { commands: [{ command: `node ${JSON.stringify(new URL("./fixtures/process-tree.cjs", import.meta.url).pathname)} ${JSON.stringify(marker)}` }] }, { ...context(cwd), signal: controller.signal });
+  const task = createTestToolRegistry().dispatch("bash", { commands: [{ command: `node ${JSON.stringify(new URL("./fixtures/process-tree.cjs", import.meta.url).pathname)} ${JSON.stringify(marker)}` }] }, { ...context(cwd), signal: controller.signal });
   let ownedPid = 0;
   for (let i = 0; i < 100; i++) {
     try { ownedPid = Number(await readFile(marker + ".ready", "utf8")); break; }
@@ -100,7 +100,7 @@ test("abort kills owned shell descendants and leaves unrelated processes running
   assert.equal(await readFile(unrelated, "utf8"), "ok");
   const pre = new AbortController();
   pre.abort();
-  assert.equal((await createToolRegistry().dispatch("bash", { commands: [{ command: `touch ${JSON.stringify(marker)}` }] }, { ...context(cwd), signal: pre.signal })).code, "aborted");
+  assert.equal((await createTestToolRegistry().dispatch("bash", { commands: [{ command: `touch ${JSON.stringify(marker)}` }] }, { ...context(cwd), signal: pre.signal })).code, "aborted");
 });
 
 test("timeout settles even when an escaped descendant holds inherited output pipes", async () => {
@@ -109,7 +109,7 @@ test("timeout settles even when an escaped descendant holds inherited output pip
   const started = Date.now();
   const timersBefore = process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
   try {
-    const result = await createToolRegistry().dispatch("bash", { commands: [{
+    const result = await createTestToolRegistry().dispatch("bash", { commands: [{
       command: `node ${JSON.stringify(new URL("./fixtures/escaped-pipes.cjs", import.meta.url).pathname)} ${JSON.stringify(pidFile)}`,
       timeout_ms: 300,
     }] }, context(cwd));

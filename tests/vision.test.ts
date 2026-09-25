@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { loadConfig, parseCliArgs } from "../src/config.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 import { createProvider } from "../src/llm/client.js";
 import { createAgent } from "../src/agent.js";
 import { connectMcpServers } from "../src/tools/mcp-client.js";
@@ -51,7 +51,7 @@ function config(vision?: unknown): Promise<string> {
     await writeFile(path, JSON.stringify({ default_profile: "local", models: { local: {
       provider: "ollama", method: "openai-chat-completions", model_id: "fixture",
       ...(vision === undefined ? {} : { vision }),
-    } }, profiles: { local: { model: "local" } } }));
+    } }, profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", ...(vision === true ? ["builtin/view_image"] : [])] } } } }));
     return path;
   });
 }
@@ -59,11 +59,11 @@ function config(vision?: unknown): Promise<string> {
 test("vision is opt-in, adds only view_image, and needs no image CLI flag", async () => {
   const plain = await loadConfig({ configPath: await config(), env: {}, requireModel: true });
   assert.equal(plain.profile?.vision, false);
-  assert.deepEqual(createToolRegistry([], plain.profile?.vision).definitions().map((tool) => tool.name),
+  assert.deepEqual(createTestToolRegistry([], plain.profile?.vision).definitions().map((tool) => tool.name),
     ["read_file", "write_file", "bash"]);
   const enabled = await loadConfig({ configPath: await config(true), env: {}, requireModel: true });
   assert.equal(enabled.profile?.vision, true);
-  assert.deepEqual(createToolRegistry([], enabled.profile?.vision).definitions().map((tool) => tool.name),
+  assert.deepEqual(createTestToolRegistry([], enabled.profile?.vision).definitions().map((tool) => tool.name),
     ["read_file", "write_file", "bash", "view_image"]);
   await assert.rejects(loadConfig({ configPath: await config("yes"), env: {}, requireModel: true }), /vision/);
   assert.throws(() => parseCliArgs(["--image", "photo.png", "explain"]), /unknown option/);
@@ -79,7 +79,7 @@ test("view_image validates magic and size, resolves cwd, and keeps a >8 KiB nati
   const huge = join(cwd, "huge.png");
   await writeFile(huge, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   await truncate(huge, 16 * 1024 * 1024 + 1);
-  const registry = createToolRegistry([], true);
+  const registry = createTestToolRegistry([], true);
   const result = await registry.dispatch("view_image", { path: "large.png" }, context(cwd));
   assert.equal(result.isError, false);
   assert.equal(result.truncated, false);
@@ -96,7 +96,7 @@ test("view_image validates magic and size, resolves cwd, and keeps a >8 KiB nati
     assert.equal(invalid.isError, true);
     assert.doesNotMatch(JSON.stringify(invalid), /iVBORw0KGgo/);
   }
-  const denied = createToolRegistry([{ match: "view_image", effect: "deny" }], true);
+  const denied = createTestToolRegistry([{ match: "builtin/view_image", effect: "deny" }], true);
   assert.ok(!denied.definitions().some((tool) => tool.name === "view_image"));
   assert.equal((await denied.dispatch("view_image", { path: "large.png" }, context(cwd))).code, "tool_denied");
 });
@@ -123,7 +123,7 @@ test("image rejection and non-vision errors respect the text output cap", async 
   const capped = capResult({ isError: false, content: [{ type: "image", mimeType: "image/png", data: over }] }, 3);
   assert.equal(capped.code, "image_too_large");
   assert.ok(capped.content[0]?.type === "text" && Buffer.byteLength(capped.content[0].text) <= 3);
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   registry.register({ name: "external_image", description: "fixture", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [{ type: "image", mimeType: "image/png", data: png.toString("base64") }] }) });
   let turn = 0;
@@ -141,7 +141,7 @@ test("image rejection and non-vision errors respect the text output cap", async 
 test("real view_image result reaches each adapter as native image content", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-vision-wire-"));
   await writeFile(join(cwd, "large.png"), png);
-  const image = await createToolRegistry([], true).dispatch("view_image", { path: "large.png" }, context(cwd));
+  const image = await createTestToolRegistry([], true).dispatch("view_image", { path: "large.png" }, context(cwd));
   const cases = [
     { method: "openai-chat-completions", provider: "openai", frames: [openAiFrame({ content: "done" }, "stop"), openAiDone],
       wire: "image_url" },
@@ -167,7 +167,7 @@ test("real view_image result reaches each adapter as native image content", asyn
         { role: "user", content: "inspect large.png" },
         { role: "assistant", text: "", toolCalls: [{ id: "call", name: "view_image", arguments: { path: "large.png" } }] },
         { role: "tool", callId: "call", name: "view_image", result: image },
-      ], tools: createToolRegistry([], true).definitions(), timeoutMs: 1000 });
+      ], tools: createTestToolRegistry([], true).definitions(), timeoutMs: 1000 });
       assert.equal(response.text, "done");
       const body = JSON.stringify(fixture.requests[0]?.body);
       assert.match(body, new RegExp(scenario.wire));
@@ -192,7 +192,7 @@ test("image bytes stay out of public tool-result events while transcript retains
     return calls === 1 ? { text: "", toolCalls: [{ id: "c", name: "view_image", arguments: { path: "large.png" } }], finishReason: "tool_calls" }
       : { text: "done", toolCalls: [], finishReason: "stop" };
   } };
-  const agent = createAgent({ provider, registry: createToolRegistry([], true), cwd });
+  const agent = createAgent({ provider, registry: createTestToolRegistry([], true), cwd });
   await agent.run("inspect", (event) => { if (event.type === "tool_result") seen.push(JSON.stringify(event)); });
   assert.ok(seen.length > 0);
   assert.ok(seen.every((value) => !value.includes(png.toString("base64").slice(0, 100))));

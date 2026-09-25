@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
 import { openSessionStore } from "../src/sessions/store.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "raw-session-agent-"));
@@ -21,7 +21,7 @@ function provider(generate: (request: ProviderRequest) => Promise<ProviderTurn>,
 
 test("durable agent restores exact model messages, selected tools, and cache key", async () => {
   const { root, store, id } = setup();
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   registry.register({ name: "echo", description: "Echo", inputSchema: { type: "object", properties: { value: { type: "string" } } },
     handler: async (args) => ({ isError: false, content: [{ type: "text", text: String(args.value) }] }) });
   const requests: Array<{ messages: unknown; tools: unknown; cacheKey: string | undefined; system: string }> = [];
@@ -58,7 +58,7 @@ test("durable agent restores exact model messages, selected tools, and cache key
 
 test("pending declared tool recovers as uncertain without dispatch on resume", async () => {
   const { root, store, id } = setup();
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   let executed = 0;
   registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object" },
     handler: async () => { executed++; return { isError: false, content: [{ type: "text", text: "done" }] }; } });
@@ -191,7 +191,7 @@ test("saved resource link, image result, and opaque block survive a new process 
   const { root, store, id } = setup();
   const image = "a".repeat(90_000);
   let turn = 0;
-  const registry = createToolRegistry([], true);
+  const registry = createTestToolRegistry([], true);
   registry.register({ name: "native", description: "Native", inputSchema: { type: "object" }, handler: async () => ({
     isError: false, content: [{ type: "image", data: image, mimeType: "image/png" }],
   }) });
@@ -248,7 +248,7 @@ test("successful compact retains full CLI Bash arguments and ACP raw result in d
 
   const acp = setup();
   const output = "raw:" + "b".repeat(70_000);
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   registry.register({ name: "large", description: "Large", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [{ type: "text", text: output }] }) });
   let step = 0;
@@ -273,7 +273,7 @@ test("successful compact retains full CLI Bash arguments and ACP raw result in d
 
 test("failed compaction and changed tool schema leave durable context intact", async () => {
   const { root, store, id } = setup();
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   registry.register({ name: "selected", description: "Original", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [] }) });
   const runtime = provider(async (request) => request.system.startsWith("Summarize prior conversation")
@@ -288,7 +288,7 @@ test("failed compaction and changed tool schema leave durable context intact", a
     await assert.rejects(agent.compact({ keepRecentTurns: 0 }), /empty summary/i);
     assert.deepEqual(agent.transcript, before);
     await agent.close();
-    const changed = createToolRegistry();
+    const changed = createTestToolRegistry();
     changed.register({ name: "selected", description: "Changed", inputSchema: { type: "object" },
       handler: async () => ({ isError: false, content: [] }) });
     assert.throws(() => createAgent({ cwd: root, provider: runtime, registry: changed, system: "system",

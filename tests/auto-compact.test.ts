@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgent } from "../src/agent.js";
 import { loadConfig } from "../src/config.js";
-import { ToolRegistry, createToolRegistry } from "../src/tools/registry.js";
+import { ToolRegistry, createTestToolRegistry } from "./fixtures/registry.js";
 import { COMPACT_SYSTEM_PROMPT, estimateRequestTokens, performCompaction } from "../src/compact.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
 
@@ -18,7 +18,7 @@ test("trigger_tokens needs a context budget and validates its reserve", async ()
   const config = (context?: number, trigger = 500) => ({ default_profile: "p",
     models: { m: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture",
       ...(context === undefined ? {} : { context_window_tokens: context }) } },
-    profiles: { p: { model: "m", compact: { trigger_tokens: trigger, max_output_tokens: 100 } } } });
+    profiles: { p: { model: "m", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, compact: { trigger_tokens: trigger, max_output_tokens: 100 } } } });
   await writeFile(path, JSON.stringify(config()));
   await assert.rejects(loadConfig({ configPath: path, env: {}, requireModel: true }), /trigger_tokens|context_window_tokens/);
   await writeFile(path, JSON.stringify(config(600)));
@@ -56,7 +56,7 @@ test("automatic compact runs before the next over-threshold inference and keeps 
 test("manual compaction chunks older turns and never sends image base64 to the summarizer", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-auto-image-"));
   const image = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64");
-  const registry = createToolRegistry([], true);
+  const registry = createTestToolRegistry([], true);
   registry.register({ name: "fixture_image", description: "image", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [{ type: "image", mimeType: "image/png", data: image,
       path: "photo.png", byteSize: 8 }] }) });

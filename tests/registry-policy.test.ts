@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 
 const ctx = { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true };
 
 test("deny hides schema and blocks direct dispatch while ordered last match wins", async () => {
-  const registry = createToolRegistry([
+  const registry = createTestToolRegistry([
     { match: "*", effect: "allow" },
-    { match: "mcp:search/*", effect: "deny" },
-    { match: "mcp:search/public", effect: "allow" },
-    { match: "write_file", effect: "deny" },
+    { match: "mcp/search/*", effect: "deny" },
+    { match: "mcp/search/public", effect: "allow" },
+    { match: "builtin/write_file", effect: "deny" },
   ]);
   let ran = false;
-  for (const name of ["private", "public"]) registry.register({ name: `alias_${name}`, canonicalName: `mcp:search/${name}`,
+  for (const name of ["private", "public"]) registry.register({ name: `alias_${name}`, canonicalName: `mcp/search/${name}`,
     description: name, inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async handler() { ran = true; return { isError: false, content: [{ type: "text", text: "ok" }] }; } });
   const names = registry.definitions().map((item) => item.name);
@@ -27,7 +27,7 @@ test("deny hides schema and blocks direct dispatch while ordered last match wins
 });
 
 test("explicit ask cannot be bypassed by autoApprove and headless request fails closed", async () => {
-  const registry = createToolRegistry([{ match: "bash", effect: "ask" }]);
+  const registry = createTestToolRegistry([{ match: "builtin/bash", effect: "ask" }]);
   const input = { commands: [{ command: "printf should-not-run" }] };
   const missing = await registry.dispatch("bash", input, ctx);
   assert.equal(missing.code, "approval_required");
@@ -42,12 +42,12 @@ test("explicit ask cannot be bypassed by autoApprove and headless request fails 
 
 test("wildcards cover embedded and trailing line breaks across entire canonical identity", async () => {
   let ran = 0;
-  const denied = createToolRegistry([{ match: "acp:*", effect: "deny" }]);
+  const denied = createTestToolRegistry([{ match: "acp:*", effect: "deny" }]);
   denied.register({ name: "alias", canonicalName: "acp:blocked\nextra", description: "hidden",
     inputSchema: { type: "object", properties: {} }, async handler() { ran++; return { isError: false, content: [] }; } });
   assert.ok(!denied.definitions().some((tool) => tool.name === "alias"));
   assert.equal((await denied.dispatch("alias", {}, ctx)).code, "tool_denied");
-  const asked = createToolRegistry([{ match: "acp:blocked", effect: "allow" }, { match: "acp:*", effect: "ask" }]);
+  const asked = createTestToolRegistry([{ match: "acp:blocked", effect: "allow" }, { match: "acp:*", effect: "ask" }]);
   asked.register({ name: "alias", canonicalName: "acp:blocked\n", description: "requires approval",
     inputSchema: { type: "object", properties: {} }, async handler() { ran++; return { isError: false, content: [] }; } });
   assert.equal((await asked.dispatch("alias", {}, ctx)).code, "approval_required");

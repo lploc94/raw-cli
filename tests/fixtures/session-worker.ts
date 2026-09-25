@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createAgent } from "../../src/agent.js";
 import type { ProviderAdapter } from "../../src/llm/types.js";
 import { openSessionStore } from "../../src/sessions/store.js";
-import { createToolRegistry } from "../../src/tools/registry.js";
+import { createTestToolRegistry } from "./registry.js";
 
 const [mode, root, sessionId, marker] = process.argv.slice(2);
 if (!mode || !root || !sessionId || !marker) throw new Error("worker arguments missing");
@@ -30,7 +30,7 @@ if (mode === "hold") {
   process.stdout.write("COMMITTED\n");
   store.close();
 } else if (mode === "tool" || mode === "tool_done") {
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object" },
     handler: async () => {
       appendFileSync(marker, "x");

@@ -48,7 +48,7 @@ test("one loader selects bundled, global, and config-local tools without importi
   assert.deepEqual(tools.map((item) => item.id), ["builtin/read_file", "local/chosen", "agent/chosen"]);
   const registry = new ToolRegistry();
   for (const tool of tools) registry.register(tool.registration);
-  assert.deepEqual(registry.definitions().map((item) => item.name), ["read_file", "agent_chosen", "global_chosen"]);
+  assert.deepEqual(registry.definitions().map((item) => item.name), ["read_file", "global_chosen", "agent_chosen"]);
   await assert.rejects(readFile(untouched));
 });
 

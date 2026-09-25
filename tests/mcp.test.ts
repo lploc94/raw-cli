@@ -8,7 +8,7 @@ import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
 import { connectMcpServers } from "../src/tools/mcp-client.js";
 import { loadConfig } from "../src/config.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { startMcpHttp } from "./fixtures/mcp-http.js";
 
@@ -16,7 +16,7 @@ const stdio = (label: string, count = 2) => ({ command: process.execPath, args: 
   env: { MCP_LABEL: label, MCP_COUNT: String(count) }, tools: ["selected"] });
 
 test("profile deny removes selected MCP tool from exposed set and direct dispatch", async () => {
-  const registry = createToolRegistry([{ match: "mcp:fixture/selected", effect: "deny" }]);
+  const registry = createTestToolRegistry([{ match: "mcp/fixture/selected", effect: "deny" }]);
   const connection = await connectMcpServers({ servers: { fixture: stdio("fixture") }, registry,
     cwd: process.cwd(), timeoutMs: 3000 });
   try {
@@ -32,7 +32,7 @@ test("profile deny removes selected MCP tool from exposed set and direct dispatc
 
 test("T-07 review: selected MCP alias collision with pre-registered tool fails startup", async () => {
   const alias = `mcp_fixture_selected_${createHash("sha256").update("fixture\0selected").digest("hex").slice(0, 12)}`;
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   registry.register({ name: alias, description: "pre-existing", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [{ type: "text", text: "wrong-handler" }] }) });
   await assert.rejects(connectMcpServers({ servers: { fixture: stdio("fixture") }, registry,
@@ -64,7 +64,7 @@ test("T-06a: all official SDK transports paginate and selected page-two tools re
           const second = fixture.requests[1]?.body as { messages: Array<{ role: string; content: string }> };
           assert.match(JSON.stringify(second.messages), new RegExp(`${name}:selected:ping`));
           assert.deepEqual((fixture.requests[0]?.body as { tools: Array<{ function: { name: string } }> }).tools.map((tool) => tool.function.name),
-            ["read_file", "write_file", "bash", alias]);
+            [alias]);
         } finally { await agent.close(); await fixture.close(); }
       } finally { await connection.close(); }
     }
@@ -77,8 +77,7 @@ test("T-06b: 100 discovered tools expose only selected names, route same names t
     assert.equal(connection.discovered.length, 102);
     assert.equal(connection.exposed.length, 2);
     const names = connection.registry.definitions().map((item) => item.name);
-    assert.deepEqual(names.slice(0, 3), ["read_file", "write_file", "bash"]);
-    assert.deepEqual(names.slice(3), [...names.slice(3)].sort());
+    assert.deepEqual(names, [...names].sort());
     assert.equal(new Set(names).size, names.length);
     const aliases = Object.fromEntries(connection.exposed.map((item) => [item.server, item.alias]));
     for (const [server, sentinel] of [["zed", "Z"], ["alpha", "A"]] as const) {
@@ -117,7 +116,7 @@ test("T-06b: all-selection, long-prefix collisions and shuffled discovery remain
     assert.equal(connection.exposed.length, 3);
     assert.equal(new Set(connection.exposed.map((item) => item.alias)).size, 3);
     assert.ok(connection.exposed.every((item) => item.alias.length <= 64));
-    assert.deepEqual(connection.registry.definitions().slice(3).map((item) => item.name), connection.exposed.map((item) => item.alias));
+    assert.deepEqual(connection.registry.definitions().map((item) => item.name).sort(), connection.exposed.map((item) => item.alias));
   } finally { await connection.close(); }
 });
 
@@ -128,17 +127,17 @@ test("T-06b/c: unselected config starts nothing, explicit empty selection discov
     args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: { MCP_LABEL: label, MCP_COUNT: "2" } });
   await writeFile(configPath, JSON.stringify({ default_profile: "plain",
     models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
-    profiles: { plain: { model: "local" }, selected: { model: "local", mcp: { shared: [], onlyUser: [] } } },
+    profiles: { plain: { model: "local", tools: { use: [] } }, selected: { model: "local", tools: { use: ["mcp/shared/selected", "mcp/onlyUser/selected"] } } },
     mcp: { servers: { shared: stdioSpec("project"), onlyUser: stdioSpec("u") } },
   }));
   const plain = await loadConfig({ configPath, env: {}, requireModel: true });
   assert.equal(Object.keys(plain.mcpServers).length, 0);
   const config = await loadConfig({ configPath, env: {}, flags: { profile: "selected" }, requireModel: true });
-  assert.deepEqual(config.mcpServers.shared?.tools, []);
+  assert.deepEqual(config.mcpServers.shared?.tools, ["selected"]);
   if (!config.mcpServers.shared || !("command" in config.mcpServers.shared)) throw new Error("expected stdio config");
   assert.equal(config.mcpServers.shared?.env?.MCP_LABEL, "project");
-  const connection = await connectMcpServers({ servers: config.mcpServers, cwd: process.cwd(), timeoutMs: 3000 });
-  try { assert.equal(connection.discovered.length, 4); assert.equal(connection.exposed.length, 0); assert.equal(connection.registry.definitions().length, 3); }
+  const connection = await connectMcpServers({ servers: Object.fromEntries(Object.entries(config.mcpServers).map(([name, spec]) => [name, { ...spec, tools: [] }])), cwd: process.cwd(), timeoutMs: 3000 });
+  try { assert.equal(connection.discovered.length, 4); assert.equal(connection.exposed.length, 0); assert.equal(connection.registry.definitions().length, 0); }
   finally { await connection.close(); }
   const pidFile = join(root, "good.pid");
   await assert.rejects(connectMcpServers({ servers: { a_good: { ...stdio("good"), env: { MCP_PID_FILE: pidFile } }, z_bad: { ...stdio("bad"), env: { MCP_MODE: "crash" } } },

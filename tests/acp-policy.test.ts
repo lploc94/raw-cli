@@ -9,7 +9,7 @@ import { testConfig } from "./fixtures/config.js";
 function policyConfig(rules: Array<{ match: string; effect: string }>): string {
   const path = testConfig("ollama");
   const document = JSON.parse(readFileSync(path, "utf8"));
-  document.profiles.fixture.tools = { rules };
+  document.profiles.fixture.tools = { ...document.profiles.fixture.tools, rules };
   writeFileSync(path, JSON.stringify(document));
   return path;
 }
@@ -57,7 +57,7 @@ test("ACP injected deny stays hidden and rejects direct call; ask still calls pe
 });
 
 test("ACP session MCP server is explicit but profile deny hides its tools", async () => {
-  const path = policyConfig([{ match: "mcp:browser/*", effect: "deny" }]);
+  const path = policyConfig([{ match: "mcp/browser/*", effect: "deny" }]);
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
   let tools: readonly string[] = [];
   const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!, async generate(request) {

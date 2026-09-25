@@ -25,13 +25,13 @@ test("runtime info exposes selected model/method/vision/MCP/policy without crede
   await writeFile(path, JSON.stringify({ default_profile: "research",
     models: { flash: { provider: "deepseek", method: "openai-chat-completions", model_id: "deepseek-flash",
       base_url: "https://api.deepseek.com", api_key: secret, vision: true, context_window_tokens: 4096 } },
-    profiles: { research: { model: "flash", mcp: { search: ["web_search"] },
+    profiles: { research: { model: "flash",
       compact: { trigger_tokens: 1000, max_output_tokens: 100 },
-      tools: { rules: [{ match: "bash", effect: "deny" }] } } },
+      tools: { use: ["mcp/search/web_search"], rules: [{ match: "builtin/bash", effect: "deny" }] } } },
     mcp: { servers: { search: { transport: "stdio", command: "unused", args: [] } } },
   }));
   const runtime = await loadConfig({ flags: { configPath: path }, env: {}, requireModel: true });
-  const server = createAcpServer({ runtime, mcpServers: runtime.mcpServers, providerFactory: () => ({ profile: runtime.profile!,
+  const server = createAcpServer({ runtime, providerFactory: () => ({ profile: runtime.profile!,
     generate: async () => ({ text: "ok", toolCalls: [], finishReason: "stop" }) }) });
   const connection = client({ name: "runtime-info-client" }).connect(server.app);
   try {

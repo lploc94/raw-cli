@@ -47,8 +47,8 @@ Options:
 Session options: --all (list all workspaces), --before CURSOR (older page)
 
 REPL: /compact, /clear, /stats, /exit
-Config: models define access paths; profiles select a model, MCP tools and policy.
-Vision: a model with vision=true gets view_image; no image flag is needed.
+Config: models define access paths; profiles select a model, prompt, tools and policy.
+Vision: a model with vision=true may select builtin/view_image.
 Compact: profile compact.trigger_tokens enables automatic compaction.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 `;
@@ -70,7 +70,7 @@ async function run(): Promise<void> {
           base_url: "http://127.0.0.1:11434/v1",
         },
       },
-      profiles: { local: { model: "local" } },
+      profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } },
     };
     input(() => {
       mkdirSync(dirname(path), { recursive: true });
@@ -95,28 +95,27 @@ async function run(): Promise<void> {
         ? (models as Record<string, unknown>)[alias] : undefined;
       const spec = model && typeof model === "object" && !Array.isArray(model) ? model as Record<string, unknown> : {};
       const endpoint = typeof spec.base_url === "string" ? redact(spec.base_url) : "default endpoint";
-      const selectedMcp = data.mcp && typeof data.mcp === "object" && !Array.isArray(data.mcp)
-        ? Object.entries(data.mcp).map(([server, tools]) => `${server}:${tools === "*" ? "*" : Array.isArray(tools) ? tools.join(",") : "?"}`).join(";") : "";
+      const selectedTools = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
+        ? (data.tools as { use?: string[] }).use ?? [] : [];
       const policy = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
         ? (data.tools as { rules?: Array<{ match: string; effect: string }> }).rules ?? [] : [];
       const rules = policy.map((rule) => `${rule.effect}:${rule.match}`).join(",");
       const compact = data.compact && typeof data.compact === "object" && !Array.isArray(data.compact)
         ? data.compact as Record<string, unknown> : {};
       process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`
-        + `\tvision=${spec.vision === true}\tmcp=${selectedMcp || "none"}\trules=${rules || "default-allow"}`
+        + `\tvision=${spec.vision === true}\ttools=${selectedTools.join(",") || "none"}\trules=${rules || "default-allow"}`
         + `\ttrigger=${compact.trigger_tokens ?? "manual"}\n`);
     }
     return;
   }
   if (parsed.command === "acp") {
     const runtime = await inputAsync(() => loadConfig({ flags: parsed.flags }));
-    const mcpServers = runtime.mcpServers;
     if (parsed.acpTransport !== "ws") {
-      await serveAcpStdio(createAcpServer({ runtime, mcpServers }));
+      await serveAcpStdio(createAcpServer({ runtime }));
       return;
     }
     const listener = await serveAcpWebSocket({ host: parsed.flags.host ?? "127.0.0.1", port: parsed.flags.port ?? 8765,
-      serverFactory: () => createAcpServer({ runtime, mcpServers }) });
+      serverFactory: () => createAcpServer({ runtime }) });
     process.stderr.write(`raw: ACP WebSocket listening on 127.0.0.1:${listener.port}\n`);
     await new Promise<void>((resolve) => {
       const stop = () => { void listener.close().then(resolve); };
@@ -169,8 +168,7 @@ async function run(): Promise<void> {
       }, requireModel: true }));
       process.stderr.write(`raw: resuming in ${selected.cwd}\n`);
     } else runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true }));
-    process.exitCode = await runCli(runtime, parsed.command === "task" ? parsed.task : undefined,
-      runtime.mcpServers, store, selected);
+    process.exitCode = await runCli(runtime, parsed.command === "task" ? parsed.task : undefined, store, selected);
   } finally {
     try { runSessionMaintenance(store); }
     catch { process.stderr.write("raw: session maintenance deferred\n"); }

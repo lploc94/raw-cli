@@ -4,7 +4,7 @@ import { estimateRequestTokens, performCompaction, type CompactOptions, type Com
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
-import { createToolRegistry, type ToolDefinition, type ToolRegistry } from "./tools/registry.js";
+import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import type { ToolResult } from "./tools/types.js";
@@ -90,7 +90,7 @@ export class AgentSession {
     }
     this.options = {
       provider: options.provider,
-      registry: options.registry ?? createToolRegistry([], options.provider.profile.vision === true),
+      registry: options.registry ?? new ToolRegistry(),
       cwd: options.cwd ?? process.cwd(),
       system: options.system ?? DEFAULT_SYSTEM_PROMPT,
       maxSteps, maxOutputBytes, requestTimeoutMs,

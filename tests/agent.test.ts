@@ -6,14 +6,14 @@ import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 const fake = (generate: (request: ProviderRequest) => Promise<ProviderTurn>): ProviderAdapter => ({
   profile: { name: "fake", provider: "ollama", method: "openai-chat-completions", model: "fixture" }, generate,
 });
 const options = (cwd: string, provider: ProviderAdapter, maxSteps = 25) => ({
-  cwd, provider, registry: createToolRegistry(), system: "tiny", maxSteps, maxOutputBytes: 8192,
+  cwd, provider, registry: createTestToolRegistry(), system: "tiny", maxSteps, maxOutputBytes: 8192,
   requestTimeoutMs: 2000, autoApprove: true,
 });
 
@@ -65,7 +65,7 @@ test("step budget never dispatches a tool whose result cannot be consumed", asyn
   await assert.rejects(readFile(marker));
 
   let executed = 0;
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   registry.register({ name: "count", description: "Count", inputSchema: { type: "object", properties: {}, additionalProperties: false }, handler: async () => { executed++; return { isError: false, content: [{ type: "text", text: "ok" }] }; } });
   let requests = 0;
   const twentyFive = createAgent({ ...options(cwd, fake(async () => {

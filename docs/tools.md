@@ -1,8 +1,8 @@
-# Built-in tools
+# Tools and plugins
 
-## Bundled plugin contract (implementation phase 1)
+## Bundled plugin contract
 
-The four shipped tools are being moved into package-owned folders under
+The four shipped tools live in package-owned folders under
 `dist/tools/builtin/<name>/`. Each folder contains an editable `tool.json` and a
 standalone `index.mjs`. The manifest declares `api_version: 1`, `id`, `version`,
 `name`, `description`, `input_schema`, and `entry: "./index.mjs"`. The entry
@@ -13,11 +13,9 @@ Bash entries retain their semantic batch validators, including mode-specific
 write fields and ordered line ranges, even where JSON Schema alone is too
 broad. Results, abort behavior, and byte caps remain host-controlled.
 
-During this phase the existing registry assembly still supplies sessions;
-profiles do not load plugin folders yet. The shared selected-only loader and
-profile syntax are introduced in later phases.
+Profiles load these tools only when their IDs appear in `tools.use`.
 
-## Selected plugin folders (implementation phase 2)
+## Selected plugin folders
 
 The loader accepts exact IDs from three roots: `builtin/<folder>` in the
 installed package, `local/<folder>` in `$XDG_CONFIG_HOME/raw/tools/` (or
@@ -43,9 +41,9 @@ side effect. The context gives the session cwd, abort signal, result byte cap,
 tool-call ID, and available host options; callbacks for approval stay in Raw.
 The result uses Raw's text, JSON, and image blocks and is capped by the host.
 Local modules run with the invoking OS account's full permissions. No plugin
-sandbox is implied. The profile-to-loader connection is added in Phase 3.
+sandbox is implied.
 
-The default registry exposes exactly three tools. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
+The starter profile selects exactly three tools: `builtin/read_file`, `builtin/write_file`, and `builtin/bash`. Other profiles choose their own ordered `tools.use` list, including an empty list. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
 
 | Tool | Required input | Optional input | Action |
 |---|---|---|---|
@@ -53,7 +51,7 @@ The default registry exposes exactly three tools. The model receives each tool's
 | `write_file` | `operations: array` (1–16 entries with `path` and `mode`) | Mode-specific fields below | Apply ordered UTF-8 writes and guarded edits. |
 | `bash` | `commands: array` (1–16 entries with `command`) | Per entry: `timeout_ms: positive integer` | Run commands sequentially using Bash. Default per-command deadline: 120000 ms. |
 
-When the selected model declares `vision: true`, Raw exposes one additional built-in: `view_image` with `{ "path": string }`. It reads a local PNG or JPEG and returns a native image block to the selected model. Relative paths use the session cwd. Raw checks file structure and a separate 16 MiB decoded-file limit; the normal text result cap does not replace a valid image with a placeholder. Missing, invalid, or oversized images return a structured tool error without base64. `raw "Explain screenshot.png"` needs no image flag: the model can call `view_image` using the named path.
+When the selected model declares `vision: true`, a profile may select `builtin/view_image` with `{ "path": string }`. It reads a local PNG or JPEG and returns a native image block to the selected model. Relative paths use the session cwd. Raw checks file structure and a separate 16 MiB decoded-file limit; the normal text result cap does not replace a valid image with a placeholder. Missing, invalid, or oversized images return a structured tool error without base64. `raw "Explain screenshot.png"` needs no image flag: the model can call `view_image` using the named path.
 
 Relative paths resolve against the session's `cwd`; absolute paths are used as given. The working directory does not restrict filesystem access. The process uses the user's full OS permissions. File errors are returned as tool errors. `write_file` reports success only after the write finishes.
 
@@ -78,7 +76,7 @@ Dispatch validates the tool name, schema, visibility and session whitelist befor
 
 ## Profile rules
 
-An optional profile `tools.rules` array applies to built-ins, MCP tools and ACP-injected tools. Each rule is `{ "match": "<glob>", "effect": "allow" | "ask" | "deny" }`. `*` matches any number of characters and `?` matches one character; the pattern covers the whole canonical tool identity. Built-ins are `read_file`, `write_file`, `bash`; MCP identities are `mcp:<server>/<original-tool-name>`; ACP-injected identities are `acp:<registered-name>`. Rules run in array order and the last match wins. No match means `allow`.
+An optional profile `tools.rules` array applies to built-ins, MCP tools and ACP-injected tools. Each rule is `{ "match": "<glob>", "effect": "allow" | "ask" | "deny" }`. `*` matches any number of characters and `?` matches one character; the pattern covers the whole canonical tool identity. Built-in identities are `builtin/read_file`, `builtin/write_file`, `builtin/bash`, and `builtin/view_image`; local plugin identities are `local/<id>` or `agent/<id>`; MCP identities are `mcp/<server>/<original-tool-name>`; ACP-injected identities are `acp:<registered-name>`. Rules run in array order and the last match wins. No match means `allow`.
 
 `deny` removes the schema from the model and rejects direct dispatch. `ask` remains visible and requests permission once for each call through the CLI TTY or ACP `session/request_permission`; headless execution without an approval channel returns `approval_required`. `-y` never overrides an explicit `ask`. `allow` executes automatically. Policies are tool-name filters, not filesystem or process isolation: allowing `bash` grants the agent the user's full shell permissions even if `write_file` is denied.
 

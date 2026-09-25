@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { deleteSession, getSessionHistory, listSessions, openSessionStore, resumeSession } from "../src/index.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 import type { ProviderAdapter } from "../src/llm/types.js";
 
 test("library session APIs page history and resume with an owned store lifetime", async () => {
@@ -25,7 +25,7 @@ test("library session APIs page history and resume with an owned store lifetime"
     async *complete() { yield { type: "text_delta", text: "done" }; },
   } as unknown as ProviderAdapter;
   const handle = resumeSession({ sessionId: saved.id, storeOptions,
-    agentOptions: { provider, registry: createToolRegistry(), cwd } });
+    agentOptions: { provider, registry: createTestToolRegistry(), cwd } });
   assert.equal(handle.session.id, saved.id);
   assert.equal(handle.agent.cwd, cwd);
   await handle.close();

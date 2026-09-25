@@ -107,7 +107,7 @@ if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new 
     const document = JSON.parse(await readFile(configPath, "utf8"));
     document.mcp = { servers: { pkg: { transport: "stdio", command: process.execPath,
       args: ["--import", import.meta.resolve("tsx"), join(repo, "tests/fixtures/mcp-stdio.ts")], env: { MCP_LABEL: "pkg" } } } };
-    document.profiles.fixture.mcp = { pkg: ["selected"] };
+    document.profiles.fixture.tools.use.push("mcp/pkg/selected");
     await writeFile(configPath, JSON.stringify(document));
     const mcp = await run(bin, [...args, "call MCP"], consumer, env);
     assert.equal(mcp.code, 0, mcp.stderr);
@@ -115,6 +115,7 @@ if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new 
     assert.match(JSON.stringify(fixture.requests[3]?.body), /pkg:selected:probe/);
 
     document.models.fixture.vision = true;
+    document.profiles.fixture.tools.use.push("builtin/view_image");
     await writeFile(configPath, JSON.stringify(document));
     const jpeg = await readFile(join(repo, "tests/fixtures/vision.jpg"));
     await writeFile(join(consumer, "installed.jpg"), jpeg);
@@ -145,12 +146,12 @@ if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new 
     assert.equal(stats.code, 0, stats.stderr);
     assert.ok((JSON.parse(stats.stdout) as { databaseBytes: number }).databaseBytes > 0);
 
-    const parentScript = `import { createAcpClient, createToolRegistry } from "raw-cli";
+    const parentScript = `import { createAcpClient, BUILTIN_TOOL_DEFINITIONS } from "raw-cli";
 const options = { command: ${JSON.stringify(bin)}, args: ${JSON.stringify(["--acp", "--stdio", ...args])} };
 let id;
 const first = await createAcpClient(options);
 try { id = await first.newSession(process.cwd()); const answer = await first.prompt(id, "ACP installed");
-if (answer.stopReason !== "end_turn" || createToolRegistry().definitions().length !== 3) throw new Error("initial ACP failed");
+if (answer.stopReason !== "end_turn" || BUILTIN_TOOL_DEFINITIONS.length !== 3) throw new Error("initial ACP failed");
 } finally { await first.close(); }
 const replay = [];
 const second = await createAcpClient({ ...options, onUpdate: ({ update }) => replay.push(update) });
@@ -171,7 +172,7 @@ process.stdout.write("installed-parent-ok\\n");`;
     assert.match(JSON.stringify(fixture.requests[8]?.body), /ACP installed/);
     assert.match(JSON.stringify(fixture.requests[9]?.body), /ACP resumed/);
 
-    await writeFile(join(consumer, "consumer.ts"), 'import { createToolRegistry, listSessions, getSessionHistory, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod, type SessionHistoryOptions } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst history: SessionHistoryOptions | undefined = undefined;\nconst names: string[] = createToolRegistry().definitions().map(tool => tool.name);\nvoid options; void compact; void input; void method; void history; void names; void listSessions; void getSessionHistory;\n');
+    await writeFile(join(consumer, "consumer.ts"), 'import { ToolRegistry, listSessions, getSessionHistory, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod, type SessionHistoryOptions } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst history: SessionHistoryOptions | undefined = undefined;\nconst names: string[] = new ToolRegistry().definitions().map(tool => tool.name);\nvoid options; void compact; void input; void method; void history; void names; void listSessions; void getSessionHistory;\n');
     const tsc = spawnSync(process.execPath, [join(repo, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck",
       "--target", "esnext", "--module", "nodenext", "--moduleResolution", "nodenext",
       "--typeRoots", join(repo, "node_modules/@types"), "consumer.ts"], { cwd: consumer, encoding: "utf8" });

@@ -21,7 +21,7 @@ test("T-01a: profile selects an exact model alias and CLI wins over RAW_PROFILE"
   const { home } = fixture({ default_profile: "local-a", models: {
     a: model("ollama", "upstream-a", "http://127.0.0.1:9001/v1"),
     b: model("ollama", "upstream-b", "http://127.0.0.1:9002/v1"),
-  }, profiles: { "local-a": { model: "a" }, "local-b": { model: "b" } } });
+  }, profiles: { "local-a": { model: "a", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } }, "local-b": { model: "b", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } });
   const baseline = await loadConfig({ home, env: {}, requireModel: true });
   assert.equal(baseline.profile?.name, "local-a");
   assert.equal(baseline.profile?.model, "upstream-a");
@@ -37,7 +37,7 @@ test("T-01a: missing references, duplicate JSON names and invalid output limit f
   await assert.rejects(loadConfig({ home: missing.home, env: {}, requireModel: true }), /unknown profile/i);
   const duplicate = fixture('{"models":{"x":{"provider":"ollama","method":"openai-chat-completions","model_id":"a"},"x":{"provider":"ollama","method":"openai-chat-completions","model_id":"b"}},"profiles":{"x":{"model":"x"}}}');
   await assert.rejects(loadConfig({ home: duplicate.home, env: {}, requireModel: true }), /duplicate/i);
-  const bad = fixture({ default_profile: "x", models: { x: { ...model("ollama", "a"), context_window_tokens: 100, max_output_tokens: 100 } }, profiles: { x: { model: "x" } } });
+  const bad = fixture({ default_profile: "x", models: { x: { ...model("ollama", "a"), context_window_tokens: 100, max_output_tokens: 100 } }, profiles: { x: { model: "x", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } });
   await assert.rejects(loadConfig({ home: bad.home, env: {}, requireModel: true }), /max_output_tokens/i);
   assert.throws(() => parseCliArgs(["--max-steps", "0", "task"]), /max-steps/i);
   assert.throws(() => parseCliArgs(["--unknown", "task"]), /unknown/i);
@@ -54,7 +54,7 @@ test("T-01b: only selected credential resolves; compact uses selected model", as
   const { home } = fixture({ default_profile: "local", models: {
     local: model("ollama", "small"),
     cloud: { ...model("openai", "hosted"), api_key_env: "CUSTOM_KEY" },
-  }, profiles: { local: { model: "local" }, cloud: { model: "cloud" } } });
+  }, profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } }, cloud: { model: "cloud", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } });
   const local = await loadConfig({ home, env: {}, requireModel: true });
   assert.equal(local.profile?.provider, "ollama");
   assert.equal(local.resolveCompactProfile().model, "small");
@@ -70,7 +70,7 @@ test("T-01b: redaction, malformed JSON, default endpoints and immutable settings
   const invalid = fixture("{not-json");
   await assert.rejects(loadConfig({ home: invalid.home, env: {}, requireModel: true }), /JSON|config/i);
   const { home } = fixture({ default_profile: "local", models: { local: model("ollama", "small") },
-    profiles: { local: { model: "local", cache: { mode: "auto" } } } });
+    profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, cache: { mode: "auto" } } } });
   await assert.rejects(loadConfig({ home, env: { RAW_BASE_URL: "http://127.0.0.1:9999/v1" }, requireModel: true }), /RAW_BASE_URL/);
   const config = await loadConfig({ home, env: {}, requireModel: true });
   assert.equal(config.profile?.baseUrl, "http://127.0.0.1:11434/v1");

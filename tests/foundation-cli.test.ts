@@ -48,7 +48,7 @@ test("T-01d: config list redacts endpoint credentials and invalid flags fail bef
   mkdirSync(join(home, "raw"));
   writeFileSync(join(home, "raw", "config.json"), JSON.stringify({
     models: { remote: { provider: "custom", method: "openai-chat-completions", model_id: "m", base_url: "https://alice:pw@example.com/v1?token=secret" } },
-    profiles: { remote: { model: "remote" } },
+    profiles: { remote: { model: "remote", tools: { use: [] } } },
   }));
   const listed = cli(["config", "list"], home);
   assert.equal(listed.status, 0, listed.stderr);
@@ -76,7 +76,7 @@ test("T-01b: config list redacts uppercase URL credentials", () => {
   mkdirSync(join(home, "raw"));
   writeFileSync(join(home, "raw", "config.json"), JSON.stringify({
     models: { remote: { provider: "custom", method: "openai-chat-completions", model_id: "m", base_url: "HTTPS://alice:pw@example.com/v1?token=secret" } },
-    profiles: { remote: { model: "remote" } },
+    profiles: { remote: { model: "remote", tools: { use: [] } } },
   }));
   const listed = cli(["config", "list"], home);
   assert.equal(listed.status, 0, listed.stderr);
@@ -92,15 +92,15 @@ test("config list reports model capability, selected MCP tools and policy withou
     models: { flash: { provider: "deepseek", method: "openai-chat-completions", model_id: "deepseek-flash",
       base_url: "https://api.deepseek.com", api_key: secret, vision: true, context_window_tokens: 4096 } },
     profiles: { research: { model: "flash", compact: { trigger_tokens: 1000, max_output_tokens: 100 },
-      mcp: { search: ["web_search"] }, tools: { rules: [{ match: "bash", effect: "deny" }] } } },
+      tools: { use: ["mcp/search/web_search"], rules: [{ match: "builtin/bash", effect: "deny" }] } } },
     mcp: { servers: { search: { transport: "stdio", command: "unused", args: [] } } },
   }));
   const listed = cli(["config", "list"], home);
   assert.equal(listed.status, 0, listed.stderr);
   assert.match(listed.stdout, /research.*flash.*deepseek-flash.*openai-chat-completions/s);
   assert.match(listed.stdout, /vision=true/);
-  assert.match(listed.stdout, /search:web_search/);
-  assert.match(listed.stdout, /deny:bash/);
+  assert.match(listed.stdout, /mcp\/search\/web_search/);
+  assert.match(listed.stdout, /deny:builtin\/bash/);
   assert.match(listed.stdout, /trigger=1000/);
   assert.doesNotMatch(listed.stdout + listed.stderr, new RegExp(secret));
 });

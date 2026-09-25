@@ -8,7 +8,7 @@ import { loadConfig, parseCliArgs } from "../src/config.js";
 import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
 import { openSessionStore } from "../src/sessions/store.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 import { testConfig } from "./fixtures/config.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
@@ -253,7 +253,8 @@ test("list and history cursors expose older IDs/items, and an older ID resumes",
         method: runtime.profile!.method, ...(runtime.profile!.baseUrl ? { endpoint: runtime.profile!.baseUrl } : {}),
         systemPrompt: runtime.systemPrompt });
       const agent = createAgent({ cwd: a, provider: createProvider(runtime.profile!),
-        registry: createToolRegistry(runtime.toolRules, runtime.profile!.vision === true), system: runtime.systemPrompt,
+        registry: createTestToolRegistry(runtime.toolRules, runtime.profile!.vision === true), system: runtime.systemPrompt,
+        whitelist: ["read_file", "write_file", "bash"],
         persistence: { store, sessionId: row.id, surface: "cli" } });
       await agent.close();
     }

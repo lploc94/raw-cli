@@ -9,7 +9,7 @@ import { createAgent } from "../src/agent.js";
 import type { ProviderAdapter } from "../src/llm/types.js";
 import { renderStoredHistory } from "../src/sessions/display.js";
 import { openSessionStore } from "../src/sessions/store.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 
 const worker = fileURLToPath(new URL("./fixtures/session-worker.ts", import.meta.url));
 function fixture() {
@@ -109,7 +109,7 @@ test("killing a side-effecting tool never dispatches it again on resume", async 
     workerProcess.kill("SIGKILL");
     await stopped(workerProcess);
     const recovery = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root }, now: () => Date.now() + 20_000 });
-    const registry = createToolRegistry();
+    const registry = createTestToolRegistry();
     registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object" },
       handler: async () => { throw new Error("historical tool dispatched"); } });
     const provider: ProviderAdapter = { profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
@@ -144,7 +144,7 @@ test("a committed tool result survives a crash before the next model response", 
     workerProcess.kill("SIGKILL");
     await stopped(workerProcess);
     const recovery = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root }, now: () => Date.now() + 20_000 });
-    const registry = createToolRegistry();
+    const registry = createTestToolRegistry();
     registry.register({ name: "side_effect", description: "Side effect", inputSchema: { type: "object" },
       handler: async () => { throw new Error("historical tool dispatched"); } });
     const provider: ProviderAdapter = { profile: { name: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture" },

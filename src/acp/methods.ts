@@ -13,8 +13,9 @@ import { runSessionMaintenance } from "../sessions/maintenance.js";
 import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter, ProviderProfile, UserBlock } from "../llm/types.js";
-import { connectMcpServers, type McpConnection, type McpServerConfig } from "../tools/mcp-client.js";
-import { createToolRegistry, type ToolRegistry } from "../tools/registry.js";
+import type { McpConnection, McpServerConfig } from "../tools/mcp-client.js";
+import type { ToolRegistry } from "../tools/registry.js";
+import { createRuntimeTools } from "../tools/plugins/runtime.js";
 import { capResult, errorResult } from "../tools/results.js";
 import type { ToolContent, ToolResult } from "../tools/types.js";
 import { fields, object, rawCapabilities, rawError, rawErrors, string, stringArray, withAbort,
@@ -41,17 +42,20 @@ export interface AcpServer {
   close(): Promise<void>;
 }
 
-function sessionMcpServers(requestServers: readonly McpServer[], configured: Readonly<Record<string, McpServerConfig>>): Record<string, McpServerConfig> {
+function sessionMcpServers(requestServers: readonly McpServer[], configured: Readonly<Record<string, McpServerConfig>>,
+  global: Readonly<Record<string, McpServerConfig>>): Record<string, McpServerConfig> {
   const merged: Record<string, McpServerConfig> = Object.assign(Object.create(null), configured);
   for (const server of requestServers) {
-    const selection = configured[server.name]?.tools ?? "*";
+    if (Object.hasOwn(global, server.name) || Object.hasOwn(merged, server.name)) {
+      throw RequestError.invalidParams(undefined, `duplicate MCP server: ${server.name}`);
+    }
     if ("command" in server) {
       merged[server.name] = { command: server.command, args: server.args,
-        env: Object.fromEntries(server.env.map((item) => [item.name, item.value])), tools: selection };
+        env: Object.fromEntries(server.env.map((item) => [item.name, item.value])), tools: [] };
     } else {
       if (server.type === "acp") throw RequestError.invalidParams(undefined, "ACP MCP transport is unsupported");
       merged[server.name] = { url: server.url, transport: server.type === "http" ? "streamable-http" : "sse",
-        headers: Object.fromEntries(server.headers.map((item) => [item.name, item.value])), tools: selection };
+        headers: Object.fromEntries(server.headers.map((item) => [item.name, item.value])), tools: [] };
     }
   }
   return merged;
@@ -138,7 +142,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   catch { process.stderr.write("raw: session maintenance deferred\n"); }
   const sessions = new Map<string, SessionRecord>();
   const providerFactory = options.providerFactory ?? createProvider;
-  const configuredMcp = options.mcpServers ?? options.runtime.mcpServers;
+  const configuredMcp = options.mcpServers ?? {};
   let connection: AgentConnection | undefined;
   let peer: AgentContext | undefined;
   let initialized = false;
@@ -213,13 +217,15 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       }
     }
     const creation = (async () => {
-      const registry = createToolRegistry(options.runtime.toolRules, profile.vision === true);
+      let registry: ToolRegistry | undefined;
       let mcp: McpConnection | undefined;
       let id: string | undefined;
       let created = false;
       try {
-        mcp = await connectMcpServers({ servers: sessionMcpServers(mcpServers, configuredMcp), registry,
-          cwd, timeoutMs: options.runtime.requestTimeoutMs, signal: startupController.signal });
+        const tools = await createRuntimeTools({ runtime: options.runtime, cwd, signal: startupController.signal,
+          discoverableMcp: sessionMcpServers(mcpServers, configuredMcp, options.runtime.availableMcpServers) });
+        registry = tools.registry;
+        mcp = tools.mcp;
         if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
         if (saved) {
           id = saved.id;
@@ -234,6 +240,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         }
         const sessionId = id;
         const agentSession = createAgent({ provider: providerFactory(profile), registry,
+          ...(!saved ? { whitelist: tools.selectedNames } : {}),
           cwd, system: options.runtime.systemPrompt,
           maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
           requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,

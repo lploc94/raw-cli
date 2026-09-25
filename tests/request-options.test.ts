@@ -12,7 +12,7 @@ function config(provider: string, method: string, request: Record<string, unknow
   const path = join(mkdtempSync(join(tmpdir(), "raw-request-")), "config.json");
   writeFileSync(path, JSON.stringify({ default_profile: "run", models: { model: {
     provider, method, model_id: "fixture", base_url: url, api_key: "fixture-key", ...limits,
-  } }, profiles: { run: { model: "model", request } } }));
+  } }, profiles: { run: { model: "model", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] }, request } } }));
   return path;
 }
 const ordinary = { system: "tiny", messages: [{ role: "user" as const, content: "hello" }], tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 1000 };

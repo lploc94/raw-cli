@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 
 const fake = (generate: (request: ProviderRequest) => Promise<ProviderTurn>): ProviderAdapter => ({
   profile: { name: "fake", provider: "ollama", method: "openai-chat-completions", model: "fixture" }, generate,
 });
-const options = (cwd: string, provider: ProviderAdapter) => ({ cwd, provider, registry: createToolRegistry(), system: "tiny", maxSteps: 5, maxOutputBytes: 8192, requestTimeoutMs: 2000, autoApprove: true });
+const options = (cwd: string, provider: ProviderAdapter) => ({ cwd, provider, registry: createTestToolRegistry(), system: "tiny", maxSteps: 5, maxOutputBytes: 8192, requestTimeoutMs: 2000, autoApprove: true });
 
 test("abort in inference preserves user history and settles one terminal event", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-abort-model-"));
@@ -209,7 +209,7 @@ test("throwing observer cannot leave orphan calls or duplicate terminal events",
 
 test("event mutations cannot change authorized arguments, tool history or usage", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-event-mutation-"));
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   let executed: unknown;
   registry.register({ name: "record", description: "Record", inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false }, handler: async (args) => {
     executed = args.value;

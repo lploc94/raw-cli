@@ -12,7 +12,7 @@ export function testConfig(provider: string, modelId = "fixture", baseUrl?: stri
     models: { fixture: { provider, method, model_id: modelId, ...(vision ? { vision } : {}),
       ...(baseUrl === undefined ? {} : { base_url: baseUrl }),
       ...(apiKeyEnv === undefined ? {} : { api_key_env: apiKeyEnv }) } },
-    profiles: { fixture: { model: "fixture" } },
+    profiles: { fixture: { model: "fixture", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", ...(vision ? ["builtin/view_image"] : [])] } } },
   }));
   return path;
 }

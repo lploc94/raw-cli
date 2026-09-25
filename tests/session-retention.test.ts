@@ -133,7 +133,7 @@ test("two separate profile processes obey one canonical retention setting", () =
   const configs = [join(root, "first.json"), join(root, "second.json")];
   for (const path of configs) writeFileSync(path, JSON.stringify({ default_profile: "local",
     models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: path } },
-    profiles: { local: { model: "local" } } }));
+    profiles: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } } }));
   for (const [index, path] of configs.entries()) {
     const child = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"),
       join(process.cwd(), "tests/fixtures/retention-worker.ts"), path, id,

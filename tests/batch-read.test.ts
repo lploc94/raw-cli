@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 import type { ToolResult } from "../src/tools/types.js";
 
 function entries(result: ToolResult): Array<Record<string, unknown>> {
@@ -16,7 +16,7 @@ test("one read call selects full, range and count independently with EOF and dig
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-read-"));
   await writeFile(join(cwd, "full.txt"), "alpha\n");
   await writeFile(join(cwd, "lines.txt"), "one\r\ntwo\r\nthree");
-  const result = await createToolRegistry().dispatch("read_file", { files: [
+  const result = await createTestToolRegistry().dispatch("read_file", { files: [
     { path: "full.txt" },
     { path: "lines.txt", start_line: 2, end_line: 2 },
     { path: "lines.txt", start_line: 2, max_lines: 9 },
@@ -37,7 +37,7 @@ test("large full read returns a resumable prefix while later files fit the one s
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-large-"));
   await writeFile(join(cwd, "huge.txt"), "H".repeat(80) + "\n" + "x\n".repeat(50_000));
   await writeFile(join(cwd, "small.txt"), "small\n");
-  const result = await createToolRegistry().dispatch("read_file", { files: [
+  const result = await createTestToolRegistry().dispatch("read_file", { files: [
     { path: "huge.txt" }, { path: "small.txt" }, { path: "missing.txt" },
   ] }, { cwd, maxOutputBytes: 1024, autoApprove: true });
   const rows = entries(result);
@@ -54,7 +54,7 @@ test("range paging stops on a whole line and invalid batch shapes reject before 
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-page-"));
   const original = `first\n${"s".repeat(100)}\nthird\n`;
   await writeFile(join(cwd, "lines.txt"), original);
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   const first = entries(await registry.dispatch("read_file", { files: [
     { path: "lines.txt", start_line: 1, max_lines: 3, max_bytes: 215 },
   ] }, { cwd, maxOutputBytes: 8192, autoApprove: true }))[0]!;
@@ -81,7 +81,7 @@ test("a long first line is not split and UTF-8 paging resumes on the next line",
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-utf8-"));
   await writeFile(join(cwd, "long.txt"), "L".repeat(10_000) + "\nshort\n");
   await writeFile(join(cwd, "emoji.txt"), `😀\n${"n".repeat(100)}\n`);
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   const long = entries(await registry.dispatch("read_file", { files: [
     { path: "long.txt", start_line: 1, max_lines: 2, max_bytes: 220 },
   ] }, { cwd, maxOutputBytes: 8192, autoApprove: true }))[0]!;
@@ -99,7 +99,7 @@ test("a long first line is not split and UTF-8 paging resumes on the next line",
 test("a later missing file keeps its error after an earlier read fills the response", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-error-budget-"));
   await writeFile(join(cwd, "noisy.txt"), Array.from({ length: 120 }, (_, i) => `line ${i} ${"x".repeat(80)}\n`).join(""));
-  const rows = entries(await createToolRegistry().dispatch("read_file", { files: [
+  const rows = entries(await createTestToolRegistry().dispatch("read_file", { files: [
     { path: "noisy.txt", start_line: 1 }, { path: "missing.txt" },
   ] }, { cwd, maxOutputBytes: 1024, autoApprove: true }));
   assert.equal(rows[0]?.status, "partial");
@@ -109,7 +109,7 @@ test("a later missing file keeps its error after an earlier read fills the respo
 test("max_bytes limits a serialized item and a completed range fits exactly", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-exact-budget-"));
   await writeFile(join(cwd, "tiny.txt"), "a\n");
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   const args = { files: [{ path: "tiny.txt", start_line: 1, max_lines: 1 }] };
   const full = entries(await registry.dispatch("read_file", args, { cwd, maxOutputBytes: 8192 }))[0]!;
   const exact = Buffer.byteLength(JSON.stringify({ results: [full] }));
@@ -128,7 +128,7 @@ test("Unicode path errors survive a noisy prior read; empty results respect max_
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-unicode-error-"));
   await writeFile(join(cwd, "noisy"), "x\n".repeat(6000));
   await writeFile(join(cwd, "empty"), "");
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   const rows = entries(await registry.dispatch("read_file", { files: [
     { path: "noisy", start_line: 1 }, { path: "漢".repeat(60) },
   ] }, { cwd, maxOutputBytes: 8192 }));
@@ -143,7 +143,7 @@ test("Unicode path errors survive a noisy prior read; empty results respect max_
 test("a completed multiline range fits its exact serialized global and entry budgets", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-batch-multiline-exact-"));
   await writeFile(join(cwd, "tiny"), "a\nb\n");
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   const args = { files: [{ path: "tiny", start_line: 1, max_lines: 2 }] };
   const expected = entries(await registry.dispatch("read_file", args, { cwd, maxOutputBytes: 8192 }))[0]!;
   const globalExact = Buffer.byteLength(JSON.stringify({ results: [expected] }));

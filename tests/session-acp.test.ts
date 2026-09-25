@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -408,7 +408,11 @@ test("dropping an old callback cannot hide a changed retained MCP schema", async
   const root = mkdtempSync(join(tmpdir(), "raw-session-acp-schema-"));
   const state = mkdtempSync(join(tmpdir(), "raw-session-acp-schema-state-"));
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
-  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama") }, env: {}, requireModel: true });
+  const configPath = testConfig("ollama");
+  const document = JSON.parse(readFileSync(configPath, "utf8"));
+  document.profiles.fixture.tools.use.push("mcp/fixture/selected");
+  writeFileSync(configPath, JSON.stringify(document));
+  const runtime = await loadConfig({ flags: { configPath }, env: {}, requireModel: true });
   const makeServer = (label: string) => createAcpServer({ runtime, storeOptions,
     mcpServers: { fixture: { command: process.execPath,
       args: ["--import", import.meta.resolve("tsx"), join(process.cwd(), "tests/fixtures/mcp-stdio.ts")],

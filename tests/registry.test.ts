@@ -4,7 +4,7 @@ import { access, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BUILTIN_TOOL_DEFINITIONS, createToolRegistry, ToolRegistry } from "../src/tools/registry.js";
+import { BUILTIN_TOOL_DEFINITIONS, createTestToolRegistry, ToolRegistry } from "./fixtures/registry.js";
 import { loadBundledTools } from "../src/tools/plugins/loader.js";
 
 test("packaged bundled plugins preserve exact definitions and semantic batch preflight", async () => {
@@ -12,7 +12,7 @@ test("packaged bundled plugins preserve exact definitions and semantic batch pre
   const plugins = await loadBundledTools(names);
   const registry = new ToolRegistry();
   for (const plugin of plugins) registry.register(plugin);
-  assert.deepEqual(registry.definitions(), createToolRegistry([], true).definitions());
+  assert.deepEqual(registry.definitions(), createTestToolRegistry([], true).definitions());
   // Frozen from the pre-refactor four-tool definition array at 3681c12.
   assert.equal(createHash("sha256").update(JSON.stringify(registry.definitions())).digest("hex"),
     "ebb9316cba1a92401a88e5a17955e89f64bd17bd559e756209c82b414e8bfe3d");
@@ -53,7 +53,7 @@ test("packaged bundled plugins preserve exact definitions and semantic batch pre
 test("registry has only three built-ins and rejects invalid/hidden calls before approval", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-reg-"));
   const marker = join(cwd, "marker");
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   assert.deepEqual(registry.definitions().map((d) => d.name), ["read_file", "write_file", "bash"]);
   let approvals = 0;
   const ctx = { cwd, maxOutputBytes: 8192, autoApprove: false, approve: async () => { approvals++; return true; } };
@@ -95,7 +95,7 @@ test("abort settles an unresolved approval and late approval cannot execute", as
   const abort = new AbortController();
   let allow!: (value: boolean) => void;
   const pending = new Promise<boolean>((resolve) => { allow = resolve; });
-  const run = createToolRegistry().dispatch("write_file", { operations: [{ path: marker, mode: "overwrite", content: "bad" }] }, {
+  const run = createTestToolRegistry().dispatch("write_file", { operations: [{ path: marker, mode: "overwrite", content: "bad" }] }, {
     cwd, maxOutputBytes: 8192, autoApprove: false, signal: abort.signal, approve: () => pending,
   });
   abort.abort();

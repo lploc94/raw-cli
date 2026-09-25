@@ -2,11 +2,6 @@ import type { ToolContext } from "./primitives.js";
 import readManifest from "./bundled/read_file/tool.json" with { type: "json" };
 import writeManifest from "./bundled/write_file/tool.json" with { type: "json" };
 import bashManifest from "./bundled/bash/tool.json" with { type: "json" };
-import imageManifest from "./bundled/view_image/tool.json" with { type: "json" };
-import { handler as readHandler, validateArgs as validateReadBatch } from "./bundled/read_file/index.js";
-import { handler as writeHandler, validateArgs as validateWriteBatch } from "./bundled/write_file/index.js";
-import { handler as bashHandler, validateArgs as validateBashBatch } from "./bundled/bash/index.js";
-import { handler as imageHandler, validateArgs as validateImageArgs } from "./bundled/view_image/index.js";
 import { capResult, errorResult } from "./results.js";
 import type { ToolResult } from "./types.js";
 
@@ -35,22 +30,6 @@ function matcher(pattern: string): RegExp {
   return new RegExp(`^(?:${source})(?![\\s\\S])`, "su");
 }
 
-function registration(manifest: { name: string; description: string; input_schema: unknown },
-  handler: ToolRegistration["handler"], validateArgs?: ToolRegistration["validateArgs"]): ToolRegistration {
-  return {
-    name: manifest.name, description: manifest.description,
-    inputSchema: manifest.input_schema as ToolDefinition["inputSchema"],
-    ...(validateArgs ? { validateArgs } : {}), handler,
-  };
-}
-
-const builtIns: readonly ToolRegistration[] = [
-  registration(readManifest, readHandler, validateReadBatch),
-  registration(writeManifest, writeHandler, validateWriteBatch),
-  registration(bashManifest, bashHandler, validateBashBatch),
-];
-const imageTool: ToolRegistration = registration(imageManifest, imageHandler, validateImageArgs);
-
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") {
     for (const child of Object.values(value)) deepFreeze(child);
@@ -59,7 +38,11 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export const BUILTIN_TOOL_DEFINITIONS: readonly ToolDefinition[] = deepFreeze(builtIns.map(({ handler: _handler, validateArgs: _validateArgs, ...definition }) => structuredClone(definition)));
+export const BUILTIN_TOOL_DEFINITIONS: readonly ToolDefinition[] = deepFreeze(
+  [readManifest, writeManifest, bashManifest].map((manifest) => ({
+    name: manifest.name, description: manifest.description,
+    inputSchema: structuredClone(manifest.input_schema) as ToolDefinition["inputSchema"],
+  })));
 
 function validate(definition: ToolDefinition, value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
@@ -95,13 +78,10 @@ export class ToolRegistry {
   }
 
   definitions(whitelist?: readonly string[]): readonly ToolDefinition[] {
-    return [...this.tools.values()]
+    const ordered = whitelist === undefined ? [...this.tools.values()]
+      : [...new Set(whitelist)].map((name) => this.tools.get(name)).filter((item): item is ToolRegistration => item !== undefined);
+    return ordered
       .filter((tool) => this.effect(tool) !== "deny" && (whitelist === undefined || whitelist.includes(tool.name)))
-      .sort((a, b) => {
-        const first = ["read_file", "write_file", "bash", "view_image"].indexOf(a.name);
-        const second = ["read_file", "write_file", "bash", "view_image"].indexOf(b.name);
-        return first >= 0 && second >= 0 ? first - second : first >= 0 ? -1 : second >= 0 ? 1 : a.name.localeCompare(b.name);
-      })
       .map(({ handler: _handler, validateArgs: _validateArgs, canonicalName: _canonicalName, ...definition }) => structuredClone(definition));
   }
 
@@ -144,11 +124,4 @@ export class ToolRegistry {
       return finish(errorResult("tool_error", `${name} failed: ${(error as Error).message}`));
     }
   }
-}
-
-export function createToolRegistry(rules: readonly ToolPolicyRule[] = [], vision = false): ToolRegistry {
-  const registry = new ToolRegistry(rules);
-  for (const tool of builtIns) registry.register(tool);
-  if (vision) registry.register(imageTool);
-  return registry;
 }

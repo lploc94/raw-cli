@@ -12,7 +12,8 @@ export type { ApiMethod, ProviderName, ProviderProfile, ProfileRequestOptions, C
 export { createProvider, ProviderError } from "./llm/client.js";
 export type { ProviderAdapter, ProviderRequest, ProviderTurn, ModelMessage, ModelToolCall } from "./llm/types.js";
 export type { ToolContent, ToolResult } from "./tools/types.js";
-export { BUILTIN_TOOL_DEFINITIONS, ToolRegistry, createToolRegistry } from "./tools/registry.js";
+export { BUILTIN_TOOL_DEFINITIONS, ToolRegistry } from "./tools/registry.js";
+export { createRuntimeTools } from "./tools/plugins/runtime.js";
 export { loadToolPlugins, bundledToolsRoot } from "./tools/plugins/loader.js";
 export type { LoadToolPluginsOptions } from "./tools/plugins/loader.js";
 export type { ToolManifest, ToolPlugin } from "./tools/plugins/contract.js";

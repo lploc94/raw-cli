@@ -2,8 +2,7 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 import { createAgent, type AgentSession, type RunEvent, type RunResult } from "./agent.js";
 import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
-import { connectMcpServers, type McpServerConfig } from "./tools/mcp-client.js";
-import { createToolRegistry } from "./tools/registry.js";
+import { createRuntimeTools } from "./tools/plugins/runtime.js";
 import { renderStoredHistory } from "./sessions/display.js";
 import { runSessionMaintenance } from "./sessions/maintenance.js";
 import type { SessionStore, SessionSummary } from "./sessions/store.js";
@@ -141,7 +140,7 @@ async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, 
   return answer !== undefined && /^(?:y|yes)$/i.test(answer.trim());
 }
 
-export async function runCli(runtime: RuntimeConfig, task: string | undefined, mcpServers: Readonly<Record<string, McpServerConfig>>,
+export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   store: SessionStore, selected?: SessionSummary): Promise<number> {
   if (!runtime.profile) throw new Error("provider and model are required");
   const cwd = selected?.cwd ?? process.cwd();
@@ -151,10 +150,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   const cancelStartup = () => { startupCancelled = true; startupController.abort(); };
   process.on("SIGINT", cancelStartup);
   process.on("SIGTERM", cancelStartup);
-  let mcp;
+  let tools;
   try {
-    mcp = await connectMcpServers({ cwd, servers: mcpServers, registry: createToolRegistry(runtime.toolRules, runtime.profile?.vision === true),
-      timeoutMs: runtime.requestTimeoutMs, signal: startupController.signal });
+    tools = await createRuntimeTools({ runtime, cwd, signal: startupController.signal });
   } catch (error) {
     if (startupCancelled) return 130;
     throw error;
@@ -162,7 +160,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
     process.off("SIGINT", cancelStartup);
     process.off("SIGTERM", cancelStartup);
   }
-  if (startupCancelled) { await mcp.close(); return 130; }
+  if (startupCancelled) { await tools.mcp.close(); return 130; }
   const rl = task === undefined || process.stdin.isTTY
     ? createInterface({ input: process.stdin, output: process.stdout, terminal: Boolean(process.stdin.isTTY) })
     : undefined;
@@ -174,7 +172,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
     provider: runtime.profile!.provider, method: runtime.profile!.method,
     ...(runtime.profile!.baseUrl ? { endpoint: runtime.profile!.baseUrl } : {}),
     systemPrompt: runtime.systemPrompt });
-  const createRuntimeAgent = (id: string) => createAgent({ provider, registry: mcp.registry,
+  const createRuntimeAgent = (id: string) => createAgent({ provider, registry: tools.registry, whitelist: tools.selectedNames,
     cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
     requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
     persistence: { store, sessionId: id, surface: "cli" },
@@ -184,7 +182,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
   try {
     record = selected ?? createSavedSession(task?.trim().replace(/\s+/g, " ").slice(0, 80) || "New session");
     session = createRuntimeAgent(record.id);
-  } catch (error) { rl?.close(); await mcp.close(); throw error; }
+  } catch (error) { rl?.close(); await tools.mcp.close(); throw error; }
   const interrupt = () => {
     if (session.abort()) { process.stderr.write("\nraw: cancelled\n"); return; }
     cancelledWhileIdle = true;
@@ -258,6 +256,6 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined, m
     process.off("SIGINT", interrupt);
     process.off("SIGTERM", onTerm);
     await session.close();
-    await mcp.close();
+    await tools.mcp.close();
   }
 }

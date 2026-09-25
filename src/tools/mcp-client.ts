@@ -7,7 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ToolRegistry, createToolRegistry, type ToolRegistration } from "./registry.js";
+import { ToolRegistry, type ToolRegistration } from "./registry.js";
 import { capResult, errorResult } from "./results.js";
 import type { ToolContent, ToolResult } from "./types.js";
 
@@ -229,7 +229,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) throw new Error("MCP timeout must be a positive integer");
   const configs = options.servers ?? {};
   const specs = Object.entries(configs).map(([name, raw]) => [string(name, "MCP server name"), validateServer(name, raw)] as const).sort(([a], [b]) => a.localeCompare(b));
-  const registry = options.registry ?? createToolRegistry();
+  const registry = options.registry ?? new ToolRegistry();
   const owners: Client[] = [];
   const discovered: { server: string; name: string }[] = [];
   const exposed: McpToolInfo[] = [];
@@ -304,7 +304,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
           try { validate = ajv.compile(schema); }
           catch { throw new Error(`unsupported MCP tool schema for ${name}/${originalName}`); }
           if ((validate as typeof validate & { $async?: boolean }).$async) throw new Error(`unsupported async MCP tool schema for ${name}/${originalName}`);
-          return { name: alias, canonicalName: `mcp:${name}/${originalName}`, description: tool.description, inputSchema: schema,
+          return { name: alias, canonicalName: `mcp/${name}/${originalName}`, description: tool.description, inputSchema: schema,
           validateArgs: (args) => validate(args) ? undefined : ajv.errorsText(validate.errors),
           handler: async (args, context) => {
             if (closed) return errorResult("mcp_closed", `MCP server ${name} is closed`);

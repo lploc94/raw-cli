@@ -3,7 +3,7 @@ import { access, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createToolRegistry } from "../src/tools/registry.js";
+import { createTestToolRegistry } from "./fixtures/registry.js";
 import type { ToolResult } from "../src/tools/types.js";
 
 function rows(result: ToolResult): Array<Record<string, unknown>> {
@@ -13,7 +13,7 @@ function rows(result: ToolResult): Array<Record<string, unknown>> {
 
 test("bash batch is sequential, keeps channels separate and continues after nonzero exit", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-bash-batch-"));
-  const result = await createToolRegistry().dispatch("bash", { commands: [
+  const result = await createTestToolRegistry().dispatch("bash", { commands: [
     { command: "printf first > marker; printf out; printf err >&2" },
     { command: "test -f marker; exit 7" },
     { command: "cat marker; printf third >> marker" },
@@ -30,7 +30,7 @@ test("bash batch is sequential, keeps channels separate and continues after nonz
 
 test("a noisy first command cannot hide or prevent later command outcomes", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-bash-noisy-"));
-  const result = await createToolRegistry().dispatch("bash", { commands: [
+  const result = await createTestToolRegistry().dispatch("bash", { commands: [
     { command: "printf '%05000d' 0" },
     { command: "printf middle > marker; printf M" },
     { command: "cat marker" },
@@ -46,7 +46,7 @@ test("a noisy first command cannot hide or prevent later command outcomes", asyn
 
 test("JSON-escaped output uses only its fair share, leaving later outputs intact", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-bash-escaped-budget-"));
-  const result = await createToolRegistry().dispatch("bash", { commands: [
+  const result = await createTestToolRegistry().dispatch("bash", { commands: [
     { command: "printf '\\001%.0s' {1..20000}" },
     { command: "printf '%01000d' 0" },
     { command: "printf '%01000d' 0" },
@@ -61,7 +61,7 @@ test("JSON-escaped output uses only its fair share, leaving later outputs intact
 
 test("timeout and abort stop the batch and mark every later index skipped", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-bash-stop-"));
-  const registry = createToolRegistry();
+  const registry = createTestToolRegistry();
   const timed = rows(await registry.dispatch("bash", { commands: [
     { command: "sleep 2", timeout_ms: 50 }, { command: "touch timeout-marker" },
   ] }, { cwd, maxOutputBytes: 8192 }));
@@ -79,7 +79,7 @@ test("timeout and abort stop the batch and mark every later index skipped", asyn
 
 test("invalid commands reject the whole call before approval and spawning", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-bash-invalid-"));
-  const registry = createToolRegistry([{ match: "bash", effect: "ask" }]);
+  const registry = createTestToolRegistry([{ match: "builtin/bash", effect: "ask" }]);
   let approvals = 0;
   for (const input of [
     { command: "touch marker" },

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -195,10 +195,14 @@ test("T-07b: stdio handles split/coalesced JSON-RPC frames, notifications, inval
   } finally { rl.close(); child.stdin.end(); if (child.exitCode === null) child.kill("SIGTERM"); }
 });
 
-test("T-07a: standard session/new MCP server is an explicit selection and executes without raw extensions", async () => {
+test("T-07a: profile-selected ACP session/new MCP server executes without raw extensions", async () => {
   const responses = [{ frames: [openAiFrame({ content: "ready" }, "stop"), openAiDone] }];
   const fixture = await startMockProvider(responses);
-  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", testConfig("openai", "fixture", fixture.url), "-y"],
+  const configPath = testConfig("openai", "fixture", fixture.url);
+  const document = JSON.parse(readFileSync(configPath, "utf8"));
+  document.profiles.fixture.tools.use.push("mcp/browser/selected");
+  writeFileSync(configPath, JSON.stringify(document));
+  const child = spawn(process.execPath, ["--import", "tsx", "bin/raw.ts", "--acp", "--stdio", "--config", configPath, "-y"],
     { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   if (!child.stdin || !child.stdout || !child.stderr) throw new Error("stdio unavailable");
   let stderr = "";
@@ -212,7 +216,7 @@ test("T-07a: standard session/new MCP server is an explicit selection and execut
       command: process.execPath, args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: [{ name: "MCP_LABEL", value: "IDE" }] }] });
     assert.equal((await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "first" }] })).stopReason, "end_turn");
     const initial = fixture.requests[0]?.body as { tools: Array<{ function: { name: string } }> };
-    assert.equal(initial.tools.length, 5);
+    assert.equal(initial.tools.length, 4);
     const alias = initial.tools.find((tool) => tool.function.name.includes("selected"))?.function.name;
     assert.ok(alias);
     responses.push({ frames: [openAiFrame({ tool_calls: [{ index: 0, id: "mcp-call", type: "function",

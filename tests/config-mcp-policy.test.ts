@@ -15,9 +15,23 @@ function config(data: unknown): string {
 const model = { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" };
 const server = { transport: "stdio", command: "missing-unstarted-server", args: [] };
 
+test("profiles require ordered tool IDs and resolve prompt overrides", async () => {
+  const path = config({ default_profile: "p", models: { local: model },
+    profiles: { p: { model: "local", tools: { use: ["builtin/bash", "builtin/read_file"] }, system_prompt: "from profile" } } });
+  const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
+  assert.deepEqual(runtime.toolIds, ["builtin/bash", "builtin/read_file"]);
+  assert.equal(runtime.systemPrompt, "from profile");
+  assert.equal((await loadConfig({ configPath: path, env: { RAW_SYSTEM_PROMPT: "" } })).systemPrompt, "");
+  assert.equal((await loadConfig({ configPath: path, env: { RAW_SYSTEM_PROMPT: "env" }, flags: { systemPrompt: "flag" } })).systemPrompt, "flag");
+  const missing = config({ default_profile: "p", models: { local: model }, profiles: { p: { model: "local" } } });
+  await assert.rejects(loadConfig({ configPath: missing, env: {} }), /tools\.use/);
+  const old = config({ default_profile: "p", models: { local: model }, profiles: { p: { model: "local", tools: { use: [] }, mcp: {} } } });
+  await assert.rejects(loadConfig({ configPath: old, env: {} }), /mcp/);
+});
+
 test("root MCP definitions remain inert until selected by profile", async () => {
   const path = config({ default_profile: "plain", models: { local: model }, mcp: { servers: { search: server } },
-    profiles: { plain: { model: "local" }, research: { model: "local", mcp: { search: ["web_search"] } } } });
+    profiles: { plain: { model: "local", tools: { use: [] } }, research: { model: "local", tools: { use: ["mcp/search/web_search"] } } } });
   const plain = await loadConfig({ configPath: path, env: {}, requireModel: true });
   assert.equal(Object.keys(plain.mcpServers).length, 0);
   const research = await loadConfig({ configPath: path, env: {}, flags: { profile: "research" }, requireModel: true });
@@ -28,7 +42,7 @@ test("root MCP definitions remain inert until selected by profile", async () => 
 test("configured but unselected MCP process never starts", async () => {
   const directory = mkdtempSync(join(tmpdir(), "raw-mcp-inert-"));
   const pidFile = join(directory, "started.pid");
-  const path = config({ default_profile: "plain", models: { local: model }, profiles: { plain: { model: "local" } },
+  const path = config({ default_profile: "plain", models: { local: model }, profiles: { plain: { model: "local", tools: { use: [] } } },
     mcp: { servers: { hidden: { transport: "stdio", command: process.execPath,
       args: ["--import", "tsx", "tests/fixtures/mcp-stdio.ts"], env: { MCP_PID_FILE: pidFile } } } } });
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
@@ -39,24 +53,24 @@ test("configured but unselected MCP process never starts", async () => {
   } finally { await connection.close(); }
 });
 
-test("unknown MCP selection, duplicate selected tools and invalid policy fail at config load", async () => {
+test("unknown MCP selection, duplicate selected tools and invalid policy fail before execution", async () => {
   const root = { default_profile: "p", models: { local: model }, mcp: { servers: { search: server } },
-    profiles: { p: { model: "local", mcp: { search: ["web_search"] }, tools: { rules: [{ match: "bash", effect: "ask" }] } } } };
+    profiles: { p: { model: "local", tools: { use: ["mcp/search/web_search"], rules: [{ match: "builtin/bash", effect: "ask" }] } } } };
   const valid = await loadConfig({ configPath: config(root), env: {}, requireModel: true });
-  assert.deepEqual(valid.toolRules, [{ match: "bash", effect: "ask" }]);
+  assert.deepEqual(valid.toolRules, [{ match: "builtin/bash", effect: "ask" }]);
   const unknown = structuredClone(root) as any;
-  unknown.profiles.p.mcp = { absent: "*" };
-  await assert.rejects(loadConfig({ configPath: config(unknown), env: {}, requireModel: true }), /unknown MCP server/);
+  unknown.profiles.p.tools.use = ["mcp/absent/web_search"];
+  assert.deepEqual((await loadConfig({ configPath: config(unknown), env: {}, requireModel: true })).toolIds, ["mcp/absent/web_search"]);
   const duplicate = structuredClone(root) as any;
-  duplicate.profiles.p.mcp.search = ["web_search", "web_search"];
+  duplicate.profiles.p.tools.use = ["mcp/search/web_search", "mcp/search/web_search"];
   await assert.rejects(loadConfig({ configPath: config(duplicate), env: {}, requireModel: true }), /duplicate/);
   const invalid = structuredClone(root) as any;
-  invalid.profiles.p.tools.rules = [{ match: "bash", effect: "oops" }];
+  invalid.profiles.p.tools.rules = [{ match: "builtin/bash", effect: "oops" }];
   await assert.rejects(loadConfig({ configPath: config(invalid), env: {}, requireModel: true }), /effect/);
 });
 
 test("old external MCP file shape is rejected by canonical config", async () => {
-  const path = config({ default_profile: "p", models: { local: model }, profiles: { p: { model: "local" } },
+  const path = config({ default_profile: "p", models: { local: model }, profiles: { p: { model: "local", tools: { use: [] } } },
     mcpServers: { search: server } });
   await assert.rejects(loadConfig({ configPath: path, env: {}, requireModel: true }), /mcpServers/);
 });
@@ -64,7 +78,7 @@ test("old external MCP file shape is rejected by canonical config", async () => 
 test("MCP server names cannot change configuration object prototypes", async () => {
   const path = config({ default_profile: "p", models: { local: model },
     mcp: { servers: Object.fromEntries([["__proto__", server]]) },
-    profiles: { p: { model: "local", mcp: Object.fromEntries([["__proto__", []]]) } } });
+    profiles: { p: { model: "local", tools: { use: ["mcp/__proto__/echo"] } } } });
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
   assert.equal(Object.getPrototypeOf(runtime.mcpServers), null);
   assert.equal(Object.hasOwn(runtime.mcpServers, "__proto__"), true);
@@ -74,7 +88,7 @@ test("MCP server names cannot change configuration object prototypes", async () 
 test("MCP stdio process arguments preserve empty and whitespace strings", async () => {
   const path = config({ default_profile: "p", models: { local: model },
     mcp: { servers: { server: { transport: "stdio", command: "program", args: ["", " ", "--flag"] } } },
-    profiles: { p: { model: "local", mcp: { server: [] } } } });
+    profiles: { p: { model: "local", tools: { use: ["mcp/server/echo"] } } } });
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
   assert.deepEqual(runtime.mcpServers.server && "args" in runtime.mcpServers.server ? runtime.mcpServers.server.args : undefined,
     ["", " ", "--flag"]);
