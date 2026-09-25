@@ -158,6 +158,8 @@ APPROVE — self-reviewed the four manifests and Markdown against the tool, skil
 `docs: ship complete Raw agent customization skills`
 
 ## Phase 4: Initialize and qualify the setup-capable default agent
+### Status
+complete
 ### Goal
 Give a new installation a setup-capable `raw` agent after `raw config init`, then select the five packaged skills on this machine in place of its two temporary examples.
 ### Current behavior and gap
@@ -181,16 +183,16 @@ Hardcoding skill names in the system prompt or only testing the source loader fa
 ### Implementation obligations
 Add starter selection/prompt, update help/docs, qualify packed CLI plus local Node 22/24 runtimes, then perform backed-up personal skill replacement. Keep `raw` as the starter agent name and `local` as its model alias; no new agent registry, migration, or install hook.
 ### Acceptance criteria
-- [ ] AC-4.1: Fresh `raw config init` produces a setup-capable `raw` agent with `default_agent: "raw"`, five selected built-in skills and both skill tools, refuses overwrite and preserves mode 0600 — proven by CLI/packed tests.
-- [ ] AC-4.2: Installed initial provider request has no skill catalog/body; linked list/load exposes only the selected five and exact chosen body outside the checkout — proven by mock-provider packed test.
-- [ ] AC-4.3: Install/init refusal leaves user config untouched; this machine's two agents select the five package skills after backup without changing other fields, and old examples are archived — proven by sanitized structural comparison and installed CLI validation.
-- [ ] AC-4.4: Current docs/help/examples contain the new agent contract and full skill kit; full gates pass under supported local Node runtimes — proven by inspection and commands below.
+- [x] AC-4.1: Fresh `raw config init` produces a setup-capable `raw` agent with `default_agent: "raw"`, five selected built-in skills and both skill tools, refuses overwrite and preserves mode 0600 — proven by CLI/packed tests.
+- [x] AC-4.2: Installed initial provider request has no skill catalog/body; linked list/load exposes only the selected five and exact chosen body outside the checkout — proven by mock-provider packed test.
+- [x] AC-4.3: Install/init refusal leaves user config untouched; this machine's two agents select the five package skills after backup without changing other fields, and old examples are archived — proven by sanitized structural comparison and installed CLI validation.
+- [x] AC-4.4: Current docs/help/examples contain the new agent contract and full skill kit; full gates pass under supported local Node runtimes — proven by inspection and commands below.
 ### Focused verification
 `npm run build && node --import tsx --test tests/foundation-cli.test.ts tests/bundled-skills.test.ts tests/package.test.ts tests/package-agent.test.ts`
 ### Phase gates
 `npm run check && npm run test:overhead && npm run test:package && git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — self-reviewed fresh starter config, prompt, package request sequence and personal-state diff. Fresh init writes mode 0600 and refuses overwrite; a packed consumer sees no initial skill names/body, then linked list/load results. Personal `raw` and `deepseek` select the five skills with model/MCP/prompt/credential fields unchanged; both old test folders were archived. Focused 12/12, full check 325/325, package 2/2 and overhead command passed on Node 26; full check 325/325, package 2/2 and overhead also passed on Node 22.13.0 and 24.21.0.
 ### Commit
 `feat: initialize Raw with packaged setup agent skills`
 
@@ -201,6 +203,7 @@ Implementation review is required; verdict must be APPROVE.
 - Installed examples actually create a skill, tool, portable agent and exact MCP selection outside the checkout; provider/MCP/ACP/session regressions remain green. Historical plans/evidence remain historical.
 
 ## Progress Log
+- 2026-09-25: Phase 4 complete. Fresh init names agent `raw`, retains model alias `local`, selects five built-in skills and skill tools, and uses a conditional setup prompt. Packed first/list/load request sequence, overwrite refusal and mode 0600 passed; focused 12/12, full check 325/325, package 2/2 and overhead passed. Backed up personal config, preserved DeepSeek as its default, replaced selected test skill IDs on both agents without other field changes, archived their two folders, and validated installed list/load with zero provider requests. Implementation self-review APPROVE. Node 22.13.0 and 24.21.0 each passed full check 325/325, package 2/2 and overhead.
 - 2026-09-25: Phase 3 complete. Shipped `create_skill`, `create_tool`, `create_agent` and `add_mcp` with typed contracts, actual assets and verification procedures. Their documented examples run in temporary directories; focused 30/30, full check 325/325, package 2/2 passed; implementation self-review APPROVE.
 - 2026-09-25: During Phase 3 source review, corrected the Phase 2 config skill's policy precedence: the last matching rule wins, as `ToolRegistry.effect` implements. Added a content regression assertion and regenerated the forkable copy; affected focused tests, full 320/320 and package 2/2 passed; repair review APPROVE.
 - 2026-09-25: Phase 2 complete. Added package-owned `builtin/` skill resolution and source-derived installed/forkable copies, authored the detailed 7870-byte `configure_raw` reference, and tested linked visibility plus packed-consumer validation. Focused 14/14, full check 320/320, package 2/2; implementation self-review APPROVE.

@@ -57,7 +57,7 @@ The result uses Raw's text, JSON, and image blocks and is capped by the host.
 Local modules run with the invoking OS account's full permissions. No plugin
 sandbox is implied.
 
-The starter agent selects exactly three tools: `builtin/read_file`, `builtin/write_file`, and `builtin/bash`. Other agents choose their own ordered `tools.use` list, including an empty list. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The system prompt covers only general task behavior; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
+The starter `raw` agent selects `builtin/read_file`, `builtin/write_file`, `builtin/bash`, `builtin/list_skills`, and `builtin/load_skill`. Other agents choose their own ordered `tools.use` list, including an empty list. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The starter system prompt covers general tasks and on-demand Raw setup skill routing; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
 
 The other two shipped plugins, `builtin/list_skills` and `builtin/load_skill`, expose only agent-selected skills on demand. See [skills](skills.md) for the manifest, selection, and linked-result behavior.
 

@@ -1,5 +1,7 @@
 # CLI and REPL contract
 
+`raw config init` creates agent `raw` with the local model alias, the three core file/Bash tools, both skill tools, and five built-in setup skills. Its editable system prompt asks the agent to list selected skills for Raw setup tasks and load only relevant instructions. `raw "query"` uses `default_agent` from the config; `raw --agent raw "query"` selects `raw` explicitly. Existing configs may set another default and are never overwritten by init.
+
 `raw "task"` runs one saved turn and exits. `raw` and `raw --interactive` open a `> ` REPL with a saved conversation. `--` ends flag parsing so tasks may begin with `-`. The selected agent, cwd, MCP selections, limits and prompt are fixed when the session starts. Sessions live in the private global state directory and expire after seven days without committed conversation activity by default; `sessions.retention_days` in the canonical global config changes this duration.
 
 To run a copied agent directory, use `raw --config

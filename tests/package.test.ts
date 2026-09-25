@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { testConfig } from "./fixtures/config.js";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -110,6 +110,38 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
+
+  const starterProvider = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "starter-list", type: "function", function: { name: "list_skills", arguments: "{}" } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "starter-load", type: "function", function: { name: "load_skill", arguments: '{"name":"configure_raw"}' } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "starter-ready" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const starterXdg = join(root, "starter-config");
+    const starterEnv = { ...env, XDG_CONFIG_HOME: starterXdg, XDG_STATE_HOME: join(root, "starter-state") };
+    const initialized = await run(bin, ["config", "init"], consumer, starterEnv);
+    assert.equal(initialized.code, 0, initialized.stderr);
+    const starterPath = join(starterXdg, "raw", "config.json");
+    const starterSource = await readFile(starterPath, "utf8");
+    const starter = JSON.parse(starterSource);
+    assert.equal(starter.default_agent, "raw");
+    assert.deepEqual(starter.agents.raw.skills.use, skillIds.map((id) => `builtin/${id}`));
+    assert.equal((await stat(starterPath)).mode & 0o777, 0o600);
+    starter.models.local.provider = "openai";
+    starter.models.local.model_id = "fixture";
+    starter.models.local.base_url = starterProvider.url;
+    await writeFile(starterPath, JSON.stringify(starter));
+    const task = await run(bin, ["setup Raw"], consumer, starterEnv);
+    assert.equal(task.code, 0, task.stderr);
+    assert.equal(task.stdout, "starter-ready\n");
+    assert.equal(starterProvider.requests.length, 3);
+    assert.doesNotMatch(JSON.stringify(starterProvider.requests[0]?.body), /configure_raw|create_skill|create_tool|create_agent|add_mcp/);
+    assert.match(JSON.stringify(starterProvider.requests[1]?.body), /configure_raw/);
+    assert.match(JSON.stringify(starterProvider.requests[2]?.body), /default_agent/);
+    const secondInit = await run(bin, ["config", "init"], consumer, starterEnv);
+    assert.equal(secondInit.code, 2);
+    assert.equal(await readFile(starterPath, "utf8"), JSON.stringify(starter));
+  } finally { await starterProvider.close(); }
 
   const fixture = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [

@@ -24,16 +24,21 @@ test("T-01d: help/version do not need config or provider credentials", () => {
   assert.match(version.stdout, /0\.1\.0/);
 });
 
-test("T-01d: config init creates valid local starter, refuses overwrite, list is sanitized", () => {
+test("T-01d: config init creates a setup-capable raw agent, refuses overwrite, list is sanitized", () => {
   const home = mkdtempSync(join(tmpdir(), "raw-cli-"));
   const init = cli(["config", "init"], home);
   assert.equal(init.status, 0, init.stderr);
   const path = join(home, "raw", "config.json");
   const created = readFileSync(path, "utf8");
   const data = JSON.parse(created);
-  assert.equal(data.default_agent, "local");
+  assert.equal(data.default_agent, "raw");
   assert.equal(data.models.local.provider, "ollama");
-  assert.equal(data.agents.local.model, "local");
+  assert.equal(data.agents.raw.model, "local");
+  assert.deepEqual(data.agents.raw.tools.use, ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"]);
+  assert.deepEqual(data.agents.raw.skills.use, ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp"]);
+  assert.match(data.agents.raw.system_prompt, /list_skills|list selected skills/);
+  assert.match(data.agents.raw.system_prompt, /load_skill|load only relevant/);
+  assert.doesNotMatch(data.agents.raw.system_prompt, /configure_raw|create_skill|create_tool|create_agent|add_mcp/);
   const second = cli(["config", "init"], home);
   assert.notEqual(second.status, 0);
   assert.equal(readFileSync(path, "utf8"), created);

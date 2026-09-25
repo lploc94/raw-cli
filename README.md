@@ -14,10 +14,10 @@ npm install -g ./raw-cli-0.1.0.tgz
 raw config init
 ```
 
-The package is not published. `config init` creates `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) once; edit the local model ID or add your hosted model. `--config PATH` selects another strict JSON config file.
+The package is not published. `config init` creates `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) once with setup-capable agent `raw`; edit the local model ID or add your hosted model. `raw "query"` uses the configured `default_agent`, which may name a different agent in an existing config. `--config PATH` selects another strict JSON config file.
 
 ```sh
-raw --agent local "Explain the tests in this repository"
+raw --agent raw "Explain the tests in this repository"
 raw --agent deepseek "Fix the failing tests"
 raw                         # saved REPL with > prompt
 raw --continue "Follow up on that change"
@@ -30,11 +30,11 @@ Tool calls run automatically in terminal, headless and ACP modes, using your OS 
 
 ## Models and agents
 
-`models` holds exact upstream model IDs, API methods, endpoint/auth settings, context metadata and vision capability. A `agents` entry selects one model and configures a run. Multiple agents may share a model.
+`models` holds exact upstream model IDs, API methods, endpoint/auth settings, context metadata and vision capability. An entry in `agents` selects one model and configures a run. Multiple agents may share a model.
 
 ```json
 {
-  "default_agent": "local",
+  "default_agent": "raw",
   "models": {
     "local": {
       "provider": "ollama",
@@ -52,7 +52,7 @@ Tool calls run automatically in terminal, headless and ACP modes, using your OS 
     }
   },
   "agents": {
-    "local": { "model": "local", "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"] } },
+    "raw": { "model": "local", "system_prompt": "You are a coding assistant. For Raw setup tasks, list selected skills and load only relevant instructions.", "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] }, "skills": { "use": ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp"] } },
     "deepseek": {
       "model": "flash",
       "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"] },

@@ -49,7 +49,8 @@ Session options: --all (list all workspaces), --before CURSOR (older page)
 REPL: /compact, /clear, /stats, /exit
 Config: models define access paths; agents select a model, prompt, tools and policy.
 Vision: a model with vision=true may select builtin/view_image.
-Skills: agents may select local or config-adjacent skills and both bundled skill tools.
+Skills: agents may select packaged, global, or config-adjacent skills and both skill tools.
+Setup: config init selects five packaged setup skills for the raw agent.
 Examples: installed examples/tools/ can be forked; examples/agents/project-helper/ is copyable.
 Compact: agent compact.trigger_tokens enables automatic compaction.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
@@ -63,7 +64,7 @@ async function run(): Promise<void> {
   if (parsed.command === "config-init") {
     const path = input(() => configFilePath({ flags: parsed.flags }));
     const starter = {
-      default_agent: "local",
+      default_agent: "raw",
       models: {
         local: {
           provider: "ollama",
@@ -72,7 +73,12 @@ async function run(): Promise<void> {
           base_url: "http://127.0.0.1:11434/v1",
         },
       },
-      agents: { local: { model: "local", tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] } } },
+      agents: { raw: {
+        model: "local",
+        system_prompt: "You are Raw, a terminal coding assistant. Use available tools to inspect files, make requested changes, and verify results. Continue until the task is complete or blocked. For requests about configuring or extending Raw, call list_skills to inspect selected guidance, then load_skill only for relevant skills. If none applies, continue with the available tools. For unrelated tasks, work normally without loading setup instructions. Report the outcome and remaining problems clearly.",
+        tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] },
+        skills: { use: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp"] },
+      } },
     };
     input(() => {
       mkdirSync(dirname(path), { recursive: true });
