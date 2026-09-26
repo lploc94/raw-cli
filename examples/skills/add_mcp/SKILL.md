@@ -1,6 +1,6 @@
 ---
 name: add-mcp
-description: "Use when connecting or packaging an MCP server for Raw, explaining its binding, or diagnosing tools. Discover original names, select exact IDs and verify live calls."
+description: "Use when connecting an MCP server for Raw, explaining its binding, or diagnosing tools. Discover original names, select exact IDs and verify live calls. Use create-package to distribute a definition."
 ---
 # Add an MCP server to Raw
 

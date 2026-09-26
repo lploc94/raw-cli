@@ -32,8 +32,8 @@ function model() {
   return { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" };
 }
 
-test("five shipped setup skills link complete package guidance and examples validate", async () => {
-  for (const id of ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp"]) {
+test("six shipped setup skills link complete package guidance and examples validate", async () => {
+  for (const id of ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp", "create_package"]) {
     const source = body(id);
     const parsed = parseSkillMarkdown(source, id);
     assert.ok(Buffer.byteLength(parsed.markdown) <= 8192, `${id} exceeds load cap`);
@@ -54,6 +54,51 @@ test("five shipped setup skills link complete package guidance and examples vali
   assert.deepEqual(mixed.prerequisites, ["node"]);
   assert.deepEqual((await inspectPackage(join("examples", "packages", "tool-only"))).exports.tools, ["echo"]);
   assert.deepEqual((await inspectPackage(join("examples", "packages", "skill-only"))).exports.skills, ["repo-review"]);
+});
+
+test("create_package example packs and activates with recipient inputs after source removal", () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-package-skill-example-"));
+  try {
+    const source = join(root, "author");
+    mkdirSync(join(source, "agents"), { recursive: true });
+    mkdirSync(join(source, "vars"));
+    writeFileSync(join(source, "raw-package.json"), fence("create_package", "json", "manifest"));
+    writeFileSync(join(source, "agents", "helper.json"), fence("create_package", "json", "agent"));
+    writeFileSync(join(source, "vars", "project_label.json"), fence("create_package", "json", "var"));
+    const recipient = join(root, "recipient");
+    mkdirSync(recipient);
+    const configPath = join(recipient, "raw.json");
+    const original = { default_agent: "existing", models: { local: model() },
+      agents: { existing: { model: "local", tools: { use: [] } } } };
+    writeFileSync(configPath, JSON.stringify(original));
+    const env = { ...process.env, XDG_CONFIG_HOME: join(recipient, "config"),
+      XDG_DATA_HOME: join(recipient, "data"), XDG_STATE_HOME: join(recipient, "state") };
+    const cli = (args: string[]) => {
+      const result = spawnSync(process.execPath, [join(process.cwd(), "dist/raw.js"), ...args],
+        { cwd: recipient, env, encoding: "utf8", timeout: 15000 });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    const archive = join(recipient, "project-kit-1.0.0.rawpkg");
+    cli(["package", "validate", source]);
+    cli(["package", "pack", source, "--out", archive]);
+    rmSync(source, { recursive: true });
+    const report = cli(["package", "inspect", archive]);
+    assert.deepEqual(report.exports.agents, ["helper"]);
+    assert.deepEqual(report.exports.vars, ["project_label"]);
+    cli(["package", "install", archive, "--as", "project-kit", "--config", configPath]);
+    assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), original);
+    const inputsPath = join(recipient, "inputs.json");
+    writeFileSync(inputsPath, JSON.stringify({ project_label: "Recipient project" }));
+    cli(["agent", "add", "project-helper", "--from", "pkg/project-kit/agents/helper",
+      "--model", "local", "--inputs", inputsPath, "--config", configPath]);
+    const value = cli(["--config", configPath, "--agent", "project-helper", "vars", "get", "project_label"]);
+    assert.equal(value.value, "Recipient project");
+    const updated = JSON.parse(readFileSync(configPath, "utf8"));
+    assert.equal(updated.default_agent, original.default_agent);
+    assert.deepEqual(updated.agents.existing, original.agents.existing);
+    assert.equal(updated.agents["project-helper"].model, "local");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("create_skill example registers a config-adjacent selected skill", async () => {

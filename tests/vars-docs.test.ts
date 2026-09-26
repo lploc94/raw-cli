@@ -10,7 +10,7 @@ import { parseSkillMarkdown } from "../src/skills/frontmatter.js";
 test("documented JSON blocks parse and English setup bodies stay usable within default cap", () => {
   const guide = readFileSync("docs/vars.md", "utf8");
   assert.match(guide, /protocol_version/);
-  for (const name of ["configure_raw", "create_tool", "create_agent", "create_skill", "add_mcp"]) {
+  for (const name of ["configure_raw", "create_tool", "create_agent", "create_skill", "add_mcp", "create_package"]) {
     const body = readFileSync(`src/skills/bundled/${name}/SKILL.md`, "utf8");
     assert.ok(Buffer.byteLength(parseSkillMarkdown(body, name).markdown) <= 8192, name);
     assert.match(body, /vars/);

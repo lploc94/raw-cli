@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: "Use when creating, improving or packaging a discoverable Raw skill; write its description and instructions, register it on an agent and verify loading."
+description: "Use when creating or improving a discoverable Raw skill; write its description and instructions, register it on an agent and verify loading. Use create-package to distribute existing skills."
 ---
 # Create a Raw skill
 

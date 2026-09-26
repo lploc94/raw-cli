@@ -1,6 +1,6 @@
 ---
 name: create-tool
-description: "Use to create, customize or package a Raw tool plugin or executable variable provider, including contracts, registration and verification."
+description: "Use to create or customize a Raw tool plugin or executable variable provider, including contracts, registration and verification. Use create-package to distribute existing components."
 ---
 # Create a Raw tool plugin
 

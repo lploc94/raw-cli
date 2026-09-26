@@ -73,6 +73,8 @@ The effective agent is resolved on each new runtime attach, including resume. A 
 
 ## Author and recipient cheatsheet
 
+The shipped `builtin/create_package` skill guides package creation and sharing. Its catalog name is `create-package`; new `raw config init` agents select it alongside the other setup skills. Existing agents can append its selection ID to `skills.use` and use `list_skills`/`load_skill` to read the workflow and manifest/recipient references.
+
 The shipped `examples/packages/mixed-kit/` is an editable source package with a prompt, helper-backed tool, resource-bearing skill, lazy variable/provider, MCP definition and conditional Bash policy. Its manifest declares every owned file. `examples/packages/tool-only/` and `examples/packages/skill-only/` show exports that an existing direct agent can select without adopting a package agent.
 
 1. Author a folder with `raw-package.json` and all declared files; run `raw package validate DIR` and inspect the reported exports, inputs and executable prerequisites. Or start from a configured agent with `raw package export --agent NAME --name @owner/name --version 1.0.0 --out DIR`.

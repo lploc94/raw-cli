@@ -60,7 +60,7 @@ Config: models define access paths; agents select a model, prompt, tools and pol
 Packages: raw package install PATH --as ALIAS; raw package update ALIAS --from PATH.
 Vision: a model with vision=true may select builtin/view_image.
 Skills: agents may select packaged, global, or config-adjacent skills and both skill tools.
-Setup: config init selects five packaged setup skills for the raw agent.
+Setup: config init selects six packaged setup skills for the raw agent.
 Examples: installed examples/tools/ can be forked; examples/agents/project-helper/ is copyable.
 Compact: agent compact.trigger_tokens enables automatic compaction.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
@@ -93,7 +93,7 @@ async function run(): Promise<void> {
         vars: ["now"],
         system_prompt: "You are Raw, a terminal coding assistant. Use available tools to inspect files, make requested changes, and verify results. Continue until the task is complete or blocked. For requests about configuring or extending Raw, call list_skills to inspect selected guidance, then load_skill only for relevant skills. If none applies, continue with the available tools. For unrelated tasks, work normally without loading setup instructions. For current external values, call list_vars, then read_var when relevant; previous readings are historical. Report the outcome and remaining problems clearly.",
         tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill", "builtin/list_vars", "builtin/read_var"] },
-        skills: { use: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp"] },
+        skills: { use: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"] },
       } },
     };
     input(() => {

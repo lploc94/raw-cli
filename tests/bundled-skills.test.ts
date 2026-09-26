@@ -58,8 +58,8 @@ test("unselected builtin skill is inert and oversized selection fails before inf
   await assert.rejects(createRuntimeTools({ runtime: selected, cwd: capped.root }), /max_output_bytes/);
 });
 
-test("the five setup skills have distinct catalog entries and complete linked bodies", async () => {
-  const ids = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp"];
+test("the six setup skills have distinct catalog entries and complete linked bodies", async () => {
+  const ids = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp", "create_package"];
   const { root, configPath } = config(ids.map((id) => `builtin/${id}`));
   const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
   const tools = await createRuntimeTools({ runtime, cwd: root });
@@ -68,7 +68,7 @@ test("the five setup skills have distinct catalog entries and complete linked bo
     const catalog = await tools.registry.dispatch("list_skills", {}, context);
     const entries = (catalog.content[0] as { value: { skills: Array<{ name: string; description: string }> } }).value.skills;
     assert.deepEqual(entries.map((entry) => entry.name), ids.map((id) => id.replaceAll("_", "-")));
-    assert.equal(new Set(entries.map((entry) => entry.description)).size, 5);
+    assert.equal(new Set(entries.map((entry) => entry.description)).size, ids.length);
     for (const id of ids) {
       const body = await tools.registry.dispatch("load_skill", { name: id.replaceAll("_", "-") }, context);
       assert.equal(body.isError, false);

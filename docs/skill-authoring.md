@@ -1,6 +1,6 @@
 # Raw skill authoring cheatsheet
 
-Updated 2026-09-26. This guide describes the authoring approach used by Raw's five English setup skills.
+Updated 2026-09-26. This guide describes the authoring approach used by Raw's six English setup skills.
 
 ## What makes a skill useful
 
@@ -24,7 +24,7 @@ Combine short parts rather than filling a rigid template. Branch before the acti
 
 The description should let an agent distinguish neighboring skills. Mention what the user wants and when this skill helps; internal file formats alone are weak selection hints. Test both likely requests and near misses. For example, writing an ordinary Markdown checklist should not automatically become installing a Raw skill. [Agent Skills: descriptions](https://agentskills.io/skill-creation/optimizing-descriptions)
 
-For this kit, prefer bounded descriptions over deliberately broad triggering. Raw has only five setup skills and should not load them during unrelated coding work. This is a Raw design choice, not a universal specification rule.
+For this kit, prefer bounded descriptions over deliberately broad triggering. Raw has six setup skills and should not load them during unrelated coding work. This is a Raw design choice, not a universal specification rule.
 
 ## Adapt the format to Raw
 
@@ -44,7 +44,7 @@ For sharing, place the skill directory in a package's declared `files` and `expo
 
 Raw exposes names/descriptions only after `list_skills`; `load_skill` returns the body after frontmatter at the conversation tail. The loader validates that body against `max_output_bytes` (default **8192 bytes**, not tokens). The catalog must also fit. No arbitrary minimum word/byte count establishes quality.
 
-Keep the five shipped bodies self-contained within that cap. The copy script preserves entire skill folders, including references, scripts and assets. A `load_skill` result contains the body, not automatic resource contents; mention relative resources in instructions and use the agent's file tools to read them when needed. Do not rely on a source checkout or undeclared files for portable packages.
+Keep the six shipped bodies self-contained within that cap. The copy script preserves entire skill folders, including references, scripts and assets. A `load_skill` result contains the body, not automatic resource contents; mention relative resources in instructions and use the agent's file tools to read them when needed. Do not rely on a source checkout or undeclared files for portable packages.
 
 ## A body outline to adapt
 
@@ -98,7 +98,7 @@ These rules are grounded in Raw's contracts and setup sessions. The target is co
 
 Create a small set of realistic prompts with expected outcomes and fixture inputs. Compare the current and revised skill with the same model/settings. Grade observable artifacts and full tool traces, not only a polished final answer. Start small, include boundary cases, and expand around actual failures. [Agent Skills: evaluating output](https://agentskills.io/skill-creation/evaluating-skills)
 
-For each of the five setup skills, include a how-to request and an execution request. Add near misses to check over-selection. Record:
+For each setup skill, include a how-to request and an execution request. Add near misses to check over-selection. Record:
 
 - Whether the appropriate skill was listed/loaded and whether unrelated skills stayed unloaded.
 - Whether examples parse/load/execute under Raw's real contracts.
@@ -117,5 +117,5 @@ Use deterministic tests for schemas, manifests, artifact behavior and packaging.
 - Examples have exact insertion locations and pass real contract checks.
 - Required information is available from the installed package.
 - Body and catalog fit the actual byte cap.
-- Source and generated examples match; packed consumers load all five bodies.
+- Source and generated examples match; packed consumers load all six bodies and their linked references are available.
 - Evaluation report contains failures and limitations as well as successes.
