@@ -95,6 +95,10 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       owner_token TEXT NOT NULL,
       relative_path TEXT NOT NULL UNIQUE
     )`);
+    database.exec(`CREATE TABLE IF NOT EXISTS session_runtime_metadata (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      payload_json TEXT NOT NULL
+    )`);
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");

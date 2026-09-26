@@ -2,7 +2,6 @@ import type { VariableContext } from "../../vars/contract.js";
 import AjvDraft7 from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -12,6 +11,7 @@ import type { ToolContext } from "../primitives.js";
 import type { ToolRegistration } from "../registry.js";
 import type { ToolManifest, ToolPlugin } from "./contract.js";
 import type { SelectedSkill } from "../../skills/contract.js";
+import { selectedToolSnapshot } from "./snapshot.js";
 
 const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var"]);
 const manifestKeys = ["api_version", "id", "version", "name", "description", "input_schema", "entry"];
@@ -108,9 +108,8 @@ async function selectedManifest(id: string, root: string): Promise<{
   try { manifestBytes = await readFile(realManifest); manifest = manifestFrom(JSON.parse(manifestBytes.toString("utf8")), id); }
   catch (error) { throw new Error(`invalid selected tool manifest ${id}: ${(error as Error).message}`); }
   const validateSchema = compileSchema(manifest);
-  const entryBytes = await readFile(realEntry);
-  const sourceDigest = createHash("sha256").update(id).update("\0").update(manifestBytes).update("\0").update(entryBytes).digest("hex");
-  return { id, manifest, entryPath: realEntry, sourceDigest, validateSchema };
+  const snapshot = await selectedToolSnapshot(id, realFolder, manifest, manifestBytes, parseId(id).scope === "builtin");
+  return { id, manifest, entryPath: snapshot.entryPath, sourceDigest: snapshot.sourceDigest, validateSchema };
 }
 
 export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<ToolPlugin[]> {

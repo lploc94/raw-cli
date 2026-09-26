@@ -5,6 +5,7 @@ export function isEphemeralPeerAlias(name: string): boolean { return /^raw_[A-Za
 
 export function validateStoredAgentState(state: StoredAgentState): void {
   if (!state.cacheKey || !Number.isSafeInteger(state.contextRevision) || state.contextRevision < 1
+    || !Number.isSafeInteger(state.replayBefore) || state.replayBefore < 0 || state.replayBefore > state.messages.length
     || !Number.isFinite(state.tokenCalibration) || state.tokenCalibration < 1
     || !Array.isArray(state.messages) || !Array.isArray(state.rawUsage) || !Array.isArray(state.usageEntries)
     || !state.skillVisibility || typeof state.skillVisibility.listed !== "boolean"

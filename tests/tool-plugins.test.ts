@@ -70,6 +70,58 @@ test("editing only a selected entry changes its source identity and reloads its 
   assert.match(JSON.stringify(await after.dispatch("editable", { payload: { value: "x" } }, context)), /new/);
 });
 
+test("editing an imported helper changes the next same-process tool snapshot only once", async () => {
+  const options = await workspace();
+  const folder = join(dirname(options.configPath), "tools", "helper_tool");
+  await plugin(folder, "helper_tool", "helper_tool", `import { value } from "./helper.mjs";
+    export async function handler() { return { isError: false, content: [{ type: "text", text: value }] }; }`);
+  await writeFile(join(folder, "helper.mjs"), 'export const value = "old";\n');
+  const first = (await loadToolPlugins({ ...options, selectedIds: ["agent/helper_tool"] }))[0]!;
+  await writeFile(join(folder, "helper.mjs"), 'export const value = "new";\n');
+  const second = (await loadToolPlugins({ ...options, selectedIds: ["agent/helper_tool"] }))[0]!;
+  const third = (await loadToolPlugins({ ...options, selectedIds: ["agent/helper_tool"] }))[0]!;
+  const call = async (tool: typeof first) => {
+    const registry = new ToolRegistry(); registry.register(tool.registration);
+    return JSON.stringify(await registry.dispatch("helper_tool", { payload: { value: "x" } },
+      { cwd: options.cwd, maxOutputBytes: 8192, autoApprove: true }));
+  };
+  assert.match(await call(first), /old/);
+  assert.match(await call(second), /new/);
+  assert.equal(second.sourceDigest, third.sourceDigest);
+  assert.notEqual(first.sourceDigest, second.sourceDigest);
+});
+
+test("tool version label alone does not change selected behavioral source identity", async () => {
+  const options = await workspace();
+  const folder = join(dirname(options.configPath), "tools", "label_only");
+  await plugin(folder, "label_only", "label_only");
+  const first = (await loadToolPlugins({ ...options, selectedIds: ["agent/label_only"] }))[0]!;
+  const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8")) as Record<string, unknown>;
+  manifest.version = "2.0.0";
+  await writeFile(join(folder, "tool.json"), JSON.stringify(manifest));
+  const second = (await loadToolPlugins({ ...options, selectedIds: ["agent/label_only"] }))[0]!;
+  assert.equal(first.sourceDigest, second.sourceDigest);
+  assert.equal(second.version, "2.0.0");
+});
+
+test("an internal helper link works, while a link outside the owned tool folder is rejected", async () => {
+  const options = await workspace();
+  const folder = join(dirname(options.configPath), "tools", "linked_helper");
+  await plugin(folder, "linked_helper", "linked_helper", `import { value } from "./helper.mjs";
+    export async function handler() { return { isError: false, content: [{ type: "text", text: value }] }; }`);
+  await writeFile(join(folder, "actual.mjs"), 'export const value = "inside";\n');
+  await symlink("actual.mjs", join(folder, "helper.mjs"));
+  const first = (await loadToolPlugins({ ...options, selectedIds: ["agent/linked_helper"] }))[0]!;
+  const registry = new ToolRegistry(); registry.register(first.registration);
+  assert.match(JSON.stringify(await registry.dispatch("linked_helper", { payload: { value: "x" } },
+    { cwd: options.cwd, maxOutputBytes: 8192, autoApprove: true })), /inside/);
+  await unlink(join(folder, "helper.mjs"));
+  const outside = join(options.root, "outside.mjs");
+  await writeFile(outside, 'export const value = "outside";\n');
+  await symlink(outside, join(folder, "helper.mjs"));
+  await assert.rejects(loadToolPlugins({ ...options, selectedIds: ["agent/linked_helper"] }), /escapes|outside/i);
+});
+
 test("selected manifest and schema failures reject before any handler import", async () => {
   const options = await workspace();
   const agentRoot = join(dirname(options.configPath), "tools");

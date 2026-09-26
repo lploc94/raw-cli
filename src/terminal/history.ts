@@ -23,6 +23,7 @@ export function renderTerminalHistory(item: HistoryItem, ui: UiOptions = resolve
     return `${paint("thinking", label, ui, caps)}\n${ui.reasoning === "full" ? paint("thinking", safeTerminalText(String(payload.text ?? "")), ui, caps) + "\n" : ""}`;
   }
   if (item.kind === "status") return `${safeTerminalText(String(payload.text ?? ""))}\n`;
+  if (item.kind === "runtime_transition") return `${paint("thinking", icon("attention", ui, caps), ui, caps)} ${safeTerminalText(String(payload.text ?? ""))}\n`;
   if (item.kind === "tool_call") {
     const display = payload.display as VisibleToolCall | undefined;
     if (display) return formatToolStart(display, ui, caps, width);

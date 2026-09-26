@@ -13,7 +13,7 @@ const suites = {
   acp: ["acp", "acp-client", "acp-transport"],
   cli: ["cli", "repl", "package"],
   sessions: ["session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp",
-    "session-retention", "cache", "provider-content", "auto-compact"],
+    "session-retention", "session-transition", "session-replay", "tool-plugins", "cache", "provider-content", "auto-compact"],
 };
 
 const selector = process.argv[2];

@@ -234,6 +234,7 @@ Implementation self-review: APPROVE. `location.ts` probes the legacy database re
 `fix: isolate legacy session stores from new conversations`
 
 ## Phase 2: Replace runtime identity refusals with durable transitions
+Status: complete (2026-09-26).
 
 ### Goal
 Make a changed valid runtime resumable while keeping unchanged prefixes stable and historical replay valid.
@@ -264,11 +265,11 @@ Do not accept deleting equality checks plus catching provider errors. Assert act
 ### Implementation obligations
 Build the effective replay view once per request through one common path used by estimation and adapters; persist only deterministic annotations/baselines. Reconcile payload references transactionally. Snapshot selected local tool roots before import, stage complete snapshots atomically, reuse identical digests, and never mix helper bytes from different generations. Reject links that escape the owned closure; exclude the generated snapshot directory from future hashes. Reset calibration only when its model assumptions change. Preserve active-turn immutability and existing explicit key semantics.
 ### Acceptance criteria
-- [ ] AC-4: All valid runtime-change cases continue on the same session ID with their historical content retained — transition matrix.
-- [ ] AC-5: Every changed-runtime test proves B→B key/prefix stability, not just A→B success — captured mock requests.
-- [ ] AC-6: Cross-provider/tool-removal replay succeeds without executing old calls or forwarding foreign opaque blocks — replay/provider/process tests.
-- [ ] AC-7: Failed transition retry is atomic and produces no duplicate notice/revision — injected failure tests.
-- [ ] AC-7a: A helper-only edit under a local selected tool executes new code on the next same-process attachment and then stabilizes — tool-plugin/SDK/ACP tests.
+- [x] AC-4: All valid runtime-change cases continue on the same session ID with their historical content retained — transition matrix.
+- [x] AC-5: Every changed-runtime test proves B→B key/prefix stability, not just A→B success — captured mock requests.
+- [x] AC-6: Cross-provider/tool-removal replay succeeds without executing old calls or forwarding foreign opaque blocks — replay/provider/process tests.
+- [x] AC-7: Failed transition retry is atomic and produces no duplicate notice/revision — injected failure tests.
+- [x] AC-7a: A helper-only edit under a local selected tool executes new code on the next same-process attachment and then stabilizes — tool-plugin/SDK/ACP tests.
 ### Focused verification
 `npm run test:phase -- sessions`
 ### Phase gates
@@ -556,6 +557,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
+- 2026-09-26: Phase 2 complete. Docs-first and red tests preceded transactional runtime transitions, canonical/provider replay projection and complete selected-tool folder snapshots. `npm run test:phase -- sessions` passed 127/127, `npm run typecheck` and `git diff --check` passed. Self-review APPROVE: transition notice is host-only, prior transcript remains canonical, stable B→B key and request prefix are asserted, helper-only source changes execute new bytes. ACP integration remains part of Phase 3's surface qualification.
 - 2026-09-26: Phase 1 complete. Docs first, then 5 red integration/storage cases (`unsupported session schema version`); implemented read-only location selection, scoped missing-ID diagnostics for CLI/SDK/ACP and isolated active payload root. Final `npm run test:phase -- sessions` passed 106/106, `npm run typecheck` passed, `git diff --check` passed. AC-1–AC-3 reviewed APPROVE; commit below.
 - 2026-09-26: Phase 1 in_progress. Plan reviewer APPROVE finalized in `/Users/lploc94/projects/raw-cli/.codex-review/sessions/codex-plan-review-20260926-002` (2 rounds, 1 accepted/fixed issue). Implementation started from clean main plus this untracked plan.
 - 2026-09-26: Planning started from clean `5cd36df`; read loop-plan and applicable global instructions; verified prior 395/395 baseline evidence.
@@ -564,4 +566,3 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Self-review clarified optional runtime metadata storage without a format bump, first-attach ACP baseline behavior, per-component rather than whole-package fingerprints, selected-input projection, builtin skill IDs versus portable names, and single-authority package updates. Plan verdict APPROVE; structural checks and whitespace inspection passed. No production tests were rerun for this documentation-only planning turn.
 - 2026-09-26: External codex-plan-review round 1 (`gpt-6-astra`) returned REVISE on local imported-helper changes being deferred beyond Milestone A. Accepted ISSUE-1 and added a complete local owned-file snapshot/import mechanism and same-process helper-only A→B→B acceptance criterion AC-7a to Phase 2. Pending Codex re-verification.
 - 2026-09-26: Review round 2 returned text verdict APPROVE and explicitly confirmed ISSUE-1 resolved, stable subsequent prefixes/keys, Milestone A dependency gate and no remaining blocking findings. Runner parser cannot structure zero-issue verdict-only text; raw verdict retained. User preauthorized implementation after this review.
-- Implementation has not started. All acceptance checkboxes intentionally remain open.

@@ -87,6 +87,7 @@ export interface StoredAgentState {
   cacheKey: string;
   selectedTools: readonly string[] | null;
   contextRevision: number;
+  replayBefore: number;
   skillVisibility: SkillVisibility;
   tokenCalibration: number;
   rawUsage: unknown[];
@@ -101,6 +102,7 @@ export interface AgentMetadata {
   contextRevision?: number;
   skillVisibility?: SkillVisibility;
   skillNotice?: string;
+  replayBefore?: number;
 }
 export interface VisibleRecord { kind: string; payload: Record<string, unknown>; status?: string }
 
@@ -144,7 +146,7 @@ function digest(value: string): string { return createHash("sha256").update(valu
 
 function snapshotSkills(skills: readonly SelectedSkill[]): SkillSnapshotItem[] {
   return skills.map((skill) => ({ id: skill.id, name: skill.name,
-    metadataDigest: digest(JSON.stringify([skill.id, skill.version, skill.name, skill.description])),
+    metadataDigest: digest(JSON.stringify([skill.id, skill.name, skill.description])),
     bodyDigest: digest(skill.markdown) }));
 }
 
@@ -332,16 +334,15 @@ export class SessionStore {
     const runtimeDigest = digest(JSON.stringify({ request: identity.modelConfig.request ?? null,
       cache: identity.modelConfig.cache ?? null, vision: identity.modelConfig.vision ?? false,
       contextWindow: identity.modelConfig.contextWindow ?? null, maxOutputTokens: identity.modelConfig.maxOutputTokens ?? null }));
+    const replaySignature = digest(JSON.stringify({ provider: identity.modelConfig.provider,
+      method: identity.modelConfig.method, model: identity.modelConfig.model, endpointHash,
+      request: identity.modelConfig.request ?? null, vision: identity.modelConfig.vision ?? false }));
     this.transaction(() => {
       const row = this.ownerRow(sessionId, owner);
       const workspace = this.database.prepare("SELECT canonical_path FROM workspaces WHERE id = ?").get(String(row.workspace_id));
       if (workspace?.canonical_path !== canonical) throw new Error("session cwd changed");
+      const previousMeta = this.runtimeMetadata(sessionId);
       if (row.tool_schema_digest === null) {
-        for (const [field, expected] of [["agent_name", identity.modelConfig.agentName], ["model_id", identity.modelConfig.model],
-          ["provider", identity.modelConfig.provider], ["method", identity.modelConfig.method], ["endpoint", endpointHash],
-          ["system_prompt", identity.system]] as const) {
-          if (row[field] !== null && row[field] !== expected) throw new Error(`session ${field} differs from saved identity`);
-        }
         this.database.prepare(`UPDATE sessions SET agent_name = ?, model_id = ?, provider = ?, method = ?, endpoint = ?,
           system_prompt = ?, cache_key = ?, selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
           skill_snapshot_json = ?, skill_visibility_json = ?, runtime_digest = ? WHERE id = ?`)
@@ -349,25 +350,47 @@ export class SessionStore {
             endpointHash, identity.system, row.cache_key === null ? identity.cacheKey : String(row.cache_key),
             JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
             JSON.stringify({ listed: false, loaded: [] }), runtimeDigest, sessionId);
+        this.writeRuntimeMetadata(sessionId, { replayBefore: 0, replaySignature });
       } else {
-        if (row.agent_name !== identity.modelConfig.agentName || row.model_id !== identity.modelConfig.model
-          || row.provider !== identity.modelConfig.provider || row.method !== identity.modelConfig.method
-          || row.endpoint !== endpointHash || row.system_prompt !== identity.system || row.runtime_digest !== runtimeDigest) {
-          throw new Error("session runtime identity changed; resume requires the saved model and system prompt");
-        }
         this.recoverInterruptedCallsInTransaction(sessionId, owner);
-        validateStoredAgentState(this.readAgentState(sessionId, owner));
+        const previousState = this.readAgentState(sessionId, owner);
+        validateStoredAgentState(previousState);
+        const runtimeChanged = row.model_id !== identity.modelConfig.model
+          || row.provider !== identity.modelConfig.provider || row.method !== identity.modelConfig.method
+          || row.endpoint !== endpointHash || row.system_prompt !== identity.system || row.runtime_digest !== runtimeDigest;
         const toolChanged = row.tool_schema_digest !== toolDigest || row.tool_source_digest !== sourceDigest
           || row.selected_tools_json !== JSON.stringify(identity.selectedTools);
+        const toolCatalogChanged = row.tool_schema_digest !== toolDigest || row.selected_tools_json !== JSON.stringify(identity.selectedTools);
         const skillChanged = row.skill_snapshot_json !== skillSnapshotJson;
-        if (toolChanged || skillChanged) {
+        const replayChanged = toolCatalogChanged || (previousMeta
+          ? previousMeta.replaySignature !== replaySignature
+          : runtimeChanged && (row.model_id !== identity.modelConfig.model
+            || row.provider !== identity.modelConfig.provider || row.method !== identity.modelConfig.method
+            || row.endpoint !== endpointHash || row.runtime_digest !== runtimeDigest));
+        if (runtimeChanged || toolChanged || skillChanged) {
           const visibility = JSON.parse(String(row.skill_visibility_json)) as SkillVisibility;
           const previousSkills = JSON.parse(String(row.skill_snapshot_json)) as SkillSnapshotItem[];
           const stale = skillChanged ? staleSkillNames(previousSkills, skillSnapshot, visibility) : [];
-          this.database.prepare(`UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
-            skill_snapshot_json = ?, context_revision = context_revision + 1, cache_key = ? WHERE id = ?`)
-            .run(JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
-              toolChanged ? randomUUID() : String(row.cache_key), sessionId);
+          this.database.prepare(`UPDATE sessions SET agent_name = ?, model_id = ?, provider = ?, method = ?, endpoint = ?,
+            system_prompt = ?, runtime_digest = ?, selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
+            skill_snapshot_json = ?, context_revision = context_revision + 1, cache_key = ?, token_calibration = ? WHERE id = ?`)
+            .run(identity.modelConfig.agentName, identity.modelConfig.model, identity.modelConfig.provider,
+              identity.modelConfig.method, endpointHash, identity.system, runtimeDigest,
+              JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
+              runtimeChanged || toolChanged ? randomUUID() : String(row.cache_key),
+              replayChanged ? 1 : Number(row.token_calibration), sessionId);
+          this.writeRuntimeMetadata(sessionId, { replayBefore: replayChanged ? previousState.messages.length : previousMeta?.replayBefore ?? 0,
+            replaySignature });
+          const changes = [
+            ...(runtimeChanged ? ["runtime"] : []),
+            ...(toolCatalogChanged ? ["tools"] : toolChanged ? ["tool source"] : []),
+            ...(skillChanged ? ["skills"] : []),
+          ];
+          const sequence = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM history WHERE session_id = ?")
+            .get(sessionId)?.next);
+          const transitionText = `Raw resumed with updated ${changes.join(", ")}; earlier calls remain historical.`;
+          this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
+            .run(sessionId, sequence, this.now(), "runtime_transition", JSON.stringify({ text: transitionText, changes }), "complete");
           if (stale.length) {
             const notice = `[Raw skill reload notice] Stale selected skill information: ${stale.join(", ")}. Call list_skills and load_skill again before relying on earlier results.`;
             const position = Number(this.database.prepare("SELECT coalesce(max(position), -1) + 1 AS next FROM model_context WHERE session_id = ?")
@@ -381,6 +404,10 @@ export class SessionStore {
             this.database.prepare("UPDATE sessions SET skill_notice_digest = ? WHERE id = ?")
               .run(digest(skillSnapshotJson), sessionId);
           }
+        } else {
+          if (row.agent_name !== identity.modelConfig.agentName) this.database.prepare("UPDATE sessions SET agent_name = ? WHERE id = ?")
+            .run(identity.modelConfig.agentName, sessionId);
+          if (!previousMeta) this.writeRuntimeMetadata(sessionId, { replayBefore: 0, replaySignature });
         }
       }
     });
@@ -394,12 +421,23 @@ export class SessionStore {
     const usage = row.usage_json === null ? {} : JSON.parse(String(row.usage_json)) as { rawUsage?: unknown[]; usageEntries?: UsageRecord[] };
     return {
       messages, cacheKey: String(row.cache_key), selectedTools: JSON.parse(String(row.selected_tools_json)) as readonly string[] | null,
+      replayBefore: this.runtimeMetadata(sessionId)?.replayBefore ?? 0,
       contextRevision: Number(row.context_revision), tokenCalibration: Number(row.token_calibration),
       skillVisibility: JSON.parse(String(row.skill_visibility_json)) as SkillVisibility,
       rawUsage: usage.rawUsage ?? [], usageEntries: usage.usageEntries ?? [],
       ...(row.original_task === null ? {} : { originalTask: JSON.parse(String(row.original_task)) as UserInput }),
       ...(row.summary_text === null ? {} : { summaryText: String(row.summary_text) }),
     };
+  }
+
+  private runtimeMetadata(sessionId: string): { replayBefore: number; replaySignature: string } | undefined {
+    const row = this.database.prepare("SELECT payload_json FROM session_runtime_metadata WHERE session_id = ?").get(sessionId);
+    return row ? JSON.parse(String(row.payload_json)) as { replayBefore: number; replaySignature: string } : undefined;
+  }
+
+  private writeRuntimeMetadata(sessionId: string, metadata: { replayBefore: number; replaySignature: string }): void {
+    this.database.prepare(`INSERT INTO session_runtime_metadata(session_id, payload_json) VALUES (?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET payload_json = excluded.payload_json`).run(sessionId, JSON.stringify(metadata));
   }
 
   private writeMetadata(sessionId: string, metadata: AgentMetadata): void {
@@ -419,6 +457,10 @@ export class SessionStore {
     if (metadata.skillVisibility !== undefined) { fields.push("skill_visibility_json = ?"); values.push(JSON.stringify(metadata.skillVisibility)); }
     if (metadata.skillNotice !== undefined) { fields.push("skill_notice_digest = ?"); values.push(digest(metadata.skillNotice)); }
     if (fields.length) this.database.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values, sessionId);
+    if (metadata.replayBefore !== undefined) {
+      const current = this.runtimeMetadata(sessionId);
+      this.writeRuntimeMetadata(sessionId, { replayBefore: metadata.replayBefore, replaySignature: current?.replaySignature ?? "" });
+    }
   }
 
   updateAgentMetadata(sessionId: string, owner: SessionOwner, metadata: AgentMetadata): void {
@@ -426,13 +468,18 @@ export class SessionStore {
   }
 
   updateAgentToolView(sessionId: string, owner: SessionOwner, selection: readonly string[] | null,
-    definitions: readonly ToolDefinition[], revision: number, cacheKey: string, explicit: boolean): void {
+    definitions: readonly ToolDefinition[], revision: number, cacheKey: string, explicit: boolean,
+    replayBefore?: number): void {
     this.transaction(() => {
       this.ownerRow(sessionId, owner);
       const toolDigest = digest(JSON.stringify(definitions));
       this.database.prepare(`UPDATE sessions SET selected_tools_json = ?, tool_schema_digest = ?, context_revision = ?,
         cache_key = ?, selection_explicit = ? WHERE id = ?`)
         .run(JSON.stringify(selection), toolDigest, revision, cacheKey, explicit ? 1 : 0, sessionId);
+      if (replayBefore !== undefined) {
+        const current = this.runtimeMetadata(sessionId);
+        this.writeRuntimeMetadata(sessionId, { replayBefore, replaySignature: current?.replaySignature ?? "" });
+      }
       this.renewSession(sessionId, owner);
     });
   }
@@ -665,7 +712,7 @@ export class SessionStore {
   }
 
   clearAgentContext(sessionId: string, owner: SessionOwner): void {
-    this.replaceAgentContext(sessionId, owner, [], {}, true);
+    this.replaceAgentContext(sessionId, owner, [], { replayBefore: 0 }, true);
   }
 
   appendOwnedHistory(sessionId: string, owner: SessionOwner, kind: string, payload: Record<string, unknown>, status = "complete"): HistoryItem {

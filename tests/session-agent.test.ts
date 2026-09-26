@@ -152,6 +152,31 @@ test("skill-only change keeps cache key and appends one durable reload notice af
   } finally { await first.close(); store.close(); }
 });
 
+test("skill version label alone leaves the session generation and request prefix unchanged", async () => {
+  const { root, store, id } = setup();
+  const selected = (version: string) => [{ id: "agent/example", version, name: "example",
+    description: "Unchanged", markdown: "same instructions" }];
+  const requests: ProviderRequest[] = [];
+  const runtime = provider(async (request) => {
+    requests.push({ ...request, messages: structuredClone(request.messages) });
+    return { text: "done", toolCalls: [], finishReason: "stop" };
+  });
+  try {
+    const first = createAgent({ cwd: root, provider: runtime, system: "system", selectedSkills: selected("1.0.0"),
+      persistence: { store, sessionId: id, surface: "cli" } });
+    assert.equal((await first.run("one")).status, "completed");
+    await first.close();
+    const second = createAgent({ cwd: root, provider: runtime, system: "system", selectedSkills: selected("2.0.0"),
+      persistence: { store, sessionId: id, surface: "cli" } });
+    try {
+      assert.equal(second.contextRevision, first.contextRevision);
+      assert.equal((await second.run("two")).status, "completed");
+      assert.equal(requests[0]!.cacheKey, requests[1]!.cacheKey);
+      assert.equal(second.transcript.some((item) => item.role === "user" && String(item.content).includes("reload")), false);
+    } finally { await second.close(); }
+  } finally { store.close(); }
+});
+
 test("compaction that removes a loaded skill appends one durable tail reminder", async () => {
   const { root, store, id } = setup();
   const body = "SKILL_BODY_TO_RELOAD_".repeat(80);

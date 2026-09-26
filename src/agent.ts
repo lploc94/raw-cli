@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
+import { projectReplayMessages } from "./llm/replay.js";
 import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
@@ -85,6 +86,7 @@ export class AgentSession {
   private cacheKey: string = randomUUID();
   private schemaView: readonly ToolDefinition[];
   private contextGenerationRevision = 1;
+  private replayBefore = 0;
   private readonly selectedSkills: readonly SelectedSkill[];
   private skillVisibility: SkillVisibility = { listed: false, loaded: [] };
   private tokenCalibration = 1;
@@ -157,6 +159,7 @@ export class AgentSession {
         this.usageEntries = structuredClone(saved.usageEntries);
         this.tokenCalibration = saved.tokenCalibration;
         this.contextGenerationRevision = saved.contextRevision;
+        this.replayBefore = saved.replayBefore;
         this.skillVisibility = saved.skillVisibility;
         this.persistence = { store, sessionId, owner, surface };
         this.heartbeat = setInterval(() => {
@@ -184,8 +187,10 @@ export class AgentSession {
   toolIdentity(name: string): string | undefined { return this.options.registry.canonicalIdentity(name); }
   stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
   estimatedContextTokens(): number {
-    return Math.ceil(estimateRequestTokens(this.options.system, this.messages, this.schemaView) * this.tokenCalibration);
+    return Math.ceil(estimateRequestTokens(this.options.system, this.requestMessages(), this.schemaView) * this.tokenCalibration);
   }
+
+  private requestMessages(): ModelMessage[] { return projectReplayMessages(this.messages, this.replayBefore); }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
     const binding = this.persistence;
@@ -216,12 +221,14 @@ export class AgentSession {
     if (JSON.stringify(this.options.whitelist ?? null) === JSON.stringify(whitelist ?? null)
       && JSON.stringify(this.schemaView) === JSON.stringify(next)) return this.contextGenerationRevision;
     const nextKey = randomUUID();
+    const replayBefore = this.messages.length;
     if (this.persistence) this.persistence.store.updateAgentToolView(this.persistence.sessionId, this.persistence.owner,
-      whitelist ?? null, next, this.contextGenerationRevision + 1, nextKey, this.persistence.surface === "acp");
+      whitelist ?? null, next, this.contextGenerationRevision + 1, nextKey, this.persistence.surface === "acp", replayBefore);
     if (whitelist === undefined) delete this.options.whitelist;
     else this.options.whitelist = [...whitelist];
     this.schemaView = Object.freeze(next);
     this.cacheKey = nextKey;
+    this.replayBefore = replayBefore;
     return ++this.contextGenerationRevision;
   }
 
@@ -229,6 +236,7 @@ export class AgentSession {
     if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
     if (this.persistence) this.persistence.store.clearAgentContext(this.persistence.sessionId, this.persistence.owner);
     this.messages = [];
+    this.replayBefore = 0;
     this.originalTask = undefined;
     this.summaryText = undefined;
     this.skillVisibility = { listed: false, loaded: [] };
@@ -250,7 +258,7 @@ export class AgentSession {
   private async compactWork(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number,
     controller: AbortController, onUsage?: (raw: unknown) => void): Promise<CompactResult> {
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
-    const snapshot = { messages: structuredClone(this.messages), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
+    const snapshot = { messages: structuredClone(this.requestMessages()), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
       ...(this.summaryText !== undefined ? { previousSummary: this.summaryText } : {}) };
     const entries = new Map<number, { entry: UsageRecord; rawIndex?: number }>();
     let onAbort!: () => void;
@@ -301,8 +309,9 @@ export class AgentSession {
         if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
         this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
           { summaryText: work.summary!, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
-            tokenCalibration: this.tokenCalibration, ...(notice ? { skillNotice: notice } : {}) }));
+            tokenCalibration: this.tokenCalibration, replayBefore: 0, ...(notice ? { skillNotice: notice } : {}) }));
         this.messages = structuredClone(replacement);
+        this.replayBefore = 0;
         this.summaryText = work.summary;
         return { ...work.result, afterBytes: finalBytes };
       }
@@ -491,7 +500,7 @@ export class AgentSession {
           const outputReserve = modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
           const inputBudget = effectiveInputBudget(context, outputReserve);
           const estimate = () => {
-            baseEstimate = estimateRequestTokens(this.options.system, this.messages, this.schemaView);
+            baseEstimate = estimateRequestTokens(this.options.system, this.requestMessages(), this.schemaView);
             return Math.ceil(baseEstimate * this.tokenCalibration);
           };
           requestEstimate = estimate();
@@ -499,7 +508,8 @@ export class AgentSession {
             emit({ type: "compact_start", estimatedTokens: requestEstimate });
             if (controller.signal.aborted) return finish(interrupted());
             let compactResult: CompactResult;
-            const history = this.summaryText ? this.messages.slice(1) : this.messages;
+            const effective = this.requestMessages();
+            const history = this.summaryText ? effective.slice(1) : effective;
             const starts = history.flatMap((message, index) => message.role === "user" ? [index] : []);
             let keep = Math.min(compact.keepRecentTurns, starts.length);
             if (keep === starts.length && history.length > starts.length) keep = Math.max(0, keep - 1);
@@ -553,7 +563,7 @@ export class AgentSession {
         try {
           turn = await Promise.race([this.options.provider.generate({
             system: this.options.system,
-            messages: this.messages,
+            messages: this.requestMessages(),
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
             cacheKey: this.cacheKey,

@@ -35,7 +35,7 @@ export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {
   }
   if (item.kind === "assistant") return [{ sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: String(payload.text ?? "") } }];
-  if (item.kind === "reasoning" || item.kind === "status") return [{ sessionUpdate: "agent_thought_chunk",
+  if (item.kind === "reasoning" || item.kind === "status" || item.kind === "runtime_transition") return [{ sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: String(payload.text ?? "") } }];
   if (item.kind === "tool_call") {
     const display = payload.display as VisibleToolCall;
