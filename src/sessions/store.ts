@@ -12,6 +12,8 @@ import { projectToolResult } from "./visible.js";
 import { initializeSessionSchema } from "./schema.js";
 import { validateStoredAgentState } from "./restore.js";
 import { locateSessionStore } from "./location.js";
+import { SessionOperationError, terminalOperationStates, type OperationIntent, type OperationState, type SessionOperation } from "./operation-types.js";
+import type { SessionMetrics } from "./metrics.js";
 
 export interface SessionStoreOptions {
   env?: NodeJS.ProcessEnv;
@@ -109,7 +111,7 @@ export interface AgentMetadata {
 }
 export interface VisibleRecord { kind: string; payload: Record<string, unknown>; status?: string }
 
-interface ListOptions { cwd?: string; before?: string; limit?: number }
+interface ListOptions { cwd?: string; title?: string; before?: string; limit?: number }
 interface HistoryOptions { sessionId: string; before?: string; limit?: number }
 interface AppendHistoryOptions { sessionId: string; kind: string; payload: Record<string, unknown>; status?: string }
 
@@ -239,18 +241,139 @@ export class SessionStore {
     this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner'").run();
   }
 
+  private claimInTransaction(sessionId: string): SessionOwner {
+    this.assertMaintenanceIdle();
+    const row = this.database.prepare("SELECT owner_token, owner_generation, lease_until, updated_at FROM sessions WHERE id = ?").get(sessionId);
+    if (!row || Number(row.updated_at) <= this.cutoff()) throw new SessionOperationError("not_found", this.missingSessionMessage());
+    if (row.owner_token !== null && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)))) {
+      throw new SessionOperationError("busy", "session is busy in another process");
+    }
+    const owner = { token: `${process.pid}-${randomUUID()}`, generation: Number(row.owner_generation) + 1 };
+    this.database.prepare("UPDATE sessions SET owner_token = ?, owner_generation = ?, lease_until = ? WHERE id = ?")
+      .run(owner.token, owner.generation, this.now() + 15_000, sessionId);
+    return owner;
+  }
+
   claimSession(sessionId: string): SessionOwner {
+    return this.transaction(() => this.claimInTransaction(sessionId));
+  }
+
+  sessionIsBusy(sessionId: string): boolean {
+    const row = this.database.prepare("SELECT owner_token, lease_until FROM sessions WHERE id = ?").get(sessionId);
+    return !!row && row.owner_token !== null
+      && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)));
+  }
+
+  acceptOperation(intent: OperationIntent): { operation: SessionOperation; owner?: SessionOwner } {
+    if (![intent.sessionId, intent.clientRequestId, intent.agentName, intent.configPath].every((value) => typeof value === "string" && value.trim())
+      || intent.clientRequestId.length > 128 || !["turn", "compact"].includes(intent.kind)
+      || (intent.kind === "turn" ? typeof intent.input !== "string" || !intent.input.trim() : intent.input !== undefined)
+      || Buffer.byteLength(intent.input ?? "") > 1024 * 1024) {
+      throw new SessionOperationError("invalid_input", "invalid session operation intent");
+    }
+    const normalized: OperationIntent = { sessionId: intent.sessionId, clientRequestId: intent.clientRequestId,
+      kind: intent.kind, agentName: intent.agentName, configPath: intent.configPath,
+      ...(intent.input === undefined ? {} : { input: intent.input }) };
+    const requestHash = digest(JSON.stringify(normalized));
     return this.transaction(() => {
-      this.assertMaintenanceIdle();
-      const row = this.database.prepare("SELECT owner_token, owner_generation, lease_until, updated_at FROM sessions WHERE id = ?").get(sessionId);
-      if (!row || Number(row.updated_at) <= this.cutoff()) throw new Error(this.missingSessionMessage());
-      if (row.owner_token !== null && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)))) {
-        throw new Error("session is busy in another process");
+      const existing = this.database.prepare("SELECT * FROM session_operations WHERE session_id = ? AND client_request_id = ?")
+        .get(intent.sessionId, intent.clientRequestId);
+      if (existing) {
+        if (existing.request_hash !== requestHash) throw new SessionOperationError("conflict", "client request ID conflicts with an earlier submitted intent");
+        return { operation: this.operationRow(existing) };
       }
-      const owner = { token: `${process.pid}-${randomUUID()}`, generation: Number(row.owner_generation) + 1 };
-      this.database.prepare("UPDATE sessions SET owner_token = ?, owner_generation = ?, lease_until = ? WHERE id = ?")
-        .run(owner.token, owner.generation, this.now() + 15_000, sessionId);
-      return owner;
+      const owner = this.claimInTransaction(intent.sessionId);
+      const operation: SessionOperation = { ...normalized, id: randomUUID(), state: "accepted",
+        ownerGeneration: owner.generation, acceptedAt: this.now(), updatedAt: this.now() };
+      this.database.prepare(`INSERT INTO session_operations(id, session_id, client_request_id, request_hash,
+        owner_generation, state, accepted_at, updated_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(operation.id, intent.sessionId, intent.clientRequestId, requestHash, owner.generation, operation.state,
+          operation.acceptedAt, operation.updatedAt, JSON.stringify(operation));
+      return { operation, owner };
+    });
+  }
+
+  private operationRow(row: DbRow): SessionOperation {
+    return { ...JSON.parse(String(row.payload_json)) as SessionOperation, state: row.state as OperationState,
+      updatedAt: Number(row.updated_at),
+      ...(row.committed_user_position === null ? {} : { committedUserPosition: Number(row.committed_user_position) }) };
+  }
+
+  getOperation(id: string): SessionOperation | undefined {
+    const row = this.database.prepare("SELECT * FROM session_operations WHERE id = ?").get(id);
+    return row ? this.operationRow(row) : undefined;
+  }
+
+  listOperations(sessionId?: string, limit = 100): SessionOperation[] {
+    boundedLimit(limit);
+    const rows = sessionId === undefined
+      ? this.database.prepare("SELECT * FROM session_operations ORDER BY updated_at DESC, id DESC LIMIT ?").all(limit)
+      : this.database.prepare("SELECT * FROM session_operations WHERE session_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?").all(sessionId, limit);
+    return rows.map((row) => this.operationRow(row));
+  }
+
+  updateOperation(id: string, owner: SessionOwner, state: OperationState,
+    details: Pick<SessionOperation, "result" | "error" | "metrics"> = {}): SessionOperation {
+    return this.transaction(() => {
+      const operation = this.getOperation(id);
+      if (!operation) throw new SessionOperationError("not_found", "operation not found");
+      this.ownerRow(operation.sessionId, owner);
+      if (operation.ownerGeneration !== owner.generation) throw new Error("operation ownership lost");
+      if (terminalOperationStates.has(operation.state)) throw new Error("operation already ended");
+      const allowed: Partial<Record<OperationState, readonly OperationState[]>> = {
+        accepted: ["starting", "cancelled", "error"], starting: ["running", "compacting", "cancelled", "error"],
+        running: ["completed", "max_steps", "cancelled", "error"], compacting: ["completed", "cancelled", "error"],
+      };
+      if (!allowed[operation.state]?.includes(state)) throw new Error(`invalid operation transition: ${operation.state} -> ${state}`);
+      const next = { ...operation, ...details, state, updatedAt: this.now() };
+      this.database.prepare("UPDATE session_operations SET state = ?, updated_at = ?, payload_json = ? WHERE id = ?")
+        .run(state, next.updatedAt, JSON.stringify(next), id);
+      return next;
+    });
+  }
+
+  recoverOperations(): number {
+    return this.transaction(() => {
+      let count = 0;
+      const rows = this.database.prepare(`SELECT o.*, s.owner_generation AS current_generation, s.owner_token, s.lease_until
+        FROM session_operations o JOIN sessions s ON s.id = o.session_id
+        WHERE o.state IN ('accepted', 'starting', 'running', 'compacting')`).all();
+      for (const row of rows) {
+        const owned = row.owner_token !== null && row.current_generation === row.owner_generation
+          && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)));
+        if (owned) continue;
+        this.database.prepare("UPDATE session_operations SET state = 'interrupted', updated_at = ? WHERE id = ?")
+          .run(this.now(), String(row.id));
+        count++;
+      }
+      return count;
+    });
+  }
+
+  getLastSessionMetrics(sessionId: string): SessionMetrics | undefined {
+    const row = this.database.prepare(`SELECT payload_json FROM session_operations
+      WHERE session_id = ? AND json_type(payload_json, '$.metrics') = 'object'
+      ORDER BY updated_at DESC, id DESC LIMIT 1`).get(sessionId);
+    return row ? (JSON.parse(String(row.payload_json)) as SessionOperation).metrics : undefined;
+  }
+
+  getContextSummary(sessionId: string): { summary?: string; messageCount: number } {
+    const row = this.database.prepare("SELECT summary_text FROM sessions WHERE id = ?").get(sessionId);
+    if (!row || !this.getSession(sessionId)) throw new SessionOperationError("not_found", this.missingSessionMessage());
+    return { ...(row.summary_text === null ? {} : { summary: String(row.summary_text) }),
+      messageCount: Number(this.database.prepare("SELECT count(*) AS n FROM model_context WHERE session_id = ?").get(sessionId)?.n ?? 0) };
+  }
+
+  historyWatermark(sessionId: string): number {
+    return Number(this.database.prepare("SELECT coalesce(max(sequence), 0) AS n FROM history WHERE session_id = ?").get(sessionId)?.n ?? 0);
+  }
+
+  renameSession(sessionId: string, title: string): SessionSummary {
+    if (typeof title !== "string" || !title.trim() || title.length > 200) throw new SessionOperationError("invalid_input", "title must contain 1 to 200 characters");
+    return this.transaction(() => {
+      if (!this.getSession(sessionId)) throw new SessionOperationError("not_found", this.missingSessionMessage());
+      this.database.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(title.trim(), sessionId);
+      return this.getSession(sessionId)!;
     });
   }
 
@@ -676,13 +799,19 @@ export class SessionStore {
   }
 
   appendAgentMessage(sessionId: string, owner: SessionOwner, message: ModelMessage, metadata: AgentMetadata = {},
-    display: readonly VisibleRecord[] = []): void {
+    display: readonly VisibleRecord[] = [], operationId?: string): void {
     this.ownerRow(sessionId, owner);
     const staged = this.stageStored(message, owner);
     const visible = display.map((item) => ({ item, stored: this.stageStored(item.payload, owner) }));
     this.transaction(() => {
       this.ownerRow(sessionId, owner);
       const position = Number(this.database.prepare("SELECT coalesce(max(position), -1) + 1 AS next FROM model_context WHERE session_id = ?").get(sessionId)?.next);
+      if (operationId !== undefined) {
+        const consumed = this.database.prepare(`UPDATE session_operations SET committed_user_position = ?
+          WHERE id = ? AND session_id = ? AND owner_generation = ? AND state = 'running' AND committed_user_position IS NULL`)
+          .run(position, operationId, sessionId, owner.generation);
+        if (consumed.changes !== 1 || message.role !== "user") throw new Error("operation input already consumed or ownership lost");
+      }
       this.addPayloadReference(staged);
       this.database.prepare("INSERT INTO model_context(session_id, position, payload_json) VALUES (?, ?, ?)")
         .run(sessionId, position, staged.encoded);
@@ -700,9 +829,10 @@ export class SessionStore {
   }
 
   replaceAgentContext(sessionId: string, owner: SessionOwner, messages: readonly ModelMessage[], metadata: AgentMetadata = {},
-    resetContextMetadata = false): void {
+    resetContextMetadata = false, display: readonly VisibleRecord[] = []): void {
     this.ownerRow(sessionId, owner);
     const staged = messages.map((message) => this.stageStored(message, owner));
+    const visible = display.map((item) => ({ item, stored: this.stageStored(item.payload, owner) }));
     this.transaction(() => {
       this.ownerRow(sessionId, owner);
       const old = this.database.prepare("SELECT payload_json FROM model_context WHERE session_id = ?").all(sessionId);
@@ -713,6 +843,12 @@ export class SessionStore {
         this.database.prepare("INSERT INTO model_context(session_id, position, payload_json) VALUES (?, ?, ?)").run(sessionId, position, value.encoded);
       }
       this.writeMetadata(sessionId, metadata);
+      for (const { item, stored } of visible) {
+        const sequence = this.historyWatermark(sessionId) + 1;
+        this.addPayloadReference(stored);
+        this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(sessionId, sequence, this.now(), item.kind, stored.encoded, item.status ?? "complete");
+      }
       if (metadata.skillNotice !== undefined) {
         const sequence = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM history WHERE session_id = ?")
           .get(sessionId)?.next);
@@ -724,7 +860,7 @@ export class SessionStore {
         .run(JSON.stringify({ listed: false, loaded: [] }), sessionId);
       this.renewSession(sessionId, owner);
     });
-    this.discardDuplicateStages(staged);
+    this.discardDuplicateStages([...staged, ...visible.map((item) => item.stored)]);
     try { this.reclaimUnreferencedPayloads(); }
     catch { /* The context checkpoint committed; idle maintenance will retry reclamation. */ }
   }
@@ -832,7 +968,7 @@ export class SessionStore {
   listSessions(options: ListOptions = {}): Page<SessionSummary> {
     const limit = boundedLimit(options.limit);
     const cwd = options.cwd === undefined ? undefined : realpathSync(resolve(options.cwd));
-    const scope = `${this.storeId}:${cwd ?? "*"}`;
+    const scope = `${this.storeId}:${cwd ?? "*"}:${options.title ?? ""}`;
     const before = options.before === undefined ? undefined : cursorData(options.before, "sessions", scope);
     const workspaceId = cwd === undefined ? undefined : this.database.prepare("SELECT id FROM workspaces WHERE canonical_path = ?").get(cwd)?.id;
     if (cwd !== undefined && workspaceId === undefined) return { items: [] };
@@ -842,6 +978,7 @@ export class SessionStore {
       conditions.unshift("s.workspace_id = ?");
       parameters.unshift(String(workspaceId));
     }
+    if (options.title) { conditions.push("instr(lower(s.title), lower(?)) > 0"); parameters.push(options.title); }
     if (before) {
       conditions.push("(s.updated_at, s.id) < (?, ?)");
       parameters.push(before.timestamp!, before.id!);

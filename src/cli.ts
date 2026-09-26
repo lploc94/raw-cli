@@ -3,6 +3,7 @@ import { createAgent, type AgentSession, type RunResult } from "./agent.js";
 import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { createRuntimeTools } from "./tools/plugins/runtime.js";
+import { runtimeAgentOptions } from "./sessions/runtime.js";
 import { renderTerminalHistory } from "./terminal/history.js";
 import { terminalCapabilities } from "./terminal/options.js";
 import { formatResumeCommand, formatStats, formatTurnFooter } from "./terminal/footer.js";
@@ -121,11 +122,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     provider: runtime.modelConfig!.provider, method: runtime.modelConfig!.method,
     ...(runtime.modelConfig!.baseUrl ? { endpoint: runtime.modelConfig!.baseUrl } : {}),
     systemPrompt: runtime.systemPrompt });
-  const createRuntimeAgent = (id: string) => createAgent({ provider, registry: tools.registry, whitelist: tools.selectedNames,
-    toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
-    cwd, system: runtime.systemPrompt, configPath: runtime.configPath,
-    maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
-    requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
+  const createRuntimeAgent = (id: string) => createAgent({ ...runtimeAgentOptions(runtime, tools, provider, cwd),
     persistence: { store, sessionId: id, surface: "cli" },
     ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal, tools.registry.canonicalIdentity(name), currentRenderer) } : {}) });
   let session: AgentSession;

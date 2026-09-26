@@ -14,7 +14,7 @@ import type { SessionOwner, SessionStore } from "./sessions/store.js";
 import type { SkillVisibility } from "./sessions/store.js";
 import type { SelectedSkill } from "./skills/contract.js";
 import { validateStoredAgentState } from "./sessions/restore.js";
-import { acpUpdate } from "./sessions/display.js";
+import { historyPresentation, type HistorySurface } from "./sessions/presentation.js";
 import type { AgentMetadata, VisibleRecord } from "./sessions/store.js";
 import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./sessions/visible.js";
 
@@ -44,16 +44,31 @@ export interface RunResult {
   message?: string;
 }
 
-export type RunEvent =
+export type RunEvent = (
   | { type: "text_delta"; text: string }
   | { type: "reasoning_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown>; display?: VisibleToolCall }
   | { type: "tool_result"; id: string; name: string; result: ToolResult; display?: VisibleToolResult }
   | { type: "usage"; raw: unknown }
-  | { type: "compact_start"; estimatedTokens: number }
-  | { type: "compact_end"; result: CompactResult }
-  | { type: "run_end"; result: RunResult };
+  | { type: "compact_start"; estimatedTokens: number; details?: CompactionDetails }
+  | { type: "compact_end"; result: CompactResult; details?: CompactionDetails }
+  | { type: "compact_error"; details: CompactionDetails }
+  | { type: "run_end"; result: RunResult }
+) & { turnId?: string; segmentId?: string };
+
+export interface CompactionDetails {
+  id: string;
+  cause: "manual" | "automatic";
+  status: "running" | CompactResult["status"] | "error";
+  keepRecentTurns: number;
+  beforeTokens: number;
+  afterTokens?: number;
+  beforeBytes?: number;
+  afterBytes?: number;
+  summary?: string;
+  message?: string;
+}
 
 export interface AgentOptions {
   provider: ProviderAdapter;
@@ -72,7 +87,7 @@ export interface AgentOptions {
   approve?: ToolContext["approve"];
   whitelist?: readonly string[];
   compact?: Readonly<CompactSettings>;
-  persistence?: { store: SessionStore; sessionId: string; surface: "cli" | "acp"; owner?: SessionOwner };
+  persistence?: { store: SessionStore; sessionId: string; surface: HistorySurface; owner?: SessionOwner; ownership?: "agent" | "host"; operationId?: string };
 }
 
 export class AgentSession {
@@ -93,10 +108,12 @@ export class AgentSession {
   private readonly selectedSkills: readonly SelectedSkill[];
   private skillVisibility: SkillVisibility = { listed: false, loaded: [] };
   private tokenCalibration = 1;
-  private persistence: { store: SessionStore; sessionId: string; owner: SessionOwner; surface: "cli" | "acp" } | undefined;
+  private persistence: { store: SessionStore; sessionId: string; owner: SessionOwner; surface: HistorySurface; ownership: "agent" | "host"; operationId?: string } | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
   private persistenceFailed = false;
   private persistenceError: Error | undefined;
+  private currentTurnId: string | undefined;
+  private segmentCounter = 0;
 
   constructor(options: AgentOptions) {
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
@@ -131,6 +148,7 @@ export class AgentSession {
     this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
     if (options.persistence) {
       const { store, sessionId, surface } = options.persistence;
+      if (options.persistence.ownership === "host" && !options.persistence.owner) throw new Error("host ownership requires a claimed session owner");
       const owner = options.persistence.owner ?? store.claimSession(sessionId);
       try {
         if (options.whitelist === undefined && surface === "cli") {
@@ -161,8 +179,9 @@ export class AgentSession {
         this.contextGenerationRevision = saved.contextRevision;
         this.replayBefore = saved.replayBefore;
         this.skillVisibility = saved.skillVisibility;
-        this.persistence = { store, sessionId, owner, surface };
-        this.heartbeat = setInterval(() => {
+        this.persistence = { store, sessionId, owner, surface, ownership: options.persistence.ownership ?? "agent",
+          ...(options.persistence.operationId ? { operationId: options.persistence.operationId } : {}) };
+        if (this.persistence.ownership === "agent") this.heartbeat = setInterval(() => {
           try { store.renewSession(sessionId, owner); }
           catch (error) {
             this.persistenceFailed = true;
@@ -170,9 +189,9 @@ export class AgentSession {
             this.controller?.abort();
           }
         }, 5_000);
-        this.heartbeat.unref();
+        this.heartbeat?.unref();
       } catch (error) {
-        store.releaseSession(sessionId, owner);
+        if (options.persistence.ownership !== "host") store.releaseSession(sessionId, owner);
         throw error;
       }
     }
@@ -185,7 +204,7 @@ export class AgentSession {
   get contextRevision(): number { return this.contextGenerationRevision; }
   get toolDefinitions(): readonly ToolDefinition[] { return structuredClone(this.schemaView); }
   toolIdentity(name: string): string | undefined { return this.options.registry.canonicalIdentity(name); }
-  stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
+  stats(fromRequest = 0): UsageSummary { return summarizeUsage(this.usageEntries.slice(fromRequest)); }
   estimatedContextTokens(): number {
     return Math.ceil(estimateRequestTokens(this.options.system, this.requestMessages(), this.schemaView) * this.tokenCalibration);
   }
@@ -204,13 +223,20 @@ export class AgentSession {
     }
   }
 
-  private commitMessage(message: ModelMessage, metadata: AgentMetadata = {}, display: readonly VisibleRecord[] = []): void {
-    this.durable((store, sessionId, owner) => store.appendAgentMessage(sessionId, owner, message, metadata, display));
+  private visiblePayload(payload: Record<string, unknown>): Record<string, unknown> {
+    return { ...payload, ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
+      ...(this.persistence?.operationId ? { operationId: this.persistence.operationId } : {}) };
+  }
+
+  private commitMessage(message: ModelMessage, metadata: AgentMetadata = {}, display: readonly VisibleRecord[] = [], consumeOperation = false): void {
+    this.durable((store, sessionId, owner) => store.appendAgentMessage(sessionId, owner, message, metadata,
+      display.map((item) => ({ ...item, payload: this.visiblePayload(item.payload) })),
+      consumeOperation ? this.persistence?.operationId : undefined));
     this.messages.push(structuredClone(message));
   }
 
   private recordVisible(kind: string, payload: Record<string, unknown>, status = "complete"): void {
-    this.durable((store, sessionId, owner) => store.appendOwnedHistory(sessionId, owner, kind, payload, status));
+    this.durable((store, sessionId, owner) => store.appendOwnedHistory(sessionId, owner, kind, this.visiblePayload(payload), status));
   }
 
   setToolView(whitelist?: readonly string[]): number {
@@ -256,7 +282,7 @@ export class AgentSession {
   }
 
   private async compactWork(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number,
-    controller: AbortController, onUsage?: (raw: unknown) => void): Promise<CompactResult> {
+    controller: AbortController, details: CompactionDetails, onUsage?: (raw: unknown) => void): Promise<CompactResult> {
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
     const snapshot = { messages: structuredClone(this.requestMessages()), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
       ...(this.summaryText !== undefined ? { previousSummary: this.summaryText } : {}) };
@@ -307,9 +333,13 @@ export class AgentSession {
           ...(notice ? [{ role: "user" as const, content: notice }] : [])];
         const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
         if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
+        const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: work.summary, beforeBytes, afterBytes: finalBytes,
+          afterTokens: Math.ceil(estimateRequestTokens(this.options.system, replacement, this.schemaView) * this.tokenCalibration) };
         this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
           { summaryText: work.summary!, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
-            tokenCalibration: this.tokenCalibration, replayBefore: 0, ...(notice ? { skillNotice: notice } : {}) }));
+            tokenCalibration: this.tokenCalibration, replayBefore: 0, ...(notice ? { skillNotice: notice } : {}) },
+          false, [{ kind: "compaction", payload: this.visiblePayload({ ...committedDetails }) }]));
+        Object.assign(details, committedDetails);
         this.messages = structuredClone(replacement);
         this.replayBefore = 0;
         this.summaryText = work.summary;
@@ -323,6 +353,34 @@ export class AgentSession {
     } finally { controller.signal.removeEventListener("abort", onAbort); }
   }
 
+  private async compactAttempt(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number,
+    controller: AbortController, cause: CompactionDetails["cause"], onEvent?: (event: RunEvent) => void): Promise<CompactResult> {
+    const details: CompactionDetails = { id: randomUUID(), cause, status: "running", keepRecentTurns,
+      beforeTokens: this.estimatedContextTokens(), beforeBytes: Buffer.byteLength(JSON.stringify(this.messages)) };
+    const emit = (event: RunEvent) => onEvent?.(structuredClone({ ...event,
+      ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}) }));
+    this.recordVisible("compaction", { ...details });
+    try {
+      emit({ type: "compact_start", estimatedTokens: details.beforeTokens, details });
+      const result = await this.compactWork(provider, keepRecentTurns, maxOutputTokens, controller, details,
+        (raw) => emit({ type: "usage", raw }));
+      Object.assign(details, { status: result.status, afterTokens: this.estimatedContextTokens(),
+        beforeBytes: result.beforeBytes ?? details.beforeBytes, afterBytes: result.status === "compacted" ? result.afterBytes : details.beforeBytes });
+      if (result.status !== "compacted") this.recordVisible("compaction", { ...details });
+      emit({ type: "compact_end", result, details });
+      return result;
+    } catch (error) {
+      // A failure to deliver an already committed success cannot relabel its context as rolled back.
+      if (details.status !== "compacted") {
+        Object.assign(details, { status: "error", message: error instanceof Error ? error.message : String(error),
+          afterTokens: this.estimatedContextTokens() });
+        try { this.recordVisible("compaction", { ...details }, "error"); } catch { /* preserve an unavailable store failure */ }
+        try { emit({ type: "compact_error", details }); } catch { /* preserve the original failure */ }
+      }
+      throw error;
+    }
+  }
+
   async close(): Promise<void> {
     if (this.currentState === "closed") return;
     this.currentState = "closing";
@@ -333,14 +391,16 @@ export class AgentSession {
     }
     finally {
       if (this.heartbeat) clearInterval(this.heartbeat);
-      if (this.persistence) this.persistence.store.releaseSession(this.persistence.sessionId, this.persistence.owner);
+      if (this.persistence?.ownership === "agent") this.persistence.store.releaseSession(this.persistence.sessionId, this.persistence.owner);
       this.currentState = "closed";
     }
   }
 
-  compact(options: CompactOptions = {}): Promise<CompactResult> {
+  compact(options: CompactOptions = {}, onEvent?: (event: RunEvent) => void): Promise<CompactResult> {
     if (this.currentState === "closed" || this.currentState === "closing") return Promise.reject(new Error("agent session is closed"));
     if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
+    if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
+    this.currentTurnId = undefined;
     const keepRecentTurns = options.keepRecentTurns ?? 2;
     const maxOutputTokens = options.maxOutputTokens ?? 512;
     if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0 || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
@@ -350,7 +410,7 @@ export class AgentSession {
     this.heartbeat?.ref();
     const controller = new AbortController();
     this.controller = controller;
-    const task = this.compactWork(options.provider ?? this.options.provider, keepRecentTurns, maxOutputTokens, controller).finally(() => {
+    const task = this.compactAttempt(options.provider ?? this.options.provider, keepRecentTurns, maxOutputTokens, controller, "manual", onEvent).finally(() => {
       this.controller = undefined;
       this.activeCompact = undefined;
       this.heartbeat?.unref();
@@ -365,6 +425,8 @@ export class AgentSession {
     if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
     if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
     this.currentState = "running";
+    this.currentTurnId = this.persistence?.operationId ?? randomUUID();
+    this.segmentCounter = 0;
     this.heartbeat?.ref();
     const controller = new AbortController();
     this.controller = controller;
@@ -382,35 +444,31 @@ export class AgentSession {
     let steps = 0;
     let observerError: Error | undefined;
     let ended = false;
-    const visibleSegments: Array<{ kind: "assistant" | "reasoning"; text: string }> = [];
+    const presentation = historyPresentation(this.persistence?.surface);
+    const visibleSegments: Array<{ kind: "assistant" | "reasoning"; text: string; segmentId: string }> = [];
     const appendVisible = (kind: "assistant" | "reasoning", text: string) => {
       if (!text) return;
       const last = visibleSegments.at(-1);
       if (last?.kind === kind) last.text += text;
-      else visibleSegments.push({ kind, text });
+      else visibleSegments.push({ kind, text, segmentId: `${this.currentTurnId}:segment:${++this.segmentCounter}` });
+      return visibleSegments.at(-1)!.segmentId;
     };
     const startedCalls = new Set<string>();
     const startedAt = new Map<string, number>();
     const emit = (event: RunEvent) => {
       if (observerError) return;
       try {
-        onEvent?.(structuredClone(event));
-        if (event.type === "text_delta") appendVisible("assistant", event.text);
-        else if (event.type === "reasoning_delta") appendVisible("reasoning", event.text);
-        else if (event.type === "tool_start" && this.persistence?.surface === "cli") {
-          const display = projectToolCall(event.name, this.toolIdentity(event.name), event.arguments, true);
-          this.recordVisible("tool_call", { display: { ...display, id: event.id } });
+        let segmentId: string | undefined;
+        if (event.type === "text_delta") segmentId = appendVisible("assistant", event.text);
+        else if (event.type === "reasoning_delta") segmentId = appendVisible("reasoning", event.text);
+        else if (event.type === "tool_start") {
+          for (const item of presentation.start(event.id, event.name, this.toolIdentity(event.name), event.arguments))
+            this.recordVisible(item.kind, item.payload, item.status);
           startedCalls.add(event.id);
           startedAt.set(event.id, performance.now());
         }
-        else if (this.persistence?.surface === "acp" && ["tool_start", "compact_start", "compact_end"].includes(event.type)) {
-          const update = acpUpdate(event);
-          if (update) this.recordVisible("acp_update", { update });
-        } else if (this.persistence?.surface === "cli" && event.type === "compact_start") {
-          this.recordVisible("status", { text: `raw: compacting context (${event.estimatedTokens} estimated input tokens)` });
-        } else if (this.persistence?.surface === "cli" && event.type === "compact_end") {
-          this.recordVisible("status", { text: `raw: compact ${event.result.status}` });
-        }
+        onEvent?.(structuredClone({ ...event, ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
+          ...(segmentId ? { segmentId } : {}) }));
       }
       catch (error) {
         observerError = error instanceof Error ? error : new Error(String(error));
@@ -420,13 +478,9 @@ export class AgentSession {
     const visibleMessage = (fallbackText = "", status = "complete"): VisibleRecord[] => {
       const segments = visibleSegments.splice(0);
       if (fallbackText && !segments.some((segment) => segment.kind === "assistant")) {
-        segments.push({ kind: "assistant", text: fallbackText });
+        segments.push({ kind: "assistant", text: fallbackText, segmentId: `${this.currentTurnId}:segment:${++this.segmentCounter}` });
       }
-      if (this.persistence?.surface === "acp") {
-        const text = segments.filter((segment) => segment.kind === "assistant").map((segment) => segment.text).join("");
-        return text ? [{ kind: "assistant", payload: { update: acpUpdate({ type: "text_delta", text }) }, status }] : [];
-      }
-      return segments.map((segment) => ({ kind: segment.kind, payload: { text: segment.text }, status }));
+      return presentation.messages(segments, status);
     };
     const finish = (result: RunResult): RunResult => {
       if (!ended) {
@@ -440,7 +494,11 @@ export class AgentSession {
               message: error instanceof Error ? error.message : String(error) };
           }
         }
-        try { onEvent?.(structuredClone({ type: "run_end", result: finalResult })); }
+        if (this.persistence?.surface === "web" && !this.persistenceError) {
+          try { this.recordVisible("run_end", { result: finalResult }); }
+          catch (error) { finalResult = { status: "error", steps, code: "persistence_error", message: String(error) }; }
+        }
+        try { onEvent?.(structuredClone({ type: "run_end", result: finalResult, ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}) })); }
         catch { /* observer failure cannot emit a second terminal event */ }
         return finalResult;
       }
@@ -462,19 +520,11 @@ export class AgentSession {
       const publicResult: ToolResult = { ...result, content: result.content.map((block) => block.type === "image"
         ? { type: "text", text: `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]` }
         : block) };
-      const display: VisibleRecord[] = [];
       const identity = this.toolIdentity(call.name);
-      if (this.persistence?.surface === "cli" && !startedCalls.has(call.id)) {
-        display.push({ kind: "tool_call", payload: {
-          display: { ...projectToolCall(call.name, identity, call.arguments, false), id: call.id },
-        } });
-      }
       const projected = { ...projectToolResult(call.name, identity, publicResult,
         startedAt.has(call.id) ? performance.now() - startedAt.get(call.id)! : undefined), id: call.id };
-      if (this.persistence?.surface === "cli") display.push({ kind: "tool_result", payload: { display: projected } });
-      if (this.persistence?.surface === "acp") display.push({ kind: "tool_result", payload: {
-        update: acpUpdate({ type: "tool_result", id: call.id, name: call.name, result: publicResult }),
-      } });
+      const display = presentation.result({ type: "tool_result", id: call.id, name: call.name, result: publicResult },
+        identity, call.arguments, startedCalls.has(call.id), projected);
       this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) },
         visibility ? { skillVisibility: visibility } : {}, display);
       if (visibility) this.skillVisibility = visibility;
@@ -484,7 +534,7 @@ export class AgentSession {
     let autoCompacted = false;
     try {
       this.commitMessage({ role: "user", content: structuredClone(input) }, firstTask ? { originalTask: input } : {},
-        [{ kind: "user", payload: { input: structuredClone(input) } }]);
+        [{ kind: "user", payload: { input: structuredClone(input) } }], true);
       if (firstTask) {
         this.originalTask = structuredClone(input);
         this.durable((store, sessionId, owner) => store.setTitleFromPrompt(sessionId, owner, renderUserInput(input)));
@@ -505,7 +555,6 @@ export class AgentSession {
           };
           requestEstimate = estimate();
           if (requestEstimate >= compact.triggerTokens && !autoCompacted) {
-            emit({ type: "compact_start", estimatedTokens: requestEstimate });
             if (controller.signal.aborted) return finish(interrupted());
             let compactResult: CompactResult;
             const effective = this.requestMessages();
@@ -523,11 +572,10 @@ export class AgentSession {
               if (Math.ceil(estimateRequestTokens(this.options.system, candidate, this.schemaView) * this.tokenCalibration) <= inputBudget) break;
               keep--;
             }
-            try { compactResult = await this.compactWork(this.options.provider, keep, compact.maxOutputTokens,
-              controller, (raw) => emit({ type: "usage", raw })); }
+            try { compactResult = await this.compactAttempt(this.options.provider, keep, compact.maxOutputTokens,
+              controller, "automatic", emit); }
             catch (error) { return finish({ status: "error", steps, code: "compact_error", message: (error as Error).message }); }
             autoCompacted = compactResult.status !== "noop";
-            emit({ type: "compact_end", result: compactResult });
             if (controller.signal.aborted || compactResult.status === "cancelled") return finish(interrupted());
             requestEstimate = estimate();
           }
@@ -590,10 +638,7 @@ export class AgentSession {
         this.commitMessage(structuredClone({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls,
           ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }), {}, [
           ...visibleMessage(turn.text),
-          ...(this.persistence?.surface === "acp" ? turn.toolCalls.map((call) => ({
-            kind: "tool_call", payload: { update: acpUpdate({ type: "tool_call", id: call.id, name: call.name,
-              arguments: call.arguments }) }, status: "complete",
-          })) : []),
+          ...turn.toolCalls.flatMap((call) => presentation.declaration(call.id, call.name, call.arguments)),
         ]);
         for (const call of turn.toolCalls) emit({ type: "tool_call", id: call.id, name: call.name, arguments: call.arguments });
         for (let index = 0; index < turn.toolCalls.length; index++) {

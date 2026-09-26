@@ -27,6 +27,9 @@ export function acpUpdate(event: RunEvent): SessionUpdate | undefined {
 
 export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {
   const payload = item.payload;
+  if (item.kind === "compaction") return [{ sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: `Context compaction: ${String(payload.status)}.` } }];
+  if (item.kind === "run_end") return [];
   if (payload.update && typeof payload.update === "object") return [payload.update as SessionUpdate];
   if (item.kind === "user") {
     const input = payload.input as UserInput;

@@ -71,3 +71,9 @@ export type { VariableConfig, VariableContext, VariableDefinition, VariableMetad
 export { VariableError } from "./vars/contract.js";
 export { createVariableResolver } from "./vars/resolver.js";
 export type { VariableResolverOptions } from "./vars/resolver.js";
+
+export { SessionOperations, SessionOperationError } from "./sessions/operations.js";
+export type { OperationIntent, OperationState, SessionOperation, OperationEvent, SessionRuntime, AttachSessionRuntime } from "./sessions/operations.js";
+export { projectHistoryItem } from "./sessions/view.js";
+export type { HistoryView } from "./sessions/view.js";
+export type { SessionMetrics } from "./sessions/metrics.js";

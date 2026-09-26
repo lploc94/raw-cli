@@ -99,6 +99,20 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
       payload_json TEXT NOT NULL
     )`);
+    database.exec(`CREATE TABLE IF NOT EXISTS session_operations (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      client_request_id TEXT NOT NULL,
+      request_hash TEXT NOT NULL,
+      owner_generation INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      accepted_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      committed_user_position INTEGER,
+      payload_json TEXT NOT NULL,
+      UNIQUE(session_id, client_request_id)
+    );
+    CREATE INDEX IF NOT EXISTS session_operations_recent ON session_operations(session_id, updated_at DESC, id DESC);`);
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");

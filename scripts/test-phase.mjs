@@ -12,7 +12,7 @@ const suites = {
   mcp: ["mcp", "mcp-content"],
   acp: ["acp", "acp-client", "acp-transport"],
   cli: ["cli", "repl", "package"],
-  sessions: ["session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp",
+  sessions: ["session-operations", "session-view", "session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp",
     "session-retention", "session-transition", "session-replay", "tool-plugins", "cache", "provider-content", "auto-compact"],
   sharing: ["package-manifest", "component-references", "skill-frontmatter", "package-export", "package-archive", "package-store", "package-lifecycle", "package-config", "package-cli", "package-runtime", "skill-tools", "bundled-skills"],
 };
