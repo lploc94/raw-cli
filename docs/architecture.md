@@ -34,3 +34,7 @@ Each `run` appends one user message and makes at most `maxSteps` inference reque
 Event payloads are detached snapshots. A renderer cannot mutate authorized arguments, usage or committed tool results. A renderer exception aborts the active turn, fills unresolved call results as cancelled, and returns `event_handler_error`; the agent attempts `run_end` once. An exception from the terminal event sink cannot cause a second terminal event or rewrite the completed run result.
 
 `raw` has full permissions of its invoking OS account. Session cwd resolves relative file paths and shell working directories, without limiting access to absolute paths. Approval and whitelists decide which registered handlers raw will dispatch; they are not OS isolation mechanisms.
+
+## Runtime variables
+
+Variable definitions are validated config; the runtime-tools instance owns its resolver and TTL cache. CLI and ACP use the same plugin context service. Session storage owns history but never stores a separate variable cache or expanded env bindings. Definitions remain fixed within a runtime; restart/resume loads current definitions. File/env/provider values are read lazily. This adds no session schema revision.

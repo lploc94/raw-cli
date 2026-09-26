@@ -28,3 +28,7 @@ Every tool result has a status line and a stderr preview. Indexed built-in batch
 All tools execute automatically with the host account's permissions, including on TTY and non-TTY input. `-y`/`--auto-approve` is a compatibility alias. Ctrl-C aborts active work; in a REPL it returns to `> `, and a second Ctrl-C while idle exits. EOF aborts active work and exits after cleanup. One-shot cancellation exits 130.
 
 Exit codes are 0 for completed turns and informational commands, 1 for runtime/provider errors, 2 for argument/config errors, 3 for max steps, and 130 for user cancellation. Recoverable tool errors that the model handles do not set process exit status. Startup and shutdown close owned MCP clients and running shell processes.
+
+## Runtime variables
+
+`raw [--config PATH] [--agent NAME] vars list` returns one JSON catalog; `vars get NAME` returns `{name,value,observed_at,cached}`. These utilities use effective agent selection without credentials, prompt files, plugins, MCP or session storage. Only config/agent flags apply. Use-only get is rejected. Errors use stderr: invalid config/arguments exit 2, resolution/access failures exit 1, cancellation exits 130. Each utility invocation starts an empty value cache. `config init` selects both variable tools and a readable `now` clock for the raw agent.

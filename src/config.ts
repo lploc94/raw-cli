@@ -37,9 +37,11 @@ export interface RawFlags {
 }
 
 export type CliCommand = "help" | "version" | "config-init" | "config-list" | "task" | "interactive" | "acp"
+  | "vars-list" | "vars-get"
   | "sessions-list" | "sessions-show" | "sessions-delete" | "sessions-stats";
 
 export interface CliArgs {
+  variableName?: string;
   command: CliCommand;
   task?: string;
   flags: RawFlags;
@@ -772,6 +774,12 @@ export function parseCliArgs(argv: string[]): CliArgs {
   }
   if (help) return { command: "help", flags };
   if (version) return { command: "version", flags };
+  if (positional[0] === "vars") {
+    if (interactive || acp || acpTransport || Object.keys(flags).some(key => key !== "configPath" && key !== "agent")) throw new Error("vars accepts only --config and --agent");
+    if (positional.length === 2 && positional[1] === "list") return { command: "vars-list", flags };
+    if (positional.length === 3 && positional[1] === "get" && positional[2]) return { command: "vars-get", variableName: positional[2], flags };
+    throw new Error("vars requires list or get NAME");
+  }
   if (flags.continue && flags.resumeId) throw new Error("--continue and --resume are mutually exclusive");
   if (positional[0] === "sessions") {
     if (interactive || acp || acpTransport || flags.host || flags.port || flags.continue || flags.resumeId

@@ -1,6 +1,7 @@
+import { createVariableResolver } from "../src/vars/resolver.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { configFilePath, loadConfig, parseCliArgs, readConfigDocument, readSessionRetentionDays, redact } from "../src/config.js";
+import { configFilePath, loadConfig, loadVariableConfig, parseCliArgs, readConfigDocument, readSessionRetentionDays, redact } from "../src/config.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
 import { parseUiDocument, resolveUiOptions, terminalCapabilities } from "../src/terminal/options.js";
@@ -23,6 +24,7 @@ async function inputAsync<T>(read: () => Promise<T>): Promise<T> {
 function help(): string {
   return `raw-cli ${version}
 Usage: raw [options] [task]
+       raw vars list|get NAME
        raw config init|list
        raw sessions [--all] [--before CURSOR]
        raw sessions show ID [--before CURSOR]
@@ -69,6 +71,7 @@ async function run(): Promise<void> {
     const path = input(() => configFilePath({ flags: parsed.flags }));
     const starter = {
       default_agent: "raw",
+      vars: { now: { description: "Current UTC time", access: "read", source: { kind: "provider", name: "system.time" } } },
       models: {
         local: {
           provider: "ollama",
@@ -79,8 +82,9 @@ async function run(): Promise<void> {
       },
       agents: { raw: {
         model: "local",
-        system_prompt: "You are Raw, a terminal coding assistant. Use available tools to inspect files, make requested changes, and verify results. Continue until the task is complete or blocked. For requests about configuring or extending Raw, call list_skills to inspect selected guidance, then load_skill only for relevant skills. If none applies, continue with the available tools. For unrelated tasks, work normally without loading setup instructions. Report the outcome and remaining problems clearly.",
-        tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] },
+        vars: ["now"],
+        system_prompt: "You are Raw, a terminal coding assistant. Use available tools to inspect files, make requested changes, and verify results. Continue until the task is complete or blocked. For requests about configuring or extending Raw, call list_skills to inspect selected guidance, then load_skill only for relevant skills. If none applies, continue with the available tools. For unrelated tasks, work normally without loading setup instructions. For current external values, call list_vars, then read_var when relevant; previous readings are historical. Report the outcome and remaining problems clearly.",
+        tools: { use: ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill", "builtin/list_vars", "builtin/read_var"] },
         skills: { use: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp"] },
       } },
     };
@@ -89,6 +93,22 @@ async function run(): Promise<void> {
       writeFileSync(path, `${JSON.stringify(starter, null, 2)}\n`, { flag: "wx", mode: 0o600 });
     });
     process.stdout.write(`Created ${path}\n`);
+    return;
+  }
+  if (parsed.command === "vars-list" || parsed.command === "vars-get") {
+    const config = input(() => loadVariableConfig({ flags: parsed.flags }));
+    const vars = createVariableResolver({ config });
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    process.once("SIGINT", cancel); process.once("SIGTERM", cancel);
+    try {
+      const result = parsed.command === "vars-list" ? { vars: vars.list() } : await vars.read(parsed.variableName!, { signal: controller.signal });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      process.exitCode = 130;
+      process.stderr.write("raw: variable resolution cancelled\n");
+    } finally { process.off("SIGINT", cancel); process.off("SIGTERM", cancel); }
     return;
   }
   if (parsed.command === "config-list") {
@@ -111,6 +131,7 @@ async function run(): Promise<void> {
         ? (data.tools as { use?: string[] }).use ?? [] : [];
       const selectedSkills = data.skills && typeof data.skills === "object" && !Array.isArray(data.skills)
         ? (data.skills as { use?: string[] }).use ?? [] : [];
+      const selectedVars = Array.isArray(data.vars) ? data.vars : [];
       const policy = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
         ? (data.tools as { rules?: Array<{ match: string; effect: string; when?: { any: string; regex: string } }> }).rules ?? [] : [];
       const rules = policy.map((rule) => `${rule.effect}:${rule.match}${rule.when ? `:${JSON.stringify(rule.when)}` : ""}`).join(",");
@@ -118,6 +139,7 @@ async function run(): Promise<void> {
         ? data.compact as Record<string, unknown> : {};
       process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`
         + `\tvision=${spec.vision === true}\ttools=${selectedTools.join(",") || "none"}\tskills=${selectedSkills.join(",") || "none"}\trules=${rules || "default-allow"}`
+        + `\tvars=${selectedVars.join(",") || "none"}`
         + `\ttrigger=${compact.trigger_tokens ?? "manual"}\n`);
     }
     return;

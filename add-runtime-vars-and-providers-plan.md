@@ -271,9 +271,9 @@ Read actual persisted invocation rows and captured provider requests for a use-o
 ### Implementation obligations
 Factor utility selection cleanly; avoid spinning up full agent runtime for inspection. Keep CLI and ACP session resolver instances isolated. Do not introduce session migration or silently rewrite user config. Propagate cancel through utility provider calls.
 ### Acceptance criteria
-- [ ] AC-9: CLI vars works with no model credentials, prompt assets, MCP startup or session DB — proven by installed/dist CLI fixtures.
-- [ ] AC-10: Resume/ACP/SDK use fresh scoped resolver state and retain stable prompt prefix/history semantics — proven with mock provider and persistent sessions.
-- [ ] AC-11: config init/list accurately expose variable capabilities without resolving/displaying values — proven through CLI tests.
+- [x] AC-9: CLI vars works with no model credentials, prompt assets, MCP startup or session DB — proven by installed/dist CLI fixtures.
+- [x] AC-10: Resume/ACP/SDK use fresh scoped resolver state and retain stable prompt prefix/history semantics — proven with mock provider and persistent sessions.
+- [x] AC-11: config init/list accurately expose variable capabilities without resolving/displaying values — proven through CLI tests.
 ### Focused verification
 `npm run build`
 `node --import tsx --test tests/vars-cli.test.ts tests/vars-session.test.ts tests/cli.test.ts tests/repl.test.ts tests/session-cli.test.ts tests/session-acp.test.ts tests/session-api.test.ts tests/acp.test.ts tests/cache.test.ts`
@@ -339,3 +339,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 1 complete; review APPROVE. Red: missing loadVariableConfig export. Green: 10 config tests; typecheck and diff checks passed. Reviewed strict metadata-only projection, path resolution, immutable declarations, and no eager credentials/prompt/source access. Phase 2 in_progress.
 - 2026-09-26: Phase 2 complete; review APPROVE. Red: missing resolver/provider modules. Green: 12 resolver/provider/Bash lifecycle tests, typecheck. Real subprocess fixtures covered timeout, abort, inherited pipes, invalid protocol and counting TTL. Corrected one trailing blank line in docs/vars.md reported by the Phase 1 staged diff check (the earlier log overstated that whitespace check); current diff check passes. Phase 3 in_progress.
 - 2026-09-26: Phase 3 complete; review APPROVE. Red: unknown bundled vars tools and missing custom context service. Green: 33 focused tests including MCP/Bash/approval/fork regressions; typecheck/build/diff checks passed. Updated intentional Bash schema digest golden for env_refs. Denied conditional calls have zero provider marker writes, and invalid later refs prevent the first command. Phase 4 in_progress.
+- 2026-09-26: Phase 4 complete; review APPROVE. Red: missing vars command/init defaults. Green: 72 CLI/ACP/session/cache regression tests, then 7 affected vars CLI/session tests including real CLI and ACP provider cancellation; typecheck/build/diff passed. Actual persisted history and mock requests excluded the use-only sentinel while child output file verified receipt. Vars-only metadata/file changes retained tool/system prefix and cache key; SDK resumed the same session. Phase 5 in_progress.
