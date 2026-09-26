@@ -200,7 +200,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
     const saved = resumeId === undefined ? undefined : store.getSession(resumeId);
     if (resumeId !== undefined) {
-      if (!saved) throw rawError(rawErrors.unknownSession, "unknown or expired session");
+      if (!saved) throw rawError(rawErrors.unknownSession, `unknown or expired session: ${store.missingSessionMessage()}`);
       if (realpathSync(saved.cwd) !== canonicalCwd) throw RequestError.invalidParams(undefined, "session cwd differs from saved cwd");
       if (saved.configPath !== options.runtime.configPath || saved.agentName !== modelConfig.agentName) {
         throw RequestError.invalidParams(undefined, "session config/agent differs from saved identity");

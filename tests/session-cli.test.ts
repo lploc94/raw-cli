@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { loadConfig, parseCliArgs } from "../src/config.js";
 import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
@@ -93,6 +94,39 @@ test("one-shot session lists, resumes in another process, pages history, and del
     const store = openSessionStore({ env });
     try { assert.equal(store.getSession(id), undefined); }
     finally { store.close(); }
+  } finally { await provider.close(); }
+});
+
+test("each old session format leaves a new CLI task and its later resume usable", async () => {
+  const versions = [2, 4, 999, "unversioned"] as const;
+  const provider = await startMockProvider(versions.flatMap((version) => [answer(`fresh-${version}`), answer(`resumed-${version}`)]));
+  try {
+    for (const version of versions) {
+      const { root, a, env } = fixture();
+      const previous = openSessionStore({ env });
+      const oldId = previous.createSession({ cwd: a, title: "old-format task" }).id;
+      previous.close();
+      const legacy = join(root, "raw", "sessions.sqlite");
+      const seed = new DatabaseSync(legacy);
+      seed.exec(`PRAGMA user_version = ${version === "unversioned" ? 0 : version}`);
+      seed.close();
+      const before = readFileSync(legacy);
+      const config = testConfig("openai", "fixture", provider.url);
+      const fresh = await raw(["--config", config, "fresh task"], a, env);
+      assert.equal(fresh.code, 0, fresh.stderr);
+      assert.equal(fresh.stdout, `fresh-${version}\n`);
+      const freshId = fresh.stderr.match(/raw --resume ([0-9a-f-]+) "query"/)?.[1];
+      assert.ok(freshId);
+      assert.notEqual(freshId, oldId);
+      const resumed = await raw(["--resume", freshId, "continue"], a, env);
+      assert.equal(resumed.code, 0, resumed.stderr);
+      assert.equal(resumed.stdout, `resumed-${version}\n`);
+      const old = await raw(["--resume", oldId, "continue old"], a, env);
+      assert.equal(old.code, 2);
+      assert.match(old.stderr, /older|legacy|unsupported/i);
+      assert.match(old.stderr, /sessions\.sqlite/);
+      assert.deepEqual(readFileSync(legacy), before);
+    }
   } finally { await provider.close(); }
 });
 

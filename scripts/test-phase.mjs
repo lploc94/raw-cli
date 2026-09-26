@@ -12,6 +12,8 @@ const suites = {
   mcp: ["mcp", "mcp-content"],
   acp: ["acp", "acp-client", "acp-transport"],
   cli: ["cli", "repl", "package"],
+  sessions: ["session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp",
+    "session-retention", "cache", "provider-content", "auto-compact"],
 };
 
 const selector = process.argv[2];

@@ -183,7 +183,7 @@ async function run(): Promise<void> {
         for (const item of page.items) process.stdout.write(renderTerminalHistory(item, ui, caps, process.stdout.columns || 80));
         if (page.nextCursor) process.stdout.write(`next: ${page.nextCursor}\n`);
       } else if (parsed.command === "sessions-delete") {
-        if (!store.getSession(parsed.sessionId!)) throw new InputError("session not found or expired");
+        if (!store.getSession(parsed.sessionId!)) throw new InputError(store.missingSessionMessage());
         input(() => store.deleteSession(parsed.sessionId!));
         process.stdout.write(`Deleted ${parsed.sessionId}\n`);
       } else process.stdout.write(`${JSON.stringify(store.storageStats())}\n`);
@@ -192,7 +192,7 @@ async function run(): Promise<void> {
     const selected = input(() => parsed.flags.continue
       ? store.listSessions({ cwd: process.cwd(), limit: 1 }).items[0]
       : parsed.flags.resumeId ? store.getSession(parsed.flags.resumeId) : undefined);
-    if ((parsed.flags.continue || parsed.flags.resumeId) && !selected) throw new InputError("session not found or expired");
+    if ((parsed.flags.continue || parsed.flags.resumeId) && !selected) throw new InputError(store.missingSessionMessage());
     let runtime;
     if (selected) {
       const savedConfigPath = selected.configPath;

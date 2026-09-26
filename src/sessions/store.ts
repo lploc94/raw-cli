@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { readSessionRetentionDays } from "../config.js";
@@ -12,6 +11,7 @@ import { errorResult } from "../tools/results.js";
 import { projectToolResult } from "./visible.js";
 import { initializeSessionSchema } from "./schema.js";
 import { validateStoredAgentState } from "./restore.js";
+import { locateSessionStore } from "./location.js";
 
 export interface SessionStoreOptions {
   env?: NodeJS.ProcessEnv;
@@ -163,13 +163,6 @@ function staleSkillNames(previous: readonly SkillSnapshotItem[], current: readon
   return [...names].sort();
 }
 
-function pathForState(options: SessionStoreOptions): string {
-  const env = options.env ?? process.env;
-  const cwd = options.cwd ?? process.cwd();
-  const base = env.XDG_STATE_HOME ? resolve(cwd, env.XDG_STATE_HOME) : join(options.home ?? homedir(), ".local", "state");
-  return join(base, "raw", "sessions.sqlite");
-}
-
 function sessionRow(row: DbRow): SessionSummary {
   return {
     id: String(row.id), workspaceId: String(row.workspace_id), cwd: String(row.display_path), title: String(row.title),
@@ -183,6 +176,7 @@ function sessionRow(row: DbRow): SessionSummary {
 export class SessionStore {
   readonly database: DatabaseSync;
   readonly path: string;
+  readonly preservedLegacyPath: string | undefined;
   readonly storeId: string;
   private readonly now: () => number;
   private readonly env: NodeJS.ProcessEnv;
@@ -194,7 +188,9 @@ export class SessionStore {
     this.home = options.home;
     this.cwd = options.cwd;
     this.now = options.now ?? Date.now;
-    this.path = pathForState(options);
+    const location = locateSessionStore(options);
+    this.path = location.path;
+    this.preservedLegacyPath = location.preservedLegacyPath;
     const directory = dirname(this.path);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     chmodSync(directory, 0o700);
@@ -211,6 +207,11 @@ export class SessionStore {
   }
 
   close(): void { this.database.close(); }
+
+  missingSessionMessage(): string {
+    return `session not found or expired in the active store${this.preservedLegacyPath
+      ? `; an older session store was preserved at ${this.preservedLegacyPath}` : ""}`;
+  }
 
   private ownerRow(sessionId: string, owner: SessionOwner): DbRow {
     const row = this.database.prepare("SELECT * FROM sessions WHERE id = ? AND owner_token = ? AND owner_generation = ?")
@@ -237,7 +238,7 @@ export class SessionStore {
     return this.transaction(() => {
       this.assertMaintenanceIdle();
       const row = this.database.prepare("SELECT owner_token, owner_generation, lease_until, updated_at FROM sessions WHERE id = ?").get(sessionId);
-      if (!row || Number(row.updated_at) <= this.cutoff()) throw new Error("session not found or expired");
+      if (!row || Number(row.updated_at) <= this.cutoff()) throw new Error(this.missingSessionMessage());
       if (row.owner_token !== null && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)))) {
         throw new Error("session is busy in another process");
       }
@@ -791,7 +792,7 @@ export class SessionStore {
 
   appendHistory(options: AppendHistoryOptions): HistoryItem {
     return this.transaction(() => {
-      if (!this.getSession(options.sessionId)) throw new Error("session not found or expired");
+      if (!this.getSession(options.sessionId)) throw new Error(this.missingSessionMessage());
       const sequence = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM history WHERE session_id = ?").get(options.sessionId)?.next);
       const createdAt = this.now();
       this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
@@ -805,7 +806,7 @@ export class SessionStore {
     const limit = boundedLimit(options.limit);
     const scope = `${this.storeId}:${options.sessionId}`;
     const before = options.before === undefined ? undefined : cursorData(options.before, "history", scope);
-    if (!this.getSession(options.sessionId)) throw new Error("session not found or expired");
+    if (!this.getSession(options.sessionId)) throw new Error(this.missingSessionMessage());
     const rows = before
       ? this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
         WHERE session_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`).all(options.sessionId, before.sequence!, limit + 1)
@@ -821,7 +822,7 @@ export class SessionStore {
   }
 
   async scanSessionHistory(sessionId: string, visit: (item: HistoryItem) => Promise<void>): Promise<void> {
-    if (!this.getSession(sessionId)) throw new Error("session not found or expired");
+    if (!this.getSession(sessionId)) throw new Error(this.missingSessionMessage());
     let after = 0;
     for (;;) {
       const rows = this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
@@ -961,4 +962,4 @@ export class SessionStore {
 }
 
 export function openSessionStore(options: SessionStoreOptions = {}): SessionStore { return new SessionStore(options); }
-export function sessionStorePath(options: SessionStoreOptions = {}): string { return pathForState(options); }
+export function sessionStorePath(options: SessionStoreOptions = {}): string { return locateSessionStore(options).path; }

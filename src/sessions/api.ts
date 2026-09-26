@@ -49,7 +49,7 @@ export function getSessionHistory(options: SessionHistoryOptions): Page<HistoryI
 export function deleteSession(options: SessionIdOptions): void {
   const store = openSessionStore(options.storeOptions);
   try {
-    if (!store.getSession(options.sessionId)) throw new Error("session not found or expired");
+    if (!store.getSession(options.sessionId)) throw new Error(store.missingSessionMessage());
     store.deleteSession(options.sessionId);
   } finally { store.close(); }
 }
@@ -58,7 +58,7 @@ export function resumeSession(options: ResumeSessionOptions): ResumedSession {
   const store = openSessionStore(options.storeOptions);
   try {
     const session = store.getSession(options.sessionId);
-    if (!session) throw new Error("session not found or expired");
+    if (!session) throw new Error(store.missingSessionMessage());
     const agent = createAgent({ ...options.agentOptions, cwd: session.cwd,
       persistence: { store, sessionId: session.id, surface: "cli" } });
     let closed = false;

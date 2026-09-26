@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { openSessionStore } from "../src/sessions/store.js";
+import { openSessionStore, sessionStorePath } from "../src/sessions/store.js";
 import { initializeSessionSchema } from "../src/sessions/schema.js";
+import { runSessionMaintenance } from "../src/sessions/maintenance.js";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "raw-sessions-"));
@@ -75,17 +76,79 @@ test("newest 20 history items page backward through all 41 and deletion cascades
   } finally { store.close(); }
 });
 
-test("unsupported schema version fails without altering the database", () => {
+for (const legacyVersion of [2, 4, 999, "unversioned"] as const) {
+  test(`unreadable ${legacyVersion} state stays untouched while new sessions use one isolated store`, () => {
+    const root = mkdtempSync(join(tmpdir(), "raw-legacy-store-"));
+    const env = { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root };
+    const legacy = join(root, "raw", "sessions.sqlite");
+    mkdirSync(join(root, "raw", "payloads", "historical"), { recursive: true });
+    const payload = join(root, "raw", "payloads", "historical", "saved.json");
+    writeFileSync(payload, "legacy payload");
+    const seed = new DatabaseSync(legacy);
+    if (legacyVersion === "unversioned") seed.exec("CREATE TABLE old_messages(id TEXT PRIMARY KEY)");
+    else seed.exec(`PRAGMA user_version = ${legacyVersion}`);
+    seed.close();
+    const originalDb = readFileSync(legacy);
+    const options = { env };
+    const first = openSessionStore(options);
+    const second = openSessionStore(options);
+    const expected = join(root, "raw", "stores", "storage-v5", "sessions.sqlite");
+    try {
+      assert.equal(first.path, expected);
+      assert.equal(second.path, expected);
+      assert.equal(sessionStorePath(options), expected);
+      const id = first.createSession({ cwd: root, title: "fresh" }).id;
+      assert.equal(second.getSession(id)?.title, "fresh");
+      first.appendHistory({ sessionId: id, kind: "user", payload: { text: "fresh" } });
+      assert.equal(second.getSessionHistory({ sessionId: id }).items[0]?.payload.text, "fresh");
+      const removable = first.createSession({ cwd: root, title: "temporary" }).id;
+      const owner = first.claimSession(removable);
+      first.appendOwnedHistory(removable, owner, "tool", { text: "x".repeat(100_000) });
+      first.releaseSession(removable, owner);
+      assert.ok(first.storageStats().payloadFiles > 0);
+      first.deleteSession(removable);
+      runSessionMaintenance(first);
+      assert.deepEqual(readFileSync(legacy), originalDb);
+      assert.equal(readFileSync(payload, "utf8"), "legacy payload");
+      assert.equal(statSync(expected).mode & 0o777, 0o600);
+      assert.equal(statSync(join(root, "raw", "stores", "storage-v5")).mode & 0o777, 0o700);
+    } finally { first.close(); second.close(); }
+    const third = openSessionStore(options);
+    try { assert.equal(third.listSessions({ cwd: root }).items[0]?.title, "fresh"); }
+    finally { third.close(); }
+    assert.deepEqual(readFileSync(legacy), originalDb);
+  });
+}
+
+test("readable format-5 state keeps its existing path and session IDs", () => {
   const { root, store } = fixture();
-  const path = join(root, "raw", "sessions.sqlite");
+  const id = store.createSession({ cwd: root, title: "current" }).id;
   store.close();
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA user_version = 999");
-  db.close();
-  assert.throws(() => openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } }), /schema version/i);
-  const verify = new DatabaseSync(path);
-  assert.equal(verify.prepare("PRAGMA user_version").get()?.user_version, 999);
-  verify.close();
+  const reopened = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
+  try {
+    assert.equal(reopened.path, join(root, "raw", "sessions.sqlite"));
+    assert.equal(reopened.getSession(id)?.title, "current");
+  } finally { reopened.close(); }
+});
+
+test("a real legacy-path I/O error is not treated as an old format", () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-legacy-io-"));
+  const rawRoot = join(root, "raw");
+  mkdirSync(join(rawRoot, "sessions.sqlite"), { recursive: true });
+  assert.throws(() => openSessionStore({ env: { XDG_STATE_HOME: root } }), /open|directory|SQLITE|I\/O/i);
+  assert.equal(statSync(join(rawRoot, "sessions.sqlite")).isDirectory(), true);
+});
+
+test("bad saved context row cannot prevent an unrelated new session", () => {
+  const { root, store } = fixture();
+  try {
+    const bad = store.createSession({ cwd: root, title: "bad" }).id;
+    store.database.prepare("INSERT INTO model_context(session_id, position, payload_json) VALUES (?, ?, ?)")
+      .run(bad, 0, "not-json");
+    const good = store.createSession({ cwd: root, title: "good" }).id;
+    assert.equal(store.getSession(good)?.title, "good");
+    assert.equal(store.listSessions({ cwd: root }).items.length, 2);
+  } finally { store.close(); }
 });
 
 test("independent reader sees committed writes without blocking", () => {
