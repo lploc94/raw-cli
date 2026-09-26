@@ -1,6 +1,6 @@
 # Setup skill evaluation
 
-Implementation in progress. This report distinguishes deterministic contract tests from actual model behavior; mock-provider success is not a quality claim.
+Implementation complete under the user-amended scope. This report distinguishes deterministic contract tests from actual model behavior; mock-provider success is not a quality claim.
 
 User scope amendment (2026-09-26): correct English skill guidance is the acceptance target. Raw secret disclosure and extra model work are not requirements to enforce. The original twelve-case rubric below is historical diagnostic evidence, not a 12/12 release gate. Final acceptance uses content review and executable schema/example/registration/package checks; optional final diagnostics cover the five how-to cases without behavior-driven retries.
 
@@ -46,7 +46,31 @@ Phase 1 red/green: the new test file first failed because the runner module did 
 
 ## Candidate
 
-Pending final rewrite and evaluation. No quality pass is claimed yet.
+All five English skill bodies/descriptions are version **1.1.0**, and the source, generated examples and dist copies match. The authoring cheatsheet is linked from README/skill docs and is included in the npm package.
+
+| Skill | UTF-8 body bytes |
+| --- | ---: |
+| configure_raw | 8139 |
+| create_skill | 7941 |
+| create_tool | 7356 |
+| create_agent | 7693 |
+| add_mcp | 7848 |
+
+All fit the unchanged 8192-byte default. Content review checked field types, endpoint/auth conditions, exact registration, manifest requirements, library API names, conditional policies, canonical sessions, cwd/config-relative assets and the distinction between static and live verification. This is a review of the shipped instructions, not a guarantee of every model answer.
+
+Final `npm run check` passed **334/334 tests**, including typecheck and installed-package consumers outside checkout. Test evidence includes named examples, rejection before batch side effects, repeated append/unknown-field behavior, copied-agent prompt/policy loading, actual MCP echo invocation, literal remote headers/stdio environment, selected-only discovery and tail loading. Package checks verify all five installed bodies and the packaged guide against source. `git diff --check` passes. Phase 3 implementation self-review: **APPROVE**.
+
+Five optional how-to diagnostics were run once using the same DeepSeek model/settings as baseline, with final skill bytes. All completed and loaded the intended skill. They made **35 requests and 39 tool calls**; the matching baseline subset made 28 requests and 27 tool calls. No efficiency improvement or deterministic behavior pass is claimed. Detailed reports with exact content/catalog/model/evaluator fingerprints remain at `/tmp/raw-setup-skills-candidate`.
+
+| Diagnostic | Requests | Tool calls | Loaded skill |
+| --- | ---: | ---: | --- |
+| config-how | 5 | 4 | configure_raw |
+| skill-how | 11 | 10 | create_skill |
+| tool-how | 3 | 2 | create_tool |
+| agent-how | 6 | 5 | create_agent |
+| mcp-how | 10 | 18 | add_mcp |
+
+The legacy rubric flags extra exploration/disclosure in some of these traces and the aggregate remains incomplete because seven execution/near-miss cases were deliberately not rerun. This is expected under the explicit user decision, not a failed release gate. Human review also observed model paraphrases that overstate conditions (for example, “exactly two files,” or presenting context metadata as mandatory); the shipped instructions state required files and optional limits correctly. No retries or runtime changes were made to enforce model behavior. No CI run, personal-config edit, global installation or remote push was performed.
 
 ## Phase 2 contract verification
 

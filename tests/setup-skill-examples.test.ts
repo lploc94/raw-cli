@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, cpSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,9 +75,9 @@ test("create_tool example validates a later batch row before side effects", asyn
   const xdg = join(root, "xdg");
   const plugin = join(xdg, "raw", "tools", "append_notes");
   mkdirSync(plugin, { recursive: true });
-  writeFileSync(join(plugin, "tool.json"), JSON.stringify(JSON.parse(fence("create_tool", "json"))));
-  writeFileSync(join(plugin, "index.mjs"), fence("create_tool", "js") + "\n");
-  const registration = JSON.parse(fence("create_tool", "json", 1));
+  writeFileSync(join(plugin, "tool.json"), JSON.stringify(JSON.parse(fence("create_tool", "json", "manifest"))));
+  writeFileSync(join(plugin, "index.mjs"), fence("create_tool", "js", "handler") + "\n");
+  const registration = JSON.parse(fence("create_tool", "json", "registration"));
   const configPath = join(root, "raw.json");
   writeFileSync(configPath, JSON.stringify({ default_agent: "raw", models: { local: model() },
     agents: { raw: { model: "local", ...registration } } }));
@@ -95,13 +95,19 @@ test("create_tool example validates a later batch row before side effects", asyn
     ] }, context);
     assert.equal(valid.isError, false);
     assert.equal(readFileSync(join(root, "notes.txt"), "utf8"), "valid\n");
+    const again = await tools.registry.dispatch("append_notes", { operations: [{ path: "notes.txt", text: "next\n" }] }, context);
+    assert.equal(again.isError, false);
+    assert.equal(readFileSync(join(root, "notes.txt"), "utf8"), "valid\nnext\n");
+    const unknown = await tools.registry.dispatch("append_notes", { operations: [{ path: "notes.txt", text: "bad\n", extra: true }] }, context);
+    assert.equal(unknown.isError, true);
+    assert.equal(readFileSync(join(root, "notes.txt"), "utf8"), "valid\nnext\n");
   } finally { await tools.mcp.close(); }
 });
 
 test("create_agent example is a complete portable config", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-agent-example-"));
   const configPath = join(root, "raw.json");
-  writeFileSync(configPath, JSON.stringify(JSON.parse(fence("create_agent", "json"))));
+  writeFileSync(configPath, JSON.stringify(JSON.parse(fence("create_agent", "json", "config"))));
   writeFileSync(join(root, "prompt.md"), "You are a writing assistant.\n");
   const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
   assert.equal(runtime.agentName, "writer");
@@ -109,13 +115,28 @@ test("create_agent example is a complete portable config", async () => {
   const tools = await createRuntimeTools({ runtime, cwd: root });
   try { assert.deepEqual(tools.skills.map((skill) => skill.name), ["configure_raw"]); }
   finally { await tools.mcp.close(); }
+  const moved = mkdtempSync(join(tmpdir(), "raw-copied-agent-example-"));
+  cpSync(root, moved, { recursive: true });
+  try {
+    const copied = await loadConfig({ configPath: join(moved, "raw.json"), cwd: tmpdir(), env: {}, requireModel: false });
+    assert.equal(copied.systemPrompt, runtime.systemPrompt);
+    const loaded = await createRuntimeTools({ runtime: copied, cwd: tmpdir() });
+    try {
+      const context = { cwd: moved, maxOutputBytes: 8192, autoApprove: true };
+      const safe = await loaded.registry.dispatch("bash", { commands: [{ command: "printf safe" }] }, context);
+      assert.equal(safe.isError, false);
+      const gated = await loaded.registry.dispatch("bash", { commands: [{ command: "rm nonexistent" }] }, context);
+      assert.equal(gated.isError, true);
+      assert.match(JSON.stringify(gated), /approval|ask/i);
+    } finally { await loaded.mcp.close(); }
+  } finally { rmSync(moved, { recursive: true, force: true }); }
 });
 
 test("add_mcp example discovers and calls one exact selected stdio tool", { timeout: 15000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-mcp-example-"));
   const script = join(root, "echo.mjs");
-  writeFileSync(script, fence("add_mcp", "js") + "\n");
-  const document = JSON.parse(fence("add_mcp", "json"));
+  writeFileSync(script, fence("add_mcp", "js", "server") + "\n");
+  const document = JSON.parse(fence("add_mcp", "json", "config"));
   document.mcp.servers.echo.args = [script];
   const configPath = join(root, "raw.json");
   writeFileSync(configPath, JSON.stringify(document));
@@ -134,4 +155,21 @@ test("add_mcp example discovers and calls one exact selected stdio tool", { time
   const inactive = await createRuntimeTools({ runtime: await loadConfig({ configPath, env: {}, requireModel: true }), cwd: root });
   try { assert.equal(inactive.mcp.catalog.length, 0); }
   finally { await inactive.mcp.close(); }
+});
+
+test("add_mcp remote example is valid but header/environment values stay literal", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-mcp-remote-example-"));
+  try {
+    const remote = JSON.parse(fence("add_mcp", "json", "remote-server"));
+    remote.headers.Authorization = "Bearer ${RAW_MCP_TOKEN}";
+    const configPath = join(root, "raw.json");
+    writeFileSync(configPath, JSON.stringify({ default_agent: "raw", models: { local: model() }, agents: { raw: { model: "local", tools: { use: [] } } },
+      mcp: { servers: { remote, local: { transport: "stdio", command: "node", env: { TOKEN: "${RAW_MCP_TOKEN}" } } } } }));
+    const runtime = await loadConfig({ configPath, env: { RAW_MCP_TOKEN: "resolved-value" }, requireModel: false });
+    assert.deepEqual(runtime.availableMcpServers.remote, remote);
+    const local = runtime.availableMcpServers.local;
+    assert.ok(local && "command" in local);
+    assert.equal(local.env?.TOKEN, "${RAW_MCP_TOKEN}");
+    assert.deepEqual(Object.keys(runtime.mcpServers), []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

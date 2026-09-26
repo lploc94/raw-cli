@@ -40,6 +40,8 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     await access(join(example, "index.mjs"));
   }
   await access(join(consumer, "node_modules", "raw-cli", "examples", "agents", "project-helper", "raw.json"));
+  assert.equal(await readFile(join(consumer, "node_modules", "raw-cli", "docs", "skill-authoring.md"), "utf8"),
+    await readFile(join(repo, "docs", "skill-authoring.md"), "utf8"));
   const skillIds = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp"];
   const packagedSkill = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", "configure_raw");
   for (const id of skillIds) {
@@ -49,7 +51,9 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     assert.equal(manifest.name, id);
     assert.ok(manifest.description);
     const body = await readFile(join(folder, "SKILL.md"), "utf8");
-    assert.ok(body.length > 2000);
+    assert.ok(body.trim());
+    assert.ok(Buffer.byteLength(body) <= 8192);
+    assert.equal(body, await readFile(join(repo, "src", "skills", "bundled", id, "SKILL.md"), "utf8"));
     assert.equal(body, await readFile(join(consumer, "node_modules", "raw-cli", "examples", "skills", id, "SKILL.md"), "utf8"));
   }
   const skillBody = await readFile(join(packagedSkill, "SKILL.md"), "utf8");

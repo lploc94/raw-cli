@@ -1,17 +1,30 @@
 # Create a Raw tool plugin
 
-Use when the user needs a new callable action, not merely reusable instructions. Inspect the intended agent's `tools.use`, existing model-visible names and policy, and the nearest shipped `examples/tools/` plugin. A plugin is one folder with `tool.json` and standalone ESM `index.mjs`; Raw loads only selected IDs at startup. A local plugin runs as the Raw process with full OS permissions, so review its side effects and bound its inputs. Keep tool descriptions accurate about required arguments, output, errors, and side effects. Do not put secrets in descriptions or results.
+Use for a new callable action or a customized existing tool. Reusable instructions belong in `create_skill`. A tool is a selected folder containing a strict manifest and a standalone ESM handler.
 
-## Roots and manifest contract
+## Choose the task and contract
 
-Use `local/<id>` under `$XDG_CONFIG_HOME/raw/tools/<id>/` (fallback `~/.config/raw/tools/<id>/`) for a global fork, or `agent/<id>` under `tools/<id>/` beside the selected config file for a portable agent. `builtin/<id>` belongs to the installed package: copy an example to a user root before editing. `--config` does not relocate the local root. Folder ID begins with lowercase a–z and then lowercase letters, digits, `_` or `-`; manifest `id` equals the folder. Model-visible `name` starts with a letter or `_`, is at most 64 supported characters, and must not duplicate a selected tool name. `version` uses `major.minor.patch`.
+For a how-to, explain the manifest, handler and registration with the example below. For implementation, establish the intended agent, inputs, output and side effects before writing. For a broken plugin, start from its exact load/argument/handler error.
 
-`tool.json` has exactly seven fields: numeric `api_version: 1`, `id`, `version`, `name`, nonempty `description`, `input_schema`, and `entry: "./index.mjs"`. `input_schema` is an object JSON Schema; draft 2020-12 is the default, draft-07 is allowed by its `$schema` URI. Remote `$ref` and `$async` are unsupported. Declare `type: "object"`, `properties`, `required`, and `additionalProperties: false` so the model and host agree. Raw validates every selected manifest/schema before importing any selected handler; unselected plugin code is never imported. Symlinks must stay inside their selected root and folder.
+Define what the action does, argument limits, result shape and failure behavior. A batch that validates all rows first is still not transactional after I/O starts. Decide whether paths are relative to session cwd, what files may be created, and how partial execution is reported. Describe these facts in English in the manifest. Reuse an existing tool when it already supplies the requested action.
 
-## Working batch example
+## Layout and schema
 
-For `local/append_notes`, create `~/.config/raw/tools/append_notes/tool.json` (or use the XDG root):
+- `agent/<id>`: `tools/<id>/` beside the selected config; portable with that directory.
+- `local/<id>`: `$XDG_CONFIG_HOME/raw/tools/<id>/`, otherwise `~/.config/raw/tools/<id>/`.
+- `builtin/<id>`: installed package-owned tools. Fork a shipped `examples/tools/` folder into a user root and rename folder/manifest/name consistently; do not edit package-owned code for a user customization.
 
+`--config` changes the agent root, not the global root. Folder/manifest `id` matches `[a-z][a-z0-9_-]*`; model-visible `name` matches `[A-Za-z_][A-Za-z0-9_-]{0,63}` and must be unique among selected tools. `version` is a three-component numeric string.
+
+`tool.json` has exactly seven fields: number `api_version:1`, `id`, `version`, `name`, nonempty `description`, object `input_schema`, and `entry:"./index.mjs"`. Schema defaults to draft 2020-12; draft-07 is allowed via `$schema`. Remote `$ref` and `$async` are unsupported. Use an object schema with explicit properties, required fields and `additionalProperties:false`. Selected manifests/schemas are validated before any selected handler import; unselected code is not imported. Symlinks cannot escape the selected root/folder.
+
+`index.mjs` exports async `handler(args, context)` and may export synchronous `validateArgs(args)`, returning an error string or `undefined`. Semantic preflight runs before approval and execution. `context.cwd` resolves paths; `context.signal` communicates abort. Return `{content:[...], isError?:boolean, code?:string}`; content may be `{type:"text",text}`, `{type:"json",value}` or a supported typed image. A JSON value must be serializable. Keep imports free of side effects. The handler runs with Raw's OS permissions; cwd and approval rules are not filesystem isolation.
+
+## Working example
+
+For `local/append_notes`, create `tool.json` in the global `tools/append_notes/` folder:
+
+<!-- example:manifest -->
 ```json
 {
   "api_version": 1,
@@ -31,8 +44,9 @@ For `local/append_notes`, create `~/.config/raw/tools/append_notes/tool.json` (o
 }
 ```
 
-Create `index.mjs` in that folder. `validateArgs` is synchronous and returns an error string or `undefined`; it checks constraints that JSON Schema does not express. Raw calls it before approval or the handler, so a malformed **later** row cannot allow earlier side effects. The handler still guards aborts and returns a Raw `ToolResult` with text, JSON or image content. This example uses JSON content and appends only after whole-batch preflight:
+Create its `index.mjs`. The semantic validator rejects an invalid later row before any earlier write. The handler checks abort between writes and returns a count:
 
+<!-- example:handler -->
 ```js
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -60,16 +74,21 @@ export async function handler(args, context) {
 }
 ```
 
-Registration is an exact ID in `agents.<name>.tools.use`, preserving its existing order and selected entries:
+Append the exact ID to `agents.<name>.tools.use`, preserving existing entries and order. This is an agent fragment, not a complete config:
 
+<!-- example:registration -->
 ```json
 { "tools": { "use": ["builtin/read_file", "local/append_notes", "builtin/bash"] } }
 ```
 
-Add a `tools.rules` entry only if the user wants `ask` or `deny` for this tool; e.g. `{ "match": "local/append_notes", "effect": "ask" }`. Rules use the canonical ID, with the **last matching rule** winning. Unmatched tools run automatically, and `-y` cannot bypass an explicit ask. A `when` predicate is permitted only for `ask` and must resolve to a string path in the declared schema. The tool has the user's full filesystem permissions regardless of `cwd`; a rule is an approval policy, not a sandbox.
+Use `agent/append_notes` instead when the folder is config-adjacent. Keep other agent fields and `default_agent` unchanged unless requested.
 
-## Verification and failure handling
+## Implement and verify
 
-Back up and edit the config at mode 0600. Run `raw config list` or `raw --config /path/to/raw.json config list`; then run a harmless call using the target agent. Call `append_notes` with `{ "operations": [{ "path": "notes.txt", "text": "first\n" }] }` and confirm the file and JSON result. Before this, call it with a valid first row and a second row whose `text` lacks `\n`; verify the whole call fails before `notes.txt` is created. Test a second run for appending, an unknown input field, a denied/ask rule if configured, and an abort or partial runtime failure. Host result caps still apply; a very large result may be truncated or rejected even if the handler returned it. Do not claim a batch is atomic after execution starts: an I/O error can leave earlier writes, while schema and semantic validation run before any write.
+1. Inspect the target agent's selected names and policy. Create the manifest and handler in the chosen root. Validate the complete batch before side effects; handle aborts and genuine runtime failures without claiming rollback.
+2. Back up existing config, add the exact selection, and keep config mode 0600. Run `raw config list` or `raw --config PATH config list` for static config validation; this alone does not import or execute the plugin.
+3. If the installed `raw-cli` library is importable, use `loadConfig({configPath,requireModel:false})`, then `createRuntimeTools({runtime,cwd})`. Dispatch the model-visible name through `tools.registry.dispatch(name,args,{cwd,maxOutputBytes:8192})`; close `tools.mcp` in `finally`. This tests real registration/schema/preflight without a model call. Otherwise use a harmless task with the intended configured agent and report provider prerequisites.
+4. For this example, first send a valid first row and a second row without a newline; confirm failure and no first file. Then send `{"operations":[{"path":"notes.txt","text":"first\n"}]}` and verify file contents and JSON `written:1`. Repeat to check append behavior, reject unknown properties, and test abort/partial failure when relevant. Host output caps still apply.
+5. Add `tools.rules` only for requested policy. Match the canonical ID, e.g. `{"match":"local/append_notes","effect":"ask"}`. Last matching rule wins; unmatched calls run, and `-y` does not bypass explicit ask. Only ask accepts a `when` predicate on a schema-bound string path. Verify a requested rule with harmless inputs.
 
-If startup fails, check exact ID/folder/manifest values, `entry` path, exports, schema draft, unique name, containment, and import side effects. If a selected tool's schema, description or source changes between runs, Raw advances context revision and rotates its generated cache key on resume; committed history is retained. Unselected code edits do not change the active agent.
+For startup failure, check ID/folder/entry, exports, unique names, schema draft and containment. For runtime failure, report whether earlier rows already completed. Selected schema/description/source changes advance context revision and rotate Raw's generated cache key on resume; unselected edits do not. Report created paths, exact registration, the checks actually run and any remaining limitation.

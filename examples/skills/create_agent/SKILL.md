@@ -1,13 +1,18 @@
 # Create a Raw agent
 
-Use when the user wants a new named assistant with a particular role or a shareable setup. In Raw, an **agent** is one entry under `agents`; it chooses one upstream model alias and owns its prompt, request/cache/compact settings, ordered tool and skill selections, and policy. A **model** under `models` defines upstream access; a **session** is a saved conversation bound to an agent. There is no agent registry, inheritance, automatic plugin discovery, or profile compatibility layer. Inspect existing names and the requested role before editing so a new agent does not accidentally replace a current one.
+Use for a new named assistant, a specialized role or a shareable Raw setup. An agent is one `agents.<name>` config entry; it selects a model alias and owns its prompt, tools, skills, request/cache/compact settings and policy. A session is a saved conversation, not an agent definition. Use `configure_raw` for changing a field of an existing agent.
 
-## Choose global or portable layout
+For a how-to, explain the layout and relevant example. For creation, establish the desired role, target name/location and available model; ask only for unresolved decisions. For a startup failure, diagnose the referenced model/assets before recreating the whole agent.
 
-For a personal agent, add `agents.<new-name>` to `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) and reference existing `models.<alias>` when appropriate. For sharing, create a directory with `raw.json`, optional `prompt.md`, `tools/` and `skills/`. `agent/<id>` references resolve beside **that config file**, so the directory can be copied intact to another machine. `local/<id>` references resolve under the recipient's global Raw config root and are not portable by copying the agent directory. `builtin/<id>` resolves from the installed Raw package. Exact `mcp/server/tool` IDs additionally require a matching `mcp.servers` definition and the recipient's server installation/credentials. Only selected assets load; no wildcard MCP selection.
+## Choose the layout
 
-The installed `examples/agents/project-helper/` is a runnable template with `raw.json`, `prompt.md`, one agent tool, one agent skill, and a conditional Bash `rm` ask rule. Copy the entire directory, edit its model ID/endpoint and name, and check every `agent/` reference before sharing. For a new agent with no custom assets, start from this smaller complete `raw.json` in a new directory:
+For personal use, add an entry to `$XDG_CONFIG_HOME/raw/config.json` or `~/.config/raw/config.json`. Reuse a suitable `models.<alias>` instead of duplicating the connection. Preserve every other agent and the default unless the user asks to change them.
 
+For sharing, create a directory containing `raw.json`, `prompt.md`, and any custom `tools/<id>/` and `skills/<id>/`. Select `agent/<id>` to resolve these beside that config, independent of the working directory. `local/<id>` needs the recipient's global installation and does not travel with the folder. `builtin/<id>` comes from their installed Raw version. Exact MCP selections also require server definitions and the recipient's command/endpoint prerequisites.
+
+The shipped `examples/agents/project-helper/` is a complete forkable layout. Copy the whole directory if useful. For a smaller agent, this complete config demonstrates a file prompt, the five basic setup tools, one selected skill and a conditional Bash rule. Select only capabilities needed for the requested role; a writer need not always have setup skills or Bash.
+
+<!-- example:config -->
 ```json
 {
   "default_agent": "writer",
@@ -28,23 +33,37 @@ The installed `examples/agents/project-helper/` is a runnable template with `raw
 }
 ```
 
-Create `prompt.md` beside `raw.json`, UTF-8: `You are a writing assistant. Read the source material, draft accurately, and cite the files used.` The prompt file path is relative to `raw.json`, not the run cwd; an absolute path works but reduces portability. Use `system_prompt` for literal inline text instead, never both. `--system-prompt` and `RAW_SYSTEM_PROMPT` override the agent prompt at run time. Keep setup-skill routing in the prompt only if this agent is meant to configure Raw; for a specialized agent, say which selected skills it should list/load and when. Do not paste skill bodies into the prompt: list/load results arrive later and preserve the initial provider prefix.
+Create `prompt.md` beside `raw.json`, for example:
 
-## Model, tools, skills and MCP choices
+<!-- example:prompt -->
+```markdown
+You are a writing assistant. Read the supplied material, draft clear documentation
+in the requested format, and distinguish verified facts from assumptions. Preserve
+unrelated files. For requests about Raw configuration, list selected skills and
+load the relevant guidance. Report the written artifact and checks performed.
+```
 
-The agent's `model` must name an existing alias. The model object needs nonempty `provider`, method (`openai-chat-completions`, `openai-responses`, `anthropic-messages`, or `google-generate-content`) and exact `model_id`. Provide HTTP(S) `base_url` for custom/gateway pairs, or use official matching defaults. Prefer `api_key_env` over literal `api_key`; never share actual credentials. `vision:true` is needed before selecting `builtin/view_image`. Optional `context_window_tokens` and `max_output_tokens` are positive integers used for budgeting and automatic compact constraints.
+Replace the model ID and context/compact limits with verified capabilities. `YOUR_INSTALLED_MODEL` is a placeholder, not an advertised model. A recipient provides their own authentication; do not distribute an actual credential as part of the portable example.
 
-`tools.use` is required, ordered, and may be empty. Select exact `builtin/`, `local/`, `agent/`, or `mcp/server/tool` IDs. The `examples/tools/` package folders can be forked into `tools/` for agent-local modifications; their manifests and ESM handlers must be copied and renamed consistently. `skills.use` is optional and lists exact selected `builtin/`, `local/`, or `agent/` IDs; a nonempty list requires `builtin/list_skills` and `builtin/load_skill` in `tools.use`. A selected skill is disclosed to the model only through linked list/load calls. A selected but absent tool or skill prevents startup; unselected folders stay inert.
+## Compose the role and capabilities
 
-For MCP, define `mcp.servers.<name>` as stdio or streamable-http and select its *original tool name* with `mcp/<name>/<tool>` in `tools.use`; test the server on the recipient machine. See the `add_mcp` skill for a complete fixture. Tool policy belongs to this agent under `tools.rules`. Rules match canonical IDs, use `allow`, `ask`, or `deny`, and the **last matching rule** wins. A conditional `ask` may inspect a schema-bound string argument path such as `commands[*].command`; other Bash calls continue without a prompt. An `ask` in headless mode without an approval channel fails closed. Plugins and Bash still have the Raw process's full OS permissions.
+Write the prompt in English with role, expected deliverables, scope, working conventions and uncertainty handling. Choose literal `system_prompt` (empty allowed) OR a UTF-8 `system_prompt_file` path, never both. File paths resolve relative to config, not cwd. `--system-prompt` and `RAW_SYSTEM_PROMPT` override the configured prompt. Add list/load routing only when the selected skills help the role; do not paste skill bodies into the initial prompt.
 
-Other optional agent values: `request` for provider-specific output/reasoning settings, `cache` for supported hints, `compact` for manual/automatic compaction, `max_steps`, `max_output_bytes`, and `request_timeout_ms`. Validate provider-specific request fields against `configure_raw`; do not pass a field merely because a different provider supports it. Automatic compaction needs model `context_window_tokens` and agent `compact.trigger_tokens` with output reserve. Setting `default_agent` changes which agent `raw "query"` uses; `raw --agent writer "query"` selects explicitly regardless of that default. An existing config may intentionally retain a different default.
+The model alias must exist under `models`. Its required nonempty strings are `provider`, `method` and exact upstream `model_id`. Methods: `openai-chat-completions`, `openai-responses`, `anthropic-messages`, `google-generate-content`. Matching services have supported defaults; custom/gateway pairs need HTTP(S) `base_url`. Credentials may be `api_key_env` or literal `api_key`, not both; an unauthenticated endpoint needs neither. Optional `vision` is boolean; `context_window_tokens` and `max_output_tokens` are positive integers with output below context. Select `builtin/view_image` only with `vision:true`.
 
-## Register, share and verify
+Required `tools.use` is ordered and may be empty. Select exact `builtin/<id>`, `local/<id>`, `agent/<id>` or `mcp/server/original-tool-name` IDs; no wildcard discovery. Optional `skills.use` selects unique exact `builtin/`, `local/` or `agent/` skill IDs. Any nonempty skill list requires both skill tools. Only selected folders load, but a missing selected asset blocks startup.
 
-1. Choose a new unique agent name, model alias, and location. Create/copy the entire portable directory or back up the personal JSON at mode 0600. Preserve every existing agent and the effective default unless the user requested a change.
-2. Add the model only if needed. Write one complete `agents.<name>` object, prompt file or inline prompt, and only the exact selected IDs for assets that exist. For a portable directory, keep prompts, `agent/` tools and `agent/` skills beside `raw.json`; document any required global `local/` asset or external MCP server before sharing.
-3. Validate with `raw --config /absolute/path/raw.json config list` or `raw config list`. Use `raw --config /absolute/path/raw.json --agent writer "inspect these files"` with a working endpoint. Check `list_skills`/`load_skill` only if selected, and verify policies with a harmless command and a matching `rm` text in a disposable test directory.
-4. Copy the directory to a second unrelated path and repeat validation to prove relative paths are portable. Do not ship literal credentials, private history, session DBs, or machine-specific absolute paths. A copied config may use the same agent name without sharing session identity.
+To make a new plugin or skill, use its creation skill only when needed. For existing assets, copying and checking exact IDs is enough. MCP definitions belong to top-level `mcp.servers`; select actual original tool names, not the model-facing aliases. `add_mcp` covers new connection setup.
 
-Resume is deliberately strict: saved config path, agent name, model identity/endpoint and effective system prompt must still match. Changing these can reject `--resume`; changing selected tool/schema/source advances context revision and rotates the generated cache key; skill-only changes keep that key and may append a reload notice. Preserve the old config if an old conversation still matters. Raw does not migrate old session schemas or translate `profiles`/`--profile`.
+Policy belongs in this agent's `tools.rules`. Ordered allow/ask/deny rules match canonical IDs, last match wins, unmatched calls run. Conditional ask may inspect a schema-bound string path with an RE2 search pattern. The example uses `commands[*].command` and a direct `rm` pattern; it is textual matching, not complete shell analysis. Ask without an approval channel fails closed. Preserve selective Bash approval rather than prompting for every command. Tools retain full OS permissions.
+
+Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_timeout_ms`; `request` for provider-specific reasoning/output; `cache` for supported hints; `compact` for retention/summarization. Automatic compact requires model context metadata and a `compact.trigger_tokens` leaving output reserve. Consult `configure_raw` for nontrivial provider-specific fields instead of copying another provider's controls blindly.
+
+## Create, verify and share
+
+1. Select a unique name and destination; back up an existing config before adding fields. Keep its mode 0600. For a portable config omit `sessions`, which is canonical-only.
+2. Add/reuse the model, create the prompt and selected custom assets, then add the agent with exact IDs. Keep the existing default unless asked; a new standalone file may set its own `default_agent`. `raw --agent writer "query"` selects explicitly; `raw "query"` follows configured selection.
+3. Run `raw --config /path/to/raw.json config list`. It verifies schema and references to model aliases, not file contents or live MCP. If the installed library is importable, use `loadConfig({configPath,requireModel:false})` to check the prompt and `createRuntimeTools({runtime,cwd})` to load selected tools/skills and connect selected MCP. Close `tools.mcp` afterward. Otherwise use a harmless task with the intended agent when model access exists and report what remains unverified.
+4. For sharing, copy the directory to an unrelated path and repeat loading. Check config-relative prompt/custom assets, required external commands, global dependencies and literal server paths. Exercise a requested policy with harmless calls. Include setup instructions for the recipient; exclude private conversation state and machine-specific paths.
+
+Report the agent name, directory/config, model alias, prompt/capabilities, checks and remaining prerequisites. Existing sessions bind config path, agent name, model/endpoint and effective prompt; changing those can reject resume. Tool changes can rotate the generated cache key; skill-only changes may append a reload notice while keeping it. Sharing an agent does not transfer session identity.

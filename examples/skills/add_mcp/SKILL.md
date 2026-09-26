@@ -1,17 +1,49 @@
 # Add an MCP server to Raw
 
-Use when the user wants an external capability served by MCP. Raw's top-level `mcp.servers` is a catalog of connections; a server definition alone is inert. A named agent activates only exact IDs in its ordered `agents.<name>.tools.use`, written `mcp/<server>/<original-tool-name>`. Do not select `mcp/server/*` or invent tool names. Inspect the selected agent, the server's own documentation or live `tools/list` response, required credentials, and current policy before editing. MCP tools and server processes use the privileges and secrets given to them; the policy controls approval, not isolation.
+Use when connecting a new MCP capability to a Raw agent or diagnosing that connection. For a how-to, explain connection schema, exact selection and verification. For an actual setup, use the requested server; creating the optional echo fixture below is not a prerequisite or a replacement for that server.
 
-## Connection schema and selection
+## Establish the connection
 
-`mcp: { "servers": { "name": serverObject } }` is a top-level config object. A stdio server has required `transport: "stdio"` and nonempty `command`; optional `args` is an array of strings and `env` is a string-to-string map. The process is started in the session cwd only when an exact selected tool needs it. A remote server has required `transport: "streamable-http"` and HTTP(S) `url`; optional `headers` is a string-to-string map. Raw currently supports these two config transports. Keep command paths, arguments, URLs and headers valid for the recipient machine. The config does not expand `${VAR}` in `env` or `headers`: supply a private literal value when unavoidable, or let a stdio server read inherited process environment itself. Keep config mode 0600 and do not share secret-bearing files.
+Identify the target config/agent, server command or endpoint, authentication requirements and needed tools. Use the server's actual documentation or `tools/list` to get original tool names. Ask for a missing endpoint/command or required credential source rather than inventing them. For an existing server, inspect its error and definition before replacing it.
 
-`tools.use` must contain `mcp/name/original_name` for each selected tool. The original name comes from the server's `tools/list`, not Raw's stable model-facing alias. Unselected definitions do not start, are not imported into the model context, and do not alter the provider prefix. Raw discovers paginated catalogs, validates selected JSON Schemas and arguments, and closes owned connections on shutdown or failed startup. An unknown server/tool, duplicate server name, unsupported selected schema or failed handshake stops startup before inference. An unsupported **unselected** schema stays inert. ACP `session/new` may also provide discoverable servers; `_raw/session/configure` can later activate a cataloged tool for that session without changing the global config. ACP's standard method names remain unchanged.
+Top-level `mcp.servers` is a connection catalog. An agent activates only exact entries in its ordered `tools.use`, e.g. `mcp/search/web_search`. A server definition alone stays inert. Do not select `mcp/server/*` or substitute Raw's generated model-facing alias for the original tool name.
 
-## Runnable local stdio fixture
+## Connection contract
 
-For a no-dependency smoke test, save this as `/absolute/path/echo.mjs` (replace that path with a real absolute path). It speaks newline-delimited MCP JSON-RPC and exposes one `echo_text` tool. Use only for test setup, then replace it with the actual server and exact tool name the user wants:
+| Transport | Required | Optional |
+| --- | --- | --- |
+| stdio | `transport:"stdio"`, nonempty string `command` | `args`: string array; `env`: string-to-string map |
+| remote | `transport:"streamable-http"`, HTTP(S) string `url` | `headers`: string-to-string map |
 
+Those are the two configuration transports; unknown fields fail. Stdio starts in the session cwd. Make command/script paths valid for the target machine; a relative script argument is not automatically config-relative. Stdout must carry MCP protocol messages, with logs on stderr. Unselected catalog entries do not start.
+
+`env` and `headers` are literal values: Raw does not expand `${VAR}`. A stdio server can read inherited environment variables through its own authentication mechanism. For a remote endpoint needing a header, obtain a valid private value using the supported setup; do not teach nonexistent interpolation or OAuth configuration fields.
+
+For a remote server, place this object at `mcp.servers.search`; replace the placeholder URL/header, then select exact names returned by that server:
+
+<!-- example:remote-server -->
+```json
+{ "transport": "streamable-http", "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer REPLACE_IN_PRIVATE_CONFIG" } }
+```
+
+For example, select `mcp/search/web_search` only if that is a real listed name. The URL itself is not a tool ID. Keep existing agents, servers, defaults and selected tool ordering intact.
+
+## Register and verify the requested server
+
+1. Obtain server-specific command/arguments or URL, check executable/dependency availability, and discover the actual tools. Verify the tool's input schema before choosing test arguments.
+2. Back up the config, add one server definition, and append only requested `mcp/<server>/<original-name>` IDs to `agents.<name>.tools.use`. Keep config mode 0600. Follow the canonical/portable path actually in use.
+3. Run `raw config list` or `raw --config PATH config list`. This checks structure and selected IDs' syntax; it does not prove handshake, original tool existence or successful execution.
+4. If the installed `raw-cli` library is importable, call `loadConfig({configPath,requireModel:false})`, then `createRuntimeTools({runtime,cwd})`. `tools.mcp.catalog` contains discovered tools; `tools.mcp.exposed` contains selected ones. Find the selected server/original name there, dispatch its `alias` through `tools.registry.dispatch(alias,args,{cwd,maxOutputBytes:8192})`, inspect the real result, and close `tools.mcp` in `finally`. This does not require a model request. Otherwise run a harmless task with the configured agent when model access is available. Report inability to verify rather than equating config parsing with a live pass.
+5. Use a harmless server-specific call. Do not perform writes, purchases or other unrelated side effects just to test the connection. Unselecting the server's tool IDs should leave the definition inert on the next startup.
+6. Add a requested policy under this agent's `tools.rules`, matching canonical `mcp/server/tool`, not the alias. Effects are allow/ask/deny, last matching rule wins, unmatched calls run. Only ask permits `when` on a schema-bound string path and an RE2 regex. Verify policy with harmless arguments; headless ask without approval fails closed. Policy does not sandbox the server.
+
+The registry/schema view is fixed for a running CLI session. Editing config does not add a callable MCP alias to that same session automatically; verify the changed configuration through a fresh runtime or next run.
+
+## Optional complete stdio test fixture
+
+Use only when the user wants a reproducible MCP smoke test without installing a real server. Save as an actual absolute `echo.mjs` path. It exposes `echo_text` over newline-delimited JSON-RPC:
+
+<!-- example:server -->
 ```js
 import { createInterface } from "node:readline";
 const lines = createInterface({ input: process.stdin });
@@ -29,8 +61,9 @@ for await (const line of lines) {
 }
 ```
 
-This complete example config selects the one server tool for agent `research`. Replace the model ID and the script path; no MCP credentials are needed for this fixture:
+Complete config for that fixture; replace both the model ID and script path. Its MCP server needs no credentials:
 
+<!-- example:config -->
 ```json
 {
   "default_agent": "research",
@@ -40,19 +73,14 @@ This complete example config selects the one server tool for agent `research`. R
 }
 ```
 
-For a real remote server instead, the server object shape is:
+With this fixture, verify a real `echo_text` call with `{"text":"hello"}` returns `hello`. With a different requested server, use its real tool/schema instead.
 
-```json
-{ "transport": "streamable-http", "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer REPLACE_IN_PRIVATE_CONFIG" } }
-```
+## Diagnose and report
 
-Put it under `mcp.servers.search`, then select names actually returned by that server, e.g. `mcp/search/web_search`. A URL is not a tool ID. Do not assume the example endpoint or header value exists. The header map is literal; protect private config and prefer a server's own local credential mechanism where available. MCP result text/structured JSON/image blocks stay typed; a text-only model may use a server that performs OCR and returns **text**, while native image blocks still require a capable selected model/adapter.
+- Spawn/handshake failure: check command/PATH, cwd, script arguments, stdout protocol and timeout.
+- Unknown tool/server: check server key and actual original names, including paginated `tools/list`; do not guess from an alias.
+- Unsupported selected schema: identify the actual schema error; an unselected unsupported tool is inert.
+- Authentication failure: check the server's real credential mechanism and literal headers/environment, not model-provider credentials.
+- Image content failure: native images need a capable model/adapter; text-only agents can use OCR tools returning text.
 
-## Safe registration and verification
-
-1. Identify the target `agents.<name>` and whether the server belongs in a global or portable config. Back up that JSON at mode 0600. Get the server's real tool names from its documentation or a live MCP `tools/list` call; do not guess from a display alias. For the fixture above, the known name is `echo_text`.
-2. Add one `mcp.servers.<name>` object without overwriting other servers. Add exact `mcp/<name>/<tool>` IDs to that agent's ordered `tools.use`; keep its existing selections. `raw config list` should show the selected ID and redact URL credentials, but this alone does **not** prove the server works.
-3. Run a harmless task with `raw --config /path/to/raw.json --agent research "echo hello"` against an available model, or use Raw's library `loadConfig` plus `createRuntimeTools` in a local script without provider traffic. Verify connection, catalog lookup and a real call with `{ "text": "hello" }`. Repeat after removing the selected MCP ID: the server must remain inert. If the fixture cannot start, verify `node` on PATH, absolute script path, executable access, protocol output on stdout, and the configured request timeout.
-4. Add a `tools.rules` entry only when approval or denial is requested. Match canonical `mcp/echo/echo_text`, not the generated alias; `allow`, `ask` and `deny` are ordered and the last matching rule wins. A conditional `ask` needs a string argument path present in the selected tool's JSON Schema. Test it with a harmless argument; headless `ask` without an approval channel fails closed.
-
-Changing a selected MCP tool's visible schema or selection can advance context revision and rotate Raw's generated cache key on session resume; unselected server edits do not affect the active prefix. A changed config path, agent, model, endpoint or effective prompt can prevent resume entirely. Keep old config files while any important conversation still needs them. Do not add a registry, wildcard expansion, compatibility parser, or background server startup for an unselected definition.
+Raw validates selected tool schemas/arguments and closes owned connections on failed startup or shutdown. Selected schema/selection changes can rotate the generated cache key on resume; unselected server edits do not affect the active prefix. Changing config path, agent, model/endpoint or effective prompt can reject resume entirely. Report server/transport, exact selections, actual checks and remaining prerequisites.

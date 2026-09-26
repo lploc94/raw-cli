@@ -242,7 +242,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Phase 3: Rewrite tool, agent and MCP guidance and qualify the kit
 
-Status: in_progress
+Status: complete
 
 ### Goal
 
@@ -292,10 +292,10 @@ Rewrite the remaining descriptions/bodies, set versions `1.1.0`, regenerate exam
 
 ### Acceptance criteria
 
-- [ ] AC-9: Three remaining skills follow routing/contract/verification requirements and preserve their working examples — review and functional tests.
-- [ ] AC-10: All five final installed skill bodies and generated copies match, fit caps and work outside checkout; guide is packaged — package tests.
-- [ ] AC-11: All five English bodies/descriptions are reviewed against the actual Raw contracts; diagnostic observations, if run, identify their content and remain distinct from contract-test results — content review and evidence report. No 12/12 model-behavior gate.
-- [ ] AC-12: Local regression suite and diff checks pass; no unrelated config/runtime/CI change — test output and final diff review.
+- [x] AC-9: Three remaining skills follow routing/contract/verification requirements and preserve their working examples — review and functional tests.
+- [x] AC-10: All five final installed skill bodies and generated copies match, fit caps and work outside checkout; guide is packaged — package tests.
+- [x] AC-11: All five English bodies/descriptions are reviewed against the actual Raw contracts; diagnostic observations, if run, identify their content and remain distinct from contract-test results — content review and evidence report. No 12/12 model-behavior gate.
+- [x] AC-12: Local regression suite and diff checks pass; no unrelated config/runtime/CI change — test output and final diff review.
 
 ### Focused verification
 
@@ -323,13 +323,13 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Completion Criteria
 
-- [ ] Research-backed authoring cheatsheet is finalized, linked and shipped.
-- [ ] All five skills and descriptions are rewritten, versioned and synchronized with examples.
-- [ ] Exact Raw schema/registration/runtime boundaries are preserved and correctly taught.
-- [ ] Explanation/change/diagnosis routes are clear; no enforcement or acceptance promise is made about model-dependent extra work or secret reads.
-- [ ] Functional, installed-package and local repository checks pass.
-- [ ] Any real-model evidence identifies its evaluated inputs and limitations, separately from deterministic instruction/example/package acceptance.
-- [ ] All phase reviews are APPROVE and cohesive local commits exist; user config and GitHub Actions remain untouched.
+- [x] Research-backed authoring cheatsheet is finalized, linked and shipped.
+- [x] All five skills and descriptions are rewritten, versioned and synchronized with examples.
+- [x] Exact Raw schema/registration/runtime boundaries are preserved and correctly taught.
+- [x] Explanation/change/diagnosis routes are clear; no enforcement or acceptance promise is made about model-dependent extra work or secret reads.
+- [x] Functional, installed-package and local repository checks pass.
+- [x] Any real-model evidence identifies its evaluated inputs and limitations, separately from deterministic instruction/example/package acceptance.
+- [x] All phase reviews are APPROVE and cohesive local commits exist; user config and GitHub Actions remain untouched.
 
 ## Progress Log
 
@@ -346,3 +346,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: User explicitly removed Raw secret-disclosure concerns and model extra-work control from scope. Updated invariants, Phase 2 tests/AC-6/AC-8, global gates and Phase 3 AC-11: focus on correct English guidance, schemas, runnable examples and registration. The completed baseline remains diagnostic history; no 12/12 behavioral gate, no new secret-safe editing helper, no retries solely to enforce model behavior.
 
 - 2026-09-26: Phase 2 complete, self-review APPROVE under the user-amended scope. Both English skills/descriptions rewritten at 1.1.0, generated copies synchronized; 14 focused tests, typecheck and diff checks pass. Named examples verify canonical sessions validation, invalid endpoint rejection without source mutation, and skill loading without provider credentials. All bodies fit 8192 bytes. Phase 3 in_progress.
+
+- 2026-09-26: Phase 3 complete, self-review APPROVE. Remaining English skills/manifests rewritten at 1.1.0; packaged authoring guide and generated copies synchronized. Final npm run check: 334/334 passing, with installed-package checks; diff clean. Five optional how-to diagnostics completed with intended skills, 35 requests/39 tool calls; model extra work and paraphrase errors documented rather than enforced. All amended acceptance criteria met; CI remains disabled and no install/push/personal-config changes were made.

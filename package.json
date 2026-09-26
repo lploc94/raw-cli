@@ -20,6 +20,7 @@
     "examples/tools",
     "examples/skills",
     "examples/agents",
+    "docs/skill-authoring.md",
     "README.md"
   ],
   "scripts": {

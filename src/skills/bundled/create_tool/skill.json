@@ -1,7 +1,7 @@
 {
   "api_version": 1,
   "id": "create_tool",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "create_tool",
-  "description": "Build and register a standalone Raw tool plugin with strict JSON Schema, synchronous batch preflight, handler results, and policy checks."
+  "description": "Use when creating, modifying or explaining a callable Raw tool plugin: define its input schema and handler, register it on an agent and verify real behavior. Reusable instructions alone belong in create_skill."
 }

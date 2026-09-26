@@ -1,6 +1,6 @@
 # Raw skill authoring cheatsheet
 
-Research draft, 2026-09-26. This guide informs the proposed rewrite of Raw's five setup skills; it does not claim that the current skills already follow it.
+Updated 2026-09-26. This guide describes the authoring approach used by Raw's five English setup skills.
 
 ## What makes a skill useful
 
@@ -82,7 +82,7 @@ This is a writing aid, not a parser schema or a mandatory list of headings. A cr
 - **Distinguish verification levels.** `raw config list` validates configuration structure. Loading a prompt/plugin and calling a selected MCP tool require their own checks. In particular, `sessions` is canonical-only: validating a copied canonical config as an arbitrary alternate file will fail. Stage such a candidate as `raw/config.json` under a temporary `XDG_CONFIG_HOME`, preserving its `sessions` data; static config validation does not require copying prompt/tool/skill folders.
 - **Stop when the request is answered.** Smoke tests are conditional on the requested change. Do not start a recursive model task solely to prove a prose explanation.
 
-These rules are grounded in Raw's contracts and real setup sessions. The user clarified that the target is correct, useful instructions: extra model actions and Raw config secret reads are not acceptance criteria or new runtime controls.
+These rules are grounded in Raw's contracts and setup sessions. The target is correct, useful instructions. Model-dependent extra actions and config reads are diagnostic observations, not behavior enforced by this skill kit.
 
 ## Evaluate discovery and execution separately
 

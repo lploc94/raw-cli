@@ -34,7 +34,7 @@ Optional fields:
 - `skills: { "use": [exact IDs] }` (`skills.use`): unique `builtin/`, `local/`, `agent/` IDs; nonempty requires both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. Catalog/body arrive only through linked list/load results, not the initial prompt.
 - `system_prompt`: literal string (including empty) OR `system_prompt_file`: nonempty UTF-8 path, relative to config or absolute; never both.
 - Positive integers `max_steps` (25), `max_output_bytes` (8192), `request_timeout_ms` (120000). Numeric CLI flags override corresponding `RAW_*` variables, then agent values.
-- `tools.rules`: ordered `{ "match": string, "effect": "allow" | "ask" | "deny" }` entries; last matching rule wins, unmatched calls run. Match canonical IDs or supported policy patterns. Only `ask` permits `when: { "any": string, "regex": string }`: schema-bound string path plus RE2 search pattern. Bash uses `commands[*].command`. `-y` cannot bypass explicit ask; headless ask without an approval channel fails closed. Regex matching is not a shell parser or sandbox.
+- `tools.rules`: ordered `{ "match": string, "effect": "allow" | "ask" | "deny" }` entries; last matching rule wins, unmatched calls run. Match canonical IDs or globs: `*` any text, `?` one character. Only `ask` permits `when: { "any": string, "regex": string }`: schema-bound string path plus RE2 search pattern. Bash uses `commands[*].command`. `-y` cannot bypass explicit ask; headless ask without an approval channel fails closed. Regex matching is not a shell parser or sandbox.
 
 ### Request, cache and compact
 
