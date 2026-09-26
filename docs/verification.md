@@ -2,7 +2,7 @@
 
 ## Terminal output redesign qualification
 
-On 2026-09-26, the implementation at source commit `0945f1cee89d04e1b74bd122ea523e715cdd71a9` passed `npm run check` (368/368) and `npm run test:package` (2/2) locally. The packed consumer exercised a highlighted PTY answer and read preview, byte-exact redirected output, installed docs/skills/tools, MCP, ACP and public imports. A fixed no-network gallery was inspected at 40/80/120 columns with light/dark/terminal themes and ASCII/Unicode icons. [Terminal output evidence](evidence/terminal-output.md) records the artifact hash, commands, representative transcript, and limits. The user's global installation and state were not modified.
+On 2026-09-26, the implementation at source commit `9ede7835eb749d6311a00449a8edb2f784979910` passed `npm run check` (368/368) and `npm run test:package` (2/2) locally. The packed consumer exercised a highlighted PTY answer and read preview, byte-exact redirected output, installed docs/skills/tools, MCP, ACP and public imports. A fixed no-network gallery was inspected at 40/80/120 columns with light/dark/terminal themes and ASCII/Unicode icons. [Terminal output evidence](evidence/terminal-output.md) records the artifact hash, commands, representative transcript, and limits. The user's global installation and state were not modified.
 
 ## Persistent-session qualification
 

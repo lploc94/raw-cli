@@ -1,15 +1,17 @@
 # Terminal output qualification — 2026-09-26
 
-The exact implementation source is commit `0945f1cee89d04e1b74bd122ea523e715cdd71a9` (tree `89e3b7978855df767f2b175131a82cccd8b291ae`). The local packed artifact `raw-cli-0.1.0.tgz` has SHA-256 `fad2531e79e4886fa0ea935e4d4bd3c8362685ac4dd4c7e1e78e0a64ff64fc4a`. This is local mock-provider and renderer qualification, not a hosted-model or GitHub Actions run. The user's installed CLI/config/session store were not changed.
+The exact implementation source is commit `9ede7835eb749d6311a00449a8edb2f784979910` (tree `acf0a08e3ce445355e2d926cccc4ab62b0d7e3bf`). The local packed artifact `raw-cli-0.1.0.tgz` has SHA-256 `c84294fb7ddf5e12d636532bf20ca81fdb84b6a3e630a84e23c7c52392117ffe`. This is local mock-provider and renderer qualification, not a hosted-model or GitHub Actions run. The user's installed CLI/config/session store were not changed.
 
 | Gate | Result |
 | --- | --- |
-| `npm run check` | 368/368 tests passed (`/tmp/raw-terminal-phase6-check1.log`) |
-| `npm run test:package` | 2/2 passed (`/tmp/raw-terminal-phase6-package-final.log`) |
+| `npm run check` | 368/368 tests passed (`/tmp/raw-terminal-lazy-check.log`) |
+| `npm run test:package` | 2/2 passed (`/tmp/raw-terminal-lazy-package.log`) |
 | `git diff --check` | Passed before the source commit |
 | Shipped `configure_raw` skill | 8,154 bytes, within its 8,192-byte load cap; installed `docs/terminal-output.md` byte-matches source |
 
 The installed-consumer test used `npm pack` and `npm install` in a temporary project outside this checkout. It ran the packed executable through a real PTY against a local mock provider: `read_file` returned `installed-preview.ts`, and both the read preview and streamed fenced TypeScript showed keyword color. The same installed executable then ran with redirected stdout, `--color always`, and ASCII icons; stdout was byte-exact source Markdown with no ANSI in either stream. Existing packed MCP, ACP, skill/tool asset, JavaScript import, and TypeScript consumer checks also passed.
+
+The final build separates CLI/history rendering into lazy chunks. `dist/raw.js` contains no direct `marked` or `lowlight` import; ACP startup loads neither grammar dependency. Two full-suite runs with an eager single bundle hit an existing 2-second ACP initialization timeout under concurrent test load, while that test passed in isolation. After splitting and lazy import, the same full suite passed, with the ACP framing case completing in 1.66 seconds. No ACP framing, provider, or protocol behavior changed.
 
 The deterministic gallery ran without config, session state, tools, provider, or network:
 
