@@ -14,7 +14,7 @@ const suites = {
   cli: ["cli", "repl", "package"],
   sessions: ["session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp",
     "session-retention", "session-transition", "session-replay", "tool-plugins", "cache", "provider-content", "auto-compact"],
-  sharing: ["package-manifest", "component-references", "skill-frontmatter", "package-export", "package-archive", "skill-tools", "bundled-skills"],
+  sharing: ["package-manifest", "component-references", "skill-frontmatter", "package-export", "package-archive", "package-store", "package-lifecycle", "skill-tools", "bundled-skills"],
 };
 
 const selector = process.argv[2];
@@ -31,12 +31,14 @@ if (!files || files.some((file) => !existsSync(file))) {
   else {
     const configHome = mkdtempSync(join(tmpdir(), "raw-test-config-"));
     const stateHome = mkdtempSync(join(tmpdir(), "raw-test-state-"));
+    const dataHome = mkdtempSync(join(tmpdir(), "raw-test-data-"));
     const result = spawnSync(process.execPath, ["--import", "tsx", "--test", ...files], {
       stdio: "inherit",
-      env: { ...process.env, XDG_CONFIG_HOME: configHome, XDG_STATE_HOME: stateHome },
+      env: { ...process.env, XDG_CONFIG_HOME: configHome, XDG_STATE_HOME: stateHome, XDG_DATA_HOME: dataHome },
     });
     rmSync(configHome, { recursive: true, force: true });
     rmSync(stateHome, { recursive: true, force: true });
+    rmSync(dataHome, { recursive: true, force: true });
     process.exitCode = result.status ?? 1;
   }
 }

@@ -412,6 +412,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: export and pack portable raw artifacts`
 
 ## Phase 6: Install, update and develop packages transactionally
+Status: complete (2026-09-26).
 
 ### Goal
 Provide the artifact store, installation lock and local authoring lifecycle without editing active session state.
@@ -441,9 +442,9 @@ Run a reader during update and a provider/tool import after its source folder is
 ### Implementation obligations
 Hash complete selected component file closures, excluding labels/paths/mtime. Use per-artifact/development snapshots so Node import caching cannot retain helper modules from a prior version. Expose data-only effective binding validation for update; do not load executable code to check compatibility.
 ### Acceptance criteria
-- [ ] AC-17: Concurrent/faulted installation leaves one coherent lock and complete referenced artifacts — process/failure tests.
-- [ ] AC-18: Update keeps local bindings and running snapshots; next attach resolves the new artifact — lifecycle tests.
-- [ ] AC-19: Link/fork enables code/schema/prompt editing without corrupting installed artifacts — development tests.
+- [x] AC-17: Concurrent/faulted installation leaves one coherent lock and complete referenced artifacts — process/failure tests.
+- [x] AC-18: Update keeps local bindings and running snapshots; next attach resolves the new artifact — lifecycle tests.
+- [x] AC-19: Link/fork enables code/schema/prompt editing without corrupting installed artifacts — development tests.
 ### Focused verification
 `npm run test:phase -- sharing`
 ### Phase gates
@@ -560,6 +561,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
+- 2026-09-26: Phase 6 complete. Added per-config atomic install authority, owned writer lock and stale-process recovery, immutable artifact/dependency publication, update/removal binding checks, and linked/forked development snapshots. Docs and red tests preceded implementation. `npm run test:phase -- sharing` passed 36/36, `npm run typecheck` passed, `git diff --check` passed. Self-review APPROVE: concurrent writers retain both aliases; injected faults leave old locks intact; runtime snapshots keep helper bytes; package operations do not open sessions or start executable components.
 - 2026-09-26: Phase 5 complete. Added data-only mixed-agent export with explicit include/binding choices and missing-asset draft reports; bounded deterministic ZIP packing, integrity inventory, safe archive validation/extraction and nested exact dependency checks. Static selected tool imports and agent references must be covered by the declared graph. `npm run test:phase -- sharing` passed 29/29, `npm run typecheck` passed, `npm run test:package` passed 2/2, `git diff --check` passed; final export-path refinement passed focused export/archive tests 7/7 and typecheck. Self-review APPROVE: no runtime plugin/provider/MCP/model/session startup in packaging APIs; author-only paths and secret model fields are absent from the artifact by default.
 - 2026-09-26: Phase 4 complete. Added `raw-package.schema.json` and data-only manifest, reference, input and component APIs; exact SemVer and YAML parsers are pinned. Migrated selected skills and five bundled examples to one Agent Skills frontmatter source, copied full skill directories, and removed `skill.json`. Docs explain six exports, aliases, input sites and package identity. Red tests preceded implementation. `npm run test:phase -- sharing` passed 19/19, `npm run typecheck` passed, `npm run check` passed 428/428, `npm run test:package` passed 2/2, `git diff --check` passed. Self-review APPROVE: parser/resolver imports no handlers or providers; release-only tool/package labels do not change fingerprints; selected skill bodies still load at the tail.
 - 2026-09-26: Phase 3 complete. CLI explicit agent/config overrides now become saved defaults, SDK returns refreshed metadata, ACP uses current base selection while retaining compatible explicit views and pruning unavailable historical aliases. Removed-config recovery and A→B→B CLI/SDK/ACP tests added; selected bundled skill instructions updated within the 8 KiB load cap. `npm run test:phase -- sessions` passed 130/130; final `npm run check` passed 419/419; `git diff --check` passed. Local evidence: `docs/evidence/milestone-a-session-continuity.md`. Self-review APPROVE: no saved-runtime equality gate remains on these surfaces; current invalid references still fail and existing policy/vars/UI regressions pass.

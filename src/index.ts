@@ -36,6 +36,9 @@ export type { ExportAgentOptions, ExportAgentReport } from "./packages/export.js
 export { inspectPackage, validatePackage } from "./packages/inspect.js";
 export type { PackageReport } from "./packages/inspect.js";
 export { packPackage, validatePackageArchive, unpackPackage } from "./packages/archive.js";
+export { installPackage, updatePackage, removePackage, linkPackage, forkPackage,
+  listInstalledPackages, resolveInstalledPackage } from "./packages/store.js";
+export type { PackageStoreOptions, PackageEntry, InstallPackageOptions, PackageAliasOptions, ForkPackageOptions } from "./packages/store.js";
 export type { ToolManifest, ToolPlugin } from "./tools/plugins/contract.js";
 export { viewImageTool, MAX_IMAGE_BYTES } from "./tools/image.js";
 export type { ToolDefinition, ToolRegistration, ToolPolicyRule } from "./tools/registry.js";
