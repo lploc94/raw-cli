@@ -323,7 +323,8 @@ test("T-08 review: SIGINT during MCP startup reaps owned stdio child", async () 
   child.stdout.resume(); child.stderr.resume();
   let mcpPid = 0;
   try {
-    for (let attempt = 0; attempt < 100; attempt++) {
+    // Full-suite process startup can consume several seconds before the fixture writes its marker.
+    for (let attempt = 0; attempt < 300; attempt++) {
       try { await access(started); break; } catch { await new Promise((resolve) => setTimeout(resolve, 20)); }
     }
     await access(started);
