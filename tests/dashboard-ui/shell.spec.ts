@@ -220,6 +220,25 @@ test("history pagination preserves the viewport and does not dispatch historical
     page.getByText("Message 74 with saved content", { exact: true }),
   ).toBeVisible();
   const viewport = page.locator(".conversation-scroll");
+  const expectSingleChatScroll = async () => {
+    expect(
+      await page.locator("#main").evaluate((element) =>
+        element.scrollHeight - element.clientHeight,
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      await viewport.evaluate((element) =>
+        element.scrollHeight > element.clientHeight && element.clientHeight > 0,
+      ),
+    ).toBe(true);
+    await expect(
+      page.getByRole("textbox", { name: "Message", exact: true }),
+    ).toBeInViewport();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight),
+    ).toBe(true);
+  };
+  await expectSingleChatScroll();
   await viewport.evaluate((element) => {
     element.scrollTop = 0;
   });
@@ -237,6 +256,18 @@ test("history pagination preserves the viewport and does not dispatch historical
     page.getByRole("button", { name: "Jump to latest" }),
   ).toBeVisible();
   expect(raw.provider.requests.length).toBe(0);
+  for (const size of [
+    { width: 1440, height: 900 },
+    { width: 800, height: 600 },
+    { width: 320, height: 900 },
+  ]) {
+    await page.setViewportSize(size);
+    await expectSingleChatScroll();
+    await viewport.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expectSingleChatScroll();
+  }
 });
 
 test("legacy tool IDs reused in different turns retain separate results and honest preview labels", async ({

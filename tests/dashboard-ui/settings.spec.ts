@@ -45,7 +45,12 @@ test("invalid config repair uses a lazy strict JSON editor and never discards a 
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator("section").filter({ has: editor }).getByRole("alert")).toContainText("invalid JSON config");
   expect(readFileSync(raw.configPath, "utf8")).toBe("{broken");
-  await editor.fill(before);
+  // Use the editor's selection command; DOM-level fill can append to CodeMirror in Firefox.
+  await editor.press("ControlOrMeta+a");
+  await editor.press("Backspace");
+  await expect(editor).toHaveText("");
+  await page.keyboard.insertText(before);
+  await expect(editor).toHaveText(before);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => readFileSync(raw.configPath, "utf8")).toBe(before);
 });

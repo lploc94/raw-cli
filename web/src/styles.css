@@ -669,6 +669,8 @@ main > .error-banner {
   white-space: nowrap;
 }
 .conversation-scroll {
+  /* Keep positioned message controls and their hidden announcements inside this scroller. */
+  position: relative;
   overflow: auto;
   flex: 1;
   min-height: 0;
