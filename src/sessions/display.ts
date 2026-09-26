@@ -1,14 +1,9 @@
-import type { ToolResult } from "../tools/types.js";
 import type { RunEvent } from "../agent.js";
 import type { ContentBlock, SessionUpdate } from "@agentclientprotocol/sdk";
 import { renderUserInput } from "../llm/types.js";
 import type { UserInput } from "../llm/types.js";
 import type { HistoryItem } from "./store.js";
-import { projectToolCall, projectToolResult, renderPlainToolResult, type VisibleToolCall, type VisibleToolResult } from "./visible.js";
-
-export function resultPreview(name: string, result: ToolResult, identity?: string): string {
-  return renderPlainToolResult(projectToolResult(name, identity, result));
-}
+import { projectToolCall, renderPlainToolResult, type VisibleToolCall, type VisibleToolResult } from "./visible.js";
 
 export function toolArguments(name: string, args: Record<string, unknown>, full = false, identity?: string): string {
   const json = JSON.stringify(projectToolCall(name, identity, args, true).arguments);

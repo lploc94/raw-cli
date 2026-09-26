@@ -21,7 +21,11 @@ def size(columns_env, rows_env):
     rows = int(os.environ.get(rows_env, "0"))
     if columns > 0 and rows > 0:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
-        os.killpg(pid, signal.SIGWINCH)
+        try:
+            os.killpg(pid, signal.SIGWINCH)
+        except ProcessLookupError:
+            # The child may still be creating its process group at startup.
+            pass
 
 
 size("RAW_TEST_PTY_COLUMNS", "RAW_TEST_PTY_ROWS")

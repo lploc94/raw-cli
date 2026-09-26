@@ -15,6 +15,7 @@ export function terminalScreen(source: string, width = 80): string[] {
       if (match[2] === "m") continue;
       if (match[2] === "K" && (match[1] === "2" || match[1] === "")) { rows[row] = []; column = 0; continue; }
       if (match[2] === "A") { row = Math.max(0, row - Number(match[1] || "1")); column = 0; continue; }
+      if (match[2] === "B") { row += Number(match[1] || "1"); column = 0; ensure(); continue; }
       throw new Error(`unsupported cursor escape ${match[0]}`);
     }
     const point = String.fromCodePoint(source.codePointAt(i)!);

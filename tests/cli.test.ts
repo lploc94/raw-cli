@@ -76,7 +76,8 @@ test("CLI streams provider thinking to stderr and shows bash arguments before ex
     const result = await raw(["--config", testConfig("local", "fixture", fixture.url), "run a command"]);
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "done\n");
-    assert.match(result.stderr, /raw: thinking\nInspect files\.\n/);
+    assert.match(result.stderr, /raw: thinking\n/);
+    assert.doesNotMatch(result.stderr, /Inspect files\./);
     assert.match(result.stderr, /raw: bash \{"commands":\[\{"command":"printf sample","timeout_ms":1000\}\]\}/);
     assert.match(result.stderr, /raw: ↳ bash result\nstatuses: 0:ok\(exit0\)\n\{"index":0,"status":"ok","exit_code":0/);
     assert.match(result.stderr, /"stdout":"sample"/);
@@ -138,7 +139,7 @@ test("TTY starts tool activity on a new line after unfinished assistant text", a
   try {
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 0, output());
-    assert.match(output().replace(/\r/g, ""), /I will inspect the repo\.\nraw: bash \{"commands":\[\{"command":"pwd"\}\]\}\nraw: ↳ bash result\n/);
+    assert.match(output().replace(/\r/g, ""), /I will inspect the repo\.\n\$ bash  pwd\n✓ bash/);
   } finally { child.kill("SIGTERM"); await fixture.close(); }
 });
 
@@ -174,13 +175,13 @@ test("TTY renders thinking in dim color while keeping the answer separate", asyn
     openAiFrame({ reasoning_content: "Checking context." }),
     openAiFrame({ content: "ready" }, "stop"), openAiDone,
   ] }]);
-  const { child, output } = ptyRaw(["--config", testConfig("deepseek", "fixture", fixture.url), "check"],
+  const { child, output } = ptyRaw(["--config", testConfig("deepseek", "fixture", fixture.url), "--reasoning", "full", "check"],
     { ...process.env, DEEPSEEK_API_KEY: "key", NO_COLOR: "", TERM: "xterm-256color" });
   try {
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 0, output());
-    assert.match(output(), /raw: \x1b\[2mthinking\x1b\[0m/);
-    assert.match(output(), /\x1b\[2mChecking context\.\x1b\[0m/);
+    assert.match(output(), /◌ Thinking…/);
+    assert.match(output(), /\x1b\[35mChecking context\.\x1b\[0m/);
     assert.match(output(), /ready/);
   } finally { child.kill("SIGTERM"); await fixture.close(); }
 });
@@ -262,7 +263,7 @@ test("explicit agent ask prompts once in a TTY and -y does not bypass it", async
   await writeFile(configPath, JSON.stringify(document));
   const { child, output } = ptyRaw(["--config", configPath, "-y", "write"], { ...process.env, OPENAI_API_KEY: "key" });
   try {
-    await waitFor(output, "allow write_file");
+    await waitFor(output, "Allow write_file?");
     await assert.rejects(access(join(root, "allowed.txt")));
     assert.match(output(), /allowed\.txt/);
     assert.match(output(), /also-allowed\.txt/);
@@ -273,7 +274,7 @@ test("explicit agent ask prompts once in a TTY and -y does not bypass it", async
     assert.equal(await readFile(join(root, "allowed.txt"), "utf8"), "secret-first-payload");
     assert.equal(await readFile(join(root, "also-allowed.txt"), "utf8"), "secret-second-payload");
     assert.doesNotMatch(output(), /secret-first-payload|secret-second-payload/);
-    assert.equal((output().match(/allow write_file/g) ?? []).length, 1);
+    assert.equal((output().match(/Allow write_file\?/g) ?? []).length, 1);
   } finally { child.kill("SIGTERM"); await fixture.close(); }
 });
 
@@ -386,11 +387,11 @@ test("T-08b: Ctrl-C during an active PTY tool aborts it and exits 130", async ()
   const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "-y", "run shell"],
     { ...process.env, OPENAI_API_KEY: "key", NO_COLOR: "", TERM: "xterm-256color" });
   try {
-    await waitFor(output, "⚙ bash");
+    await waitFor(output, "$ bash");
     child.stdin.write("\x03");
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 130, output());
-    assert.match(output(), /\x1b\[1;36m⚙ bash\x1b\[0m/);
+    assert.match(output(), /\x1b\[36m\$ bash\x1b\[0m/);
     await new Promise((resolve) => setTimeout(resolve, 650));
     await assert.rejects(access(join(root, "marker")));
   } finally { child.kill("SIGTERM"); await fixture.close(); }
@@ -406,7 +407,7 @@ test("T-08b: REPL Ctrl-C aborts active work, then Ctrl-C while idle exits", asyn
   try {
     await waitFor(output, "> ");
     child.stdin.write("run shell\n");
-    await waitFor(output, join(root, "marker"));
+    await waitFor(output, "$ bash");
     child.stdin.write("\x03");
     await waitFor(output, "raw: cancelled");
     const until = Date.now() + 3000;

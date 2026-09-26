@@ -1,5 +1,5 @@
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import { createAgent, type AgentSession, type RunEvent, type RunResult } from "./agent.js";
+import { createAgent, type AgentSession, type RunResult } from "./agent.js";
 import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { createRuntimeTools } from "./tools/plugins/runtime.js";
@@ -7,97 +7,27 @@ import { renderStoredHistory } from "./sessions/display.js";
 import { runSessionMaintenance } from "./sessions/maintenance.js";
 import type { SessionStore, SessionSummary } from "./sessions/store.js";
 
-export { resultPreview } from "./sessions/display.js";
 import { toolArguments } from "./sessions/display.js";
-import { projectToolCall, projectToolResult, renderPlainToolResult } from "./sessions/visible.js";
+import { TerminalRenderer } from "./terminal/renderer.js";
 
-function textRun(session: AgentSession, task: string): Promise<RunResult> {
-  let wrote = false;
-  let endedWithNewline = false;
-  let thinkingOpen = false;
-  let thinkingEndedWithNewline = false;
-  const pendingCalls = new Map<string, { name: string; arguments: Record<string, unknown> }>();
-  const color = Boolean(process.stderr.isTTY && !process.env.NO_COLOR && process.env.TERM !== "dumb");
-  const style = (value: string, code: string) => color ? `\x1b[${code}m${value}\x1b[0m` : value;
-  const finishThinking = () => {
-    if (thinkingOpen && !thinkingEndedWithNewline) process.stderr.write("\n");
-    thinkingOpen = false;
-  };
-  const finishTextLine = () => {
-    if (wrote && !endedWithNewline) {
-      process.stdout.write("\n");
-      endedWithNewline = true;
-    }
-  };
-  const show = (event: RunEvent) => {
-    if (event.type === "text_delta") {
-      finishThinking();
-      process.stdout.write(event.text);
-      wrote ||= event.text.length > 0;
-      if (event.text.length) endedWithNewline = event.text.endsWith("\n");
-    } else if (event.type === "reasoning_delta" && event.text) {
-      finishTextLine();
-      if (!thinkingOpen) process.stderr.write(`raw: ${style("thinking", "2")}\n`);
-      process.stderr.write(style(event.text, "2"));
-      thinkingOpen = true;
-      thinkingEndedWithNewline = event.text.endsWith("\n");
-    } else if (event.type === "tool_call") {
-      pendingCalls.set(event.id, { name: event.name, arguments: event.arguments });
-    } else if (event.type === "tool_start") {
-      pendingCalls.delete(event.id);
-      finishTextLine();
-      finishThinking();
-      const label = color ? style(`⚙ ${event.name}`, "1;36") : event.name;
-      const args = ` ${style(JSON.stringify(event.display?.arguments ?? projectToolCall(event.name, session.toolIdentity(event.name), event.arguments, true).arguments), "2")}`;
-      process.stderr.write(`raw: ${label}${args}\n`);
-    }
-    else if (event.type === "tool_result") {
-      finishTextLine();
-      finishThinking();
-      const pending = pendingCalls.get(event.id);
-      if (pending) {
-        pendingCalls.delete(event.id);
-        const args = JSON.stringify(projectToolCall(pending.name, session.toolIdentity(pending.name), pending.arguments, false).arguments);
-        process.stderr.write(`raw: ${style(`⚠ ${pending.name}`, "1;33")} ${style(args, "2")}\n`);
-      }
-      const result = event.result;
-      const display = event.display ?? projectToolResult(event.name, session.toolIdentity(event.name), result);
-      const failed = display.failed;
-      const meta = [
-        ...(typeof result.exitCode === "number" ? [`exit ${result.exitCode}`] : []),
-        ...(result.code ? [result.code] : []),
-        ...(result.truncated ? ["model output capped"] : []),
-      ];
-      const preview = renderPlainToolResult(display);
-      const label = `${failed ? "✗" : "↳"} ${event.name} result${meta.length ? ` (${meta.join(", ")})` : ""}${preview ? "" : " (empty)"}`;
-      process.stderr.write(`raw: ${style(label, failed ? "1;31" : "2")}\n`);
-      if (preview) process.stderr.write(`${style(preview, "2")}\n`);
-    } else if (event.type === "compact_start") {
-      finishTextLine();
-      process.stderr.write(`raw: compacting context (${event.estimatedTokens} estimated input tokens)\n`);
-    } else if (event.type === "compact_end") {
-      finishTextLine();
-      process.stderr.write(`raw: compact ${event.result.status}\n`);
-    }
-  };
-  return session.run(task, show).then((result) => {
-    finishThinking();
-    if (!wrote && result.text) {
-      process.stdout.write(result.text);
-      endedWithNewline = result.text.endsWith("\n");
-      wrote = true;
-    }
-    if (wrote && !endedWithNewline) process.stdout.write("\n");
+async function textRun(session: AgentSession, task: string, renderer: TerminalRenderer): Promise<RunResult> {
+  renderer.start();
+  try {
+    const result = await session.run(task, renderer.event);
+    renderer.finish(result);
     return result;
-  });
+  } catch (error) {
+    renderer.beforeInput();
+    throw error;
+  }
 }
 
-function statusCode(result: RunResult): number {
+function statusCode(result: RunResult, quiet = false): number {
   if (result.status === "completed") return 0;
   if (result.status === "cancelled") return 130;
-  if (result.status === "max_steps") { process.stderr.write("raw: maximum steps reached\n"); return 3; }
-  if (result.code === "approval_required") { process.stderr.write("raw: tool approval required by caller\n"); return 2; }
-  process.stderr.write(`raw: ${result.code ?? "agent_error"}\n`);
+  if (result.status === "max_steps") { if (!quiet) process.stderr.write("raw: maximum steps reached\n"); return 3; }
+  if (result.code === "approval_required") { if (!quiet) process.stderr.write("raw: tool approval required by caller\n"); return 2; }
+  if (!quiet) process.stderr.write(`raw: ${result.code ?? "agent_error"}\n`);
   return 1;
 }
 
@@ -132,10 +62,11 @@ function lineQueue(rl: ReadlineInterface): {
   return { next: (signal) => take(0, signal), nextAfter: take, mark: () => lastId };
 }
 
-async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, args: Record<string, unknown>, signal?: AbortSignal, identity?: string): Promise<boolean> {
+async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, args: Record<string, unknown>, signal?: AbortSignal, identity?: string, renderer?: TerminalRenderer): Promise<boolean> {
   if (signal?.aborted) return false;
   const mark = lines.mark();
-  process.stderr.write(`raw: allow ${name} ${toolArguments(name, args, true, identity)}? [y/N] `);
+  process.stderr.write(renderer?.approvalPrompt(name, args, identity)
+    ?? `raw: allow ${name} ${toolArguments(name, args, true, identity)}? [y/N] `);
   const answer = await lines.nextAfter(mark, signal);
   return answer !== undefined && /^(?:y|yes)$/i.test(answer.trim());
 }
@@ -167,6 +98,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   const lines = rl ? lineQueue(rl) : undefined;
   let closed = false;
   let cancelledWhileIdle = false;
+  let currentRenderer: TerminalRenderer | undefined;
   const createSavedSession = (title: string) => store.createSession({ cwd, title,
     agentName: runtime.modelConfig!.agentName, configPath: runtime.configPath, modelId: runtime.modelConfig!.model,
     provider: runtime.modelConfig!.provider, method: runtime.modelConfig!.method,
@@ -177,7 +109,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
     requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
     persistence: { store, sessionId: id, surface: "cli" },
-    ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal, tools.registry.canonicalIdentity(name)) } : {}) });
+    ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal, tools.registry.canonicalIdentity(name), currentRenderer) } : {}) });
   let session: AgentSession;
   let record: SessionSummary;
   try {
@@ -185,7 +117,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     session = createRuntimeAgent(record.id);
   } catch (error) { rl?.close(); await tools.mcp.close(); throw error; }
   const interrupt = () => {
-    if (session.abort()) { process.stderr.write("\nraw: cancelled\n"); return; }
+    currentRenderer?.beforeInput();
+    if (session.abort()) { if (!currentRenderer?.rich) process.stderr.write("\nraw: cancelled\n"); return; }
     cancelledWhileIdle = true;
     rl?.close();
   };
@@ -200,8 +133,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   rl?.on("close", onClose);
   try {
     if (task !== undefined) {
-      const result = await textRun(session, task);
-      const code = statusCode(result);
+      currentRenderer = new TerminalRenderer(session, runtime, cwd, true);
+      const result = await textRun(session, task, currentRenderer);
+      const code = statusCode(result, currentRenderer.rich);
       if (result.status === "completed") {
         const stats = session.stats();
         const usage: string[] = [];
@@ -223,6 +157,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       return code;
     }
     if (!rl || !lines) throw new Error("interactive input unavailable");
+    new TerminalRenderer(session, runtime, cwd, true).start();
     if (selected) for (const item of store.getSessionHistory({ sessionId: selected.id }).items) {
       process.stdout.write(`${renderStoredHistory(item)}\n`);
     }
@@ -252,9 +187,11 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
         } catch { process.stderr.write("raw: compaction failed\n"); }
         continue;
       }
-      const result = await textRun(session, line);
-      if (result.code === "approval_required" && !process.stdin.isTTY) return statusCode(result);
-      if (result.status !== "completed" && result.status !== "cancelled") statusCode(result);
+      currentRenderer = new TerminalRenderer(session, runtime, cwd, false);
+      const result = await textRun(session, line, currentRenderer);
+      if (result.code === "approval_required" && !process.stdin.isTTY) return statusCode(result, currentRenderer.rich);
+      if (result.status !== "completed" && result.status !== "cancelled") statusCode(result, currentRenderer.rich);
+      currentRenderer = undefined;
     }
     return cancelledWhileIdle ? 130 : 0;
   } finally {

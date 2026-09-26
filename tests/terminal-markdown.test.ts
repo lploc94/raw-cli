@@ -48,7 +48,11 @@ test("large incomplete blocks keep progressing with bounded parser source", () =
   const stream = new MarkdownStream(ui, color, 40);
   const content = "```ts\n" + "const x = 1;\n".repeat(4000);
   let committed = "";
-  for (const chunk of content.match(/.{1,100}/gs)!) committed += stream.push(chunk).committed;
+  for (const chunk of content.match(/.{1,100}/gs)!) {
+    const frame = stream.push(chunk);
+    committed += frame.committed;
+    assert.ok(frame.tail.split("\n").length <= 21);
+  }
   committed += stream.flush();
   assert.ok(committed.includes("const x = 1;"));
   assert.equal(strip(committed).match(/const x = 1;/g)?.length, 4000);

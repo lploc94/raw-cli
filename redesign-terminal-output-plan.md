@@ -357,6 +357,8 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Phase 4: Live renderer, tool activity, and input-safe status presentation
 
+Status: complete (2026-09-26). Implementation self-review: APPROVE.
+
 ### Goal
 Replace scattered writes in the live run with the approved visual hierarchy and shared formatters.
 
@@ -391,9 +393,9 @@ Mock-provider request bodies must match across UI settings after excluding only 
 Remove duplicate formatting/write ownership from `textRun`, status, compact and signal handlers. Input coordination must retain buffered REPL lines, fresh approval answers and default-no behavior. Display-only failures recover as plain text; I/O failures follow existing error handling. Dispose timers/listeners in existing `finally` cleanup.
 
 ### Acceptance criteria
-- [ ] AC-4.1: One-shot TTY output implements the approved hierarchy, icons/themes and highlighted code across all density modes — screen/PTY tests.
-- [ ] AC-4.2: Approval/cancellation/EOF preserve behavior and leave terminal/input state clean — CLI/PTY tests.
-- [ ] AC-4.3: Pipes, model requests, tools, MCP and ACP retain their contracts — cross-mode assertions/full regression.
+- [x] AC-4.1: One-shot TTY output implements the approved hierarchy, icons/themes and highlighted code across all density modes — screen/PTY tests.
+- [x] AC-4.2: Approval/cancellation/EOF preserve behavior and leave terminal/input state clean — CLI/PTY tests.
+- [x] AC-4.3: Pipes, model requests, tools, MCP and ACP retain their contracts — cross-mode assertions/full regression.
 
 ### Focused verification
 `npm run build`
@@ -550,3 +552,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 2 complete, implementation self-review APPROVE. New record tests were red before production code; isolated focused suite passed 35/35, repair-focused suites passed 60/60, and final `npm run check` passed 346/346. Repaired the crash-recovery writer found by full regression and preserved head/tail under a near-budget preview. One direct focused invocation inherited the user's old global schema; it was stopped and rerun with isolated XDG state. Evidence: `/tmp/raw-terminal-phase2-red.log`, `/tmp/raw-terminal-phase2-final-focused.log`, `/tmp/raw-terminal-phase2-repair-focused.log`, `/tmp/raw-terminal-phase2-head-check.log`.
 - 2026-09-26: Phase 2 commit `79d2619`; Phase 3 in progress.
 - 2026-09-26: Phase 3 complete, implementation self-review APPROVE. Pinned Marked 18.0.14 and Lowlight 3.3.0 (public lexer/HAST APIs). Focused syntax/Markdown/layout suite passed 9/9; `npm run check` passed 352/352. Incremental formatter reparses only the bounded active block, displays partial frames immediately, and falls back to literal text after 32 KiB. Evidence: `/tmp/raw-terminal-phase3-red.log`, `/tmp/raw-terminal-phase3-focused3.log`, `/tmp/raw-terminal-phase3-check.log`.
+- 2026-09-26: Phase 3 commit `2640e6b`; Phase 4 in progress.
+- 2026-09-26: Phase 4 complete, implementation self-review APPROVE. Introduced one event renderer for rich and append-only CLI paths, semantic tool formatter, bounded transient writer, explicit no-color ASCII presentation, and control-byte display escaping. Screen/PTY tests cover final visible scrollback, densities, syntax colors, approval, cancellation, and piping. Focused CLI tests passed 31/31; final `npm run check` passed 359/359. Evidence: `/tmp/raw-terminal-phase4-red.log`, `/tmp/raw-terminal-phase4-repair.log`, `/tmp/raw-terminal-phase4-head-check.log`.

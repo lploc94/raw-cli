@@ -3,14 +3,12 @@ import { textWidth, wrapStyled } from "./layout.js";
 import { highlightCode } from "./highlight.js";
 import { paint } from "./theme.js";
 import type { TerminalCapabilities, UiOptions } from "./options.js";
+import { safeTerminalText } from "./safe.js";
 
 type Token = Record<string, unknown>;
 const LIMIT_BYTES = 32 * 1024;
 
-function safe(value: string): string {
-  return value.replace(/\x1b/g, "␛").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, (character) =>
-    character === "\n" ? "\n" : `^${String.fromCharCode(character.charCodeAt(0) ^ 64)}`);
-}
+const safe = safeTerminalText;
 
 function inline(tokens: unknown, ui: UiOptions, caps: TerminalCapabilities): string {
   if (!Array.isArray(tokens)) return "";
@@ -95,11 +93,26 @@ export interface MarkdownFrame { committed: string; tail: string }
 export class MarkdownStream {
   private pending = "";
   private fallback = false;
+  private fallbackLast = "";
   private peak = 0;
   constructor(private readonly ui: UiOptions, private readonly caps: TerminalCapabilities, private readonly width: number) {}
   get maxPendingBytes(): number { return this.peak; }
 
   push(chunk: string): MarkdownFrame {
+    if (this.fallback) {
+      const boundary = (this.fallbackLast + chunk).indexOf("\n\n");
+      if (boundary < 0) {
+        this.fallbackLast = chunk.slice(-1) || this.fallbackLast;
+        return { committed: safe(chunk), tail: "" };
+      }
+      const before = Math.max(0, boundary + 2 - this.fallbackLast.length);
+      const committed = safe(chunk.slice(0, before));
+      this.fallback = false;
+      this.fallbackLast = "";
+      const next = chunk.slice(before);
+      const frame = next ? this.push(next) : { committed: "", tail: "" };
+      return { committed: committed + frame.committed, tail: frame.tail };
+    }
     this.pending += chunk;
     let committed = "";
     while (true) {
@@ -110,22 +123,33 @@ export class MarkdownStream {
       this.pending = this.pending.slice(boundary + 2);
       this.fallback = false;
     }
-    while (Buffer.byteLength(this.pending, "utf8") > LIMIT_BYTES) {
-      const boundary = this.pending.lastIndexOf("\n", Math.min(this.pending.length, LIMIT_BYTES));
-      const cut = boundary > 0 ? boundary + 1 : Math.min(this.pending.length, 8192);
-      const block = this.pending.slice(0, cut);
-      committed += this.fallback ? safe(block) : renderMarkdown(block, this.ui, this.caps, this.width);
-      this.pending = this.pending.slice(cut);
+    if (Buffer.byteLength(this.pending, "utf8") > LIMIT_BYTES) {
+      committed += safe(this.pending);
+      this.fallbackLast = this.pending.slice(-1);
+      this.pending = "";
       this.fallback = true;
+      return { committed, tail: "" };
     }
     this.peak = Math.max(this.peak, Buffer.byteLength(this.pending, "utf8"));
-    return { committed, tail: this.fallback ? safe(this.pending) : renderMarkdown(this.pending, this.ui, this.caps, this.width) };
+    const tail = renderMarkdown(this.pending, this.ui, this.caps, this.width);
+    const logical = tail.replace(/\x1b\[[0-9;]*m/g, "").split("\n");
+    const rows = logical.reduce((sum, line, index) => sum + (index === logical.length - 1 && line === "" ? 0
+      : Math.max(1, Math.ceil(textWidth(line) / Math.max(1, this.width)))), 0);
+    if (rows > 20) {
+      committed += safe(this.pending);
+      this.fallbackLast = this.pending.slice(-1);
+      this.pending = "";
+      this.fallback = true;
+      return { committed, tail: "" };
+    }
+    return { committed, tail };
   }
 
   flush(): string {
     const result = this.fallback ? safe(this.pending) : renderMarkdown(this.pending, this.ui, this.caps, this.width);
     this.pending = "";
     this.fallback = false;
+    this.fallbackLast = "";
     return result;
   }
 }
