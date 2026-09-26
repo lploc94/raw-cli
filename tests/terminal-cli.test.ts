@@ -133,3 +133,28 @@ test("changing only UI settings on resume preserves the OpenAI cache key and too
     assert.match(next.stderr, new RegExp(`raw --resume ${id} "query"`));
   } finally { await provider.close(); }
 });
+
+test("compact shared-terminal header is one line and resume identifies the active session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-terminal-header-"));
+  const provider = await startMockProvider([
+    { frames: [openAiFrame({ content: "first", "finish_reason": "stop" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "second", "finish_reason": "stop" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const config = testConfig("openai", "fixture", provider.url);
+    const env = { ...process.env, OPENAI_API_KEY: "key", TERM: "xterm-256color", NO_COLOR: "",
+      XDG_STATE_HOME: join(root, "state"), XDG_CONFIG_HOME: join(root, "config") };
+    const first = await run(["--config", config, "--display", "compact", "first"], env, true);
+    assert.equal(first.code, 0, first.stdout + first.stderr);
+    const firstPlain = first.stdout.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+    assert.match(firstPlain, /◆ raw · agent fixture · model fixture\r?\n/);
+    assert.doesNotMatch(firstPlain, new RegExp(`${process.cwd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\r?\n`));
+    const id = firstPlain.match(/raw --resume ([0-9a-f-]+) "query"/)?.[1];
+    assert.ok(id);
+    const second = await run(["--resume", id, "--display", "compact", "second"], env, true);
+    assert.equal(second.code, 0, second.stdout + second.stderr);
+    const secondPlain = second.stdout.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+    assert.match(secondPlain, /◆ raw · agent fixture · model fixture · Resumed/);
+    assert.equal(provider.requests.length, 2);
+  } finally { await provider.close(); }
+});

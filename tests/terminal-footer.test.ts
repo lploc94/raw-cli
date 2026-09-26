@@ -48,6 +48,11 @@ test("failed and cancelled saved sessions retain continuation; persistence failu
     stats: { ...base, requests: 0 }, contextTokens: 1500, contextWindow: 1000, inputBudget: 836,
     sessionId: "id", resumable: true, ui, caps });
   assert.match(high, /150\.0%/);
+  assert.match(high, /input budget/);
+  const compactThreshold = formatTurnFooter({ status: "completed", elapsedMs: 1, startedToolCalls: 0, notRunToolCalls: 0,
+    stats: { ...base, requests: 0 }, contextTokens: 500, contextWindow: 1000, inputBudget: 836, compactTrigger: 400,
+    sessionId: "id", resumable: true, ui, caps });
+  assert.match(compactThreshold, /compact threshold/);
 });
 
 test("stats table reports coverage and no JSON or inferred misses", () => {

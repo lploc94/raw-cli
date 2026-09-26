@@ -150,7 +150,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   rl?.on("close", onClose);
   try {
     if (task !== undefined) {
-      currentRenderer = new TerminalRenderer(session, runtime, cwd, true);
+      currentRenderer = new TerminalRenderer(session, runtime, cwd, true, Boolean(selected));
       const result = await textRun(session, task, currentRenderer);
       let resumable = result.code !== "persistence_error";
       if (resumable) try { resumable = store.getSession(record.id) !== undefined; } catch { resumable = false; }
@@ -158,7 +158,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       return statusCode(result);
     }
     if (!rl || !lines) throw new Error("interactive input unavailable");
-    new TerminalRenderer(session, runtime, cwd, true).start();
+    new TerminalRenderer(session, runtime, cwd, true, Boolean(selected)).start();
     if (selected) for (const item of store.getSessionHistory({ sessionId: selected.id }).items) {
       process.stdout.write(renderTerminalHistory(item, runtime.ui,
         terminalCapabilities(Boolean(process.stdout.isTTY), process.env, runtime.ui), process.stdout.columns || 80));

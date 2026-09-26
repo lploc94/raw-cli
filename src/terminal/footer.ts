@@ -52,8 +52,10 @@ export function formatTurnFooter(input: TurnFooterInput): string {
     `${icon(okay ? "success" : status === "cancelled" ? "attention" : "failure", ui, caps)} ${label}`, ui, caps)}`
     + `${code && !okay ? ` · ${code}` : ""} · ${duration(elapsedMs)} · ${startedToolCalls} tool${startedToolCalls === 1 ? "" : "s"}`
     + `${notRunToolCalls ? ` · ${notRunToolCalls} not run` : ""}`;
-  const warning = (compactTrigger !== undefined && contextTokens >= compactTrigger)
-    || (inputBudget !== undefined && contextTokens >= inputBudget);
+  const warnings = [
+    ...(compactTrigger !== undefined && contextTokens >= compactTrigger ? ["compact threshold"] : []),
+    ...(inputBudget !== undefined && contextTokens >= inputBudget ? ["input budget"] : []),
+  ];
   let context = contextWindow === undefined
     ? `Context  ~${amount(contextTokens)} tokens (window unknown)`
     : `Context  ${caps.unicode ? "▰".repeat(Math.max(0, Math.min(10, Math.floor(contextTokens / contextWindow * 10))))
@@ -61,7 +63,7 @@ export function formatTurnFooter(input: TurnFooterInput): string {
       : "#".repeat(Math.max(0, Math.min(10, Math.floor(contextTokens / contextWindow * 10))))
       + "-".repeat(Math.max(0, 10 - Math.min(10, Math.floor(contextTokens / contextWindow * 10))))}`
       + `  ~${amount(contextTokens)} / ${amount(contextWindow)} · ${(contextTokens / contextWindow * 100).toFixed(1)}% used`;
-  if (warning) context = paint("warning", context, ui, caps);
+  if (warnings.length) context = paint("warning", `${context} · ${warnings.join(" / ")}`, ui, caps);
   if (input.repl) return `${headline}\n  ${context}\n`;
   const lines = [headline, `  ${context}`];
   const all = stats.requests > 0;

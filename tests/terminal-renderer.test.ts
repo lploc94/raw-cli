@@ -32,6 +32,7 @@ test("normal and compact density preserve failed batch states and generic tool i
   }
   const custom = projectToolCall("read_file", "mcp/server/read_file", { query: "test" }, true);
   assert.match(strip(formatToolStart(custom, resolveUiOptions({}), caps, 80)), /↗ read_file.*query/);
+  assert.match(strip(formatToolStart(custom, resolveUiOptions({ density: "verbose" }), caps, 80)), /mcp\/server\/read_file/);
 });
 
 test("tool-provided control bytes cannot erase terminal output", () => {

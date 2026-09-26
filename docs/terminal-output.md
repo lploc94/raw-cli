@@ -31,8 +31,18 @@ Recognized code languages and path suffixes include JavaScript/JSX, TypeScript/T
 
 Footer timing and tool counts describe the current turn. Context is an estimate of the current session's prompt/tool/message size, marked `~`; the percentage is shown only when a context window is configured. Token and cache values describe the cumulative session and appear only when provider coverage supports them. Missing cache counters are unknown, not zero. The continuation command uses the active durable session ID.
 
-The normal footer shows `Done`, `Failed`, `Cancelled`, or `Stopped: max steps`, then elapsed time and started tool calls. Current context appears as an approximate count with a percentage and bar when a window is known. The bar warns near the configured compact threshold or effective input budget; it never changes the compact decision. Session input/output/cache reads appear only when every request reports the field. Verbose mode and REPL `/stats` show reported-request coverage for each field, including cache writes and the already-defined cache-read ratio. No cache miss or money amount is inferred. A resumable session prints its full `raw --resume ID "query"` command after a successful, failed or interrupted turn; startup/persistence failures do not claim resumability. In REPL mode, turn metrics are compact and the full resume command appears on exit.
+The normal footer shows `Done`, `Failed`, `Cancelled`, or `Stopped: max steps`, then elapsed time and started tool calls. Current context appears as an approximate count with a percentage and bar when a window is known. When the estimate reaches the configured compact threshold or effective input budget, the warning names that limit; it never changes the compact decision. Session input/output/cache reads appear only when every request reports the field. Verbose mode and REPL `/stats` show reported-request coverage for each field, including cache writes and the already-defined cache-read ratio. No cache miss or money amount is inferred. A resumable session prints its full `raw --resume ID "query"` command after a successful, failed or interrupted turn; startup/persistence failures do not claim resumability. In REPL mode, turn metrics are compact and the full resume command appears on exit.
 
 `raw sessions show ID` and resume-history playback format retained display records using the current UI settings without re-running tools, opening full model payloads or requesting a model response. A page that begins with a result still shows that result's saved status and name. An alternate `--config` can supply only terminal appearance for history viewing; the selected model's credential is not required for viewing.
 
 The terminal renderer does not affect ACP protocol output. A theme change does not change the model request, cache key, or session schema.
+
+Developers can inspect fixed, local examples without an API key or config file:
+
+```sh
+node scripts/preview-terminal.mjs --width 40 --theme light --icons ascii
+node scripts/preview-terminal.mjs --width 80 --theme dark --icons unicode
+node scripts/preview-terminal.mjs --width 120 --theme terminal --icons unicode --display verbose
+```
+
+Run these in a real terminal to inspect color; redirecting the gallery gives plain text. The gallery uses fixed example records and times, so it does not create sessions or call tools. Newly written display records use session schema 5; older session schemas fail explicitly, with no migration in this development version.

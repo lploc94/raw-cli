@@ -47,7 +47,7 @@ export class TerminalRenderer {
   get firstTextMs(): number | undefined { return this.firstTextAt === undefined ? undefined : Math.max(0, this.firstTextAt - this.startedAt); }
 
   constructor(private readonly session: AgentSession, private readonly runtime: RuntimeConfig,
-    private readonly cwd: string, private readonly showHeader: boolean) {
+    private readonly cwd: string, private readonly showHeader: boolean, private readonly resumed = false) {
     this.caps = terminalCapabilities(Boolean(process.stdout.isTTY), process.env, runtime.ui);
     this.stderrCaps = terminalCapabilities(Boolean(process.stderr.isTTY), process.env, runtime.ui);
     const shared = sharedInteractiveTerminal();
@@ -63,8 +63,9 @@ export class TerminalRenderer {
     if ((this.rich || this.decoratedPlain) && this.showHeader) {
       const agent = this.runtime.modelConfig?.agentName ?? this.runtime.agentName ?? "raw";
       const model = this.runtime.modelConfig?.model ?? "unknown";
-      process.stderr.write(`${paint("accent", `${icon("brand", this.runtime.ui, this.caps)} raw`, this.runtime.ui, this.caps)} · agent ${agent} · model ${model}\n`
-        + `${paint("muted", this.cwd, this.runtime.ui, this.caps)}\n\n`);
+      process.stderr.write(`${paint("accent", `${icon("brand", this.runtime.ui, this.caps)} raw`, this.runtime.ui, this.caps)} · agent ${agent} · model ${model}`
+        + `${this.resumed ? " · Resumed" : ""}\n`
+        + (this.runtime.ui.density === "compact" ? "\n" : `${paint("muted", this.cwd, this.runtime.ui, this.caps)}\n\n`));
     }
   }
 

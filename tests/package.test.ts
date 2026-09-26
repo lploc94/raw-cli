@@ -8,9 +8,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
-async function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+async function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, keepStdin = false) {
   const child = spawn(command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  child.stdin.end();
+  if (!keepStdin) child.stdin.end();
   let stdout = "";
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (part: string) => { stdout += part; });
@@ -42,6 +42,8 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   await access(join(consumer, "node_modules", "raw-cli", "examples", "agents", "project-helper", "raw.json"));
   assert.equal(await readFile(join(consumer, "node_modules", "raw-cli", "docs", "skill-authoring.md"), "utf8"),
     await readFile(join(repo, "docs", "skill-authoring.md"), "utf8"));
+  assert.equal(await readFile(join(consumer, "node_modules", "raw-cli", "docs", "terminal-output.md"), "utf8"),
+    await readFile(join(repo, "docs", "terminal-output.md"), "utf8"));
   const skillIds = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp"];
   const packagedSkill = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", "configure_raw");
   for (const id of skillIds) {
@@ -114,6 +116,35 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
+
+  const terminalProvider = await startMockProvider([
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "terminal-read", type: "function", function: {
+      name: "read_file", arguments: '{"files":[{"path":"installed-preview.ts"}]}',
+    } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ content: "# Installed result\n\n```ts\nconst installedPreview = 7;\n```" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "# Pipe result\n\n```ts\nconst piped = true;\n```" }, "stop"), openAiDone] },
+  ]);
+  try {
+    await writeFile(join(consumer, "installed-preview.ts"), "const installedPreview = 7;\n");
+    const terminalConfig = testConfig("openai", "fixture", terminalProvider.url);
+    const terminalEnv = { ...env, TERM: "xterm-256color", NO_COLOR: "",
+      RAW_TEST_PTY_COLUMNS: "80", RAW_TEST_PTY_ROWS: "24" };
+    const tty = await run("python3", [join(repo, "tests", "fixtures", "pty-bridge.py"), bin,
+      "--config", terminalConfig, "--theme", "dark", "--icons", "unicode", "installed terminal"], consumer, terminalEnv, true);
+    assert.equal(tty.code, 0, tty.stdout + tty.stderr);
+    assert.match(tty.stdout, /↳ read_file/);
+    const ttyPlain = tty.stdout.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+    assert.match(ttyPlain, /const installedPreview = 7;/);
+    assert.match(tty.stdout, /Installed result/);
+    assert.match(tty.stdout, /\u001b\[(?:3[0-7]|9[0-7])mconst/);
+    assert.match(tty.stdout, /Context/);
+    assert.match(tty.stdout, /raw --resume [0-9a-f-]+ "query"/);
+    const pipe = await run(bin, ["--config", terminalConfig, "--color", "always", "--icons", "ascii", "pipe"], consumer, terminalEnv);
+    assert.equal(pipe.code, 0, pipe.stderr);
+    assert.equal(pipe.stdout, "# Pipe result\n\n```ts\nconst piped = true;\n```\n");
+    assert.doesNotMatch(pipe.stdout + pipe.stderr, /\u001b\[/);
+    assert.equal(terminalProvider.requests.length, 3);
+  } finally { await terminalProvider.close(); }
 
   const starterProvider = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "starter-list", type: "function", function: { name: "list_skills", arguments: "{}" } }] }, "tool_calls"), openAiDone] },

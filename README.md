@@ -19,7 +19,7 @@ The package is not published. `config init` creates `~/.config/raw/config.json` 
 ```sh
 raw --agent raw "Explain the tests in this repository"
 raw --agent deepseek "Fix the failing tests"
-raw                         # saved REPL with > prompt
+raw                         # saved REPL with ❯ prompt on an interactive terminal
 raw --continue "Follow up on that change"
 raw sessions
 raw sessions show SESSION_ID
@@ -97,6 +97,10 @@ The three built-ins each accept an ordered batch of up to 16 entries: `read_file
 The REPL saves turns across process restarts. Use `raw --continue` for the latest session in this workspace, `raw --resume ID` for a specific saved cwd, and `raw sessions show ID --before CURSOR` to page older visible history. Host commands are `/compact`, `/clear`, `/stats`, and `/exit`; `/clear` starts a new saved session. Without `compact.trigger_tokens`, compaction is manual. With it, Raw estimates the complete next request, emits visible compact progress, and sends bounded summary requests to the selected model when the threshold is reached. It excludes image base64 from summary prompts and retains a stable main cache key until a deliberate compact boundary. Cache reuse depends on the upstream service; a cache hit is only claimed when its usage counters report one. See [CLI sessions](docs/cli.md) and [context and cache](docs/context.md).
 
 `--system-prompt` or `RAW_SYSTEM_PROMPT` overrides an agent's `system_prompt` or `system_prompt_file`, then Raw's default. `--max-steps` defaults to 25 inference requests, `--max-output-bytes` to 8192 text bytes per tool result, and `--request-timeout-ms` to 120000. Use `raw --help` for flags and exit codes.
+
+## Terminal appearance
+
+Raw highlights Markdown code fences and source previews in an interactive terminal, shows tool progress, and ends a one-shot run with context, reported usage, and a copyable resume command. Set root `ui` in `config.json` or override it per run with `--display compact|normal|verbose`, `--reasoning hidden|summary|full`, `--color auto|always|never`, `--icons auto|unicode|ascii`, and `--theme terminal|dark|light`. For example, `raw --theme dark --display verbose "Inspect this module"` shows a longer bounded tool preview. Redirected answer text keeps its original bytes and terminal status stays on stderr. [Terminal output](docs/terminal-output.md) describes palette roles, coverage rules, fallbacks, and a no-network preview gallery.
 
 ## ACP and development
 
