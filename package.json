@@ -21,6 +21,7 @@
     "examples/skills",
     "examples/agents",
     "docs/skill-authoring.md",
+    "docs/terminal-output.md",
     "README.md"
   ],
   "scripts": {
@@ -42,6 +43,8 @@
     "jsonc-parser": "3.3.1",
     "openai": "7.23.0",
     "re2js": "2.8.6",
+    "string-width": "8.3.0",
+    "wrap-ansi": "10.0.2",
     "ws": "8.21.3"
   },
   "devDependencies": {

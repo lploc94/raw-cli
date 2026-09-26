@@ -7,12 +7,18 @@ import type { ApiMethod, CacheOptions, ModelRequestOptions, ProviderName, Resolv
 import type { McpServerConfig } from "./tools/mcp-client.js";
 import type { ToolPolicyRule } from "./tools/registry.js";
 import { compileWhen } from "./tools/policy.js";
+import { parseUiDocument, resolveUiOptions, validateUiFlag, type UiOptions, type Density, type ReasoningDisplay, type ColorDisplay, type IconsDisplay, type ThemeName } from "./terminal/options.js";
 
 type JsonObject = Record<string, unknown>;
 
 const apiMethods = new Set<ApiMethod>(["openai-chat-completions", "openai-responses", "anthropic-messages", "google-generate-content"]);
 
 export interface RawFlags {
+  density?: Density;
+  reasoning?: ReasoningDisplay;
+  color?: ColorDisplay;
+  icons?: IconsDisplay;
+  theme?: ThemeName;
   agent?: string;
   configPath?: string;
   systemPrompt?: string;
@@ -46,6 +52,7 @@ export interface CompactSettings {
 }
 
 export interface RuntimeConfig {
+  readonly ui: UiOptions;
   readonly agentName?: string;
   readonly modelConfig?: Readonly<ResolvedModelConfig>;
   readonly systemPrompt: string;
@@ -181,7 +188,8 @@ function parseConfigDocument(options: LoadConfigOptions, validateAgents: boolean
   if (!tree || errors.length) throw new Error(`invalid JSON config: ${path}`);
   checkDuplicates(tree);
   const data = object(getNodeValue(tree), "config root");
-  keys(data, ["default_agent", "models", "agents", "mcp", "sessions"], "config");
+  keys(data, ["default_agent", "models", "agents", "mcp", "sessions", "ui"], "config");
+  parseUiDocument(data.ui);
   if (data.sessions !== undefined && path !== canonicalConfigPath(options)) {
     throw new Error("sessions settings are allowed only in the canonical global config");
   }
@@ -569,6 +577,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   }
   const flags = options.flags ?? {};
   const document = readConfigDocument(options);
+  const ui = resolveUiOptions(parseUiDocument(document.data.ui), flags);
   const sessionsRetentionDays = readSessionRetentionDays(options);
   const parsed = parseDocument(document.data);
   const selectedName = flags.agent ?? env.RAW_AGENT ?? parsed.defaultName;
@@ -624,6 +633,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule,
     ...(rule.when ? { when: Object.freeze({ ...rule.when }) } : {}) })));
   return Object.freeze({
+    ui,
     ...(selectedName === undefined ? {} : { agentName: selectedName }),
     ...(selected === undefined ? {} : { modelConfig: selected }),
     systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? agentPrompt ?? resolveSystemPrompt(undefined, undefined),
@@ -677,6 +687,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   let afterDash = false;
   const seen = new Set<string>();
   const valueFlags: Record<string, keyof RawFlags> = {
+    "--display": "density", "--reasoning": "reasoning", "--color": "color", "--icons": "icons", "--theme": "theme",
     "--agent": "agent", "--config": "configPath", "--system-prompt": "systemPrompt",
     "--max-steps": "maxSteps", "--max-output-bytes": "maxOutputBytes",
     "--request-timeout-ms": "requestTimeoutMs", "--host": "host", "--port": "port",
@@ -718,6 +729,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
         if (key === "requestTimeoutMs") flags.requestTimeoutMs = numeric;
         if (key === "port") flags.port = numeric;
       } else {
+        if (key === "density" || key === "reasoning" || key === "color" || key === "icons" || key === "theme") {
+          validateUiFlag(key, next);
+          (flags as Record<string, unknown>)[key] = next;
+        }
         if (key === "agent") flags.agent = next;
         if (key === "configPath") flags.configPath = next;
         if (key === "systemPrompt") flags.systemPrompt = next;

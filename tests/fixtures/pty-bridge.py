@@ -2,15 +2,36 @@
 """Development-only PTY bridge for CLI integration tests."""
 
 import errno
+import fcntl
 import os
 import pty
 import select
 import signal
+import struct
 import sys
+import termios
 
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp(sys.argv[1], sys.argv[1:])
+
+
+def size(columns_env, rows_env):
+    columns = int(os.environ.get(columns_env, "0"))
+    rows = int(os.environ.get(rows_env, "0"))
+    if columns > 0 and rows > 0:
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+        os.killpg(pid, signal.SIGWINCH)
+
+
+size("RAW_TEST_PTY_COLUMNS", "RAW_TEST_PTY_ROWS")
+
+
+def resize(_signum, _frame):
+    size("RAW_TEST_PTY_RESIZE_COLUMNS", "RAW_TEST_PTY_RESIZE_ROWS")
+
+
+signal.signal(signal.SIGUSR1, resize)
 
 
 def terminate(_signum, _frame):

@@ -38,6 +38,11 @@ Options:
   --max-steps N              Maximum inference requests (default 25)
   --max-output-bytes N       Model-facing tool result cap (default 8192)
   --request-timeout-ms N     Inference/MCP deadline (default 120000)
+  --display MODE             compact | normal | verbose
+  --reasoning MODE           hidden | summary | full
+  --color MODE               auto | always | never
+  --icons MODE               auto | unicode | ascii
+  --theme NAME               terminal | dark | light
   --interactive              Start a terminal REPL
   --continue                 Resume latest session in current workspace
   --resume ID                Resume a selected session in its stored cwd

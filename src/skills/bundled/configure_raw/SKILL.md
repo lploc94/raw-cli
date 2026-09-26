@@ -12,7 +12,7 @@ Explain, change or diagnose existing Raw configuration. For a new skill, tool, a
 
 Strict JSON: `$XDG_CONFIG_HOME/raw/config.json`, otherwise `~/.config/raw/config.json`; `--config PATH` selects one alternate file. Duplicate/unknown keys, comments and trailing commas fail. `raw config init` creates once. `raw config list` validates structure and lists agents; it does not load prompt files, plugins or connect MCP.
 
-Root: `models` (alias map), `agents` (name map), optional `default_agent` (existing name), `mcp`, `sessions`. Agent precedence: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt precedence: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt.
+Root: `models`, `agents`, optional `default_agent`, `mcp`, `sessions`, `ui` (terminal options; see installed `docs/terminal-output.md`). Agent selection: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt.
 
 Add a model alias, then assign it to `agents.<name>.model`. `raw --agent NAME "query"` selects an agent, not a model alias. There is no direct `--model` or `raw model add`.
 
