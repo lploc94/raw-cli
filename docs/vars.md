@@ -68,4 +68,3 @@ CLI `raw [--config PATH] [--agent NAME] vars list|get NAME` uses effective agent
 `config init` adds root `vars.now`, agent raw selection `["now"]`, and both variable tools alongside existing setup tools; static prompt can mention list/read discovery but must not embed catalog/value data. Other agents require explicit edits; do not auto-append tools to user definitions.
 
 Session behavior is deliberately simple: no vars snapshot/digest/visibility fields. Prior tool results retain their observed_at and remain historical even if config/provider code changes. A new runtime uses current definitions; an existing runtime holds validated definitions until restarted. External env/files/providers resolve according to TTL. Manifest descriptions teach the model to read again when fresh data matters, especially after resume. Tests must prove repeated resumes do not execute providers until used and variable changes alone preserve system/tools/cache key.
-

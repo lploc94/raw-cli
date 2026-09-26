@@ -45,3 +45,5 @@ export type { SessionPageOptions, SessionHistoryOptions, SessionIdOptions, Resum
 
 export type { VariableConfig, VariableContext, VariableDefinition, VariableMetadata, VariableProvider, VariableSource, VariableType, ResolvedVariable, JsonValue } from "./vars/contract.js";
 export { VariableError } from "./vars/contract.js";
+export { createVariableResolver } from "./vars/resolver.js";
+export type { VariableResolverOptions } from "./vars/resolver.js";

@@ -196,9 +196,9 @@ An actual environment payload containing shell metacharacters must survive as da
 ### Implementation obligations
 Always finish process/stream cleanup and remove abort/timer listeners. Return stable errors without dumping provider bytes. Preserve successful JSON exactly; reject overflow instead of truncating into valid-looking data. Keep direct-child platform limitations explicit.
 ### Acceptance criteria
-- [ ] AC-3: Every source resolves its declared type and access rules without eager work — proven by resolver tests.
-- [ ] AC-4: Protocol and lifecycle failures return bounded errors and leave no owned active process on supported fixture paths — proven by real-process tests.
-- [ ] AC-5: TTL and cancellation semantics match the contract across independent resolvers — proven by injected-clock/counting fixtures.
+- [x] AC-3: Every source resolves its declared type and access rules without eager work — proven by resolver tests.
+- [x] AC-4: Protocol and lifecycle failures return bounded errors and leave no owned active process on supported fixture paths — proven by real-process tests.
+- [x] AC-5: TTL and cancellation semantics match the contract across independent resolvers — proven by injected-clock/counting fixtures.
 ### Focused verification
 `node --import tsx --test tests/vars-resolver.test.ts tests/vars-provider.test.ts tests/primitives.test.ts`
 ### Phase gates
@@ -337,3 +337,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: CTXE integration Ask record 55 returned partial evidence because its composer exceeded the server context budget; it is not treated as a synthesized conclusion. Exact routed source reads established the integration contracts used here. JSON examples and all five required phase blocks validated. Self-review APPROVE; user authorized immediate implementation after planning.
 - 2026-09-26: Phase 1 in_progress; phases 2–5 pending.
 - 2026-09-26: Phase 1 complete; review APPROVE. Red: missing loadVariableConfig export. Green: 10 config tests; typecheck and diff checks passed. Reviewed strict metadata-only projection, path resolution, immutable declarations, and no eager credentials/prompt/source access. Phase 2 in_progress.
+- 2026-09-26: Phase 2 complete; review APPROVE. Red: missing resolver/provider modules. Green: 12 resolver/provider/Bash lifecycle tests, typecheck. Real subprocess fixtures covered timeout, abort, inherited pipes, invalid protocol and counting TTL. Corrected one trailing blank line in docs/vars.md reported by the Phase 1 staged diff check (the earlier log overstated that whitespace check); current diff check passes. Phase 3 in_progress.
