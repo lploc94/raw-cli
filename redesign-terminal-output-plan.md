@@ -299,6 +299,8 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Phase 3: Streaming Markdown and syntax highlighting
 
+Status: complete (2026-09-26). Implementation self-review: APPROVE.
+
 ### Goal
 Build and qualify readable Markdown/code rendering before attaching it to the full CLI lifecycle.
 
@@ -333,9 +335,9 @@ The final rendered source must contain each code character exactly once after re
 Use token trees for styling, bounded parser state, deterministic flush and style resets. Register/verify required grammars and aliases; unknown languages degrade plainly. Keep raw source separate from display spans. Do not add hidden model calls, full-transcript repaints, unbounded token-per-delta parsing, or ANSI to saved text.
 
 ### Acceptance criteria
-- [ ] AC-3.1: Required languages have genuine multi-token syntax styling; unknown languages remain readable — highlighting tests.
-- [ ] AC-3.2: Chunk splits, incomplete syntax, interruption and overflow retain all source exactly once with timely display — streaming tests.
-- [ ] AC-3.3: Markdown/code/tables remain readable across widths/themes/plain modes and formatter failure cannot fail a run — layout/fallback tests.
+- [x] AC-3.1: Required languages have genuine multi-token syntax styling; unknown languages remain readable — highlighting tests.
+- [x] AC-3.2: Chunk splits, incomplete syntax, interruption and overflow retain all source exactly once with timely display — streaming tests.
+- [x] AC-3.3: Markdown/code/tables remain readable across widths/themes/plain modes and formatter failure cannot fail a run — layout/fallback tests.
 
 ### Focused verification
 `npm run build`
@@ -546,3 +548,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 1 complete, implementation self-review APPROVE. Red options/layout tests failed before code; focused tests passed. `npm run build` passed; `npm run check` passed 340/340 after final Phase 1 edits. PTY bridge now supports test resize, semantic theme/options are host-only, and configure skill remains 8,154 bytes. Evidence: `/tmp/raw-terminal-phase1-red.log`, `/tmp/raw-terminal-phase1-focused.log`, `/tmp/raw-terminal-phase1-final-check.log`.
 - 2026-09-26: Phase 1 commit `ba16093`; Phase 2 in progress.
 - 2026-09-26: Phase 2 complete, implementation self-review APPROVE. New record tests were red before production code; isolated focused suite passed 35/35, repair-focused suites passed 60/60, and final `npm run check` passed 346/346. Repaired the crash-recovery writer found by full regression and preserved head/tail under a near-budget preview. One direct focused invocation inherited the user's old global schema; it was stopped and rerun with isolated XDG state. Evidence: `/tmp/raw-terminal-phase2-red.log`, `/tmp/raw-terminal-phase2-final-focused.log`, `/tmp/raw-terminal-phase2-repair-focused.log`, `/tmp/raw-terminal-phase2-head-check.log`.
+- 2026-09-26: Phase 2 commit `79d2619`; Phase 3 in progress.
+- 2026-09-26: Phase 3 complete, implementation self-review APPROVE. Pinned Marked 18.0.14 and Lowlight 3.3.0 (public lexer/HAST APIs). Focused syntax/Markdown/layout suite passed 9/9; `npm run check` passed 352/352. Incremental formatter reparses only the bounded active block, displays partial frames immediately, and falls back to literal text after 32 KiB. Evidence: `/tmp/raw-terminal-phase3-red.log`, `/tmp/raw-terminal-phase3-focused3.log`, `/tmp/raw-terminal-phase3-check.log`.
