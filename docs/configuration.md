@@ -127,3 +127,11 @@ The method-specific request, cache and compact behavior is documented in docs/pr
 ## Runtime variables
 
 Optional root `vars` and `var_providers` declare lazy values and executable sources. `agents.<name>.vars` selects exact names; omitted means none. Static validation performs no resolution. See [variables](vars.md) for the complete schema, access and provider protocol.
+
+## Installed package bindings
+
+`agents.<name>` may be an instance binding such as `{"from":"pkg/kit/agents/writer","model":"local","inputs":{"region":"Hanoi"},"overrides":{"max_steps":30}}`. `model` always names a recipient model. `inputs` supply typed package definition values; `overrides` may replace `system_prompt`, `system_prompt_file`, `request`, `cache`, `compact`, `tools`, `skills`, `vars`, `max_steps`, `max_output_bytes`, or `request_timeout_ms`. Each list/block replaces the whole inherited list/block. Package source cannot set a publisher model alias. `raw agent add NAME --from REF --model ALIAS [--inputs FILE]` writes this binding atomically; existing names require an explicit edit.
+
+A direct agent can select an installed tool or skill by `pkg/ALIAS/tools/EXPORT` or `pkg/ALIAS/skills/EXPORT`. An object selection `{"ref":"pkg/kit/tools/search","as":"web_search","inputs":{}}` sets its model-visible alias; `as` also works for skills. Package tool rules match the canonical `@owner/name#tools/export` identity. Multiple installed packages can expose the same original tool name when selections give distinct `as` aliases. Selected assets alone are loaded. Package release labels, install paths and unused exports do not affect the model prefix.
+
+Root `vars.NAME`, `var_providers.NAME` and `mcp.servers.NAME` may be `{"from":"pkg/ALIAS/KIND/EXPORT","inputs":{...}}`. These names remain local aliases. Package agent definitions can use `#kind/export` for their own components and `dep:alias#kind/export` for an exact bundled dependency. A package update changes the next runtime attach, including `--resume`; unchanged later turns keep the new baseline. [Packages](packages.md) has the manifest, input and lifecycle contract.

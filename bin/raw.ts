@@ -1,12 +1,13 @@
 import { createVariableResolver } from "../src/vars/resolver.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { configFilePath, loadConfig, loadVariableConfig, parseCliArgs, readConfigDocument, readSessionRetentionDays, redact } from "../src/config.js";
+import { configFilePath, loadConfig, loadVariableConfigAsync, parseCliArgs, readConfigDocument, readSessionRetentionDays, redact } from "../src/config.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
 import { parseUiDocument, resolveUiOptions, terminalCapabilities } from "../src/terminal/options.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { runSessionMaintenance } from "../src/sessions/maintenance.js";
+import { runPackageCli } from "../src/packages/cli.js";
 
 const version = "0.1.0";
 class InputError extends Error {}
@@ -26,6 +27,8 @@ function help(): string {
 Usage: raw [options] [task]
        raw vars list|get NAME
        raw config init|list
+       raw package list|inspect|validate|pack|export|install|update|remove|link|fork
+       raw agent add NAME --from pkg/ALIAS/agents/EXPORT --model MODEL_ALIAS
        raw sessions [--all] [--before CURSOR]
        raw sessions show ID [--before CURSOR]
        raw sessions delete ID|stats
@@ -54,6 +57,7 @@ Session options: --all (list all workspaces), --before CURSOR (older page)
 
 REPL: /compact, /clear, /stats, /exit
 Config: models define access paths; agents select a model, prompt, tools and policy.
+Packages: raw package install PATH --as ALIAS; raw package update ALIAS --from PATH.
 Vision: a model with vision=true may select builtin/view_image.
 Skills: agents may select packaged, global, or config-adjacent skills and both skill tools.
 Setup: config init selects five packaged setup skills for the raw agent.
@@ -64,6 +68,10 @@ Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 }
 
 async function run(): Promise<void> {
+  if (process.argv[2] === "package" || process.argv[2] === "agent") {
+    await inputAsync(() => runPackageCli(process.argv.slice(2)));
+    return;
+  }
   const parsed = input(() => parseCliArgs(process.argv.slice(2)));
   if (parsed.command === "help") { process.stdout.write(help()); return; }
   if (parsed.command === "version") { process.stdout.write(`${version}\n`); return; }
@@ -96,7 +104,7 @@ async function run(): Promise<void> {
     return;
   }
   if (parsed.command === "vars-list" || parsed.command === "vars-get") {
-    const config = input(() => loadVariableConfig({ flags: parsed.flags }));
+    const config = await inputAsync(() => loadVariableConfigAsync({ flags: parsed.flags }));
     const vars = createVariableResolver({ config });
     const controller = new AbortController();
     const cancel = () => controller.abort();
@@ -122,25 +130,34 @@ async function run(): Promise<void> {
     for (const [name, raw] of Object.entries(agents)) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
       const data = raw as Record<string, unknown>;
+      let effective: Awaited<ReturnType<typeof loadConfig>> | undefined;
+      let bindingError: string | undefined;
+      if (typeof data.from === "string") {
+        try { effective = await loadConfig({ flags: { ...parsed.flags, agent: name }, requireModel: false }); }
+        catch (error) { bindingError = error instanceof Error ? error.message : String(error); }
+      }
       const alias = String(data.model ?? "?");
       const model = models && typeof models === "object" && !Array.isArray(models)
         ? (models as Record<string, unknown>)[alias] : undefined;
       const spec = model && typeof model === "object" && !Array.isArray(model) ? model as Record<string, unknown> : {};
       const endpoint = typeof spec.base_url === "string" ? redact(spec.base_url) : "default endpoint";
-      const selectedTools = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
-        ? (data.tools as { use?: string[] }).use ?? [] : [];
-      const selectedSkills = data.skills && typeof data.skills === "object" && !Array.isArray(data.skills)
-        ? (data.skills as { use?: string[] }).use ?? [] : [];
-      const selectedVars = Array.isArray(data.vars) ? data.vars : [];
-      const policy = data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
-        ? (data.tools as { rules?: Array<{ match: string; effect: string; when?: { any: string; regex: string } }> }).rules ?? [] : [];
+      const selectedTools = effective?.toolIds ?? (data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
+        ? (data.tools as { use?: string[] }).use ?? [] : []);
+      const selectedSkills = effective?.skillIds ?? (data.skills && typeof data.skills === "object" && !Array.isArray(data.skills)
+        ? (data.skills as { use?: string[] }).use ?? [] : []);
+      const selectedVars = effective?.variableConfig.variables.map((item) => item.name)
+        ?? (Array.isArray(data.vars) ? data.vars : []);
+      const policy = effective?.toolRules ?? (data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
+        ? (data.tools as { rules?: Array<{ match: string; effect: string; when?: { any: string; regex: string } }> }).rules ?? [] : []);
       const rules = policy.map((rule) => `${rule.effect}:${rule.match}${rule.when ? `:${JSON.stringify(rule.when)}` : ""}`).join(",");
       const compact = data.compact && typeof data.compact === "object" && !Array.isArray(data.compact)
         ? data.compact as Record<string, unknown> : {};
       process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`
         + `\tvision=${spec.vision === true}\ttools=${selectedTools.join(",") || "none"}\tskills=${selectedSkills.join(",") || "none"}\trules=${rules || "default-allow"}`
         + `\tvars=${selectedVars.join(",") || "none"}`
-        + `\ttrigger=${compact.trigger_tokens ?? "manual"}\n`);
+        + `\ttrigger=${effective?.compact.triggerTokens ?? compact.trigger_tokens ?? "manual"}`
+        + `${typeof data.from === "string" ? `\tfrom=${data.from}` : ""}`
+        + `${bindingError ? `\terror=${redact(bindingError)}` : ""}\n`);
     }
     return;
   }

@@ -231,6 +231,44 @@ async function validateAffectedBindings(options: PackageStoreOptions, alias: str
     try { applyPackageInputs({}, schema, supplied, [], dirname(resolve(options.configPath))); }
     catch (error) { throw new Error(`package update input mismatch for agent ${name}: ${(error as Error).message}`); }
   }
+  const root = document as typeof document & { vars?: Record<string, { from?: string; inputs?: Record<string, unknown> }>;
+    var_providers?: Record<string, { from?: string; inputs?: Record<string, unknown> }>;
+    mcp?: { servers?: Record<string, { from?: string; inputs?: Record<string, unknown> }> } };
+  const bindings = [
+    ...Object.entries(root.vars ?? {}).map(([name, value]) => ({ kind: "vars" as const, name, value })),
+    ...Object.entries(root.var_providers ?? {}).map(([name, value]) => ({ kind: "var_providers" as const, name, value })),
+    ...Object.entries(root.mcp?.servers ?? {}).map(([name, value]) => ({ kind: "mcp" as const, name, value })),
+  ];
+  for (const { kind, name, value } of bindings) {
+    const match = new RegExp(`^pkg/${alias}/${kind}/([a-z][a-z0-9_-]*)$`).exec(value?.from ?? "");
+    if (!match) continue;
+    const path = manifest.exports[kind]?.[match[1]!];
+    if (!path) continue;
+    const definition = JSON.parse(await readFile(join(packageRoot, path), "utf8")) as unknown;
+    const used = new Set<string>();
+    const walk = (item: unknown): void => {
+      if (!item || typeof item !== "object") return;
+      if (Array.isArray(item)) { item.forEach(walk); return; }
+      const record = item as Record<string, unknown>;
+      if (Object.keys(record).length === 1 && typeof record.$input === "string") {
+        used.add(record.$input); return;
+      }
+      Object.values(record).forEach(walk);
+    };
+    walk(definition);
+    if (!used.size) continue;
+    const full = parseInputSchema(manifest.inputs ?? { type: "object", properties: {} });
+    const properties = Object.fromEntries([...used].map((id) => {
+      const property = full.properties[id];
+      if (!property) throw new Error(`package update needs undeclared input ${id} for ${kind}.${name}`);
+      return [id, property];
+    }));
+    const schema = parseInputSchema({ type: "object", properties,
+      required: (full.required ?? []).filter((id) => used.has(id)) });
+    const supplied = Object.fromEntries(Object.entries(value.inputs ?? {}).filter(([id]) => used.has(id)));
+    try { applyPackageInputs({}, schema, supplied, [], dirname(resolve(options.configPath))); }
+    catch (error) { throw new Error(`package update input mismatch for ${kind}.${name}: ${(error as Error).message}`); }
+  }
 }
 
 export async function updatePackage(options: InstallPackageOptions): Promise<PackageEntry> {
@@ -291,6 +329,21 @@ export async function resolveInstalledPackage(options: PackageAliasOptions): Pro
   const root = join(dataRoot(options), installed.digest, "content");
   const manifest: LoadedPackageManifest = await loadPackageManifest(root);
   return { digest: installed.digest, root, manifest: manifest.manifest };
+}
+
+export async function resolveInstalledDependency(options: PackageAliasOptions & { dependency: string;
+  parent?: { manifest: RawPackageManifest } }): Promise<{
+  digest: string; root: string; manifest: RawPackageManifest;
+}> {
+  const parent = options.parent ?? await resolveInstalledPackage(options);
+  const declared = parent.manifest.dependencies?.[options.dependency];
+  if (!declared) throw new Error(`undeclared package dependency: ${options.alias}/${options.dependency}`);
+  const root = join(dataRoot(options), declared.digest, "content");
+  const loaded = await loadPackageManifest(root);
+  if (loaded.manifest.name !== declared.name || loaded.manifest.version !== declared.version) {
+    throw new Error(`installed dependency identity mismatch: ${options.alias}/${options.dependency}`);
+  }
+  return { digest: declared.digest, root, manifest: loaded.manifest };
 }
 
 export async function forkPackage(options: ForkPackageOptions): Promise<string> {

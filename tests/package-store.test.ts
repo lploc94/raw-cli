@@ -81,6 +81,26 @@ test("update rejects newly required recipient inputs and preserves existing bind
   assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), config);
 });
 
+test("update checks required inputs of an active standalone variable binding", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-store-var-input-"));
+  const configPath = join(root, "raw.json"), dataHome = join(root, "data");
+  writeFileSync(configPath, JSON.stringify({ agents: { raw: { model: "local", vars: ["host"],
+    tools: { use: [] } } }, vars: { host: { from: "pkg/kit/vars/host", inputs: { old: "HOST" } } } }));
+  const authored = (input: string) => {
+    const source = mkdtempSync(join(tmpdir(), "raw-store-var-source-"));
+    mkdirSync(join(source, "vars"));
+    writeFileSync(join(source, "vars", "host.json"), JSON.stringify({ description: "Host", access: "read",
+      source: { kind: "env", name: { $input: input } } }));
+    writeFileSync(join(source, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@test/host",
+      version: "1.0.0", description: "Host", files: ["vars/host.json"], exports: { vars: { host: "vars/host.json" } },
+      inputs: { type: "object", properties: { [input]: { type: "string", "x-raw-kind": "env-name" } }, required: [input] } }));
+    return source;
+  };
+  const before = await installPackage({ configPath, dataHome, source: authored("old"), alias: "kit" });
+  await assert.rejects(updatePackage({ configPath, dataHome, source: authored("new"), alias: "kit" }), /input|new/i);
+  assert.equal(listInstalledPackages({ configPath, dataHome }).kit?.digest, before.digest);
+});
+
 test("two installer processes preserve both aliases in the atomic index", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-store-concurrent-"));
   const configPath = join(root, "raw.json"), dataHome = join(root, "data");

@@ -5,6 +5,9 @@ import { readConfigDocument } from "../config.js";
 import type { RawPackageManifest } from "./contract.js";
 import { copyOwnedFile, copyOwnedTree } from "./files.js";
 import { inspectPackage, type PackageReport } from "./inspect.js";
+import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageDefinitions,
+  resolvePackageSelections } from "./resolve-agent.js";
+import { resolveInstalledPackage } from "./store.js";
 export { inspectPackage } from "./inspect.js";
 
 export interface ExportAgentOptions {
@@ -35,7 +38,20 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const globalConfigRoot = options.globalConfigRoot ?? (process.env.XDG_CONFIG_HOME
     ? join(resolve(process.cwd(), process.env.XDG_CONFIG_HOME), "raw") : join(homedir(), ".config", "raw"));
   const agents = record(document.data.agents, "agents");
-  const source = record(agents[options.agentName], `agent ${options.agentName}`);
+  const configured = record(agents[options.agentName], `agent ${options.agentName}`);
+  const packageContext = createPackageResolutionContext();
+  const originAlias = typeof configured.from === "string"
+    ? /^pkg\/([a-z][a-z0-9_-]*)\/agents\//.exec(configured.from)?.[1] : undefined;
+  const installedRoot = originAlias ? await resolveInstalledPackage({ configPath: document.path, alias: originAlias }) : undefined;
+  if (originAlias && installedRoot) packageContext.packages.set(originAlias, installedRoot);
+  const packageRoot = installedRoot?.root;
+  const bound = originAlias ? await resolvePackageAgentBinding(configured, { configPath: document.path }, packageContext) : configured;
+  const resolved = await resolvePackageSelections(bound, { configPath: document.path }, packageContext);
+  const source = resolved.agent;
+  const definitions = await resolvePackageDefinitions(source, document.data, { configPath: document.path }, originAlias,
+    packageContext, originAlias ? configured.inputs as Record<string, unknown> | undefined : undefined);
+  const packageOwned = (path: string): boolean => packageRoot !== undefined
+    && (path === packageRoot || path.startsWith(`${packageRoot}/`));
   const out = resolve(options.out);
   const unresolved: string[] = [];
   const checkAsset = async (path: string, label: string, directory: boolean, ownedRoot?: string): Promise<void> => {
@@ -53,7 +69,7 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   if (typeof source.system_prompt_file === "string") {
     const path = resolve(configDir, source.system_prompt_file);
     const external = isAbsolute(source.system_prompt_file) && !path.startsWith(`${configDir}/`);
-    if (!external || options.includeFiles?.some((item) => resolve(configDir, item) === path)) {
+    if (!external || packageOwned(path) || options.includeFiles?.some((item) => resolve(configDir, item) === path)) {
       await checkAsset(path, "system prompt", false, external ? undefined : configDir);
     }
   }
@@ -61,10 +77,11 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const selectedSkillIds = source.skills === undefined ? [] : names(record(source.skills, "agent skills").use, "agent skills.use");
   for (const [kind, ids] of [["tools", selectedToolIds], ["skills", selectedSkillIds]] as const) for (const id of ids) {
     const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(id);
-    if (!match) continue;
-    const folder = match[2]!;
-    const path = match[1] === "agent" ? join(configDir, kind, folder)
-      : join(globalConfigRoot, kind, folder);
+    const asset = kind === "tools" ? resolved.tools[id] : resolved.skills[id];
+    if (!match && !asset) continue;
+    const folder = asset?.name ?? match![2]!;
+    const path = asset?.folder ?? (match![1] === "agent" ? join(configDir, kind, folder)
+      : join(globalConfigRoot, kind, folder));
     await checkAsset(path, `selected ${kind.slice(0, -1)} ${id}`, true, dirname(path));
   }
   for (const path of options.includeFiles ?? []) await checkAsset(resolve(configDir, path), `included asset ${path}`, false);
@@ -81,7 +98,7 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const files: string[] = [];
   const included = new Set((options.includeFiles ?? []).map((path) => resolve(configDir, path)));
   const includeFile = async (sourcePath: string, target: string): Promise<string | undefined> => {
-    if (!included.has(resolve(configDir, sourcePath))) return undefined;
+    if (!included.has(resolve(configDir, sourcePath)) && !packageOwned(resolve(configDir, sourcePath))) return undefined;
     await copyOwnedFile(resolve(configDir, sourcePath), join(out, target));
     files.push(target);
     return target;
@@ -116,18 +133,20 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   for (let index = 0; index < selection.length; index++) {
     const id = selection[index]!;
     const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(id);
-    if (!match) continue;
-    const folder = match[2]!;
+    const asset = resolved.tools[id];
+    if (!match && !asset) continue;
+    const folder = asset?.name ?? match![2]!;
     if (emittedTools[folder]) throw new Error(`duplicate exported tool path: ${folder}`);
-    const sourceRoot = match[1] === "agent" ? join(configDir, "tools", folder)
-      : join(globalConfigRoot, "tools", folder);
+    const sourceRoot = asset?.folder ?? (match![1] === "agent" ? join(configDir, "tools", folder)
+      : join(globalConfigRoot, "tools", folder));
     const path = `tools/${folder}`;
     await copyOwnedTree(sourceRoot, join(out, path));
     emittedTools[folder] = path;
     files.push(path);
     selection[index] = `#tools/${folder}`;
     if (Array.isArray(tools.rules)) for (const rule of tools.rules) {
-      if (rule && typeof rule === "object" && (rule as { match?: unknown }).match === id) {
+      if (rule && typeof rule === "object" && ((rule as { match?: unknown }).match === id
+        || (asset && (rule as { match?: unknown }).match === asset.canonicalIdentity))) {
         (rule as { match: string }).match = `${options.name}#tools/${folder}`;
       }
     }
@@ -136,12 +155,14 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const skillSelection = agent.skills === undefined ? [] : names(record(agent.skills, "agent skills").use, "agent skills.use");
   const emittedSkills: Record<string, string> = {};
   for (let index = 0; index < skillSelection.length; index++) {
-    const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(skillSelection[index]!);
-    if (!match) continue;
-    const folder = match[2]!;
+    const id = skillSelection[index]!;
+    const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(id);
+    const asset = resolved.skills[id];
+    if (!match && !asset) continue;
+    const folder = asset?.name ?? match![2]!;
     if (emittedSkills[folder]) throw new Error(`duplicate exported skill path: ${folder}`);
-    const sourceRoot = match[1] === "agent" ? join(configDir, "skills", folder)
-      : join(globalConfigRoot, "skills", folder);
+    const sourceRoot = asset?.folder ?? (match![1] === "agent" ? join(configDir, "skills", folder)
+      : join(globalConfigRoot, "skills", folder));
     const path = `skills/${folder}`;
     await copyOwnedTree(sourceRoot, join(out, path));
     emittedSkills[folder] = path;
@@ -150,8 +171,8 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   }
   if (Object.keys(emittedSkills).length) exported.skills = emittedSkills;
   const selectedVars = agent.vars === undefined ? [] : names(agent.vars, "agent.vars");
-  const varDefinitions = record(document.data.vars ?? {}, "vars");
-  const providerDefinitions = record(document.data.var_providers ?? {}, "var_providers");
+  const varDefinitions = record(definitions.vars ?? document.data.vars ?? {}, "vars");
+  const providerDefinitions = record(definitions.var_providers ?? document.data.var_providers ?? {}, "var_providers");
   const emittedVars: Record<string, string> = {};
   const emittedProviders: Record<string, string> = {};
   for (const name of selectedVars) {
@@ -197,7 +218,8 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   if (Object.keys(emittedVars).length) exported.vars = emittedVars;
   if (Object.keys(emittedProviders).length) exported.var_providers = emittedProviders;
   agent.vars = selectedVars.map((name) => `#vars/${name}`);
-  const mcpDefinitions = record((document.data.mcp as { servers?: unknown } | undefined)?.servers ?? {}, "mcp.servers");
+  const mcpDefinitions = record((definitions.mcp as { servers?: unknown } | undefined)?.servers
+    ?? (document.data.mcp as { servers?: unknown } | undefined)?.servers ?? {}, "mcp.servers");
   const emittedMcp: Record<string, string> = {};
   for (const id of selection) {
     const match = /^mcp\/([a-z][a-z0-9_-]*)\//.exec(id);

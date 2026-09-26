@@ -9,6 +9,9 @@ import type { ApiMethod, CacheOptions, ModelRequestOptions, ProviderName, Resolv
 import type { McpServerConfig } from "./tools/mcp-client.js";
 import type { ToolPolicyRule } from "./tools/registry.js";
 import { compileWhen } from "./tools/policy.js";
+import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageDefinitions,
+  resolvePackageSelections, type PackageAsset } from "./packages/resolve-agent.js";
+import { parseSelectionReference } from "./packages/references.js";
 import { parseUiDocument, resolveUiOptions, validateUiFlag, type UiOptions, type Density, type ReasoningDisplay, type ColorDisplay, type IconsDisplay, type ThemeName } from "./terminal/options.js";
 
 type JsonObject = Record<string, unknown>;
@@ -73,6 +76,9 @@ export interface RuntimeConfig {
   readonly availableMcpServers: Readonly<Record<string, McpServerConfig>>;
   readonly toolIds: readonly string[];
   readonly skillIds: readonly string[];
+  readonly packageTools: Readonly<Record<string, PackageAsset>>;
+  readonly packageSkills: Readonly<Record<string, PackageAsset>>;
+  readonly packageMcpIdentities: Readonly<Record<string, string>>;
   readonly toolRules: readonly ToolPolicyRule[];
   resolveCompactModelConfig(): Readonly<ResolvedModelConfig>;
 }
@@ -310,6 +316,8 @@ function toolSpec(raw: unknown, where: string): { ids: readonly string[]; rules:
   const ids = value.use.map((id, index) => {
     const name = string(id, `${where}.use[${index}]`);
     if (!/^(?:builtin|local|agent)\/[a-z][a-z0-9_-]*$/.test(name)
+      && !/^pkg\/[a-z][a-z0-9_-]*\/tools\/[a-z][a-z0-9_-]*$/.test(name)
+      && !/^pkgdep\/[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*\/tools\/[a-z][a-z0-9_-]*$/.test(name)
       && !/^mcp\/[^/\s]+\/[^/\s]+$/.test(name)) throw new Error(`invalid tool id: ${name}`);
     return name;
   });
@@ -344,7 +352,9 @@ function skillSpec(raw: unknown, where: string): readonly string[] {
   if (!Array.isArray(value.use)) throw new Error(where + ".use must be an array");
   const ids = value.use.map((id, index) => {
     const name = string(id, `${where}.use[${index}]`);
-    if (!/^(?:builtin|local|agent)\/[a-z][a-z0-9_-]*$/.test(name)) throw new Error(`invalid skill id: ${name}`);
+    if (!/^(?:builtin|local|agent)\/[a-z][a-z0-9_-]*$/.test(name)
+      && !/^pkg\/[a-z][a-z0-9_-]*\/skills\/[a-z][a-z0-9_-]*$/.test(name)
+      && !/^pkgdep\/[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*\/skills\/[a-z][a-z0-9_-]*$/.test(name)) throw new Error(`invalid skill id: ${name}`);
     return name;
   });
   if (new Set(ids).size !== ids.length) throw new Error(where + ".use contains duplicate IDs");
@@ -541,7 +551,34 @@ function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; agen
   return { models, agents, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
 }
 
-function validateDocument(root: JsonObject): void { parseDocument(root); }
+function validateDocument(root: JsonObject): void {
+  const agents = root.agents === undefined ? {} : object(root.agents, "agents");
+  const direct = Object.fromEntries(Object.entries(agents).filter(([, value]) =>
+    !value || typeof value !== "object" || Array.isArray(value) || !Object.hasOwn(value, "from")).map(([name, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [name, value];
+    const copy = structuredClone(value) as JsonObject;
+    for (const kind of ["tools", "skills"] as const) {
+      const use = (copy[kind] as { use?: unknown } | undefined)?.use;
+      if (Array.isArray(use)) (copy[kind] as { use: unknown[] }).use = use.map((item) =>
+        typeof item === "string" ? item : parseSelectionReference(item).ref);
+    }
+    if (Array.isArray(copy.vars)) copy.vars = copy.vars.filter((item) => typeof item === "string" && !item.startsWith("pkg/"));
+    return [name, copy];
+  }));
+  const placeholderBindings = (value: unknown, kind: "vars" | "var_providers" | "mcp"): JsonObject =>
+    Object.fromEntries(Object.entries(value === undefined ? {} : object(value, "package bindings"))
+      .map(([name, item]) => [name, item && typeof item === "object" && !Array.isArray(item) && Object.hasOwn(item, "from")
+        ? kind === "vars" ? { description: "Package binding", access: "read", source: { kind: "literal", value: null } }
+          : kind === "var_providers" ? { command: "true" } : { transport: "stdio", command: "true" }
+        : item]));
+  const mcp = root.mcp === undefined ? undefined : object(root.mcp, "mcp");
+  parseDocument({ ...root, agents: direct, vars: placeholderBindings(root.vars, "vars"),
+    var_providers: placeholderBindings(root.var_providers, "var_providers"),
+    ...(mcp === undefined ? {} : { mcp: { ...mcp, servers: placeholderBindings(mcp.servers, "mcp") } }),
+    ...(!root.default_agent || Object.hasOwn(direct, String(root.default_agent))
+    ? {} : { default_agent: undefined }) });
+}
+export function validateEffectiveConfigData(data: Record<string, unknown>): void { parseDocument(data); }
 
 function resolveKey(modelConfig: ResolvedModelConfig, env: NodeJS.ProcessEnv): ResolvedModelConfig {
   if (modelConfig.apiKey) return modelConfig;
@@ -596,6 +633,28 @@ export function loadVariableConfig(options: LoadConfigOptions = {}): VariableCon
   return variableProjection(document, selected);
 }
 
+export async function loadVariableConfigAsync(options: LoadConfigOptions = {}): Promise<VariableConfig> {
+  const document = readConfigDocument(options);
+  const agents = document.data.agents === undefined ? {} : object(document.data.agents, "agents");
+  const selected = options.flags?.agent ?? (options.env ?? process.env).RAW_AGENT
+    ?? (document.data.default_agent as string | undefined);
+  if (!selected || !Object.hasOwn(agents, selected)) throw new Error(`unknown agent: ${selected ?? "<none>"}`);
+  const binding = object(agents[selected], `agent ${selected}`);
+  const originAlias = typeof binding.from === "string"
+    ? /^pkg\/([a-z][a-z0-9_-]*)\/agents\//.exec(binding.from)?.[1] : undefined;
+  const packageOptions = { configPath: document.path, ...(options.env ? { env: options.env } : {}) };
+  const packageContext = createPackageResolutionContext();
+  const agent = originAlias ? await resolvePackageAgentBinding(binding, packageOptions, packageContext)
+    : structuredClone(binding);
+  agent.tools = { use: [] };
+  const definitions = await resolvePackageDefinitions(agent, document.data, packageOptions, originAlias, packageContext,
+    originAlias ? binding.inputs as JsonObject | undefined : undefined);
+  const configDir = dirname(document.path);
+  const parsed = parseVariableDefinitions(definitions.vars, definitions.var_providers, configDir);
+  return Object.freeze({ agentName: selected, configDir,
+    variables: selectVariables(agent.vars, parsed.variables, "agent.vars"), providers: parsed.providers });
+}
+
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<RuntimeConfig> {
   const env = options.env ?? process.env;
   if (env.RAW_PROFILE !== undefined) throw new Error("RAW_PROFILE was removed; use RAW_AGENT");
@@ -606,7 +665,28 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const document = readConfigDocument(options);
   const ui = resolveUiOptions(parseUiDocument(document.data.ui), flags);
   const sessionsRetentionDays = readSessionRetentionDays(options);
-  const parsed = parseDocument(document.data);
+  const configuredAgents = document.data.agents === undefined ? {} : object(document.data.agents, "agents");
+  const wanted = flags.agent ?? env.RAW_AGENT ?? (document.data.default_agent as string | undefined);
+  if (wanted !== undefined && !Object.hasOwn(configuredAgents, wanted)) throw new Error("unknown agent: " + wanted);
+  const agentData = wanted === undefined ? undefined : configuredAgents[wanted];
+  const packageContext = createPackageResolutionContext();
+  const effective = agentData && typeof agentData === "object" && !Array.isArray(agentData) && Object.hasOwn(agentData, "from")
+    ? await resolvePackageAgentBinding(agentData, { configPath: document.path, env }, packageContext) : agentData;
+  const packageSelection = effective === undefined ? undefined
+    : await resolvePackageSelections(effective, { configPath: document.path, env }, packageContext);
+  const activeAgents: Record<string, unknown> = {};
+  if (wanted !== undefined) activeAgents[wanted] = packageSelection?.agent;
+  const originAlias = agentData && typeof agentData === "object" && !Array.isArray(agentData)
+    && typeof (agentData as { from?: unknown }).from === "string"
+    ? /^pkg\/([a-z][a-z0-9_-]*)\/agents\//.exec((agentData as { from: string }).from)?.[1] : undefined;
+  const packageDefinitions = packageSelection === undefined ? { mcpIdentities: {} as Record<string, string> }
+    : await resolvePackageDefinitions(packageSelection.agent, document.data, { configPath: document.path, env }, originAlias,
+      packageContext, originAlias ? (agentData as { inputs?: JsonObject }).inputs : undefined);
+  const { mcpIdentities, ...definitions } = packageDefinitions;
+  const effectiveDocument: ConfigDocument = { ...document, data: { ...document.data, agents: activeAgents,
+    ...definitions,
+    ...(wanted === undefined ? { default_agent: undefined } : { default_agent: wanted }) } };
+  const parsed = parseDocument(effectiveDocument.data);
   const selectedName = selectAgentName(parsed, flags, env);
   const selectedSpec = selectedName === undefined ? undefined : parsed.agents.get(selectedName);
   const model = selectedSpec === undefined ? undefined : parsed.models.get(selectedSpec.modelAlias);
@@ -659,7 +739,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule,
     ...(rule.when ? { when: Object.freeze({ ...rule.when }) } : {}) })));
   return Object.freeze({
-    variableConfig: variableProjection(document, selectedName),
+    variableConfig: variableProjection(effectiveDocument, selectedName),
     ui,
     ...(selectedName === undefined ? {} : { agentName: selectedName }),
     ...(selected === undefined ? {} : { modelConfig: selected }),
@@ -678,6 +758,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     availableMcpServers: Object.freeze(availableMcpServers),
     toolIds: Object.freeze([...(selectedSpec?.toolIds ?? [])]),
     skillIds: Object.freeze([...(selectedSpec?.skillIds ?? [])]),
+    packageTools: Object.freeze(packageSelection?.tools ?? {}),
+    packageSkills: Object.freeze(packageSelection?.skills ?? {}),
+    packageMcpIdentities: Object.freeze(mcpIdentities ?? {}),
     toolRules,
     resolveCompactModelConfig() {
       if (!selected) throw new Error("agent is required for compact");

@@ -31,7 +31,8 @@ export async function createRuntimeTools(options: {
   }
   const localIds = runtime.toolIds.filter((id) => !id.startsWith("mcp/"));
   const skills = await loadSelectedSkills({ selectedIds: runtime.skillIds, configPath: runtime.configPath,
-    maxOutputBytes: runtime.maxOutputBytes, cwd, globalConfigRoot: runtime.globalConfigRoot });
+    maxOutputBytes: runtime.maxOutputBytes, cwd, globalConfigRoot: runtime.globalConfigRoot,
+    packageSkills: runtime.packageSkills });
   if (runtime.toolIds.includes("builtin/list_skills")
     && Buffer.byteLength(JSON.stringify({ skills: skills.map(({ name, description }) => ({ name, description })) })) > runtime.maxOutputBytes) {
     throw new Error("selected skill catalog exceeds max_output_bytes");
@@ -41,7 +42,7 @@ export async function createRuntimeTools(options: {
     throw new Error("selected variable catalog exceeds max_output_bytes");
   }
   const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills, vars,
-    globalConfigRoot: runtime.globalConfigRoot });
+    globalConfigRoot: runtime.globalConfigRoot, packageTools: runtime.packageTools });
   if (signal?.aborted) throw new Error("tool startup aborted");
   const registry = new ToolRegistry(runtime.toolRules);
   for (const plugin of plugins) registry.register(plugin.registration);
@@ -55,6 +56,7 @@ export async function createRuntimeTools(options: {
     if (id.startsWith("mcp/") && !Object.hasOwn(specs, id.split("/")[1]!)) throw new Error(`unknown MCP server: ${id.split("/")[1]}`);
   }
   const mcp = await connectMcpServers({ servers: specs, registry, cwd, timeoutMs: runtime.requestTimeoutMs,
+    canonicalIdentities: runtime.packageMcpIdentities,
     ...(signal ? { signal } : {}) });
   try {
     const names: string[] = [];
@@ -70,7 +72,10 @@ export async function createRuntimeTools(options: {
     }
     if (new Set(names).size !== names.length) throw new Error("duplicate model-visible tool name");
     const toolSourceDigest = createHash("sha256").update(JSON.stringify(runtime.toolIds.map((id) =>
-      id.startsWith("mcp/") ? { id } : { id, source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }))).digest("hex");
+      id.startsWith("mcp/") ? { id, source: runtime.availableMcpServers[id.split("/")[1]!],
+        identity: runtime.packageMcpIdentities[id.split("/")[1]!] }
+        : { id: runtime.packageTools[id]?.canonicalIdentity ?? id,
+          source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }))).digest("hex");
     return { vars, registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest };
   } catch (error) { await mcp.close(); throw error; }
 }

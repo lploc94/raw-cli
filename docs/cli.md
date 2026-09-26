@@ -32,3 +32,7 @@ Exit codes are 0 for completed turns and informational commands, 1 for runtime/p
 ## Runtime variables
 
 `raw [--config PATH] [--agent NAME] vars list` returns one JSON catalog; `vars get NAME` returns `{name,value,observed_at,cached}`. These utilities use effective agent selection without credentials, prompt files, plugins, MCP or session storage. Only config/agent flags apply. Use-only get is rejected. Errors use stderr: invalid config/arguments exit 2, resolution/access failures exit 1, cancellation exits 130. Each utility invocation starts an empty value cache. `config init` selects both variable tools and a readable `now` clock for the raw agent.
+
+## Portable packages
+
+`raw package list|inspect|validate|pack|export|install|update|remove|link|fork` and `raw agent add` run before session/model startup. They report JSON to stdout and take `--config PATH` to select a per-config installation lock. Typical flow: `raw package export --agent NAME --name @owner/name --version 1.0.0 --out DIR`, `raw package pack DIR --out FILE.rawpkg`, `raw package install FILE.rawpkg --as ALIAS`, then `raw agent add NAME --from pkg/ALIAS/agents/EXPORT --model MODEL_ALIAS`. `--inputs FILE` reads recipient input values from a JSON object. `package update ALIAS --from PATH` checks current bindings before switching the alias; `package fork ALIAS --out DIR` produces editable source, while `package link DIR --as ALIAS` snapshots edited source on the next run. No package command opens the session store or uses model credentials. See [packages](packages.md).

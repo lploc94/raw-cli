@@ -40,3 +40,7 @@ Event payloads are detached snapshots. A renderer cannot mutate authorized argum
 ## Runtime variables
 
 Variable definitions are validated config; the runtime-tools instance owns its resolver and TTL cache. CLI and ACP use the same plugin context service. Session storage owns history but never stores a separate variable cache or expanded env bindings. Definitions remain fixed within a runtime; restart/resume loads current definitions. File/env/provider values are read lazily. This adds no session schema revision.
+
+## Portable package resolution
+
+`raw-package.json` and `.rawpkg` archives are data contracts. Install/link/update writes a per-config atomic alias index and publishes content-addressed artifacts outside session state. `loadConfig` resolves only the selected agent and its referenced package exports into the existing runtime config. Selected tools and skills are then loaded by the ordinary registry/catalog paths; package tool helpers use immutable snapshots. Vars and MCP definitions pass through the existing validators and startup paths. The package release label and installation path are provenance, while effective prompt/schema/source bytes determine runtime transitions. Session history remains canonical and the current selection wins on resume. Package commands and agent binding avoid provider/plugin/MCP/session initialization.

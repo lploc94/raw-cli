@@ -456,6 +456,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: manage immutable and development package installations`
 
 ## Phase 7: Bind packages into agents and expose the sharing CLI
+Status: complete (2026-09-26).
 
 ### Goal
 Make installed standalone components and complete agents usable through ordinary Raw CLI/library/ACP flows.
@@ -488,10 +489,10 @@ Run actual subprocesses and installed SDK types; do not hide a package behind a 
 ### Implementation obligations
 Keep config resolution and input materialization side-effect free until runtime startup. Split selected-agent resolution from validation of unrelated installed component contents. Persist updated config/agent provenance through shared session transition APIs. Ensure base-selection snapshots used by ACP reflect effective package selection. Handle all error exits with cleanup and existing exit-code conventions.
 ### Acceptance criteria
-- [ ] AC-20: Both complete agents and individual components install and run through ordinary CLI/SDK/ACP machinery — runtime/CLI tests.
-- [ ] AC-21: Package changes never require state upgrade, version restoration or a new conversation ID; unchanged follow-up is stable — package/session matrix.
-- [ ] AC-22: Data-only commands work without credentials/session access; unused package issues cannot block unrelated work — CLI isolation tests.
-- [ ] AC-23: Package aliases preserve current policy/vars/MCP semantics and selection order — policy/MCP/vars integration tests.
+- [x] AC-20: Both complete agents and individual components install and run through ordinary CLI/SDK/ACP machinery — runtime/CLI tests.
+- [x] AC-21: Package changes never require state upgrade, version restoration or a new conversation ID; unchanged follow-up is stable — package/session matrix.
+- [x] AC-22: Data-only commands work without credentials/session access; unused package issues cannot block unrelated work — CLI isolation tests.
+- [x] AC-23: Package aliases preserve current policy/vars/MCP semantics and selection order — policy/MCP/vars integration tests.
 ### Focused verification
 `npm run test:phase -- sharing`
 `npm run test:phase -- sessions`
@@ -561,6 +562,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
+- 2026-09-26: Phase 7 complete. Package commands and `agent add` dispatch before model/session startup; selected package agents, exact dependency tools, standalone tools/skills/vars/MCP, recipient inputs and policy identities flow through existing runtime/CLI/SDK/ACP paths. Linked package resolution is pinned per attachment, and package aliases/release labels do not enter tool/skill behavioral fingerprints. Red tests preceded implementation. `npm run test:phase -- sharing` passed 50/50, `npm run test:phase -- sessions` passed 130/130, final `npm run check` passed 460/460, `npm run typecheck` and `git diff --check` passed; targeted package CLI/config/runtime tests passed after the final policy refinement. Self-review APPROVE: package commands remain data-only; current selected references and inputs fail explicitly, unselected package bindings stay inert, and resume uses the same ID with one stable transition.
 - 2026-09-26: Phase 6 complete. Added per-config atomic install authority, owned writer lock and stale-process recovery, immutable artifact/dependency publication, update/removal binding checks, and linked/forked development snapshots. Docs and red tests preceded implementation. `npm run test:phase -- sharing` passed 36/36, `npm run typecheck` passed, `git diff --check` passed. Self-review APPROVE: concurrent writers retain both aliases; injected faults leave old locks intact; runtime snapshots keep helper bytes; package operations do not open sessions or start executable components.
 - 2026-09-26: Phase 5 complete. Added data-only mixed-agent export with explicit include/binding choices and missing-asset draft reports; bounded deterministic ZIP packing, integrity inventory, safe archive validation/extraction and nested exact dependency checks. Static selected tool imports and agent references must be covered by the declared graph. `npm run test:phase -- sharing` passed 29/29, `npm run typecheck` passed, `npm run test:package` passed 2/2, `git diff --check` passed; final export-path refinement passed focused export/archive tests 7/7 and typecheck. Self-review APPROVE: no runtime plugin/provider/MCP/model/session startup in packaging APIs; author-only paths and secret model fields are absent from the artifact by default.
 - 2026-09-26: Phase 4 complete. Added `raw-package.schema.json` and data-only manifest, reference, input and component APIs; exact SemVer and YAML parsers are pinned. Migrated selected skills and five bundled examples to one Agent Skills frontmatter source, copied full skill directories, and removed `skill.json`. Docs explain six exports, aliases, input sites and package identity. Red tests preceded implementation. `npm run test:phase -- sharing` passed 19/19, `npm run typecheck` passed, `npm run check` passed 428/428, `npm run test:package` passed 2/2, `git diff --check` passed. Self-review APPROVE: parser/resolver imports no handlers or providers; release-only tool/package labels do not change fingerprints; selected skill bodies still load at the tail.

@@ -14,7 +14,7 @@ const suites = {
   cli: ["cli", "repl", "package"],
   sessions: ["session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp",
     "session-retention", "session-transition", "session-replay", "tool-plugins", "cache", "provider-content", "auto-compact"],
-  sharing: ["package-manifest", "component-references", "skill-frontmatter", "package-export", "package-archive", "package-store", "package-lifecycle", "skill-tools", "bundled-skills"],
+  sharing: ["package-manifest", "component-references", "skill-frontmatter", "package-export", "package-archive", "package-store", "package-lifecycle", "package-config", "package-cli", "package-runtime", "skill-tools", "bundled-skills"],
 };
 
 const selector = process.argv[2];

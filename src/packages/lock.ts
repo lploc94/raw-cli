@@ -25,7 +25,10 @@ export async function withPackageWriteLock<T>(indexPath: string, work: () => Pro
         try { process.kill(owner!.pid!, 0); }
         catch (check) { if ((check as NodeJS.ErrnoException).code === "ESRCH") live = false; }
       }
-      if (!live && Date.now() - (await stat(path)).mtimeMs > 500) {
+      let age = 0;
+      try { age = Date.now() - (await stat(path)).mtimeMs; }
+      catch (missing) { if ((missing as NodeJS.ErrnoException).code === "ENOENT") continue; throw missing; }
+      if ((!live && age > 500) || (!owner && age > 30000)) {
         try { await unlink(path); continue; }
         catch (removed) { if ((removed as NodeJS.ErrnoException).code !== "ENOENT") throw removed; }
       }

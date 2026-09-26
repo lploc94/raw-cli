@@ -27,3 +27,5 @@ config-local assets so it can be copied without an MCP server. To extend it,
 declare `mcp.servers.search` in that file and add `mcp/search/web_search` to
 the agent's ordered `tools.use` list. The recipient must provide the server
 command or URL and any credentials it requires.
+
+An MCP server definition can also come from a package: `"mcp":{"servers":{"web":{"from":"pkg/kit/mcp/search","inputs":{"endpoint":"https://recipient.example/mcp"}}}}`. The local `web` alias remains the selection in `tools.use` (`mcp/web/query`). The package export has its own canonical policy identity (`@owner/name#mcp/search/query`); release labels and artifact hashes do not enter the visible alias. Only selected servers start. Installing, inspecting, exporting or updating the package does not connect to MCP.

@@ -24,6 +24,7 @@ export interface ConnectMcpOptions {
   registry?: ToolRegistry;
   timeoutMs?: number;
   signal?: AbortSignal;
+  canonicalIdentities?: Readonly<Record<string, string>>;
 }
 
 export interface McpToolInfo {
@@ -304,7 +305,9 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
           try { validate = ajv.compile(schema); }
           catch { throw new Error(`unsupported MCP tool schema for ${name}/${originalName}`); }
           if ((validate as typeof validate & { $async?: boolean }).$async) throw new Error(`unsupported async MCP tool schema for ${name}/${originalName}`);
-          return { name: alias, canonicalName: `mcp/${name}/${originalName}`, description: tool.description, inputSchema: schema,
+          return { name: alias, canonicalName: options.canonicalIdentities?.[name]
+            ? `${options.canonicalIdentities[name]}/${originalName}` : `mcp/${name}/${originalName}`,
+            description: tool.description, inputSchema: schema,
           validateArgs: (args) => validate(args) ? undefined : ajv.errorsText(validate.errors),
           handler: async (args, context) => {
             if (closed) return errorResult("mcp_closed", `MCP server ${name} is closed`);

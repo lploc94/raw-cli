@@ -206,3 +206,5 @@ Ordinary returned/printed tool output may of course contain values.
 Only --config and --agent apply to vars commands. Success emits one newline-terminated
 JSON result. Errors go to stderr: invalid input/config exits 2; resolution/access
 failure exits 1; cancellation exits 130. No reveal override or vars write command.
+
+An installed var or executable provider can be bound under a local root name with `{ "from": "pkg/ALIAS/vars/EXPORT", "inputs": {} }` or the corresponding `var_providers` reference. The agent selects the local variable name. Package agent var references (`#vars/NAME` or an exact dependency reference) resolve to selected definitions without reading values during startup or export. `vars list` still returns metadata only; `vars get` resolves the one requested value. Recipient inputs supply source definitions, environment names or paths; they are separate from the runtime readings those sources later produce.

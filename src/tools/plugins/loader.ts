@@ -12,6 +12,7 @@ import type { ToolRegistration } from "../registry.js";
 import type { ToolManifest, ToolPlugin } from "./contract.js";
 import type { SelectedSkill } from "../../skills/contract.js";
 import { selectedToolSnapshot } from "./snapshot.js";
+import type { PackageAsset } from "../../packages/resolve-agent.js";
 
 const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var"]);
 const manifestKeys = ["api_version", "id", "version", "name", "description", "input_schema", "entry"];
@@ -25,6 +26,7 @@ export interface LoadToolPluginsOptions {
   globalConfigRoot?: string;
   skills?: readonly SelectedSkill[];
   vars?: VariableContext;
+  packageTools?: Readonly<Record<string, PackageAsset>>;
 }
 
 export function bundledToolsRoot(): string {
@@ -42,12 +44,12 @@ function parseId(id: string): { scope: "builtin" | "local" | "agent"; folder: st
   return { scope: match[1] as "builtin" | "local" | "agent", folder: match[2]! };
 }
 
-function manifestFrom(value: unknown, expectedId: string): ToolManifest {
+function manifestFrom(value: unknown, expectedId: string, expectedFolder: string): ToolManifest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`invalid tool manifest: ${expectedId}`);
   const item = value as Record<string, unknown>;
   if (Object.keys(item).some((key) => !manifestKeys.includes(key))
     || manifestKeys.some((key) => !Object.hasOwn(item, key))
-    || item.api_version !== 1 || item.id !== parseId(expectedId).folder
+    || item.api_version !== 1 || item.id !== expectedFolder
     || typeof item.version !== "string" || !/^\d+\.\d+\.\d+$/.test(item.version)
     || typeof item.name !== "string" || !/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(item.name)
     || typeof item.description !== "string" || !item.description.trim()
@@ -84,18 +86,18 @@ function compileSchema(manifest: ToolManifest): (args: unknown) => string | unde
   return (args) => validate(args) ? undefined : `invalid arguments: ${ajv.errorsText(validate.errors)}`;
 }
 
-async function selectedManifest(id: string, root: string): Promise<{
+async function selectedManifest(id: string, root: string, direct?: PackageAsset): Promise<{
   id: string; manifest: ToolManifest; entryPath: string; sourceDigest: string;
   validateSchema: (args: unknown) => string | undefined;
 }> {
-  const { folder } = parseId(id);
+  const folder = direct?.name ?? parseId(id).folder;
   let realRoot: string;
   let realFolder: string;
   let realManifest: string;
   let realEntry: string;
   try {
     realRoot = await realpath(root);
-    realFolder = await realpath(join(root, folder));
+    realFolder = await realpath(direct?.folder ?? join(root, folder));
     if (!inside(realRoot, realFolder)) throw new Error("folder escape");
     realManifest = await realpath(join(realFolder, "tool.json"));
     realEntry = await realpath(join(realFolder, "index.mjs"));
@@ -105,10 +107,11 @@ async function selectedManifest(id: string, root: string): Promise<{
   if (!inside(realFolder, realManifest) || !inside(realFolder, realEntry)) throw new Error(`selected tool entry escapes folder: ${id}`);
   let manifest: ToolManifest;
   let manifestBytes: Buffer;
-  try { manifestBytes = await readFile(realManifest); manifest = manifestFrom(JSON.parse(manifestBytes.toString("utf8")), id); }
+  try { manifestBytes = await readFile(realManifest); manifest = manifestFrom(JSON.parse(manifestBytes.toString("utf8")), id, folder); }
   catch (error) { throw new Error(`invalid selected tool manifest ${id}: ${(error as Error).message}`); }
   const validateSchema = compileSchema(manifest);
-  const snapshot = await selectedToolSnapshot(id, realFolder, manifest, manifestBytes, parseId(id).scope === "builtin");
+  const snapshot = await selectedToolSnapshot(direct?.canonicalIdentity ?? id, realFolder, manifest, manifestBytes,
+    !direct && parseId(id).scope === "builtin");
   return { id, manifest, entryPath: snapshot.entryPath, sourceDigest: snapshot.sourceDigest, validateSchema };
 }
 
@@ -124,11 +127,13 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
   for (const id of options.selectedIds) {
     if (seenIds.has(id)) throw new Error(`duplicate tool id: ${id}`);
     seenIds.add(id);
-    const parsed = parseId(id);
-    if (parsed.scope === "builtin" && !bundledNames.has(parsed.folder)) throw new Error(`unknown bundled tool: ${id}`);
-    const item = await selectedManifest(id, roots[parsed.scope]);
-    if (seenNames.has(item.manifest.name)) throw new Error(`duplicate tool name: ${item.manifest.name}`);
-    seenNames.add(item.manifest.name);
+    const direct = options.packageTools?.[id];
+    const parsed = direct ? undefined : parseId(id);
+    if (parsed?.scope === "builtin" && !bundledNames.has(parsed.folder)) throw new Error(`unknown bundled tool: ${id}`);
+    const item = await selectedManifest(id, direct ? dirname(direct.folder) : roots[parsed!.scope], direct);
+    const visibleName = direct?.as ?? item.manifest.name;
+    if (seenNames.has(visibleName)) throw new Error(`duplicate tool name: ${visibleName}`);
+    seenNames.add(visibleName);
     prepared.push(item);
   }
   const result: ToolPlugin[] = [];
@@ -141,7 +146,8 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
     }
     const semantic = entry.validateArgs as ((args: unknown) => unknown) | undefined;
     const registration: ToolRegistration = {
-      name: item.manifest.name, canonicalName: item.id,
+      name: options.packageTools?.[item.id]?.as ?? item.manifest.name,
+      canonicalName: options.packageTools?.[item.id]?.canonicalIdentity ?? item.id,
       description: item.manifest.description, inputSchema: item.manifest.input_schema,
       validateArgs(args) {
         let error: unknown;

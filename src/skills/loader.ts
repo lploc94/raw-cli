@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { packageRoot } from "../package-root.js";
 import type { SelectedSkill } from "./contract.js";
 import { parseSkillMarkdown } from "./frontmatter.js";
+import type { PackageAsset } from "../packages/resolve-agent.js";
 
 export interface LoadSelectedSkillsOptions {
   selectedIds: readonly string[];
@@ -13,6 +14,7 @@ export interface LoadSelectedSkillsOptions {
   home?: string;
   cwd?: string;
   globalConfigRoot?: string;
+  packageSkills?: Readonly<Record<string, PackageAsset>>;
 }
 
 function inside(root: string, path: string): boolean {
@@ -33,17 +35,18 @@ export async function loadSelectedSkills(options: LoadSelectedSkillsOptions): Pr
   const seenNames = new Set<string>();
   const skills: SelectedSkill[] = [];
   for (const id of options.selectedIds) {
-    const match = /^(builtin|local|agent)\/([a-z][a-z0-9_-]*)$/.exec(id);
-    if (!match) throw new Error(`invalid skill id: ${id}`);
+    const direct = options.packageSkills?.[id];
+    const match = direct ? undefined : /^(builtin|local|agent)\/([a-z][a-z0-9_-]*)$/.exec(id);
+    if (!direct && !match) throw new Error(`invalid skill id: ${id}`);
     if (seenIds.has(id)) throw new Error(`duplicate skill id: ${id}`);
     seenIds.add(id);
-    const root = roots[match[1] as "builtin" | "local" | "agent"];
+    const root = direct ? dirname(direct.folder) : roots[match![1] as "builtin" | "local" | "agent"];
     let realRoot: string;
     let realFolder: string;
     let realMarkdown: string;
     try {
       realRoot = await realpath(root);
-      realFolder = await realpath(join(root, match[2]!));
+      realFolder = await realpath(direct?.folder ?? join(root, match![2]!));
       realMarkdown = await realpath(join(realFolder, "SKILL.md"));
     } catch { throw new Error(`missing selected skill: ${id}`); }
     if (!inside(realRoot, realFolder) || !inside(realFolder, realMarkdown)) {
@@ -53,11 +56,13 @@ export async function loadSelectedSkills(options: LoadSelectedSkillsOptions): Pr
     let source: string;
     try { source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await readFile(realMarkdown)); }
     catch { throw new Error(`invalid UTF-8 selected skill: ${id}`); }
-    const skill = parseSkillMarkdown(source, match[2]!, `selected skill ${id}/SKILL.md`);
-    if (seenNames.has(skill.name)) throw new Error(`duplicate skill name: ${skill.name}`);
-    seenNames.add(skill.name);
+    const skill = parseSkillMarkdown(source, direct?.name ?? match![2]!, `selected skill ${id}/SKILL.md`);
+    const visibleName = direct?.as ?? skill.name;
+    if (seenNames.has(visibleName)) throw new Error(`duplicate skill name: ${visibleName}`);
+    seenNames.add(visibleName);
     if (Buffer.byteLength(skill.markdown) > options.maxOutputBytes) throw new Error(`selected skill exceeds max_output_bytes: ${id}`);
-    skills.push(Object.freeze({ id, ...skill }));
+    skills.push(Object.freeze({ id: direct ? `${direct.canonicalIdentity}:${visibleName}` : id,
+      ...skill, name: visibleName }));
   }
   const catalog = { skills: skills.map(({ name, description }) => ({ name, description })) };
   if (Buffer.byteLength(JSON.stringify(catalog)) > options.maxOutputBytes) throw new Error("selected skill catalog exceeds max_output_bytes");

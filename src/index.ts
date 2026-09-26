@@ -2,6 +2,7 @@ export {
   configFilePath,
   loadConfig,
   loadVariableConfig,
+  loadVariableConfigAsync,
   parseCliArgs,
   readConfigDocument,
   readSessionRetentionDays,
@@ -37,8 +38,12 @@ export { inspectPackage, validatePackage } from "./packages/inspect.js";
 export type { PackageReport } from "./packages/inspect.js";
 export { packPackage, validatePackageArchive, unpackPackage } from "./packages/archive.js";
 export { installPackage, updatePackage, removePackage, linkPackage, forkPackage,
-  listInstalledPackages, resolveInstalledPackage } from "./packages/store.js";
+  listInstalledPackages, resolveInstalledPackage, resolveInstalledDependency } from "./packages/store.js";
 export type { PackageStoreOptions, PackageEntry, InstallPackageOptions, PackageAliasOptions, ForkPackageOptions } from "./packages/store.js";
+export { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageSelections, resolvePackageDefinitions } from "./packages/resolve-agent.js";
+export type { PackageAsset, PackageSelections, PackageResolutionContext } from "./packages/resolve-agent.js";
+export { addPackageAgent, runPackageCli } from "./packages/cli.js";
+export type { AddPackageAgentOptions } from "./packages/cli.js";
 export type { ToolManifest, ToolPlugin } from "./tools/plugins/contract.js";
 export { viewImageTool, MAX_IMAGE_BYTES } from "./tools/image.js";
 export type { ToolDefinition, ToolRegistration, ToolPolicyRule } from "./tools/registry.js";
