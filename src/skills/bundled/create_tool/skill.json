@@ -1,7 +1,0 @@
-{
-  "api_version": 1,
-  "id": "create_tool",
-  "version": "1.2.0",
-  "name": "create_tool",
-  "description": "Use to create or customize a Raw tool plugin or executable variable provider, including input/output contracts, host vars consumption, registration and verification. Reusable instructions belong in create_skill."
-}

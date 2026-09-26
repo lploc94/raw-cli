@@ -1,8 +1,12 @@
+---
+name: create-skill
+description: "Use when creating or improving a discoverable Raw skill; write its description and instructions, choose a root, register it on an agent and verify loading."
+---
 # Create a Raw skill
 
 Use when creating or improving reusable instructions that a Raw agent should discover and load. An ordinary Markdown document does not need skill registration; a new callable action belongs in `create_tool`.
 
-For a how-to, explain the format, authoring approach and registration with examples. For a requested creation, use the workflow below. For a load failure, inspect the selected ID, manifest, body size and error before rewriting instructions.
+For a how-to, explain the format, authoring approach and registration with examples. For a requested creation, use the workflow below. For a load failure, inspect the selected ID, frontmatter, body size and error before rewriting instructions.
 
 ## Establish the useful task
 
@@ -24,9 +28,9 @@ Use these parts where useful; combine short sections rather than filling a rigid
 
 Keep instructions task-specific: a release-notes skill should not inherit Raw configuration-edit steps. Avoid assumed checkout paths or mandatory external documentation for core behavior.
 
-## Raw package contract
+## Raw skill contract
 
-Each skill folder contains strict `skill.json` and UTF-8 `SKILL.md`. Raw does not parse YAML frontmatter as metadata or automatically load supporting resources. The current `load_skill` returns the entire Markdown in one linked result; keep it within the target agent's `max_output_bytes` (8192 bytes by default). Catalog descriptions must collectively fit that cap too.
+Each skill folder contains UTF-8 `SKILL.md` with YAML frontmatter. Required `name` and `description` are the only catalog authority. Optional `scripts/`, `references/` and `assets/` stay with the folder; their contents are not loaded automatically. `load_skill` returns the Markdown body after frontmatter in one linked result; keep that body within the target agent's `max_output_bytes` (8192 bytes by default). Catalog descriptions must collectively fit that cap too.
 
 | Root | Location and use |
 | --- | --- |
@@ -34,27 +38,18 @@ Each skill folder contains strict `skill.json` and UTF-8 `SKILL.md`. Raw does no
 | `local/<id>` | `$XDG_CONFIG_HOME/raw/skills/<id>/`, otherwise `~/.config/raw/skills/<id>/`; shared local installation |
 | `builtin/<id>` | Package-owned; fork a shipped example into a user root to customize |
 
-`--config` changes the config-adjacent root, not the global root. Folder IDs match `[a-z][a-z0-9_-]*`. Manifest has exactly five fields: numeric `api_version: 1`, matching `id`, numeric-three-component `version` string, model-visible `name` matching `[A-Za-z_][A-Za-z0-9_-]{0,63}`, and nonempty `description`. Selected IDs and names must be unique. Duplicate/unknown JSON fields, invalid UTF-8, missing selected files, symlink escapes or oversized content fail before inference; unselected folders are inert.
+`--config` changes the config-adjacent root, not the global root. Portable folder/name values use lowercase kebab-case, at most 64 characters, no leading/trailing or consecutive hyphens; the frontmatter name matches the folder. Description is nonempty and at most 1024 characters. Selected IDs and names must be unique. Duplicate YAML keys, invalid UTF-8, missing selected files, symlink escapes or oversized bodies fail before inference; unselected folders are inert. Built-in IDs retain their existing underscores through Raw's explicit mapping.
 
 ## Worked example: release notes
 
-For `/work/helper/raw.json`, create `skills/release_notes/skill.json` beside it:
-
-<!-- example:manifest -->
-```json
-{
-  "api_version": 1,
-  "id": "release_notes",
-  "version": "1.0.0",
-  "name": "release_notes",
-  "description": "Use when drafting a changelog or release summary from a Git comparison range. Group user-visible changes and cite commits; ordinary code review does not need this skill."
-}
-```
-
-Create `skills/release_notes/SKILL.md`:
+For `/work/helper/raw.json`, create `skills/release-notes/SKILL.md` beside it:
 
 <!-- example:body -->
 ```markdown
+---
+name: release-notes
+description: Use when drafting a changelog or release summary from a Git comparison range. Group user-visible changes and cite commits; ordinary code review does not need this skill.
+---
 # Draft release notes
 
 Produce release notes from committed changes. A request to explain the process
@@ -87,17 +82,17 @@ The following fragment belongs inside `agents.helper`. Append missing IDs to exi
 ```json
 {
   "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] },
-  "skills": { "use": ["agent/release_notes"] }
+  "skills": { "use": ["agent/release-notes"] }
 }
 ```
 
-Nonempty `skills.use` requires both skill tools. Do not change `default_agent` just to register a skill. If the agent does not exist, use `create_agent`; otherwise preserve its other fields. For global files, select `local/release_notes` instead.
+Nonempty `skills.use` requires both skill tools. Do not change `default_agent` just to register a skill. If the agent does not exist, use `create_agent`; otherwise preserve its other fields. For global files, select `local/release-notes` instead.
 
 ## Create, verify and improve
 
-1. Establish the actual config/agent and chosen root. Check existing selected names, create both files, and make the smallest registration edit with a backup of existing config. Keep config mode 0600.
+1. Establish the actual config/agent and chosen root. Check existing selected names, create `SKILL.md` and any supporting files, and make the smallest registration edit with a backup of existing config. Keep config mode 0600.
 2. Run `raw --config /work/helper/raw.json config list` (or `raw config list` for canonical config). This checks config, not skill files.
-3. Verify loading without another model call when the `raw-cli` library is available: `loadConfig({configPath, requireModel:false})`, then `loadSelectedSkills({selectedIds: runtime.skillIds, configPath, maxOutputBytes: runtime.maxOutputBytes})`. Or use the configured agent's `list_skills` and `load_skill({name:"release_notes"})` in a suitable run. Confirm the selected name and exact body, not just a successful config parse.
+3. Verify loading without another model call when the `raw-cli` library is available: `loadConfig({configPath, requireModel:false})`, then `loadSelectedSkills({selectedIds: runtime.skillIds, configPath, maxOutputBytes: runtime.maxOutputBytes})`. Or use the configured agent's `list_skills` and `load_skill({name:"release-notes"})` in a suitable run. Confirm the selected name and body, not just a successful config parse.
 4. Assess content using a normal task, a boundary case and a near miss. For the example: draft from a known range with verifiable citations; handle an empty range; do ordinary code review without treating it as release-note generation. Review outputs and tool traces for incorrect advice or missing steps. Extra model work is diagnostic.
 5. Improve instructions around evidenced errors. Compare versions on the same inputs/model when useful; record which version produced the result. A mock list/load test proves wiring, not writing quality, and no model test guarantees every future action.
 

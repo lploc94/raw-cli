@@ -28,19 +28,21 @@ For this kit, prefer bounded descriptions over deliberately broad triggering. Ra
 
 ## Adapt the format to Raw
 
-Raw currently has its own strict manifest contract; it does not parse Agent Skills YAML frontmatter as registration metadata. The shared Agent Skills specification describes a different metadata convention and optional supporting directories. Borrow its authoring principles without claiming format compatibility. [Agent Skills specification](https://agentskills.io/specification)
+Raw uses Agent Skills YAML frontmatter for skill name and description. The directory may contain `scripts/`, `references/` and `assets/`; portable packages include declared owned files. [Agent Skills specification](https://agentskills.io/specification)
 
 ```text
-skills/my_skill/
-  skill.json
+skills/my-skill/
   SKILL.md
+  references/
+  scripts/
+  assets/
 ```
 
-`skill.json` has exactly `api_version` (number `1`), `id` (folder ID), `version` (three numeric semver components), `name` (unique selected model-visible skill name), and `description` (nonempty string). `id` follows `[a-z][a-z0-9_-]*`; `name` follows `[A-Za-z_][A-Za-z0-9_-]{0,63}`. Register an exact `local/<id>` or `agent/<id>` in `skills.use`; select both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. The shipped `create_skill` instructions provide a complete creation and registration example.
+`SKILL.md` starts with `---`, a lowercase kebab-case `name` matching the folder, a nonempty `description` (at most 1024 characters), and a closing `---`. Optional standard frontmatter fields include `license`, `compatibility` and string-valued `metadata`. Register exact `local/<id>` or `agent/<id>` in `skills.use`; select both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. The shipped `create_skill` instructions provide a complete example.
 
-Raw exposes names/descriptions only after `list_skills`; `load_skill` returns the complete selected Markdown at the conversation tail. The loader validates the body against `max_output_bytes` (default **8192 bytes**, not tokens). The catalog must also fit. No arbitrary minimum word/byte count establishes quality.
+Raw exposes names/descriptions only after `list_skills`; `load_skill` returns the body after frontmatter at the conversation tail. The loader validates that body against `max_output_bytes` (default **8192 bytes**, not tokens). The catalog must also fit. No arbitrary minimum word/byte count establishes quality.
 
-Keep the five shipped bodies self-contained within that cap. Today's copy script packages only `skill.json` and `SKILL.md`, and the load result provides no resource base path. Do not rely on `references/`, helper scripts, a source checkout, or relative `docs/...` links as mandatory runtime dependencies. Supporting-resource delivery would be a separate runtime design. The common recommendation to split long skills into references therefore needs adaptation for Raw, rather than literal adoption.
+Keep the five shipped bodies self-contained within that cap. The copy script preserves entire skill folders, including references, scripts and assets. A `load_skill` result contains the body, not automatic resource contents; mention relative resources in instructions and use the agent's file tools to read them when needed. Do not rely on a source checkout or undeclared files for portable packages.
 
 ## A body outline to adapt
 

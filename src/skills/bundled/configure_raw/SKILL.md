@@ -1,3 +1,7 @@
+---
+name: configure-raw
+description: "Use to explain, edit or diagnose existing Raw configuration: models, agents, prompts, UI, vars, executable provider declarations, limits and policy. Use creation skills for new assets or MCP connections."
+---
 # Configure Raw
 
 Explain, edit or diagnose existing settings; preserve unrelated fields. Creation skills cover new assets.

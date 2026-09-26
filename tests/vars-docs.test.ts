@@ -5,13 +5,14 @@ import { tmpdir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { loadVariableConfig } from "../src/config.js";
 import { createVariableResolver } from "../src/vars/resolver.js";
+import { parseSkillMarkdown } from "../src/skills/frontmatter.js";
 
 test("documented JSON blocks parse and English setup bodies stay usable within default cap", () => {
   const guide = readFileSync("docs/vars.md", "utf8");
   assert.match(guide, /protocol_version/);
   for (const name of ["configure_raw", "create_tool", "create_agent", "create_skill", "add_mcp"]) {
     const body = readFileSync(`src/skills/bundled/${name}/SKILL.md`, "utf8");
-    assert.ok(Buffer.byteLength(body) <= 8192, name);
+    assert.ok(Buffer.byteLength(parseSkillMarkdown(body, name).markdown) <= 8192, name);
     assert.match(body, /vars/);
     for (const block of body.matchAll(/```json\n([\s\S]*?)\n```/g)) JSON.parse(block[1]!);
     assert.equal(body, readFileSync(`examples/skills/${name}/SKILL.md`, "utf8"));

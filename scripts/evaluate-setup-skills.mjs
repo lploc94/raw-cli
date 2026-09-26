@@ -9,6 +9,7 @@ import { loadConfig, readConfigDocument, redact } from "../src/config.js";
 import { createProvider } from "../src/llm/client.js";
 import { createRuntimeTools } from "../src/tools/plugins/runtime.js";
 import { createAgent } from "../src/agent.js";
+import { parseSkillMarkdown } from "../src/skills/frontmatter.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ids = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp"];
@@ -49,7 +50,7 @@ export function gradeRun({ caseSpec, transcript, status, artifacts = [], unchang
   const successful = new Set(transcript.filter(m => m.role === "tool" && m.name === "load_skill" && !m.result.isError).map(m => m.callId));
   const loaded = [...new Set(calls.filter(c => c.name === "load_skill" && successful.has(c.id)).map(c => c.arguments.name))];
   const expected = caseSpec.skill ? [caseSpec.skill] : [];
-  const allowed = caseSpec.kind === "execute" ? [...expected, "configure_raw"] : expected;
+  const allowed = caseSpec.kind === "execute" ? [...expected, "configure-raw"] : expected;
   const checks = [
     { name: "completed", pass: status === "completed" },
     { name: "appropriate skill", pass: expected.every(n => loaded.includes(n)) && loaded.every(n => allowed.includes(n))
@@ -133,7 +134,7 @@ async function artifactsFor(spec, fixture) {
         && copy.models.lab?.base_url === "http://127.0.0.1:9999/v1" && !copy.models.lab?.api_key && !copy.models.lab?.api_key_env);
       delete copy.models.lab; copy.agents.raw.model = old.agents.raw.model;
     }
-    const additions = { "skill-create": ["skills", "agent/release_notes"], "tool-create": ["tools", "agent/append_notes"], "mcp-add": ["tools", "mcp/echo/echo_text"] };
+    const additions = { "skill-create": ["skills", "agent/release-notes"], "tool-create": ["tools", "agent/append_notes"], "mcp-add": ["tools", "mcp/echo/echo_text"] };
     if (additions[spec.id]) {
       const [field, id] = additions[spec.id];
       check("exact registration", copy.agents.raw[field].use.includes(id));
@@ -151,11 +152,11 @@ async function artifactsFor(spec, fixture) {
       tools = await createRuntimeTools({ runtime, cwd });
       const context = { cwd, maxOutputBytes: 8192, autoApprove: true };
       if (spec.id === "skill-create") {
-        const skill = tools.skills.find(s => s.name === "release_notes");
+        const skill = tools.skills.find(s => s.name === "release-notes");
         check("created skill loads", Boolean(skill?.markdown.trim()));
         const listed = await tools.registry.dispatch("list_skills", {}, context);
-        check("created skill discoverable", JSON.stringify(listed).includes("release_notes"));
-        const loaded = await tools.registry.dispatch("load_skill", { name: "release_notes" }, context);
+        check("created skill discoverable", JSON.stringify(listed).includes("release-notes"));
+        const loaded = await tools.registry.dispatch("load_skill", { name: "release-notes" }, context);
         check("created skill linked body", !loaded.isError && loaded.content[0]?.text === skill?.markdown);
       } else if (spec.id === "tool-create") {
         const first = join(cwd, "host-preflight.txt");
@@ -212,9 +213,10 @@ async function main() {
   const cases = readJson(join(repo, "tests/fixtures/setup-skill-evals.json"));
   if (flags.case && !cases.some(c => c.id === flags.case)) throw new Error("unknown evaluation case");
   mkdirSync(output, { recursive: true, mode: 0o700 });
-  const sourceSnapshot = join(output, `skills-${hash(ids.map(id => [readJson(join(source, id, "skill.json")), readFileSync(join(source, id, "SKILL.md"), "utf8")])).slice(0, 16)}`);
+  const sourceSnapshot = join(output, `skills-${hash(ids.map(id => readFileSync(join(source, id, "SKILL.md"), "utf8"))).slice(0, 16)}`);
   if (!existsSync(sourceSnapshot)) cpSync(source, sourceSnapshot, { recursive: true });
-  const skills = ids.map(id => ({ ...readJson(join(sourceSnapshot, id, "skill.json")), markdown: readFileSync(join(sourceSnapshot, id, "SKILL.md"), "utf8") }));
+  const skills = ids.map(id => ({ id: `builtin/${id}`,
+    ...parseSkillMarkdown(readFileSync(join(sourceSnapshot, id, "SKILL.md"), "utf8"), id) }));
   // Capture the evaluator connection before tools see a synthetic environment.
   const real = await loadConfig({ flags: { agent: flags.agent ?? "raw", ...(flags.config ? { configPath: resolve(flags.config) } : {}) }, requireModel: true });
   const provider = createProvider(real.modelConfig);

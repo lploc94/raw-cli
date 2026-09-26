@@ -32,9 +32,8 @@ function model() {
 
 test("create_skill example registers a config-adjacent selected skill", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-skill-example-"));
-  const skillRoot = join(root, "skills", "release_notes");
+  const skillRoot = join(root, "skills", "release-notes");
   mkdirSync(skillRoot, { recursive: true });
-  writeFileSync(join(skillRoot, "skill.json"), JSON.stringify(JSON.parse(fence("create_skill", "json", "manifest"))));
   writeFileSync(join(skillRoot, "SKILL.md"), fence("create_skill", "markdown", "body") + "\n");
   const registration = JSON.parse(fence("create_skill", "json", "registration"));
   const configPath = join(root, "raw.json");
@@ -43,7 +42,7 @@ test("create_skill example registers a config-adjacent selected skill", async ()
     agents: { helper: { model: "local", ...registration } } }));
   const runtime = await loadConfig({ configPath, env: {}, requireModel: false });
   const selected = await loadSelectedSkills({ selectedIds: runtime.skillIds, configPath, maxOutputBytes: 8192, cwd: root });
-  assert.deepEqual(selected.map((skill) => skill.name), ["release_notes"]);
+  assert.deepEqual(selected.map((skill) => skill.name), ["release-notes"]);
   assert.match(selected[0]!.markdown, /commit hash/);
 });
 
@@ -113,7 +112,7 @@ test("create_agent example is a complete portable config", async () => {
   assert.equal(runtime.agentName, "writer");
   assert.equal(runtime.systemPrompt, "You are a writing assistant.\n");
   const tools = await createRuntimeTools({ runtime, cwd: root });
-  try { assert.deepEqual(tools.skills.map((skill) => skill.name), ["configure_raw"]); }
+  try { assert.deepEqual(tools.skills.map((skill) => skill.name), ["configure-raw"]); }
   finally { await tools.mcp.close(); }
   const moved = mkdtempSync(join(tmpdir(), "raw-copied-agent-example-"));
   cpSync(root, moved, { recursive: true });

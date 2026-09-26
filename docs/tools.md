@@ -59,7 +59,7 @@ sandbox is implied.
 
 The starter `raw` agent selects `builtin/read_file`, `builtin/write_file`, `builtin/bash`, `builtin/list_skills`, and `builtin/load_skill`. Other agents choose their own ordered `tools.use` list, including an empty list. The model receives each tool's purpose, important result and failure behavior, and parameter descriptions in its function definition. The starter system prompt covers general tasks and on-demand Raw setup skill routing; this document is for users and is not injected into model context. Tool inputs reject unknown fields:
 
-The other two shipped plugins, `builtin/list_skills` and `builtin/load_skill`, expose only agent-selected skills on demand. See [skills](skills.md) for the manifest, selection, and linked-result behavior.
+The other two shipped plugins, `builtin/list_skills` and `builtin/load_skill`, expose only agent-selected skills on demand. See [skills](skills.md) for frontmatter, selection, and linked-result behavior.
 
 | Tool | Required input | Optional input | Action |
 |---|---|---|---|

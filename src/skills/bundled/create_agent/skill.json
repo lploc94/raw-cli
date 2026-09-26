@@ -1,7 +1,0 @@
-{
-  "api_version": 1,
-  "id": "create_agent",
-  "version": "1.2.0",
-  "name": "create_agent",
-  "description": "Use to create or share a Raw agent with its model, prompt, tools, skills, vars, providers and policy. For changing one setting of an existing agent, use configure_raw."
-}

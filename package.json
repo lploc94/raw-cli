@@ -24,6 +24,8 @@
     "docs/terminal-output.md",
     "README.md",
     "docs/vars.md",
+    "docs/packages.md",
+    "schemas/raw-package.schema.json",
     "examples/providers"
   ],
   "scripts": {
@@ -47,12 +49,15 @@
     "marked": "18.0.14",
     "openai": "7.23.0",
     "re2js": "2.8.6",
+    "semver": "7.8.5",
     "string-width": "8.3.0",
     "wrap-ansi": "10.0.2",
-    "ws": "8.21.3"
+    "ws": "8.21.3",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
+    "@types/semver": "7.8.0",
     "@types/ws": "8.18.1",
     "js-tiktoken": "1.0.21",
     "tsup": "8.5.1",

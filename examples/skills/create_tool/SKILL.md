@@ -1,3 +1,7 @@
+---
+name: create-tool
+description: "Use to create or customize a Raw tool plugin or executable variable provider, including input/output contracts, host vars consumption, registration and verification."
+---
 # Create a Raw tool plugin
 
 Create callable tools or executable variable providers; reusable instructions belong in create_skill. Tools have manifests and ESM handlers; providers are scripts returning configured data.

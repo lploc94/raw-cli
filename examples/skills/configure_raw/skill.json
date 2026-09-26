@@ -1,7 +1,0 @@
-{
-  "api_version": 1,
-  "id": "configure_raw",
-  "version": "1.2.0",
-  "name": "configure_raw",
-  "description": "Use to explain, edit or diagnose existing Raw configuration: models, agents, prompts, UI, vars, executable provider declarations, limits and policy. Use creation skills for new assets or MCP connections."
-}

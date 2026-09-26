@@ -1,14 +1,19 @@
 # Skills
 
-An agent may select skills with `"skills": {"use": ["builtin/configure_raw", "local/review", "agent/project"]}`. The list defaults to empty. `builtin/<id>` resolves from the installed Raw package, independently of the checkout and config path. `local/<id>` resolves under `$XDG_CONFIG_HOME/raw/skills/` or `~/.config/raw/skills/`; `agent/<id>` resolves under `skills/` beside the selected config file. Raw reads only selected folders. Each folder contains a strict `skill.json` manifest and UTF-8 `SKILL.md`:
+An agent may select skills with `"skills": {"use": ["builtin/configure_raw", "local/review", "agent/project"]}`. The list defaults to empty. `builtin/<id>` resolves from the installed Raw package, independently of the checkout and config path. `local/<id>` resolves under `$XDG_CONFIG_HOME/raw/skills/` or `~/.config/raw/skills/`; `agent/<id>` resolves under `skills/` beside the selected config file. Raw reads only selected folders. Each folder contains a UTF-8 `SKILL.md` with Agent Skills YAML frontmatter:
 
-```json
-{"api_version":1,"id":"review","version":"1.0.0","name":"review","description":"Review a change"}
+```markdown
+---
+name: review
+description: Review a code change for correctness. Use when asked for a review.
+---
+# Review
+Inspect the changed behavior and report actionable findings.
 ```
 
-The folder ID and manifest ID must match. Selected names and IDs must be unique. Symlinks cannot escape the selected root or skill folder. Invalid or oversized selected content fails before an inference request; unrelated folders remain unread. Raw ships five built-in setup skills, including `builtin/configure_raw`; `examples/skills/<id>/` holds forkable copies. Copy it to `local/my_config_guide/`, change both folder and manifest `id` and `name`, then select `local/my_config_guide` to customize it without changing package-owned instructions.
+The frontmatter name matches the skill folder (portable folders use lowercase kebab-case). Selected names and IDs must be unique. Symlinks cannot escape the selected root or skill folder. Invalid or oversized selected content fails before an inference request; unrelated folders remain unread. Raw ships five built-in setup skills, including `builtin/configure_raw`; their stable selection IDs retain underscores, while catalog names use kebab-case. `examples/skills/<id>/` holds forkable copies. Copy one to `local/my-config-guide/`, change its frontmatter name to `my-config-guide`, then select `local/my-config-guide`.
 
-An agent with a nonempty `skills.use` must explicitly include both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. The generic tool definitions contain no agent-specific skill names or Markdown. The first model request sees no catalog. Calling `list_skills` returns only the selected names and descriptions in a linked tool result. Calling `load_skill` with one selected name returns the exact `SKILL.md` text in a linked tool result at the end of the conversation. Both results must fit the agent's `max_output_bytes` without truncation. Denied, cancelled, unknown, invalid, or oversized loads do not reveal partial Markdown.
+An agent with a nonempty `skills.use` must explicitly include both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. The generic tool definitions contain no agent-specific skill names or Markdown. The first model request sees no catalog. Calling `list_skills` returns only selected names and descriptions in a linked tool result. Calling `load_skill` with one selected name returns the Markdown body after frontmatter at the conversation tail. Body and catalog must fit `max_output_bytes` without truncation. Denied, cancelled, unknown, invalid, or oversized loads do not reveal partial Markdown.
 
 Copying a config file with its adjacent `skills/` directory preserves config-local skill references. The recipient can provide their own model credentials. Skills are instructions read by the agent when it chooses to call the tools; Raw does not add them to the system prompt.
 The packaged `examples/agents/project-helper/` demonstrates a portable

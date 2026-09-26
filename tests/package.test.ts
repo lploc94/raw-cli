@@ -7,6 +7,7 @@ import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+import { parseSkillMarkdown } from "../src/skills/frontmatter.js";
 
 async function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, keepStdin = false) {
   const child = spawn(command, args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
@@ -48,13 +49,12 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   const packagedSkill = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", "configure_raw");
   for (const id of skillIds) {
     const folder = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", id);
-    const manifest = JSON.parse(await readFile(join(folder, "skill.json"), "utf8")) as { id: string; name: string; description: string };
-    assert.equal(manifest.id, id);
-    assert.equal(manifest.name, id);
-    assert.ok(manifest.description);
     const body = await readFile(join(folder, "SKILL.md"), "utf8");
-    assert.ok(body.trim());
-    assert.ok(Buffer.byteLength(body) <= 8192);
+    const skill = parseSkillMarkdown(body, id);
+    assert.equal(skill.name, id.replaceAll("_", "-"));
+    assert.ok(skill.description);
+    assert.ok(skill.markdown.trim());
+    assert.ok(Buffer.byteLength(skill.markdown) <= 8192);
     assert.equal(body, await readFile(join(repo, "src", "skills", "bundled", id, "SKILL.md"), "utf8"));
     assert.equal(body, await readFile(join(consumer, "node_modules", "raw-cli", "examples", "skills", id, "SKILL.md"), "utf8"));
   }
@@ -87,7 +87,7 @@ if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new 
   const installedSkillLoader = await run(process.execPath, ["--input-type=module", "--eval", `
 import { loadSelectedSkills } from "raw-cli";
 const selected = await loadSelectedSkills({ selectedIds: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp"], configPath: "ignored.json", maxOutputBytes: 8192 });
-if (selected.length !== 5 || selected[0].name !== "configure_raw" || !selected[0].markdown.includes("default_agent")) throw new Error("installed skill root failed");
+if (selected.length !== 5 || selected[0].name !== "configure-raw" || !selected[0].markdown.includes("default_agent")) throw new Error("installed skill root failed");
 `], consumer, { ...process.env, XDG_CONFIG_HOME: join(root, "other-config") });
   assert.equal(installedSkillLoader.code, 0, installedSkillLoader.stderr);
   const builtinProbe = async (ids: string[], xdg = join(root, "other-config")) => run(process.execPath,
@@ -95,11 +95,10 @@ if (selected.length !== 5 || selected[0].name !== "configure_raw" || !selected[0
 try { await loadSelectedSkills({ selectedIds: ${JSON.stringify(ids)}, configPath: "ignored.json", maxOutputBytes: 8192 }); }
 catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], consumer,
     { ...process.env, XDG_CONFIG_HOME: xdg });
-  const manifestPath = join(packagedSkill, "skill.json");
-  const originalManifest = await readFile(manifestPath, "utf8");
+  const manifestPath = join(packagedSkill, "SKILL.md");
   await writeFile(manifestPath, "{broken");
-  assert.match((await builtinProbe(["builtin/configure_raw"])).stderr, /invalid skill manifest JSON/);
-  await writeFile(manifestPath, originalManifest);
+  assert.match((await builtinProbe(["builtin/configure_raw"])).stderr, /frontmatter/);
+  await writeFile(manifestPath, skillBody);
   const outside = join(root, "outside-skill.md");
   await writeFile(outside, "outside");
   const markdownPath = join(packagedSkill, "SKILL.md");
@@ -108,11 +107,10 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
   assert.match((await builtinProbe(["builtin/configure_raw"])).stderr, /escapes folder/);
   await unlink(markdownPath);
   await writeFile(markdownPath, skillBody);
-  const duplicateRoot = join(root, "other-config", "raw", "skills", "duplicate");
+  const duplicateRoot = join(root, "other-config", "raw", "skills", "configure-raw");
   await mkdir(duplicateRoot, { recursive: true });
-  await writeFile(join(duplicateRoot, "skill.json"), JSON.stringify({ api_version: 1, id: "duplicate", version: "1.0.0", name: "configure_raw", description: "Duplicate" }));
-  await writeFile(join(duplicateRoot, "SKILL.md"), "duplicate");
-  assert.match((await builtinProbe(["builtin/configure_raw", "local/duplicate"])).stderr, /duplicate skill name/);
+  await writeFile(join(duplicateRoot, "SKILL.md"), "---\nname: configure-raw\ndescription: Duplicate\n---\nduplicate");
+  assert.match((await builtinProbe(["builtin/configure_raw", "local/configure-raw"])).stderr, /duplicate skill name/);
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
@@ -177,7 +175,7 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
 
   const starterProvider = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "starter-list", type: "function", function: { name: "list_skills", arguments: "{}" } }] }, "tool_calls"), openAiDone] },
-    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "starter-load", type: "function", function: { name: "load_skill", arguments: '{"name":"configure_raw"}' } }] }, "tool_calls"), openAiDone] },
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "starter-load", type: "function", function: { name: "load_skill", arguments: '{"name":"configure-raw"}' } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "starter-ready" }, "stop"), openAiDone] },
   ]);
   try {
@@ -200,7 +198,7 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
     assert.equal(task.stdout, "starter-ready\n");
     assert.equal(starterProvider.requests.length, 3);
     assert.doesNotMatch(JSON.stringify(starterProvider.requests[0]?.body), /configure_raw|create_skill|create_tool|create_agent|add_mcp/);
-    assert.match(JSON.stringify(starterProvider.requests[1]?.body), /configure_raw/);
+    assert.match(JSON.stringify(starterProvider.requests[1]?.body), /configure-raw/);
     assert.match(JSON.stringify(starterProvider.requests[2]?.body), /default_agent/);
     const secondInit = await run(bin, ["config", "init"], consumer, starterEnv);
     assert.equal(secondInit.code, 2);

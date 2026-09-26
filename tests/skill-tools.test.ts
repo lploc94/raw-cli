@@ -16,9 +16,7 @@ async function fixture() {
   const skill = async (id: string, name: string, body: string) => {
     const folder = join(root, "skills", id);
     await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, "skill.json"), JSON.stringify({ api_version: 1, id, version: "1.0.0", name,
-      description: `Use ${name}` }));
-    await writeFile(join(folder, "SKILL.md"), body);
+    await writeFile(join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: Use ${name}\n---\n${body}`);
   };
   const config = async (skills: string[], tools = ["builtin/list_skills", "builtin/load_skill"], extra: Record<string, unknown> = {}) => {
     await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
@@ -47,16 +45,17 @@ test("selected skills appear only through bundled list and load results", async 
 
 test("skills require both explicit tools, and selected-only discovery validates names, paths and bytes", async () => {
   const { root, configPath, skill, config } = await fixture();
-  await skill("one", "same", "one\n");
-  await skill("two", "same", "two\n");
+  await skill("one", "one", "one\n");
+  await skill("two", "two", "two\n");
   await assert.rejects(config(["agent/one"], ["builtin/list_skills"]), /requires builtin\/list_skills and builtin\/load_skill/);
   await assert.rejects(config(["agent/one", "agent/one"]), /duplicate IDs/);
   await assert.rejects(createRuntimeTools({ runtime: await config(["agent/missing"]), cwd: root }), /missing selected skill/);
-  await assert.rejects(createRuntimeTools({ runtime: await config(["agent/one", "agent/two"]), cwd: root }), /duplicate skill name/);
-  await writeFile(join(root, "skills", "two", "skill.json"), "{broken");
-  await assert.rejects(createRuntimeTools({ runtime: await config(["agent/two"]), cwd: root }), /invalid skill manifest JSON/);
+  const both = await createRuntimeTools({ runtime: await config(["agent/one", "agent/two"]), cwd: root });
+  await both.mcp.close();
+  await writeFile(join(root, "skills", "two", "SKILL.md"), "---\nname: two\nname: duplicate\ndescription: Broken\n---\nbody");
+  await assert.rejects(createRuntimeTools({ runtime: await config(["agent/two"]), cwd: root }), /duplicate|SKILL.md/i);
   const selected = await createRuntimeTools({ runtime: await config(["agent/one"]), cwd: root });
-  try { assert.deepEqual(selected.skills.map((item) => item.name), ["same"]); }
+  try { assert.deepEqual(selected.skills.map((item) => item.name), ["one"]); }
   finally { await selected.mcp.close(); }
   await writeFile(join(root, "skills", "one", "SKILL.md"), Buffer.from([0xff]));
   await assert.rejects(createRuntimeTools({ runtime: await config(["agent/one"]), cwd: root }), /invalid UTF-8/);
@@ -66,10 +65,9 @@ test("skills require both explicit tools, and selected-only discovery validates 
   await symlink(outside, join(root, "skills", "one", "SKILL.md"));
   await assert.rejects(createRuntimeTools({ runtime: await config(["agent/one"]), cwd: root }), /escapes folder/);
   await unlink(join(root, "skills", "one", "SKILL.md"));
-  await writeFile(join(root, "skills", "one", "SKILL.md"), "inside");
+  await writeFile(join(root, "skills", "one", "SKILL.md"), "---\nname: one\ndescription: One\n---\ninside");
   await assert.rejects(createRuntimeTools({ runtime: await config(["agent/one"], undefined,
     { max_output_bytes: 20 }), cwd: root }), /catalog exceeds max_output_bytes/);
-  await writeFile(join(root, "skills", "one", "skill.json"), JSON.stringify({ api_version: 1, id: "one", version: "1.0.0", name: "same", description: "Same" }));
   const empty = await createRuntimeTools({ runtime: await config([], []), cwd: root });
   try { assert.deepEqual(empty.selectedNames, []); }
   finally { await empty.mcp.close(); }
@@ -112,10 +110,8 @@ test("global skill root follows the config environment and ignores unselected in
   const invalidFolder = join(root, "skills", "unselected");
   await mkdir(selectedFolder, { recursive: true });
   await mkdir(invalidFolder, { recursive: true });
-  await writeFile(join(selectedFolder, "skill.json"), JSON.stringify({ api_version: 1, id: "global", version: "1.0.0",
-    name: "global", description: "Global instructions" }));
-  await writeFile(join(selectedFolder, "SKILL.md"), "Global body\n");
-  await writeFile(join(invalidFolder, "skill.json"), "not JSON");
+  await writeFile(join(selectedFolder, "SKILL.md"), "---\nname: global\ndescription: Global instructions\n---\nGlobal body\n");
+  await writeFile(join(invalidFolder, "SKILL.md"), "not frontmatter");
   await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
     provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, agents: { p: {
       model: "m", tools: { use: ["builtin/list_skills", "builtin/load_skill"] },
@@ -129,14 +125,14 @@ test("global skill root follows the config environment and ignores unselected in
 
 test("ACP provider sees skill metadata and Markdown only after linked tool calls", async () => {
   const { root, skill, config } = await fixture();
-  await skill("acp", "acp_skill", "ACP_MARKDOWN_SENTINEL\n");
+  await skill("acp", "acp", "ACP_MARKDOWN_SENTINEL\n");
   const runtime = await config(["agent/acp"]);
   const requests: Array<{ system: string; tools: unknown; messages: unknown }> = [];
   const server = createAcpServer({ runtime, storeOptions: { env: { XDG_STATE_HOME: join(root, "state"), XDG_CONFIG_HOME: join(root, "xdg") } },
     providerFactory: () => ({ modelConfig: runtime.modelConfig!, async generate(request) {
       requests.push({ system: request.system, tools: structuredClone(request.tools), messages: structuredClone(request.messages) });
       if (requests.length === 1) return { text: "", toolCalls: [{ id: "list", name: "list_skills", arguments: {} }], finishReason: "tool_calls" };
-      if (requests.length === 2) return { text: "", toolCalls: [{ id: "load", name: "load_skill", arguments: { name: "acp_skill" } }], finishReason: "tool_calls" };
+      if (requests.length === 2) return { text: "", toolCalls: [{ id: "load", name: "load_skill", arguments: { name: "acp" } }], finishReason: "tool_calls" };
       return { text: "done", toolCalls: [], finishReason: "stop" };
     } }) });
   const connection = client({ name: "skill-test" }).connect(server.app);
@@ -145,8 +141,8 @@ test("ACP provider sees skill metadata and Markdown only after linked tool calls
     const { sessionId } = await connection.agent.request("session/new", { cwd: root, mcpServers: [] });
     assert.equal((await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "use skill" }] })).stopReason, "end_turn");
     assert.equal(requests.length, 3);
-    assert.doesNotMatch(JSON.stringify(requests[0]), /acp_skill|ACP_MARKDOWN_SENTINEL/);
-    assert.match(JSON.stringify(requests[1]), /acp_skill/);
+    assert.doesNotMatch(JSON.stringify(requests[0]), /ACP_MARKDOWN_SENTINEL/);
+    assert.match(JSON.stringify(requests[1]), /Use acp/);
     assert.doesNotMatch(JSON.stringify(requests[1]), /ACP_MARKDOWN_SENTINEL/);
     assert.match(JSON.stringify(requests[2]), /ACP_MARKDOWN_SENTINEL/);
     const messages = requests[2]!.messages as Array<{ role: string; callId?: string }>;
@@ -193,7 +189,7 @@ test("CLI appends list and load results after linked calls and keeps loaded Mark
     await run(["--resume", id, "again"]);
     assert.match(JSON.stringify(provider.requests[3]?.body), /PRIVATE_MARKDOWN_ONLY_AFTER_LOAD/);
     assert.doesNotMatch(JSON.stringify(provider.requests[3]?.body), /reload notice/);
-    await writeFile(join(root, "skills", "alpha", "SKILL.md"), "UPDATED_MARKDOWN_AFTER_RESUME\n");
+    await writeFile(join(root, "skills", "alpha", "SKILL.md"), "---\nname: alpha\ndescription: Use alpha\n---\nUPDATED_MARKDOWN_AFTER_RESUME\n");
     await run(["--resume", id, "after edit"]);
     const originalBody = provider.requests[0]?.body as { prompt_cache_key: string };
     const editedBody = provider.requests[4]?.body as { prompt_cache_key: string; messages: unknown[] };

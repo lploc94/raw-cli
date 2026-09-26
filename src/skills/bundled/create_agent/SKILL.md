@@ -1,3 +1,7 @@
+---
+name: create-agent
+description: "Use to create or share a Raw agent with its model, prompt, tools, skills, vars, providers and policy. For changing one setting of an existing agent, use configure_raw."
+---
 # Create a Raw agent
 
 Use for a new named assistant, a specialized role or a shareable Raw setup. An agent is one agents.<name> entry selecting model, prompt, tools, skills, vars and policy. A session is a saved conversation, not an agent definition. Use `configure_raw` for changing a field of an existing agent.

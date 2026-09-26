@@ -324,6 +324,7 @@ Implementation review is required; verdict must be APPROVE. Do not begin phase 4
 `fix: use current agent configuration when resuming sessions`
 
 ## Phase 4: Define portable component and package contracts
+Status: complete (2026-09-26).
 
 ### Goal
 Establish one documented identity, manifest, input and path contract before adding package commands.
@@ -352,9 +353,9 @@ Importing the parser must not import a selected tool's JS. Place marker side eff
 ### Implementation obligations
 Extract a component resolver whose result includes owned root, canonical identity, metadata and file references. Keep local/builtin/config-adjacent sources first-class. Introduce a maintained YAML parser for frontmatter and a maintained SemVer validator rather than hand-written parsers; pin direct dependencies and lockfile, validating their public API before use. Add the isolated `sharing` test selector.
 ### Acceptance criteria
-- [ ] AC-11: All six export categories have validated, documented, unambiguous reference/input contracts — schema and manifest tests.
-- [ ] AC-12: Identical behavior under a different package release label is accepted and yields identical component fingerprints — reference tests.
-- [ ] AC-13: Shipped skills and a plain portable skill use a single frontmatter metadata source with unchanged tail loading — skill suites.
+- [x] AC-11: All six export categories have validated, documented, unambiguous reference/input contracts — schema and manifest tests.
+- [x] AC-12: Identical behavior under a different package release label is accepted and yields identical component fingerprints — reference tests.
+- [x] AC-13: Shipped skills and a plain portable skill use a single frontmatter metadata source with unchanged tail loading — skill suites.
 ### Focused verification
 `npm run test:phase -- sharing`
 ### Phase gates
@@ -558,6 +559,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
+- 2026-09-26: Phase 4 complete. Added `raw-package.schema.json` and data-only manifest, reference, input and component APIs; exact SemVer and YAML parsers are pinned. Migrated selected skills and five bundled examples to one Agent Skills frontmatter source, copied full skill directories, and removed `skill.json`. Docs explain six exports, aliases, input sites and package identity. Red tests preceded implementation. `npm run test:phase -- sharing` passed 19/19, `npm run typecheck` passed, `npm run check` passed 428/428, `npm run test:package` passed 2/2, `git diff --check` passed. Self-review APPROVE: parser/resolver imports no handlers or providers; release-only tool/package labels do not change fingerprints; selected skill bodies still load at the tail.
 - 2026-09-26: Phase 3 complete. CLI explicit agent/config overrides now become saved defaults, SDK returns refreshed metadata, ACP uses current base selection while retaining compatible explicit views and pruning unavailable historical aliases. Removed-config recovery and A→B→B CLI/SDK/ACP tests added; selected bundled skill instructions updated within the 8 KiB load cap. `npm run test:phase -- sessions` passed 130/130; final `npm run check` passed 419/419; `git diff --check` passed. Local evidence: `docs/evidence/milestone-a-session-continuity.md`. Self-review APPROVE: no saved-runtime equality gate remains on these surfaces; current invalid references still fail and existing policy/vars/UI regressions pass.
 - 2026-09-26: Phase 2 complete. Docs-first and red tests preceded transactional runtime transitions, canonical/provider replay projection and complete selected-tool folder snapshots. `npm run test:phase -- sessions` passed 127/127, `npm run typecheck` and `git diff --check` passed. Self-review APPROVE: transition notice is host-only, prior transcript remains canonical, stable B→B key and request prefix are asserted, helper-only source changes execute new bytes. ACP integration remains part of Phase 3's surface qualification.
 - 2026-09-26: Phase 1 complete. Docs first, then 5 red integration/storage cases (`unsupported session schema version`); implemented read-only location selection, scoped missing-ID diagnostics for CLI/SDK/ACP and isolated active payload root. Final `npm run test:phase -- sessions` passed 106/106, `npm run typecheck` passed, `git diff --check` passed. AC-1–AC-3 reviewed APPROVE; commit below.

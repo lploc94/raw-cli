@@ -1,3 +1,7 @@
+---
+name: add-mcp
+description: "Use when connecting an actual MCP server to Raw, explaining the connection format, or diagnosing its tools. Discover original tool names, select exact IDs and distinguish config checks from real server calls."
+---
 # Add an MCP server to Raw
 
 Use when connecting a new MCP capability to a Raw agent or diagnosing that connection. For a how-to, explain connection schema, exact selection and verification. For an actual setup, use the requested server; creating the optional echo fixture below is not a prerequisite or a replacement for that server.
