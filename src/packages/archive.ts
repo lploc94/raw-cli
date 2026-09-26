@@ -8,7 +8,8 @@ import { loadPackageManifest } from "./manifest.js";
 
 const MAX_ENTRIES = 4096;
 const MAX_FILE = 16 * 1024 * 1024;
-const MAX_TOTAL = 128 * 1024 * 1024;
+export const MAX_PACKAGE_ARCHIVE_BYTES = 128 * 1024 * 1024;
+const MAX_TOTAL = MAX_PACKAGE_ARCHIVE_BYTES;
 const FIXED_DATE = new Date("1980-01-01T00:00:00.000Z");
 const INVENTORY = "raw-integrity.json";
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");

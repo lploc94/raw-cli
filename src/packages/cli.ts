@@ -7,7 +7,7 @@ import { inspectPackage, validatePackage } from "./inspect.js";
 import { parseComponentReference } from "./references.js";
 import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageDefinitions,
   resolvePackageSelections } from "./resolve-agent.js";
-import { mutateConfig } from "../management/config.js";
+import { mutateConfig, type ConfigEditOptions } from "../management/config.js";
 import { forkPackage, installPackage, linkPackage, listInstalledPackages, removePackage, updatePackage } from "./store.js";
 
 function args(argv: readonly string[]): { words: string[]; options: Record<string, string> } {
@@ -43,7 +43,7 @@ function allowedOptions(options: Record<string, string>, allowed: readonly strin
   }
 }
 
-export interface AddPackageAgentOptions { configPath: string; name: string; from: string; model: string;
+export interface AddPackageAgentOptions extends ConfigEditOptions { configPath: string; name: string; from: string; model: string;
   inputs?: Readonly<Record<string, unknown>> }
 
 export async function addPackageAgent(options: AddPackageAgentOptions): Promise<{ agent: string; binding: Record<string, unknown> }> {
@@ -54,17 +54,17 @@ export async function addPackageAgent(options: AddPackageAgentOptions): Promise<
   const inputs = options.inputs ?? {};
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) throw new Error("agent inputs must be a JSON object");
   const binding = { from, model, ...(Object.keys(inputs).length ? { inputs } : {}) };
-  await mutateConfig({ configPath }, async (data) => {
+  await mutateConfig(options, async (data) => {
     const document = { data };
     const agents = (document.data.agents ?? {}) as Record<string, unknown>;
     if (Object.hasOwn(agents, name)) throw new Error(`agent already exists: ${name}`);
     const models = (document.data.models ?? {}) as Record<string, unknown>;
     if (!Object.hasOwn(models, model)) throw new Error(`unknown model: ${model}`);
     const context = createPackageResolutionContext();
-    const agent = await resolvePackageAgentBinding(binding, { configPath }, context);
-    const selected = await resolvePackageSelections(agent, { configPath }, context);
+    const agent = await resolvePackageAgentBinding(binding, options, context);
+    const selected = await resolvePackageSelections(agent, options, context);
     const { mcpIdentities: _mcpIdentities, mcpSources: _mcpSources, ...definitions } = await resolvePackageDefinitions(selected.agent,
-      document.data, { configPath }, parsed.alias, context, inputs as Record<string, unknown>);
+      document.data, options, parsed.alias, context, inputs as Record<string, unknown>);
     validateEffectiveConfigData({ ...document.data, ...definitions,
       agents: { [name]: selected.agent }, default_agent: name });
     data.agents = { ...agents, [name]: binding };

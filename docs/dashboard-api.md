@@ -73,3 +73,40 @@ in-memory receipts; disconnect does not restart a check. MCP checks discover and
 validate advertised schemas, never invoke a tool, and close the connection before
 completion. Variable checks obey the selected agent's access contract and use a
 fresh resolver (returned `cached` is honest; runtime TTL caching is independent).
+
+## Portable packages
+
+Package routes share the config authority and existing package lock/digest store.
+They never import tool code, run install hooks, resolve vars or connect to MCP.
+Installation and activation are separate actions.
+
+| Method / path | Contract |
+| --- | --- |
+| GET `/packages` | Installed aliases, provenance/digest, reports and per-alias diagnostics |
+| GET `/packages/:alias` | Report, manifest input schema and current config usages |
+| POST `/packages/inspect` | `{path}`; snapshot a local source directory or `.rawpkg` into private staging, validate and return a stage receipt |
+| POST `/packages/upload` | `application/octet-stream` archive bytes, streamed with the existing 128 MiB archive limit; validate before creating a receipt |
+| GET `/packages/stages` | Current process temporary receipts for review/discard |
+| DELETE `/packages/stages/:id` | Discard temporary artifact |
+| GET `/packages/stages/:id/download` | Authenticated `.rawpkg` download |
+| POST `/packages/install` | `{stageId,alias,action:"install"|"update"|"link"}`; link requires the explicitly inspected local directory |
+| POST `/packages/:alias/agent` | `{revision,name,exportName,model,inputs}`; validate bindings and create a recipient agent without changing the default |
+| POST `/packages/:alias/component` | `{revision,kind,exportName,agent?,name?,inputs?,as?}`; tools/skills append a selection to a direct agent; vars/providers/MCP create an explicit root binding (vars may also select on an agent) |
+| POST `/packages/export` | `{revision,agent,name,version,includeLiterals?,includeFiles?}`; export with SDK decisions, pack and return a downloadable stage/report |
+| POST `/packages/:alias/fork` | `{out}`; copy the installed package into an empty/new authored directory |
+| DELETE `/packages/:alias` | Refuse current dependents; remove the alias only, keeping stored artifacts |
+
+Staged receipts contain `{id,report,inputs,sha256,bytes,canLink,expiresAt}`. Imports
+install the inspected snapshot, even if the author changes the source afterward.
+Link explicitly opts into later authored changes. At most four stages are retained
+for 30 minutes in a server-owned private temporary directory; a full staging area
+asks the user to discard an artifact. Shutdown waits for owned file work and
+cleans temporary artifacts. Malformed/interrupted/oversized uploads never publish
+an alias. A downloaded archive is independent of the staging lifetime.
+
+Package inputs use the existing manifest schema (`type`, enum/default/description
+and `x-raw-kind`); no browser-specific binding format is introduced. Agent bindings
+use recipient-owned model aliases. Package-agent selection overrides remain
+complete replacements and are edited explicitly in Agents rather than silently
+merged. A failed update keeps the last valid alias and config. Prior digest
+artifacts remain in the package store for an explicit CLI/SDK rollback.

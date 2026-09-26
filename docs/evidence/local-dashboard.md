@@ -34,3 +34,19 @@ Ctrl/Cmd-S and Back/Discard history behavior. Editors pass light/dark accessibil
 scans and 320 CSS px reflow with no CSP/page errors. Three management screenshots
 were visually inspected; reproduction is in the dashboard guide. Source edits and
 browser credentials remain in editor memory, outside the preferences store.
+
+## Package layer
+
+Real HTTP/archive tests cover mixed and standalone exports, typed recipient inputs,
+passive install without model credentials, source removal before activation,
+source-independent export/download/reinstall/run, package update on the same
+session with a stable unchanged follow-up, failed update rollback, linked-source
+inspection and independent forks. Guards include selections in package-agent
+overrides when reporting removal/update dependents. Oversized, malformed and
+interrupted uploads leave no alias or temporary partial artifact; shutdown also
+interrupts an unfinished JSON body before awaiting file cleanup.
+
+Chromium tests drive inspect → install → bind → chat → export → download → upload
+and keep invalid update/removal errors in their dialogs. All package code executes
+only when a selected agent starts a turn or an explicit var/MCP check runs.
+A package inspection screenshot was visually reviewed alongside semantic tests.

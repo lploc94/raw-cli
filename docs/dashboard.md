@@ -83,3 +83,33 @@ Agent and source editor examples (isolated fixture data):
 
 Reproduce these images after building with
 `node --import tsx tests/dashboard-ui/capture-management.ts`.
+
+## Share portable packages
+
+Open **Library → Packages** to choose a `.rawpkg` file or inspect a local source
+path. Review exports, recipient inputs, required Raw capabilities and external
+executables before choosing an alias and Install. Inspect and install are passive;
+neither selects an agent nor changes `default_agent`.
+
+Use agent creates a local binding with your own model and typed inputs. Add
+component selects a tool/skill on an existing direct agent or creates a named
+vars/provider/MCP binding. Configure MCP tool selections through explicit discovery.
+Package-agent overrides stay complete replacements in the Agent JSON editor.
+
+Export agent produces a downloadable archive. By default, literal variable values
+and external files become recipient decisions. The form exposes the SDK's explicit
+include-literals option and a list of external files to include. Review the resulting
+inputs/report before sharing. The archive works after the author's directory is
+removed; recipients supply their own model connection.
+
+Update first inspects a replacement snapshot, then applies it under an existing
+alias. Failed validation keeps the current package. Resume the same session to use
+the update on its next turn. Link opts into authored source changes, Fork copies
+into an empty/new source directory, and Remove names any bindings that still use
+the alias. Discard temporary imports/downloads when finished; stages expire after
+30 minutes or when the dashboard stops.
+
+![Package inspection before installation](dashboard/package-dark-desktop.png)
+
+Reproduce the package view with
+`node --import tsx tests/dashboard-ui/capture-management.ts --packages-only`.

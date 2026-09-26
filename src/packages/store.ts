@@ -140,7 +140,7 @@ export async function installPackage(options: InstallPackageOptions): Promise<Pa
   });
 }
 
-function configReferences(options: PackageStoreOptions, alias: string): string[] {
+export function packageReferences(options: PackageStoreOptions, alias: string): string[] {
   let document: unknown;
   try { document = JSON.parse(readFileSync(resolve(options.configPath), "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
@@ -156,11 +156,14 @@ function configReferences(options: PackageStoreOptions, alias: string): string[]
   };
   for (const [name, raw] of Object.entries((root.agents ?? {}) as Record<string, unknown>)) {
     if (!raw || typeof raw !== "object") continue;
-    const agent = raw as { from?: unknown; tools?: { use?: unknown }; skills?: { use?: unknown }; vars?: unknown };
+    const agent = raw as { from?: unknown; tools?: { use?: unknown }; skills?: { use?: unknown }; vars?: unknown; overrides?: { tools?: { use?: unknown }; skills?: { use?: unknown }; vars?: unknown } };
     add(agent.from, `agents.${name}.from`);
     selections(agent.tools?.use, `agents.${name}.tools.use`);
     selections(agent.skills?.use, `agents.${name}.skills.use`);
     selections(agent.vars, `agents.${name}.vars`);
+    selections(agent.overrides?.tools?.use, `agents.${name}.overrides.tools.use`);
+    selections(agent.overrides?.skills?.use, `agents.${name}.overrides.skills.use`);
+    selections(agent.overrides?.vars, `agents.${name}.overrides.vars`);
   }
   for (const key of ["vars", "var_providers"] as const) {
     for (const [name, raw] of Object.entries((root[key] ?? {}) as Record<string, unknown>)) {
@@ -174,7 +177,7 @@ function configReferences(options: PackageStoreOptions, alias: string): string[]
 
 async function validateAffectedBindings(options: PackageStoreOptions, alias: string, manifest: RawPackageManifest,
   packageRoot: string): Promise<void> {
-  for (const reference of configReferences(options, alias)) {
+  for (const reference of packageReferences(options, alias)) {
     const match = /pkg\/[a-z][a-z0-9_-]*\/(agents|skills|tools|vars|var_providers|mcp)\/([a-z][a-z0-9_-]*)$/.exec(reference);
     if (!match || !manifest.exports[match[1] as ComponentKind]?.[match[2]!]) {
       throw new Error(`package update would break current binding ${reference}`);
@@ -292,7 +295,7 @@ export async function removePackage(options: PackageAliasOptions): Promise<void>
   await withPackageWriteLock(indexPath(options), async () => {
     const index = readIndex(options);
     if (!index.installations[options.alias]) throw new Error(`unknown package alias: ${options.alias}`);
-    const dependents = configReferences(options, options.alias);
+    const dependents = packageReferences(options, options.alias);
     if (dependents.length) throw new Error(`package ${options.alias} is used by ${dependents.join(", ")}`);
     delete index.installations[options.alias];
     await writeIndex(options, index);

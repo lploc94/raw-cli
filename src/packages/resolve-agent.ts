@@ -157,7 +157,7 @@ export async function resolvePackageSelections(agent: unknown, options: PackageS
   return { agent: effective, tools: assets.tools, skills: assets.skills };
 }
 
-async function exportedDefinition(reference: string, inputs: unknown, options: PackageStoreOptions,
+export async function resolvePackageDefinition(reference: string, inputs: unknown, options: PackageStoreOptions,
   kind: "vars" | "var_providers" | "mcp", context?: PackageResolutionContext): Promise<{ value: JsonObject; scope: string; root: string;
     canonicalIdentity: string }> {
   const dependency = /^pkgdep\/([a-z][a-z0-9_-]*)\/([a-z][a-z0-9_-]*)\/(vars|var_providers|mcp)\/([a-z][a-z0-9_-]*)$/.exec(reference);
@@ -185,7 +185,7 @@ async function exportedDefinition(reference: string, inputs: unknown, options: P
 }
 
 export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObject, options: PackageStoreOptions,
-  originAlias?: string, context?: PackageResolutionContext, inheritedInputs?: JsonObject): Promise<JsonObject & {
+  originAlias?: string, context?: PackageResolutionContext, inheritedInputs?: JsonObject, inspectMcpNames: readonly string[] = []): Promise<JsonObject & {
   mcpIdentities: Record<string, string>; mcpSources: Record<string, { root: string; identity: string }> }> {
   const data = structuredClone(root);
   const vars = { ...((data.vars ?? {}) as JsonObject) };
@@ -219,7 +219,7 @@ export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObj
   for (const name of selectedVars) {
     const binding = vars[name] as { from?: unknown; inputs?: unknown } | undefined;
     if (!binding || typeof binding.from !== "string") continue;
-    const item = await exportedDefinition(binding.from, binding.inputs, options, "vars", context);
+    const item = await resolvePackageDefinition(binding.from, binding.inputs, options, "vars", context);
     const value = item.value;
     const source = value.source as { kind?: unknown; name?: unknown; path?: unknown } | undefined;
     if (source?.kind === "file" && typeof source.path === "string" && !isAbsolute(source.path)) {
@@ -241,7 +241,7 @@ export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObj
     if (typeof from !== "string") continue;
     const selected = selectedVars.some((varName) => (vars[varName] as { source?: { name?: unknown } } | undefined)?.source?.name === name);
     if (!selected) { delete providers[name]; continue; }
-    const item = await exportedDefinition(from, (binding as { inputs?: unknown }).inputs, options, "var_providers", context);
+    const item = await resolvePackageDefinition(from, (binding as { inputs?: unknown }).inputs, options, "var_providers", context);
     const value = item.value;
     if (typeof value.command === "string" && value.command.includes("/") && !isAbsolute(value.command)) {
       value.command = join(item.root, value.command);
@@ -252,7 +252,7 @@ export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObj
         ? join(item.root, arg) : arg);
     providers[name] = value;
   }
-  const selectedMcp = new Set<string>();
+  const selectedMcp = new Set<string>(inspectMcpNames);
   const toolUse = (agent.tools as { use?: unknown } | undefined)?.use;
   if (Array.isArray(toolUse)) for (const id of toolUse) {
     if (typeof id === "string" && id.startsWith("mcp/")) selectedMcp.add(id.split("/")[1]!);
@@ -265,7 +265,7 @@ export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObj
     const from = (binding as { from?: unknown } | undefined)?.from;
     if (typeof from !== "string") continue;
     if (!selectedMcp.has(name)) { delete servers[name]; continue; }
-    const item = await exportedDefinition(from, (binding as { inputs?: unknown }).inputs, options, "mcp", context);
+    const item = await resolvePackageDefinition(from, (binding as { inputs?: unknown }).inputs, options, "mcp", context);
     const value = item.value;
     if (typeof value.command === "string" && value.command.includes("/") && !isAbsolute(value.command)) {
       value.command = join(item.root, value.command);

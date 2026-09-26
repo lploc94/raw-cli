@@ -23,6 +23,7 @@ import { Link, useRouter } from "./router.js";
 import { Empty, ErrorMessage, Field, Modal } from "./ui.js";
 import { PreferencesPage } from "./pages/Preferences.js";
 import { AgentsPage } from "./pages/Agents.js";
+import { PackagesPage } from "./pages/Packages.js";
 import { ComponentsPage } from "./pages/Components.js";
 import { DefinitionsPage } from "./pages/Definitions.js";
 import { SettingsPage, SettingsSearch } from "./pages/Settings.js";
@@ -563,10 +564,11 @@ export function App() {
                 changed={refreshBootstrap}
               />
             ) : (
-              <div className="management-page">
-                <h1>Packages</h1>
-                <p>Portable package management.</p>
-              </div>
+              <PackagesPage
+                key={path}
+                changed={refreshBootstrap}
+                createChat={create}
+              />
             )}
           </main>
         </div>

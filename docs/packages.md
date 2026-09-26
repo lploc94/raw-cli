@@ -85,3 +85,18 @@ The shipped `examples/packages/mixed-kit/` is an editable source package with a 
 `<config-path>.packages.lock.json` records the alias and exact artifact/dependency digests, while the ordinary config owns the agent instance, model alias, input values, selected components and rules. Back up the local binding before editing it. Do not copy an author's session database or absolute config paths into the package. The artifact itself carries no current var readings or model credentials. A missing required component/input is a concrete activation error; a mere release-version difference is not.
 
 A future catalog or marketplace can index package name, version, digest, description and download location. The `.rawpkg` archive remains the portable artifact; the local lock and recipient config remain the installation and instance authorities. Adding a transport must verify the downloaded archive's digest and use the same data-only validation and atomic install path. V1 has no hosted catalog, account, signature trust framework, automatic Git transport or version-range solver.
+
+## Browser workflows
+
+`raw dashboard` exposes the same package services in **Library → Packages**.
+Inspect a local source path or upload an archive, review its report and typed input
+schema, then install under an explicit alias. Installation does not change the
+default agent. Use agent binds a recipient model/inputs; Add component makes an
+explicit selection or root binding. Agent selection overrides remain replacements.
+
+Export agent uses `exportAgentPackage` and `packPackage`. Its include-literals
+checkbox maps to `includeLiterals`; one explicitly chosen external file per line
+maps to `includeFiles`. Leaving these off preserves recipient input decisions.
+Downloads and subsequent installation use the normal `.rawpkg` format. Browser
+update/link/fork/remove retain the CLI lifecycle and session-continuity semantics.
+See [the dashboard guide](dashboard.md#share-portable-packages) for the workflow.

@@ -109,3 +109,38 @@ export async function subscribe(
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+export async function uploadPackage(
+  file: File,
+  signal?: AbortSignal,
+): Promise<import("../../src/dashboard/packages.js").PackageStageView> {
+  if (file.size > 128 * 1024 * 1024)
+    throw new Error("Package archive exceeds 128 MiB");
+  return decode(
+    await fetch("/api/packages/upload", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: file,
+      ...(signal ? { signal } : {}),
+    }),
+  );
+}
+export async function downloadPackage(id: string): Promise<void> {
+  const response = await fetch(
+    `/api/packages/stages/${encodeURIComponent(id)}/download`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!response.ok) {
+    await decode(response);
+    return;
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "raw-package.rawpkg";
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

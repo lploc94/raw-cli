@@ -12,6 +12,7 @@ export { inspectPackage } from "./inspect.js";
 
 export interface ExportAgentOptions {
   configPath: string;
+  env?: NodeJS.ProcessEnv;
   agentName: string;
   out: string;
   name: string;
@@ -33,22 +34,23 @@ function names(value: unknown, where: string): string[] {
 }
 
 export async function exportAgentPackage(options: ExportAgentOptions): Promise<{ root: string; report: ExportAgentReport }> {
-  const document = readConfigDocument({ configPath: options.configPath });
+  const document = readConfigDocument(options);
+  const packageOptions = { configPath: document.path, ...(options.env ? { env: options.env } : {}) };
   const configDir = dirname(document.path);
-  const globalConfigRoot = options.globalConfigRoot ?? (process.env.XDG_CONFIG_HOME
-    ? join(resolve(process.cwd(), process.env.XDG_CONFIG_HOME), "raw") : join(homedir(), ".config", "raw"));
+  const globalConfigRoot = options.globalConfigRoot ?? ((options.env ?? process.env).XDG_CONFIG_HOME
+    ? join(resolve(process.cwd(), (options.env ?? process.env).XDG_CONFIG_HOME!), "raw") : join(homedir(), ".config", "raw"));
   const agents = record(document.data.agents, "agents");
   const configured = record(agents[options.agentName], `agent ${options.agentName}`);
   const packageContext = createPackageResolutionContext();
   const originAlias = typeof configured.from === "string"
     ? /^pkg\/([a-z][a-z0-9_-]*)\/agents\//.exec(configured.from)?.[1] : undefined;
-  const installedRoot = originAlias ? await resolveInstalledPackage({ configPath: document.path, alias: originAlias }) : undefined;
+  const installedRoot = originAlias ? await resolveInstalledPackage({ ...packageOptions, alias: originAlias }) : undefined;
   if (originAlias && installedRoot) packageContext.packages.set(originAlias, installedRoot);
   const packageRoot = installedRoot?.root;
-  const bound = originAlias ? await resolvePackageAgentBinding(configured, { configPath: document.path }, packageContext) : configured;
-  const resolved = await resolvePackageSelections(bound, { configPath: document.path }, packageContext);
+  const bound = originAlias ? await resolvePackageAgentBinding(configured, packageOptions, packageContext) : configured;
+  const resolved = await resolvePackageSelections(bound, packageOptions, packageContext);
   const source = resolved.agent;
-  const definitions = await resolvePackageDefinitions(source, document.data, { configPath: document.path }, originAlias,
+  const definitions = await resolvePackageDefinitions(source, document.data, packageOptions, originAlias,
     packageContext, originAlias ? configured.inputs as Record<string, unknown> | undefined : undefined);
   const packageOwned = (path: string): boolean => packageRoot !== undefined
     && (path === packageRoot || path.startsWith(`${packageRoot}/`));

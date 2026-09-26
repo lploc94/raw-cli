@@ -673,6 +673,23 @@ export async function loadVariableConfigAsync(options: LoadConfigOptions = {}): 
     variables: selectVariables(agent.vars, parsed.variables, "agent.vars"), providers: parsed.providers });
 }
 
+/** Resolve one explicitly requested MCP definition without selecting or connecting tools. */
+export async function loadMcpCheckConfig(options: LoadConfigOptions, name: string): Promise<{ server: McpServerConfig; identity?: string }> {
+  const document = readConfigDocument(options), env = options.env ?? process.env;
+  const selectedName = options.flags?.agent ?? env.RAW_AGENT ?? document.data.default_agent;
+  if (typeof selectedName !== "string") throw new Error("Select an agent for MCP discovery");
+  const binding = object(object(document.data.agents, "agents")[selectedName], "agent");
+  const origin = typeof binding.from === "string" ? /^pkg\/([a-z][a-z0-9_-]*)\/agents\//.exec(binding.from)?.[1] : undefined;
+  const packageOptions = { configPath: document.path, env }, context = createPackageResolutionContext();
+  const agent = origin ? await resolvePackageAgentBinding(binding, packageOptions, context) : structuredClone(binding);
+  agent.tools = { use: [] }; agent.vars = [];
+  const definitions = await resolvePackageDefinitions(agent, document.data, packageOptions, origin, context,
+    origin ? binding.inputs as JsonObject | undefined : undefined, [name]);
+  const server = mcpServersSpec(definitions.mcp).get(name);
+  if (!server) throw new Error(`Unknown MCP server: ${name}`);
+  return { server, ...(definitions.mcpIdentities[name] ? { identity: definitions.mcpIdentities[name] } : {}) };
+}
+
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<RuntimeConfig> {
   const env = options.env ?? process.env;
   if (env.RAW_PROFILE !== undefined) throw new Error("RAW_PROFILE was removed; use RAW_AGENT");

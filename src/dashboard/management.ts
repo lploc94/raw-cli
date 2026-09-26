@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canonicalConfigPath, loadConfig, loadVariableConfigAsync, parseConfigSource, parseToolPolicyRules } from "../config.js";
+import { canonicalConfigPath, loadMcpCheckConfig, loadVariableConfigAsync, parseConfigSource, parseToolPolicyRules } from "../config.js";
 import { editAgent, editModel, patchRecord, record, type ResourceEdit } from "../management/agents.js";
 import { initializeConfig, mutateConfig, readManagedConfig, saveConfigText, type ManagedConfig } from "../management/config.js";
 import { ComponentManager, type EditableComponentKind } from "../management/components.js";
@@ -60,15 +60,14 @@ export function createManagementRoutes(context: DashboardContext): DashboardRout
     try {
     // Capture validated definitions before acknowledging. Checks own that snapshot even if config changes later.
     const variableConfig = row.kind === "var" ? await loadVariableConfigAsync({ ...options, flags: { agent } }) : undefined;
-    const runtime = row.kind === "mcp" ? await loadConfig({ ...options, requireModel: false, flags: { agent, systemPrompt: "" } }) : undefined;
-    if (runtime && !Object.hasOwn(runtime.availableMcpServers, name)) throw new DashboardError(422, "invalid_input", "MCP server is unavailable to this agent binding");
+    const mcp = row.kind === "mcp" ? await loadMcpCheckConfig({ ...options, flags: { agent } }, name) : undefined;
     assertRevision(config.revision, await readManagedConfig(options));
     const done = (async () => {
       try {
         if (variableConfig) row.result = await createVariableResolver({ config: variableConfig, env: context.env }).read(name, { signal });
-        else if (runtime) {
-          const connection = await connectMcpServers({ servers: { [name]: { ...runtime.availableMcpServers[name]!, tools: "*" } },
-            cwd: context.cwd, signal, timeoutMs: 30_000, canonicalIdentities: runtime.packageMcpIdentities });
+        else if (mcp) {
+          const connection = await connectMcpServers({ servers: { [name]: { ...mcp.server, tools: "*" } },
+            cwd: context.cwd, signal, timeoutMs: 30_000, canonicalIdentities: mcp.identity ? { [name]: mcp.identity } : {} });
           try { row.result = { tools: connection.catalog.map(tool => ({ ...tool,
             identity: connection.registry.canonicalIdentity(tool.alias), definition: connection.registry.definitions().find(def => def.name === tool.alias) })) }; }
           finally { await connection.close(); }

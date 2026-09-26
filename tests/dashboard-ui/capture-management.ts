@@ -35,7 +35,7 @@ try {
       (theme) => (document.documentElement.dataset.theme = theme),
       theme,
     );
-    await page.screenshot({
+    if (!process.argv.includes("--packages-only")) await page.screenshot({
       path: `docs/dashboard/agent-${theme}-desktop.png`,
     });
   }
@@ -46,7 +46,12 @@ try {
   await page
     .getByRole("textbox", { name: "Source tool.json", exact: true })
     .waitFor();
-  await page.screenshot({ path: "docs/dashboard/tool-dark-desktop.png" });
+  if (!process.argv.includes("--packages-only")) await page.screenshot({ path: "docs/dashboard/tool-dark-desktop.png" });
+  await page.getByRole("link", { name: "Packages", exact: true }).click();
+  await page.getByLabel("Local package path").fill(`${process.cwd()}/examples/packages/mixed-kit`);
+  await page.getByRole("button", { name: "Inspect path", exact: true }).click();
+  await page.getByRole("heading", { name: "Review package", exact: true }).waitFor();
+  await page.screenshot({ path: "docs/dashboard/package-dark-desktop.png" });
 } finally {
   await browser.close();
   await raw.close();

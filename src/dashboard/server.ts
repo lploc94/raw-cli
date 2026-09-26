@@ -14,6 +14,7 @@ import { DashboardError, json, readJson, sendError } from "./errors.js";
 import { serveDashboardStatic } from "./static.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createManagementRoutes } from "./management.js";
+import { createPackageRoutes } from "./packages.js";
 
 export type DashboardRoute = (request: IncomingMessage, response: ServerResponse, context: DashboardContext) => Promise<boolean>;
 export interface DashboardContext {
@@ -50,7 +51,7 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
   } catch (error) { context.store?.close(); delete context.store; context.storeDiagnostic = error instanceof Error ? error.message : String(error); }
   const assetsRoot = options.assetsRoot ?? join(packageRoot(), "dist", "dashboard");
   let routes: DashboardRoute[];
-  try { routes = [...createSessionRoutes(context, options.attach), ...createManagementRoutes(context), ...(options.routes?.(context) ?? [])]; }
+  try { routes = [...createSessionRoutes(context, options.attach), ...createManagementRoutes(context), ...createPackageRoutes(context), ...(options.routes?.(context) ?? [])]; }
   catch (error) {
     controller.abort(); await context.operations?.close();
     await Promise.allSettled(cleanup.map((fn) => Promise.resolve().then(fn)));
@@ -100,6 +101,9 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
       if (!http.listening) { resolve(); return; }
       http.close(() => resolve()); http.closeIdleConnections();
     });
+    // Interrupt incomplete request bodies before awaiting file-operation cleanup.
+    // Runtime cancellation still owns child reaping and durable terminal receipts.
+    http.closeAllConnections();
     await context.operations?.close();
     await Promise.allSettled(cleanup.map((fn) => Promise.resolve().then(fn)));
     http.closeAllConnections(); await listenerClosed;

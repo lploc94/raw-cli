@@ -1758,3 +1758,30 @@ summary::-webkit-details-marker {
     margin-left: 0;
   }
 }
+.package-report {
+  overflow-wrap: anywhere;
+}
+.package-report h2 small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.package-report dl > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 16px;
+  margin: 8px 0;
+}
+.package-report dt {
+  font-weight: 600;
+}
+.package-report dd {
+  margin: 0;
+}
+.package-report details {
+  margin: 12px 0;
+  max-height: 200px;
+  overflow: auto;
+}
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}
