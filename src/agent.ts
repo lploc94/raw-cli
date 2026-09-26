@@ -204,6 +204,7 @@ export class AgentSession {
   get contextRevision(): number { return this.contextGenerationRevision; }
   get toolDefinitions(): readonly ToolDefinition[] { return structuredClone(this.schemaView); }
   toolIdentity(name: string): string | undefined { return this.options.registry.canonicalIdentity(name); }
+  get requestTimeoutMs(): number { return this.options.requestTimeoutMs; }
   stats(fromRequest = 0): UsageSummary { return summarizeUsage(this.usageEntries.slice(fromRequest)); }
   estimatedContextTokens(): number {
     return Math.ceil(estimateRequestTokens(this.options.system, this.requestMessages(), this.schemaView) * this.tokenCalibration);

@@ -1,5 +1,7 @@
 export const DASHBOARD_API_VERSION = 1;
 export const MAX_JSON_BYTES = 1024 * 1024;
+export const MAX_REPLAY_FRAMES = 4096;
+export const MAX_REPLAY_BYTES = 4 * 1024 * 1024;
 export interface ApiErrorBody { error: { code: string; message: string; details?: unknown } }
 export interface DashboardBootstrap {
   apiVersion: number;

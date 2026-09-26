@@ -12,6 +12,22 @@ import { capResult, errorResult } from "./results.js";
 import type { ToolContent, ToolResult } from "./types.js";
 
 const MAX_MCP_BYTES = 16 * 1024 * 1024;
+
+// SDK initialization failure also invokes close(), without awaiting it. Keep all
+// callers on one cleanup promise and wait for the stdio child's close event.
+function ownTransportClose(transport: Transport, stdio: StdioClientTransport | undefined): void {
+  const original = transport.close.bind(transport);
+  let closing: Promise<void> | undefined;
+  let exited!: () => void;
+  const exit = new Promise<void>((resolve) => { exited = resolve; });
+  const priorClose = transport.onclose;
+  transport.onclose = () => { exited(); priorClose?.(); };
+  transport.close = () => closing ??= (async () => {
+    const pid = stdio?.pid;
+    await original();
+    if (pid) await deadline(exit, 5000);
+  })();
+}
 type Selection = "*" | readonly string[];
 
 export type McpServerConfig =
@@ -238,11 +254,11 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
   const available = new Map<string, () => ToolRegistration>();
   const selectedAliases: string[] = [];
   let closed = false;
-  const close = async () => {
-    if (closed) return;
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => closing ??= (async () => {
     closed = true;
     await Promise.allSettled(owners.reverse().map((client) => client.close()));
-  };
+  })();
   try {
     for (const [name, spec] of specs) {
       if (options.signal?.aborted) throw new Error("MCP startup aborted");
@@ -263,6 +279,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
               return boundedFetch(url, { ...init, headers } as RequestInit);
             } } } : { eventSourceInit: { fetch: (url, init) => boundedFetch(url, init as RequestInit) } }),
             fetch: boundedFetch });
+      ownTransportClose(transport as unknown as Transport, transport instanceof StdioClientTransport ? transport : undefined);
       if (transport instanceof StdioClientTransport) transport.stderr?.on("data", () => {});
       if (transport instanceof SSEClientTransport || transport instanceof StreamableHTTPClientTransport) {
         transport.onerror = () => { void close(); };

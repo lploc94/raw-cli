@@ -7,11 +7,12 @@ import { record } from "../management/agents.js";
 import { readManagedConfig } from "../management/config.js";
 import { packageRoot } from "../package-root.js";
 import { openSessionStore, type SessionStore, type SessionStoreOptions } from "../sessions/store.js";
-import { SessionOperations, type AttachSessionRuntime } from "../sessions/operations.js";
+import type { SessionOperations, AttachSessionRuntime } from "../sessions/operations.js";
 import { createDashboardToken, responseHeaders, verifyDashboardRequest } from "./auth.js";
 import { DASHBOARD_API_VERSION, type DashboardBootstrap } from "./contract.js";
 import { DashboardError, json, readJson, sendError } from "./errors.js";
 import { serveDashboardStatic } from "./static.js";
+import { createSessionRoutes } from "./sessions.js";
 
 export type DashboardRoute = (request: IncomingMessage, response: ServerResponse, context: DashboardContext) => Promise<boolean>;
 export interface DashboardContext {
@@ -45,11 +46,10 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
     ...(options.agent ? { preferredAgent: options.agent } : {}), json, readJson, onClose: (fn) => { cleanup.push(fn); } };
   try {
     context.store = (options.storeFactory ?? openSessionStore)({ cwd, env });
-    context.operations = new SessionOperations({ store: context.store, env, ...(options.attach ? { attach: options.attach } : {}) });
   } catch (error) { context.store?.close(); delete context.store; context.storeDiagnostic = error instanceof Error ? error.message : String(error); }
   const assetsRoot = options.assetsRoot ?? join(packageRoot(), "dist", "dashboard");
   let routes: DashboardRoute[];
-  try { routes = options.routes?.(context) ?? []; }
+  try { routes = [...createSessionRoutes(context, options.attach), ...(options.routes?.(context) ?? [])]; }
   catch (error) {
     controller.abort(); await context.operations?.close();
     await Promise.allSettled(cleanup.map((fn) => Promise.resolve().then(fn)));

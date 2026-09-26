@@ -32,6 +32,7 @@ interface ActiveOperation {
   controller: AbortController;
   done: Promise<SessionOperation>;
   agent?: AgentSession;
+  measure?: () => SessionMetrics;
 }
 
 export class SessionOperations {
@@ -53,6 +54,9 @@ export class SessionOperations {
   }
   owns(operationId: string): boolean { return this.active.has(operationId); }
   activeIds(): string[] { return [...this.active.keys()]; }
+  metrics(operationId: string): SessionMetrics | undefined { return this.active.get(operationId)?.measure?.(); }
+  approvalTimeout(operationId: string): number { return this.active.get(operationId)?.agent?.requestTimeoutMs ?? 120000; }
+  toolIdentity(operationId: string, name: string): string | undefined { return this.active.get(operationId)?.agent?.toolIdentity(name); }
 
   submit(intent: OperationIntent): SessionOperation {
     if (this.closed) throw new SessionOperationError("closed", "session operations are closed");
@@ -107,6 +111,9 @@ export class SessionOperations {
         signal: active.controller.signal, ...(approve ? { approve } : {}), ...(this.options.env ? { env: this.options.env } : {}) });
       active.agent = runtime.agent;
       firstRequest = runtime.agent.stats().requests;
+      const attached = runtime;
+      active.measure = () => ({ ...measureSession(attached.agent, attached.modelConfig, { startedAt, firstRequest, startedTools, failedTools,
+        ...(attached.compact ? { compact: attached.compact } : {}) }), historyWatermark: store.historyWatermark(operation.sessionId) });
       if (active.controller.signal.aborted) throw new Error("operation cancelled");
       publishState(operation.kind === "turn" ? "running" : "compacting");
       if (operation.kind === "turn") {
@@ -122,8 +129,7 @@ export class SessionOperations {
     }
     try {
       if (runtime) {
-        metrics = measureSession(runtime.agent, runtime.modelConfig, { startedAt, firstRequest, startedTools, failedTools,
-          ...(runtime.compact ? { compact: runtime.compact } : {}) });
+        metrics = active.measure?.();
         // The host retains the fenced lease until both tool and agent cleanup complete.
         try { await runtime.close(); } finally { await runtime.agent.close(); }
       }

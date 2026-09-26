@@ -112,7 +112,7 @@ export interface AgentMetadata {
 export interface VisibleRecord { kind: string; payload: Record<string, unknown>; status?: string }
 
 interface ListOptions { cwd?: string; title?: string; before?: string; limit?: number }
-interface HistoryOptions { sessionId: string; before?: string; limit?: number }
+interface HistoryOptions { sessionId: string; before?: string; limit?: number; atOrBefore?: number }
 interface AppendHistoryOptions { sessionId: string; kind: string; payload: Record<string, unknown>; status?: string }
 
 type DbRow = Record<string, unknown>;
@@ -302,6 +302,24 @@ export class SessionStore {
   getOperation(id: string): SessionOperation | undefined {
     const row = this.database.prepare("SELECT * FROM session_operations WHERE id = ?").get(id);
     return row ? this.operationRow(row) : undefined;
+  }
+
+  findOperation(sessionId: string, clientRequestId: string): SessionOperation | undefined {
+    const row = this.database.prepare("SELECT * FROM session_operations WHERE session_id = ? AND client_request_id = ?").get(sessionId, clientRequestId);
+    return row ? this.operationRow(row) : undefined;
+  }
+
+  recentWorkspaces(): Array<{ cwd: string; updatedAt: number }> {
+    return this.database.prepare(`SELECT w.display_path, max(s.updated_at) AS updated_at FROM workspaces w
+      JOIN sessions s ON s.workspace_id = w.id WHERE s.updated_at > ? GROUP BY w.id ORDER BY updated_at DESC LIMIT 100`)
+      .all(this.cutoff()).map((row) => ({ cwd: String(row.display_path), updatedAt: Number(row.updated_at) }));
+  }
+
+  historyAfter(sessionId: string, after: number, through: number): HistoryItem[] {
+    return this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
+      WHERE session_id = ? AND sequence > ? AND sequence <= ? ORDER BY sequence LIMIT 100`).all(sessionId, after, through)
+      .map((row) => ({ sessionId, sequence: Number(row.sequence), createdAt: Number(row.created_at), kind: String(row.kind),
+        payload: this.decodeStored(String(row.payload_json)) as Record<string, unknown>, status: String(row.status) }));
   }
 
   listOperations(sessionId?: string, limit = 100): SessionOperation[] {
@@ -1009,11 +1027,9 @@ export class SessionStore {
     const scope = `${this.storeId}:${options.sessionId}`;
     const before = options.before === undefined ? undefined : cursorData(options.before, "history", scope);
     if (!this.getSession(options.sessionId)) throw new Error(this.missingSessionMessage());
-    const rows = before
-      ? this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
-        WHERE session_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`).all(options.sessionId, before.sequence!, limit + 1)
-      : this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
-        WHERE session_id = ? ORDER BY sequence DESC LIMIT ?`).all(options.sessionId, limit + 1);
+    const rows = this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
+      WHERE session_id = ? AND sequence < ? AND sequence <= ? ORDER BY sequence DESC LIMIT ?`)
+      .all(options.sessionId, before?.sequence ?? Number.MAX_SAFE_INTEGER, options.atOrBefore ?? Number.MAX_SAFE_INTEGER, limit + 1);
     const hasMore = rows.length > limit;
     const items = rows.slice(0, limit).reverse().map((row): HistoryItem => ({
       sessionId: String(row.session_id), sequence: Number(row.sequence), createdAt: Number(row.created_at),
@@ -1042,9 +1058,11 @@ export class SessionStore {
 
   deleteSession(id: string): void {
     const deleted = this.transaction(() => {
-      const row = this.database.prepare("SELECT owner_token FROM sessions WHERE id = ?").get(id);
+      const row = this.database.prepare("SELECT owner_token, lease_until FROM sessions WHERE id = ?").get(id);
       if (!row) return false;
-      if (row.owner_token !== null) throw new Error("session is busy in another process");
+      if (row.owner_token !== null && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)))) {
+        throw new Error("session is busy in another process");
+      }
       for (const item of this.database.prepare("SELECT payload_json FROM history WHERE session_id = ?").all(id)) {
         this.dropPayloadReference(String(item.payload_json));
       }

@@ -490,11 +490,11 @@ Disconnect one subscriber mid-tool and reconnect: the sentinel increments once, 
 ### Implementation obligations
 Do not pass a socket writer directly to `AgentSession.run`. Serialize snapshot/live publication, persist terminal receipts before announcing them, clean transient output, release idle runtime ownership and normalize historical ACP envelopes without executing them.
 ### Acceptance criteria
-- [ ] AC-4.1: Refresh/reconnect/multiple tabs converge on one execution and complete ordered history — proven by stream tests.
-- [ ] AC-4.2: Conditional approvals, denial, expiry and cancellation preserve existing policy and linkage — proven by permission tests.
-- [ ] AC-4.3: CLI ↔ web resume preserves the session ID, current selection and stable unchanged cache prefix — proven by process/mock payload tests.
-- [ ] AC-4.4: Usage/context values identify unavailable/estimated fields and persist without opening a runtime on reads — proven by metrics tests.
-- [ ] AC-4.5: Manual/automatic compaction, historical tool states and paged turn boundaries retain correct identity/status without replay — proven by session/stream tests.
+- [x] AC-4.1: Refresh/reconnect/multiple tabs converge on one execution and complete ordered history — proven by stream tests.
+- [x] AC-4.2: Conditional approvals, denial, expiry and cancellation preserve existing policy and linkage — proven by permission tests.
+- [x] AC-4.3: CLI ↔ web resume preserves the session ID, current selection and stable unchanged cache prefix — proven by process/mock payload tests.
+- [x] AC-4.4: Usage/context values identify unavailable/estimated fields and persist without opening a runtime on reads — proven by metrics tests.
+- [x] AC-4.5: Manual/automatic compaction, historical tool states and paged turn boundaries retain correct identity/status without replay — proven by session/stream tests.
 ### Focused verification
 `node --import tsx --test tests/dashboard-sessions.test.ts tests/dashboard-streams.test.ts tests/dashboard-approval.test.ts tests/session-cli.test.ts tests/session-acp.test.ts`
 ### Phase gates
@@ -691,8 +691,8 @@ Implementation review is required; verdict must be APPROVE.
 | --- | --- | --- |
 | 1 | complete | `dfed949`; 12 focused, 142 session, 475 full tests; self-review APPROVE |
 | 2 | complete | `4365df3`; 20 focused, 484 full tests; self-review APPROVE |
-| 3 | complete | 16 focused tests (including ACP), 494 full tests; self-review APPROVE |
-| 4 | pending | Depends on 1–3 |
+| 3 | complete | `1f3911a`; 16 focused tests (including ACP), 494 full tests; self-review APPROVE |
+| 4 | complete | 41 focused, 512 full tests; self-review APPROVE |
 | 5 | pending | Depends on 3–4 |
 | 6 | pending | Depends on 2–5 |
 | 7 | pending | Depends on 2–6 |
@@ -701,3 +701,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26 Phase 1: Completed docs-first implementation of durable operation acceptance/atomic user consumption, host-owned startup/runtime/cleanup leases, nonthrowing observers, stable visible segment IDs, mixed history projection and manual/automatic compaction markers. Meaningful red evidence: the focused contracts failed before the new services existed. Final build/typecheck, 12 focused tests, 142 session-suite tests, `npm run check` (475/475) and `git diff --check` passed. Implementation self-review APPROVE: checked duplicate lookup before ownership, killed-process effect recovery, rollback triggers, startup heartbeat, receipt transitions, unchanged prefix regressions, cleanup and typed preview limits. No phase scope deviation.
 - 2026-09-26 Phase 2: Extracted config source validation and the shared starter factory; CLI initialization and package-agent binding now use revision-aware atomic config writers. Added agent/model CRUD, passive component catalogs/manifest-schema parsing, per-file revisions, staged creation/forks, explicit selection and deletion usage checks. A regression test exposed local/agent aliases sharing a folder; fixed physical-folder usage detection before deletion. Linked package inspection reads authored sources directly without snapshot/import side effects. Focused contracts were red before implementation; final build/typecheck, 20 focused tests, `npm run check` (484/484) and whitespace checks passed. Self-review APPROVE, including credentials/order preservation, stale/external edits, strict/canonical config validation, symlink containment, read-only artifacts and isolated invalid rows. Agent/model edit helpers share one cohesive module; no user-facing scope change.
 - 2026-09-26 Phase 3: Added `raw dashboard`, loopback HTTP/static routing, per-process fragment tokens, exact Host/Origin checks, bounded JSON bodies, safe bootstrap diagnostics and owned shutdown. CLI works from unrelated cwd, prints its actual port-0 URL and keeps running after a browser-opener failure. Fixed abort-during-listen ordering to prevent a late listener escaping cleanup. Verified invalid/missing config and unavailable store stay scoped, old tokens/foreign requests fail, API/missing assets do not receive the SPA entrypoint, and shutdown cancels an owned startup child/releases its lease. Build/typecheck, 16 focused tests, full `npm run check` (494/494) and whitespace checks passed. Self-review APPROVE. Static-route tests use fixture assets as planned; the real browser bundle is Phase 5.
+
+- 2026-09-26 Phase 4: Added authenticated workspace/session/history/receipt/metrics/activity APIs, typed replayable SSE, fixed-deadline conditional approvals, explicit Stop and compaction, and UTF-8 paged live spooling. Red HTTP tests initially returned 404. Real-provider/tool tests prove duplicate submissions execute one sentinel, two tabs converge after disconnect, stale cursors reset, large multibyte output survives replay eviction, approvals deny/expire/cancel, and CLI → web → CLI selections stabilize. Manual/automatic compact and rollback keep old history; reads neither infer nor refresh retention. Review found and fixed concurrent SDK MCP closes returning before child reaping, and expired dead-writer tokens blocking idle deletion. Final sequential build/check passed 512/512; the prescribed focused CLI/ACP/dashboard command passed 41/41; whitespace passed. An earlier overlapping rebuild invalidated a CLI test run; only the final sequential gates are qualification evidence. Self-review APPROVE. Metrics/activity remain in the cohesive session adapter; no product scope change.
