@@ -22,7 +22,9 @@
     "examples/agents",
     "docs/skill-authoring.md",
     "docs/terminal-output.md",
-    "README.md"
+    "README.md",
+    "docs/vars.md",
+    "examples/providers"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

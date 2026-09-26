@@ -115,3 +115,7 @@ npm exec --yes --package=node@24 -- node scripts/verify-runtime.mjs
 ```
 
 Tests use local provider/MCP/ACP fixtures. [Verification](docs/verification.md) records gates and limits. Source modules live in `bin/`, `src/config.ts`, `src/agent.ts`, `src/compact.ts`, `src/llm/`, `src/tools/`, and `src/acp/`.
+
+## Runtime variables
+
+Agents can select named read-only values from config, environment, files or executable providers. Use `raw vars list` and `raw vars get now` without invoking a model. The starter raw agent includes current UTC time. Models can use list_vars/read_var or pass commands[].env_refs to Bash; use-only values need not be returned to the model. See [the variable contract](docs/vars.md) and the forkable [host-info provider](examples/providers/host-info/README.md).

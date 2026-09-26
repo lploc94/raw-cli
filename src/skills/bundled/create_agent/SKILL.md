@@ -1,16 +1,16 @@
 # Create a Raw agent
 
-Use for a new named assistant, a specialized role or a shareable Raw setup. An agent is one `agents.<name>` config entry; it selects a model alias and owns its prompt, tools, skills, request/cache/compact settings and policy. A session is a saved conversation, not an agent definition. Use `configure_raw` for changing a field of an existing agent.
+Use for a new named assistant, a specialized role or a shareable Raw setup. An agent is one agents.<name> entry selecting model, prompt, tools, skills, vars and policy. A session is a saved conversation, not an agent definition. Use `configure_raw` for changing a field of an existing agent.
 
-For a how-to, explain the layout and relevant example. For creation, establish the desired role, target name/location and available model; ask only for unresolved decisions. For a startup failure, diagnose the referenced model/assets before recreating the whole agent.
+For how-to, explain the layout; for creation, establish role/name/location/model; for failure, diagnose referenced assets.
 
 ## Choose the layout
 
-For personal use, add an entry to `$XDG_CONFIG_HOME/raw/config.json` or `~/.config/raw/config.json`. Reuse a suitable `models.<alias>` instead of duplicating the connection. Preserve every other agent and the default unless the user asks to change them.
+Personal config: $XDG_CONFIG_HOME/raw/config.json or ~/.config/raw/config.json. Reuse model aliases; preserve other agents/default.
 
 For sharing, create a directory containing `raw.json`, `prompt.md`, and any custom `tools/<id>/` and `skills/<id>/`. Select `agent/<id>` to resolve these beside that config, independent of the working directory. `local/<id>` needs the recipient's global installation and does not travel with the folder. `builtin/<id>` comes from their installed Raw version. Exact MCP selections also require server definitions and the recipient's command/endpoint prerequisites.
 
-The shipped `examples/agents/project-helper/` is a complete forkable layout. Copy the whole directory if useful. For a smaller agent, this complete config demonstrates a file prompt, the five basic setup tools, one selected skill and a conditional Bash rule. Select only capabilities needed for the requested role; a writer need not always have setup skills or Bash.
+Copy examples/agents/project-helper/ for a forkable layout. This complete example selects a prompt, setup tools/skill and conditional Bash rule. Choose capabilities for the role.
 
 <!-- example:config -->
 ```json
@@ -67,3 +67,9 @@ Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_t
 4. For sharing, copy the directory to an unrelated path and repeat loading. Check config-relative prompt/custom assets, required external commands, global dependencies and literal server paths. Exercise a requested policy with harmless calls. Include setup instructions for the recipient; exclude private conversation state and machine-specific paths.
 
 Report the agent name, directory/config, model alias, prompt/capabilities, checks and remaining prerequisites. Existing sessions bind config path, agent name, model/endpoint and effective prompt; changing those can reject resume. Tool changes can rotate the generated cache key; skill-only changes may append a reload notice while keeping it. Sharing an agent does not transfer session identity.
+
+## Select and share variables
+
+Root vars/var_providers define values and executable sources; agent.vars selects exact names, omitted means none. Add builtin/list_vars/read_var to tools.use when discovery/reading is needed. Example: root vars.now={description:"Current UTC time",access:"read",source:{kind:"provider",name:"system.time"}}, agent.vars=["now"]. configure_raw covers the full schema; create_tool covers executable providers.
+
+Keep provider scripts/data beside the shared config; command paths, file sources and provider cwd resolve from config, unlike Bash's session cwd. Recipients supply environment values and executable dependencies. Use references for consumption-only values, e.g. commands[].env_refs; do not copy them into the prompt. List/get via raw --config PATH --agent NAME vars needs no model. Repeat after relocating. Runtime values stay out of the initial prefix; old readings are historical on resume. Providers execute on demand, not during listing.

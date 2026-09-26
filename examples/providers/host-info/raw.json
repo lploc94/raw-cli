@@ -1,0 +1,11 @@
+{
+  "default_agent": "host",
+  "models": { "local": { "provider": "ollama", "method": "openai-chat-completions", "model_id": "YOUR_INSTALLED_MODEL" } },
+  "var_providers": { "host": { "command": "node", "args": ["provider.mjs"], "timeout_ms": 5000 } },
+  "vars": {
+    "hostname": { "description": "Local machine hostname", "type": "string", "access": "read", "source": { "kind": "provider", "name": "host", "params": { "field": "hostname" } }, "cache_ttl_ms": 60000 },
+    "platform": { "description": "Operating system platform", "type": "string", "access": "read", "source": { "kind": "provider", "name": "host", "params": { "field": "platform" } } },
+    "token": { "description": "Credential for a consuming command", "access": "use", "source": { "kind": "env", "name": "RAW_EXAMPLE_TOKEN" } }
+  },
+  "agents": { "host": { "model": "local", "vars": ["hostname", "platform", "token"], "tools": { "use": ["builtin/list_vars", "builtin/read_var", "builtin/bash"] } } }
+}

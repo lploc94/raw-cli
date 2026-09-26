@@ -84,3 +84,5 @@ With this fixture, verify a real `echo_text` call with `{"text":"hello"}` return
 - Image content failure: native images need a capable model/adapter; text-only agents can use OCR tools returning text.
 
 Raw validates selected tool schemas/arguments and closes owned connections on failed startup or shutdown. Selected schema/selection changes can rotate the generated cache key on resume; unselected server edits do not affect the active prefix. Changing config path, agent, model/endpoint or effective prompt can reject resume entirely. Report server/transport, exact selections, actual checks and remaining prerequisites.
+
+Raw vars do not interpolate MCP env/headers or tool arguments. Use a server's inherited environment/auth mechanism, or a local tool consuming context.vars. Executable var_providers use a separate one-request JSON protocol, not MCP.

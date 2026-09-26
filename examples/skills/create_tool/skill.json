@@ -1,7 +1,7 @@
 {
   "api_version": 1,
   "id": "create_tool",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "create_tool",
-  "description": "Use when creating, modifying or explaining a callable Raw tool plugin: define its input schema and handler, register it on an agent and verify real behavior. Reusable instructions alone belong in create_skill."
+  "description": "Use to create or customize a Raw tool plugin or executable variable provider, including input/output contracts, host vars consumption, registration and verification. Reusable instructions belong in create_skill."
 }

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { testConfig } from "./fixtures/config.js";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, cp, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
@@ -34,7 +34,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   assert.equal(install.status, 0, install.stderr);
   const bin = join(consumer, "node_modules", ".bin", "raw");
   await access(bin);
-  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill"]) {
+  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var"]) {
     const example = join(consumer, "node_modules", "raw-cli", "examples", "tools", name);
     await access(join(example, "tool.json"));
     await access(join(example, "index.mjs"));
@@ -59,7 +59,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     assert.equal(body, await readFile(join(consumer, "node_modules", "raw-cli", "examples", "skills", id, "SKILL.md"), "utf8"));
   }
   const skillBody = await readFile(join(packagedSkill, "SKILL.md"), "utf8");
-  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill"]) {
+  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var"]) {
     const folder = join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", name);
     const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8")) as { id: string; entry: string; input_schema: { type: string } };
     assert.equal(manifest.id, name);
@@ -116,6 +116,35 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
+
+  assert.equal(await readFile(join(consumer, "node_modules/raw-cli/docs/vars.md"), "utf8"), await readFile(join(repo, "docs/vars.md"), "utf8"));
+  const providerExample = join(root, "relocated-provider");
+  await cp(join(consumer, "node_modules/raw-cli/examples/providers/host-info"), providerExample, { recursive: true });
+  const varsPath = join(providerExample, "raw.json");
+  const varsEnv = { ...env, RAW_EXAMPLE_TOKEN: "installed-use-value-7321", XDG_STATE_HOME: join(root, "vars-state") };
+  const listedVars = await run(bin, ["--config", varsPath, "vars", "list"], consumer, varsEnv);
+  assert.equal(listedVars.code, 0, listedVars.stderr);
+  assert.equal(JSON.parse(listedVars.stdout).vars.length, 3);
+  const gotVar = await run(bin, ["--config", varsPath, "vars", "get", "hostname"], consumer, varsEnv);
+  assert.equal(gotVar.code, 0, gotVar.stderr); assert.equal(JSON.parse(gotVar.stdout).value, hostname());
+  await assert.rejects(access(varsEnv.XDG_STATE_HOME));
+  const variableCall = (name: string, args: unknown, id: string) => ({ frames: [openAiFrame({ tool_calls: [{ index: 0, id, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, "tool_calls"), openAiDone] });
+  const varsProvider = await startMockProvider([
+    variableCall("list_vars", {}, "catalog"), variableCall("read_var", { name: "hostname" }, "hostname"),
+    variableCall("bash", { commands: [{ command: 'test "$TOKEN" = "$RAW_EXAMPLE_TOKEN" && printf verified > vars-verified', env_refs: { TOKEN: "token" } }] }, "consume"),
+    { frames: [openAiFrame({ content: "vars-ready" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const doc = JSON.parse(await readFile(varsPath, "utf8"));
+    doc.models.local = { provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: varsProvider.url };
+    await writeFile(varsPath, JSON.stringify(doc));
+    const task = await run(bin, ["--config", varsPath, "inspect vars"], consumer, varsEnv);
+    assert.equal(task.code, 0, task.stderr);
+    assert.equal(await readFile(join(consumer, "vars-verified"), "utf8"), "verified");
+    assert.equal(varsProvider.requests.length, 4);
+    assert.match(JSON.stringify(varsProvider.requests[2]!.body), /observed_at/);
+    assert.doesNotMatch(JSON.stringify(varsProvider.requests), /installed-use-value-7321/);
+  } finally { await varsProvider.close(); }
 
   const terminalProvider = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "terminal-read", type: "function", function: {
@@ -287,7 +316,7 @@ process.stdout.write("installed-parent-ok\\n");`;
     assert.match(JSON.stringify(fixture.requests[8]?.body), /ACP installed/);
     assert.match(JSON.stringify(fixture.requests[9]?.body), /ACP resumed/);
 
-    await writeFile(join(consumer, "consumer.ts"), 'import { ToolRegistry, listSessions, getSessionHistory, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod, type SessionHistoryOptions } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst history: SessionHistoryOptions | undefined = undefined;\nconst names: string[] = new ToolRegistry().definitions().map(tool => tool.name);\nvoid options; void compact; void input; void method; void history; void names; void listSessions; void getSessionHistory;\n');
+    await writeFile(join(consumer, "consumer.ts"), 'import { ToolRegistry, listSessions, getSessionHistory, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod, type SessionHistoryOptions, type VariableContext, createVariableResolver, loadVariableConfig } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst history: SessionHistoryOptions | undefined = undefined;\nconst names: string[] = new ToolRegistry().definitions().map(tool => tool.name);\nconst vars: VariableContext | undefined = undefined; void vars; void createVariableResolver; void loadVariableConfig; void options; void compact; void input; void method; void history; void names; void listSessions; void getSessionHistory;\n');
     const tsc = spawnSync(process.execPath, [join(repo, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck",
       "--target", "esnext", "--module", "nodenext", "--moduleResolution", "nodenext",
       "--typeRoots", join(repo, "node_modules/@types"), "consumer.ts"], { cwd: consumer, encoding: "utf8" });

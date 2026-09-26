@@ -74,6 +74,10 @@ Use for <specific intent>. For <nearby intent>, use <appropriate route>.
 
 This is a writing aid, not a parser schema or a mandatory list of headings. A created skill about release notes need not inherit Raw configuration procedures.
 
+## Dynamic data
+
+Teach skills to discover/read selected vars on demand or pass references to consuming tools. Do not capture current time, location, credentials or provider output in static skill text. configure_raw covers variable declarations; create_tool covers executable provider scripts; create_agent covers portable selections. MCP values remain literal.
+
 ## Rules specific to the setup kit
 
 - **Match the procedure to the request.** For generic how-to questions, the loaded instructions should be sufficient. Avoid making repository inspection or a demo server a mandatory prerequisite to explaining a field.

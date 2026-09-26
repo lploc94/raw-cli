@@ -1,7 +1,7 @@
 {
   "api_version": 1,
   "id": "create_skill",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "create_skill",
   "description": "Use when creating or improving a discoverable Raw skill: write its description and instructions, choose a root, register it on an agent and verify loading. Also covers how-to questions; ordinary Markdown documents do not need skill installation."
 }

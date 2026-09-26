@@ -13,12 +13,45 @@
       "model": "local",
       "system_prompt_file": "prompt.md",
       "tools": {
-        "use": ["builtin/read_file", "builtin/bash", "agent/project_note", "builtin/list_skills", "builtin/load_skill"],
+        "use": [
+          "builtin/read_file",
+          "builtin/bash",
+          "agent/project_note",
+          "builtin/list_skills",
+          "builtin/load_skill",
+          "builtin/list_vars",
+          "builtin/read_var"
+        ],
         "rules": [
-          { "match": "builtin/bash", "effect": "ask", "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)" } }
+          {
+            "match": "builtin/bash",
+            "effect": "ask",
+            "when": {
+              "any": "commands[*].command",
+              "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)"
+            }
+          }
         ]
       },
-      "skills": { "use": ["agent/project"] }
+      "skills": {
+        "use": [
+          "agent/project"
+        ]
+      },
+      "vars": [
+        "project_info"
+      ]
+    }
+  },
+  "vars": {
+    "project_info": {
+      "description": "Portable project helper settings",
+      "access": "read",
+      "source": {
+        "kind": "file",
+        "path": "project-info.json",
+        "format": "json"
+      }
     }
   }
 }

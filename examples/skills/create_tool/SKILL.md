@@ -1,18 +1,18 @@
 # Create a Raw tool plugin
 
-Use for a new callable action or a customized existing tool. Reusable instructions belong in `create_skill`. A tool is a selected folder containing a strict manifest and a standalone ESM handler.
+Create callable tools or executable variable providers; reusable instructions belong in create_skill. Tools have manifests and ESM handlers; providers are scripts returning configured data.
 
 ## Choose the task and contract
 
-For a how-to, explain the manifest, handler and registration with the example below. For implementation, establish the intended agent, inputs, output and side effects before writing. For a broken plugin, start from its exact load/argument/handler error.
+For how-to, explain; for implementation, establish agent/inputs/output/side effects; for failure, start from the exact error.
 
-Define what the action does, argument limits, result shape and failure behavior. A batch that validates all rows first is still not transactional after I/O starts. Decide whether paths are relative to session cwd, what files may be created, and how partial execution is reported. Describe these facts in English in the manifest. Reuse an existing tool when it already supplies the requested action.
+Define inputs/results/limits/failures in English. Preflight does not make I/O transactional: document partial execution and cwd/path semantics. Reuse suitable existing tools.
 
 ## Layout and schema
 
 - `agent/<id>`: `tools/<id>/` beside the selected config; portable with that directory.
 - `local/<id>`: `$XDG_CONFIG_HOME/raw/tools/<id>/`, otherwise `~/.config/raw/tools/<id>/`.
-- `builtin/<id>`: installed package-owned tools. Fork a shipped `examples/tools/` folder into a user root and rename folder/manifest/name consistently; do not edit package-owned code for a user customization.
+- `builtin/<id>`: installed package-owned tools. Fork examples/tools into a user root; rename folder/manifest/name together.
 
 `--config` changes the agent root, not the global root. Folder/manifest `id` matches `[a-z][a-z0-9_-]*`; model-visible `name` matches `[A-Za-z_][A-Za-z0-9_-]{0,63}` and must be unique among selected tools. `version` is a three-component numeric string.
 
@@ -81,14 +81,32 @@ Append the exact ID to `agents.<name>.tools.use`, preserving existing entries an
 { "tools": { "use": ["builtin/read_file", "local/append_notes", "builtin/bash"] } }
 ```
 
-Use `agent/append_notes` instead when the folder is config-adjacent. Keep other agent fields and `default_agent` unchanged unless requested.
+Use `agent/append_notes` instead when the folder is config-adjacent. Preserve other config fields.
 
 ## Implement and verify
 
 1. Inspect the target agent's selected names and policy. Create the manifest and handler in the chosen root. Validate the complete batch before side effects; handle aborts and genuine runtime failures without claiming rollback.
 2. Back up existing config, add the exact selection, and keep config mode 0600. Run `raw config list` or `raw --config PATH config list` for static config validation; this alone does not import or execute the plugin.
-3. If the installed `raw-cli` library is importable, use `loadConfig({configPath,requireModel:false})`, then `createRuntimeTools({runtime,cwd})`. Dispatch the model-visible name through `tools.registry.dispatch(name,args,{cwd,maxOutputBytes:8192})`; close `tools.mcp` in `finally`. This tests real registration/schema/preflight without a model call. Otherwise use a harmless task with the intended configured agent and report provider prerequisites.
+3. With the installed library, use `loadConfig({configPath,requireModel:false})`, then `createRuntimeTools({runtime,cwd})`. Dispatch the model-visible name through `tools.registry.dispatch(name,args,{cwd,maxOutputBytes:8192})`; close `tools.mcp` in `finally`. This verifies registration/schema/preflight without inference.
 4. For this example, first send a valid first row and a second row without a newline; confirm failure and no first file. Then send `{"operations":[{"path":"notes.txt","text":"first\n"}]}` and verify file contents and JSON `written:1`. Repeat to check append behavior, reject unknown properties, and test abort/partial failure when relevant. Host output caps still apply.
 5. Add `tools.rules` only for requested policy. Match the canonical ID, e.g. `{"match":"local/append_notes","effect":"ask"}`. Last matching rule wins; unmatched calls run, and `-y` does not bypass explicit ask. Only ask accepts a `when` predicate on a schema-bound string path. Verify a requested rule with harmless inputs.
 
-For startup failure, check ID/folder/entry, exports, unique names, schema draft and containment. For runtime failure, report whether earlier rows already completed. Selected schema/description/source changes advance context revision and rotate Raw's generated cache key on resume; unselected edits do not. Report created paths, exact registration, the checks actually run and any remaining limitation.
+Check failed loads for ID/entry/exports/schema/containment. Report partial runtime effects. Selected source/schema edits rotate generated cache keys on resume; unselected edits do not. Report paths/registration/checks.
+
+## Variable consumers and providers
+
+For a configured data value, write an executable provider instead of a tool manifest. Save `host.mjs` beside the config:
+
+<!-- example:var-provider -->
+```js
+import { hostname } from "node:os";
+let input = "";
+for await (const part of process.stdin) input += part;
+const request = JSON.parse(input);
+if (request.protocol_version !== 1) throw new Error("unsupported protocol");
+process.stdout.write(JSON.stringify({value:hostname()}) + "\n");
+```
+
+Root `var_providers.host={command:"node",args:["host.mjs"]}` and `vars.host={description:"Host name",access:"read",type:"string",source:{kind:"provider",name:"host"}}`; append `host` to agent.vars. Select builtin/list_vars and builtin/read_var for discovery/reads. Test `raw --config PATH vars get host`. No model call is needed. Provider receives `{protocol_version:1,name,params}`; params come from config. Output exactly `{value,observed_at?}` JSON, exit 0; logs stderr. Raw bounds time/bytes. Paths/cwd default to config directory; configure_raw covers limits/cache/source schema.
+
+All selected local handlers receive context.vars: list(), read(name,{signal}), validateEnvRefs(refs), resolveEnv(refs,{signal}). For an API tool, resolve `{TOKEN:args.token_ref}` and pass env.TOKEN to its client; return the API result, not the credential. Pass context.signal. Host rejects unselected names and use-only reads. Bash supports commands[].env_refs. Values enter child env, never shell interpolation; plugins can still print them. MCP gets no implicit vars rewriting.

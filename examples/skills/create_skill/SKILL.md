@@ -103,4 +103,6 @@ Nonempty `skills.use` requires both skill tools. Do not change `default_agent` j
 
 The first request contains no catalog/body; list/load appends them at the tail. Editing a selected skill on resume advances revision but keeps Raw's generated cache key; previously visible content may get a reload notice. The agent must list/load again. If a body is too large, remove redundancy before deliberately changing the agent's cap.
 
-Report paths, selected ID/agent, actual checks and missing dependencies. A valid manifest alone does not prove instruction quality.
+Report paths, registration, checks and prerequisites.
+
+For dynamic data, teach list_vars/read_var and freshness checks; select names in agent.vars and the tools in tools.use. Never bake current time or credentials into a skill. Pass use-only references via consuming tools.

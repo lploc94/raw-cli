@@ -309,9 +309,9 @@ A source-only doc/example or a handler importing the checkout must fail packed-c
 ### Implementation obligations
 Regenerate copies through build; package every referenced mandatory artifact. Preserve existing five-skill roles and UI instructions, reuse established marked-example test approach. Review all modified docs against final runtime behavior and remove provisional wording from earlier phases.
 ### Acceptance criteria
-- [ ] AC-12: Installed English skills give accurate usable vars/provider/tool/agent guidance within default caps — proven by loaded bodies and executable examples.
-- [ ] AC-13: Relocated installed artifacts execute the complete vars workflow without checkout dependencies — proven by packed-consumer tests.
-- [ ] AC-14: Entire repository regression suite passes and docs reflect final contract — proven by npm run check and final review.
+- [x] AC-12: Installed English skills give accurate usable vars/provider/tool/agent guidance within default caps — proven by loaded bodies and executable examples.
+- [x] AC-13: Relocated installed artifacts execute the complete vars workflow without checkout dependencies — proven by packed-consumer tests.
+- [x] AC-14: Entire repository regression suite passes and docs reflect final contract — proven by npm run check and final review.
 ### Focused verification
 `npm run build`
 `node --import tsx --test tests/bundled-skills.test.ts tests/vars-docs.test.ts`
@@ -340,3 +340,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 2 complete; review APPROVE. Red: missing resolver/provider modules. Green: 12 resolver/provider/Bash lifecycle tests, typecheck. Real subprocess fixtures covered timeout, abort, inherited pipes, invalid protocol and counting TTL. Corrected one trailing blank line in docs/vars.md reported by the Phase 1 staged diff check (the earlier log overstated that whitespace check); current diff check passes. Phase 3 in_progress.
 - 2026-09-26: Phase 3 complete; review APPROVE. Red: unknown bundled vars tools and missing custom context service. Green: 33 focused tests including MCP/Bash/approval/fork regressions; typecheck/build/diff checks passed. Updated intentional Bash schema digest golden for env_refs. Denied conditional calls have zero provider marker writes, and invalid later refs prevent the first command. Phase 4 in_progress.
 - 2026-09-26: Phase 4 complete; review APPROVE. Red: missing vars command/init defaults. Green: 72 CLI/ACP/session/cache regression tests, then 7 affected vars CLI/session tests including real CLI and ACP provider cancellation; typecheck/build/diff passed. Actual persisted history and mock requests excluded the use-only sentinel while child output file verified receipt. Vars-only metadata/file changes retained tool/system prefix and cache key; SDK resumed the same session. Phase 5 in_progress.
+- 2026-09-26: Phase 5 complete; review APPROVE. Red: skills lacked vars and provider example missing. Green: documented/skill examples execute, all five bodies load within 8192 bytes (source/example/dist equal), and npm run check passed 395/395 including relocated installed CLI/provider/Bash/SDK type checks. Rewrote configure_raw compactly while retaining UI/model/policy contracts. All five skill manifests are version 1.2.0. No live service/model calls or GitHub Actions. Final cumulative audit in_progress.

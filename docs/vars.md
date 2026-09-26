@@ -1,70 +1,208 @@
 # Runtime variables
 
-Root `vars` / `var_providers` default to empty objects. Reject unknown fields and duplicate JSON keys using the existing strict config approach. Variable/provider names match `[a-z][a-z0-9_.-]{0,63}`; reserve provider name `system.time`. Reject prototype-sensitive keys with own-property-safe maps consistently. Agent `vars` is an optional ordered array of unique exact existing variable names; no wildcard or implicit inheritance. Variables do not require the two discovery/read tools because a consumption-only agent may know reference names from its prompt.
+Variables are named, read-only external inputs for an agent. Discover metadata
+without resolving values, read a value when needed, or pass a reference into a
+consuming tool. They are not mutable agent state or an encrypted vault.
 
-A variable has required nonempty `description`, required `source`, required `access` (`read` or `use`), optional `type`, and optional nonnegative integer `cache_ttl_ms` (default 0, maximum 2147483647). Supported declared types: `string`, `number`, `boolean`, `object`, `array`, `null`, `json`. Numbers must be finite. `json` accepts any JSON value. Missing type is inferred from literal values, defaults to string for env/text-file, and json for JSON-file/provider; system.time defaults to string. Validate declared type on resolution, and validate literal compatibility at parse time. Omitted metadata does not require executing a provider to infer a type.
+## Quick start
 
-Source discriminated union (unknown fields rejected):
-- `{kind:"literal", value:<JSON>}`; JSON objects/arrays supported; empty strings, false, 0 and null are values, not missing values.
-- `{kind:"env", name:<environment identifier>}`; always produces a string; unset is an error, empty is valid. Reads the resolver's provided environment (default process.env); no eager value copy into runtime config.
-- `{kind:"file", path:<nonempty string>, format:"text"|"json"}`; format defaults to text. Path resolves relative to selected config directory. Read strict UTF-8 lazily, preserve text whitespace/newlines, parse JSON only for json format, bound reads to 65536 bytes including oversize detection. Fail on missing/invalid/oversized input, never silently truncate a value.
-- `{kind:"provider", name:<provider name>, params?:<JSON object>}`; params defaults to `{}`; no recursive variable references. Name must be `system.time` or a declared executable provider. Built-in system.time accepts only empty params and returns UTC ISO-8601 string.
+A complete config with no external provider dependencies:
 
-Executable provider definition: required nonempty string `command`; optional string-array `args` (default []), `cwd` (default selected config directory), positive integer `timeout_ms` (default 5000, max 2147483647), positive integer `max_output_bytes` (default 65536, max 1048576). `max_output_bytes` bounds combined stdout/stderr bytes. Bare commands resolve through PATH; absolute commands stay absolute; commands containing a path separator resolve against config directory. `cwd` resolves against config directory; args remain literal, so relative script arguments resolve from the provider cwd. No shell, tilde or environment expansion. Provider subprocess inherits the resolver environment; no separate inline script or provider-env schema in v1. Provider request JSON is limited to 65536 UTF-8 bytes and validated before spawning.
-
-Example fragment (not an entire config):
 ```json
 {
-  "var_providers": {
-    "sensor": {"command":"node", "args":["providers/sensor.mjs"], "timeout_ms":5000}
-  },
+  "default_agent": "raw",
+  "models": { "local": { "provider": "ollama", "method": "openai-chat-completions", "model_id": "YOUR_INSTALLED_MODEL" } },
   "vars": {
-    "project": {"description":"Project settings", "source":{"kind":"literal","value":{"name":"raw-cli"}}, "access":"read"},
-    "github_token": {"description":"GitHub API credential", "source":{"kind":"env","name":"GITHUB_TOKEN"}, "access":"use"},
-    "now": {"description":"Current UTC time", "source":{"kind":"provider","name":"system.time"}, "access":"read"},
-    "temperature": {"description":"Configured sensor temperature in Celsius", "type":"number", "source":{"kind":"provider","name":"sensor","params":{"field":"temperature_c"}}, "access":"read", "cache_ttl_ms":60000}
-  }
+    "project": { "description": "Project settings", "access": "read", "source": { "kind": "literal", "value": { "name": "raw-cli" } } },
+    "now": { "description": "Current UTC time", "access": "read", "source": { "kind": "provider", "name": "system.time" } },
+    "token": { "description": "API credential", "access": "use", "source": { "kind": "env", "name": "MY_API_TOKEN" } }
+  },
+  "agents": { "raw": { "model": "local", "vars": ["project", "now", "token"], "tools": { "use": ["builtin/list_vars", "builtin/read_var", "builtin/bash"] } } }
 }
 ```
-Register names in `agents.<name>.vars`; select `builtin/list_vars` / `builtin/read_var` explicitly in `tools.use` if discovery/reading is wanted.
 
-### Resolver and executable protocol
-New small `src/vars/` modules own contract/schema, resolver, and executable supervision. Reuse process lifecycle techniques from `src/tools/process.ts` without pretending provider stdout is a Bash ToolResult. Extract shared low-level supervision only if it removes real duplication without changing Bash's output semantics.
+Save as raw.json. `raw --config raw.json vars list` lists selected metadata;
+`raw --config raw.json vars get now` reads current time. These commands need no
+model credentials, prompt assets, plugin/MCP startup or session storage. Replace
+the model placeholder before inference. `raw config init` includes now and both
+variable tools for its default raw agent.
 
-Public host interface `VariableContext`:
-- `list(): readonly VariableMetadata[]` returns ordered `{name,description,type,access}` only, fresh copies.
-- `read(name, {signal}?): Promise<ResolvedVariable>` enforces read access.
-- `validateEnvRefs(refs): void` validates map shape, environment identifiers, selected names, and declared env-compatible types without I/O.
-- `resolveEnv(refs, {signal}?): Promise<Record<string,string>>` permits read/use references, validates actual values, and returns only requested environment entries. Trusted plugin code receives these values; model history does not automatically receive them.
-- ResolvedVariable is `{name,value,observed_at,cached}`; caller mutation must not mutate future reads/cache.
+## Configuration schema
 
-String/number/boolean values convert to subprocess env as unchanged string / JSON number / `true|false`. Reject null/object/array for env bindings; do not implicitly stringify structured data. For `type:json`, actual-type validation is necessarily deferred until resolution. Env names match `[A-Za-z_][A-Za-z0-9_]*`, reject NUL values; do not restrict names like PATH beyond existing host-permission model. Bindings override the inherited env for that child only.
+Root vars and var_providers default to empty objects. Every declaration is
+structurally validated; only selected/requested values resolve. Names match
+`[a-z][a-z0-9_.-]{0,63}`; constructor and prototype are reserved, and __proto__
+is invalid. Duplicate/unknown config fields fail.
 
-One request per provider invocation, newline-terminated JSON on stdin followed by EOF:
+Agent `vars` is an ordered array of unique exact root variable names; omitted
+means none. No wildcard, automatic exposure or selection inheritance. Select
+builtin/list_vars and builtin/read_var explicitly for discovery/reading; a
+consumption-only agent can instead know reference names from its prompt.
+
+Each `vars.<name>` has:
+
+| Field | Contract |
+|---|---|
+| description | Required nonempty string |
+| access | Required read or use |
+| source | Required discriminated object below |
+| type | Optional string, number, boolean, object, array, null or json |
+| cache_ttl_ms | Integer 0..2147483647; default 0, resolve every call |
+
+read permits reading and reference consumption. use rejects model and CLI reads
+but allows reference consumption. Bash/custom tools have host permissions and
+can still print a value; use is not an OS secrecy boundary.
+
+Source fields are exclusive to their kind:
+
+| kind | Fields | Value/type default |
+|---|---|---|
+| literal | Required value, any JSON | Inferred, including false/0/empty/null |
+| env | Required name, environment identifier | String; unset errors, empty is valid |
+| file | Required path; optional format text/json, default text | Text preserves whitespace; JSON file defaults to type json |
+| provider | Required name; optional params JSON object, default {} | Type json; built-in system.time defaults to string |
+
+File paths resolve relative to config directory, not session cwd. Files must be
+regular strict UTF-8 files within 65536 bytes; overflow fails rather than
+truncating. Declared types validate resolved values; numbers must be finite.
+Env/text/system.time cannot declare a non-string type except json. Provider
+params are fixed config data, not model input; recursive references are unsupported.
+
+## Write an executable provider
+
+A provider is any executable implementing one JSON request/response. It has no
+tool manifest and is not an MCP server. Root `var_providers.<name>` accepts:
+
+| Field | Contract |
+|---|---|
+| command | Required nonempty executable name/path |
+| args | Optional literal string array, default [] |
+| cwd | Optional path, default config directory |
+| timeout_ms | Integer 1..2147483647, default 5000 |
+| max_output_bytes | Integer 1..1048576, default 65536; combined stdout/stderr |
+
+Bare commands use PATH. Commands containing a path separator and cwd resolve
+against config directory; absolute paths stay absolute. Args remain literal and
+relative script arguments run from provider cwd. No shell, tilde or template
+expansion. The child inherits the resolver environment (normally process.env).
+No inline-code field or provider-specific env map exists in v1.
+
+Raw writes one JSON line to stdin, then closes stdin:
+
 ```json
-{"protocol_version":1,"name":"temperature","params":{"field":"temperature_c"}}
+{"protocol_version":1,"name":"hostname","params":{"field":"hostname"}}
 ```
-Exactly one JSON object on stdout (surrounding whitespace allowed), required `value`, optional `observed_at` UTC ISO-8601 string; reject unknown fields, malformed JSON, invalid UTF-8, extra stdout logs/JSON objects, invalid timestamp, and incompatible value types. Exit 0 is required. Absent observed_at uses host completion time; built-in system.time uses one clock sample for value and observed_at. stderr is bounded diagnostic output, not part of the value or model-facing protocol errors. Return stable error codes with provider/variable name and failure class, not raw stdout/stderr or parsed value dumps.
 
-Enforce timeout from spawn through process close, abort-before-spawn, abort while writing stdin, spawn errors, early stdin closure/EPIPE, output overflow and descendant pipe retention. Terminate and reap on failure; retain the repository's POSIX process-group termination and Windows direct-child fallback, documenting the existing platform limit rather than inventing a sandbox. No automatic retry or stale-on-error fallback.
+The JSON request is at most 65536 bytes (plus its newline). Return exactly one
+JSON object on stdout, with required value and optional observed_at. Unknown
+response fields, extra JSON objects or stdout log messages fail. Exit 0 is
+required. Logs belong on stderr; Raw counts their bytes but does not return
+arbitrary provider diagnostics to the model.
 
-Cache is per resolver instance, bounded by the selected variable catalog, with monotonic expiry measured from successful completion (not provider observed_at). TTL applies uniformly to all sources. TTL 0 always resolves; only successful results enter the cache. No cross-session/process disk cache, proactive refresh, or in-flight request sharing in v1; concurrent misses may execute independently and retain their own cancellation ownership. Permission checks run even on cache hits. `/clear` clears conversation as today; a resolver's TTL cache survives until that runtime is recreated. A CLI get process always starts with an empty cache.
-
-### Tool and surface integration
-`createRuntimeTools` creates a resolver per runtime-tools instance and passes its service into `loadToolPlugins`. Extend the existing filtered plugin context with a documented `vars` capability for all selected local/built-in plugins. Standalone plugin imports without host services return a clear vars-unavailable error only when vars are needed. Direct SDK users can create/inject the resolver explicitly through exported types/functions; no module-global singleton or new required arguments for unrelated library use.
-
-New standalone plugins use stable manifests: `list_vars({})` returns `{vars:[metadata...]}`; `read_var({name})` returns ResolvedVariable. Errors use existing ToolResult conventions. A list/read response that cannot fit maxOutputBytes returns a clear output-budget error, never a partially valid value. Validate a selected list_vars catalog can fit at startup without resolving values, consistent with list_skills.
-
-Existing Bash contract becomes:
 ```json
-{"commands":[{"command":"curl -H \"Authorization: Bearer $GH_TOKEN\" https://api.github.com/user","env_refs":{"GH_TOKEN":"github_token"}}]}
+{"value":"workstation","observed_at":"2026-09-26T10:00:00.000Z"}
 ```
-The JSON above must be parsed in documentation tests. `env_refs` is optional per command, never a top-level substitute for `commands`. Validate the complete batch's reference metadata before any provider/command side effects, after registry approval. Resolve each command's bindings immediately before that command starts. A resolution/type/NUL failure reports that row as error and skips remaining rows; previous completed rows remain completed. Keep existing nonzero-exit continuation and timeout/abort stopping behavior. Record a clear skip reason such as `prior_var_error` rather than mislabeling it `prior_timeout`. A denied/invalid call runs neither provider nor Bash. The command's timeout_ms remains its Bash execution deadline; variable providers use their own deadline and the same call abort signal.
 
-No special MCP argument rewriting. Existing MCP inputs/results and selection remain unchanged; tools capable of env references are local handlers using context.vars. This boundary must be explicit in add_mcp and tools docs.
+observed_at is valid UTC ISO time with seconds and optional three-digit
+milliseconds. If omitted Raw uses completion time. Built-in system.time returns
+a UTC ISO string and accepts empty params only; it cannot be overridden by a
+user declaration.
 
-CLI `raw [--config PATH] [--agent NAME] vars list|get NAME` uses effective agent selection, validates the config, and does not require LLM credentials, load prompt files, import plugins, start MCP, open a session DB or make inference requests. Factor selection/config projection rather than routing through full runtime startup. Output one newline-terminated JSON result using the same catalog/value shape; errors to stderr, exit 2 for invalid invocation/config and 1 for resolution/access failure, 130 for cancellation. No get override to reveal use-only values. Reject incompatible task/session/ACP flags. `config list` shows selected variable names only.
+Copy the installed `examples/providers/host-info/` directory for a working Node
+provider with two configured variables. It uses node:os to return the actual
+hostname/platform, requires no network and runs after relocating the folder.
+For another language, preserve this protocol and specify its interpreter in
+command. A variable provider has fixed parameters; a model-parameterized action
+such as arbitrary-location weather lookup is usually a tool instead.
 
-`config init` adds root `vars.now`, agent raw selection `["now"]`, and both variable tools alongside existing setup tools; static prompt can mention list/read discovery but must not embed catalog/value data. Other agents require explicit edits; do not auto-append tools to user definitions.
+Failures include spawn/stdin/I/O errors, nonzero exit, malformed UTF-8/JSON,
+invalid timestamp/type, output overflow, timeout and abort. Errors identify the
+variable and failure class without dumping raw provider output. There is no
+automatic retry or stale-on-error fallback. Timeout includes process/pipe close.
+POSIX cancellation terminates the owned process group with TERM then KILL;
+Windows uses direct-child termination. Processes escaping the group are outside
+that guarantee. This is not a background job API.
 
-Session behavior is deliberately simple: no vars snapshot/digest/visibility fields. Prior tool results retain their observed_at and remain historical even if config/provider code changes. A new runtime uses current definitions; an existing runtime holds validated definitions until restarted. External env/files/providers resolve according to TTL. Manifest descriptions teach the model to read again when fresh data matters, especially after resume. Tests must prove repeated resumes do not execute providers until used and variable changes alone preserve system/tools/cache key.
+## Model tools and Bash
+
+`list_vars({})` returns `{vars:[{name,description,type,access}]}` only and never
+runs a provider. `read_var({name})` returns `{name,value,observed_at,cached}`.
+An oversized result returns an output-budget error instead of a partial value.
+The selected catalog must fit max_output_bytes when list_vars is selected.
+
+Bash uses references per command, retaining its existing batch shape:
+
+```json
+{"commands":[{"command":"test -n \"$TOKEN\"","env_refs":{"TOKEN":"token"}}]}
+```
+
+Environment names match `[A-Za-z_][A-Za-z0-9_]*`. Values may be strings, finite
+numbers or booleans, converted to string/JSON number/true-or-false. Null,
+objects/arrays and NUL are rejected. Bindings override inherited env for that
+child only. Raw does not substitute values into shell source or mutate the
+model's original arguments.
+
+The registry validates and approves the call first; no extra blanket Bash
+prompt is added. Reference metadata for all commands is checked before batch
+I/O. Each row resolves its values immediately before starting Bash. A provider
+failure stops remaining rows with prior_var_error; prior completed rows are
+not rolled back. An actual-type failure for type json is necessarily discovered
+at resolution. Existing nonzero-exit continuation and timeout/abort behavior
+remain; provider and Bash deadlines are separate, sharing the call's abort signal.
+
+## Custom tool / library API
+
+Every selected local/bundled handler receives optional `context.vars`:
+
+```js
+const refs = { TOKEN: args.token_ref };
+context.vars.validateEnvRefs(refs); // metadata only
+const env = await context.vars.resolveEnv(refs, { signal: context.signal });
+const response = await fetch(args.url, {
+  headers: { Authorization: `Bearer ${env.TOKEN}` }, signal: context.signal
+});
+// Return the API response; do not return env merely to prove consumption.
+```
+
+`list()` returns metadata; `read(name,{signal}?)` returns a readable resolved
+value. `resolveEnv` accepts both access modes and returns only requested env
+bindings to trusted code. Handlers imported without a host service must report
+vars_unavailable when they require variables. Forked builtin tools receive the
+same capability as original tools. MCP receives no automatic refs or env/header
+interpolation; its existing literal configuration remains unchanged.
+
+SDK: `loadVariableConfig({configPath,flags:{agent},env})` projects selected
+declarations without resolving credentials/prompt assets.
+`createVariableResolver({config,env?,now?,monotonicNow?})` creates an independent
+service. `createRuntimeTools({runtime,cwd,env?})` owns its resolver at `tools.vars`
+and injects it into selected plugins. Close tools.mcp after use as usual.
+
+## Freshness, sessions and model caching
+
+TTL uses monotonic time from successful resolution completion, not observed_at.
+Only successes cache; permission checks apply to hits too. Cache is per resolver
+instance and stores copies. Concurrent misses may run independently; no in-flight
+sharing, proactive refresh, disk cache or cross-session state. CLI get starts
+empty each invocation. `/clear` clears conversation but retains the current
+runtime resolver's TTL cache.
+
+Tool/system prefixes contain no catalog, values or timestamps. Discovery/reads
+append ordinary tool results. Resume creates a fresh resolver with current
+config; previous results stay historical. An already running runtime keeps its
+validated definitions until restarted, while external values follow TTL. Read
+again when freshness matters. Vars-only changes do not rotate generated model
+cache keys; selected tool/schema/source changes still follow tool revision rules.
+No variable snapshots or resolved env bindings are added to the session DB.
+Ordinary returned/printed tool output may of course contain values.
+
+## Diagnose and verify
+
+1. Run config list for strict schema/reference validation; it does not execute sources.
+2. Run vars list to check effective agent selection and metadata without resolution.
+3. Run vars get for a readable source; get on use-only always fails. Use a nonprinting consuming command to verify use-only bindings.
+4. For provider failures check command availability, cwd/args, stdin JSON, stdout purity, exit status, type, time and output limits. Test the script directly to inspect its stderr when needed.
+5. Copy a shared config/provider folder elsewhere and repeat. Supply recipient env values/dependencies; do not copy machine credentials into a portable example.
+
+Only --config and --agent apply to vars commands. Success emits one newline-terminated
+JSON result. Errors go to stderr: invalid input/config exits 2; resolution/access
+failure exits 1; cancellation exits 130. No reveal override or vars write command.

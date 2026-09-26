@@ -1,69 +1,75 @@
 # Configure Raw
 
-Use creation skills for assets.
+Explain, edit or diagnose existing settings; preserve unrelated fields. Creation skills cover new assets.
 
-## Choose the task
+## File and selection
 
-- **Explain:** give a relevant example and insertion location.
-- **Change:** preserve unrelated settings, edit and validate; ask only for missing choices.
-- **Diagnose:** distinguish schema, asset, credential and remote API errors.
+File: `$XDG_CONFIG_HOME/raw/config.json` or `~/.config/raw/config.json`; --config selects an alternate. Strict JSON: no unknown/duplicate fields, comments or trailing commas. `raw config init` creates once; `raw config list` validates structure only.
 
-## File, selection and common changes
-
-Strict JSON: `$XDG_CONFIG_HOME/raw/config.json`, otherwise `~/.config/raw/config.json`; `--config PATH` selects one alternate file. Duplicate/unknown keys, comments and trailing commas fail. `raw config init` creates once. `raw config list` validates structure and lists agents; it does not load prompt files, plugins or connect MCP.
-
-Root: `models`, `agents`, optional `default_agent`, `mcp`, `sessions`, `ui`. Agent selection: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt.
-
-## Terminal UI: root `ui`
-
-`density`: compact/normal/verbose; `reasoning`: hidden/summary/full (default summary; verbose full); `color`: auto/always/never; `icons`: auto/unicode/ascii; `theme`: terminal/dark/light. Flags `--display` (density), `--reasoning`, `--color`, `--icons`, `--theme` override config. Example: `"ui":{"reasoning":"full"}`. For `palette` and TTY rules, see installed `docs/terminal-output.md`. UI edits preserve cache/session identity.
-
-Add a model alias, then set `agents.<name>.model`. `--agent` selects agents; there is no `--model` or `raw model add`.
+Root: `models`, `agents`; optional `default_agent`, `mcp`, `sessions`, `ui`, `vars`, `var_providers`. Agent precedence: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt precedence: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt. No --model; agents reference model aliases.
 
 ## Model: `models.<alias>`
 
-Required nonempty strings: `provider` (service/deployment, not `openai-compatible`), `method`, `model_id` (exact upstream ID). Methods: `openai-chat-completions`, `openai-responses`, `anthropic-messages`, `google-generate-content`.
+Required nonempty strings: `provider` (service name, not `openai-compatible`), `method`, exact upstream `model_id`. Methods: `openai-chat-completions`, `openai-responses`, `anthropic-messages`, `google-generate-content`.
 
-Optional fields:
-- `base_url`: HTTP(S) URL. Official SDK defaults require matching OpenAI chat/responses, Anthropic messages or Google generate-content. Ollama chat defaults to `http://127.0.0.1:11434/v1`; OpenRouter chat to `https://openrouter.ai/api/v1`. Other pairs require an explicit URL.
-- `api_key`: nonempty literal OR `api_key_env`: environment variable identifier (`[A-Za-z_][A-Za-z0-9_]*`), never both. Only the selected model resolves credentials: OpenAI `OPENAI_API_KEY`, Anthropic `ANTHROPIC_API_KEY`, Google `GEMINI_API_KEY` then `GOOGLE_API_KEY`, OpenRouter `OPENROUTER_API_KEY`. Other providers have no default key; omit both for unauthenticated endpoints. Prefer environment keys for sharing.
-- `vision`: boolean, default false; permits selecting `builtin/view_image` but does not add it.
-- `context_window_tokens`, `max_output_tokens`: positive integers. Output must be smaller than context when both exist. Use verified model limits or omit; do not invent upstream capabilities.
+- `base_url`: HTTP(S); required except matching official OpenAI/Anthropic/Google, Ollama chat (`http://127.0.0.1:11434/v1`), OpenRouter chat (`https://openrouter.ai/api/v1`).
+- `api_key`: nonempty literal OR `api_key_env`: environment identifier, never both. Default env keys: OpenAI `OPENAI_API_KEY`, Anthropic `ANTHROPIC_API_KEY`, Google `GEMINI_API_KEY` then `GOOGLE_API_KEY`, OpenRouter `OPENROUTER_API_KEY`. Selected model alone resolves credentials; other providers have no default.
+- `vision`: boolean, default false; required for builtin/view_image.
+- `context_window_tokens`, `max_output_tokens`: positive integers; output below context. Verify limits.
 
 ## Agent: `agents.<name>`
 
-Required `model`: existing alias; `tools: { "use": [exact IDs] }`: ordered array, empty allowed. Tool IDs: `builtin/<id>`, `local/<id>`, `agent/<id>`, `mcp/<server>/<original-tool-name>`; no selection wildcards or duplicates. `local/` assets live under global Raw `tools/` or `skills/`; `agent/` assets live beside the selected config. `builtin/` comes from the package.
+Required `model`: existing alias; `tools.use`: ordered unique exact IDs (empty allowed): `builtin/<id>`, `local/<id>`, `agent/<id>`, `mcp/<server>/<original-name>`. No wildcards. builtin=package, local=global Raw folders, agent=config-adjacent folders.
 
-Optional fields:
-- `skills: { "use": [exact IDs] }` (`skills.use`): unique `builtin/`, `local/`, `agent/` IDs; nonempty requires both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. Catalog/body arrive only through linked list/load results, not the initial prompt.
-- `system_prompt`: literal string (including empty) OR `system_prompt_file`: nonempty UTF-8 path, relative to config or absolute; never both.
-- Positive integers `max_steps` (25), `max_output_bytes` (8192), `request_timeout_ms` (120000). Numeric CLI flags override corresponding `RAW_*` variables, then agent values.
-- `tools.rules`: ordered `{ "match": string, "effect": "allow" | "ask" | "deny" }` entries; last matching rule wins, unmatched calls run. Match canonical IDs or globs: `*` any text, `?` one character. Only `ask` permits `when: { "any": string, "regex": string }`: schema-bound string path plus RE2 search pattern. Bash uses `commands[*].command`. `-y` cannot bypass explicit ask; headless ask without an approval channel fails closed. Regex matching is not a shell parser or sandbox.
+Optional:
+- `system_prompt`: string, empty allowed, OR `system_prompt_file`: nonempty UTF-8 path relative to config or absolute. Never both.
+- `skills.use`: unique builtin/local/agent IDs. Nonempty requires both `builtin/list_skills` and `builtin/load_skill`.
+- `vars`: ordered unique existing root variable names; omitted means none. Add `builtin/list_vars`/`builtin/read_var` to tools.use for discovery/reading.
+- Positive integers `max_steps` (25), `max_output_bytes` (8192), `request_timeout_ms` (120000). Precedence: flags, RAW_* env, agent.
+- `tools.rules`: ordered `{match:string,effect:"allow"|"ask"|"deny"}`. Match canonical IDs/globs (`*`, `?`); last matching rule wins; unmatched runs automatically. Only ask permits `when:{any:string,regex:string}`, a schema-bound string path and RE2 search. Bash uses `commands[*].command`. `-y` cannot bypass ask; no approval channel fails closed. Not a shell parser/sandbox.
 
-### Request, cache and compact
+`request.max_output_tokens`: positive, within model/context reserve. Other fields only for matching pairs:
 
-`request` is strict. Every pair permits positive `max_output_tokens`, bounded by model output capacity and context minus `max(64, ceil(context*0.05))` reserve. Additional fields only for these matching pairs:
+| Pair | Fields/values |
+|---|---|
+| OpenAI chat/responses | `service_tier`: auto/default/flex/fast/priority; `reasoning_effort`: none/minimal/low/medium/high/xhigh/max; Responses `reasoning_mode`: standard/pro |
+| DeepSeek chat | `thinking`: enabled/disabled; `reasoning_effort`: low/high/max, incompatible with thinking disabled |
+| Anthropic messages | `thinking`: `{type:"adaptive"}`, `{type:"disabled"}` or `{type:"enabled",budget_tokens:N}` (integer >=1024, below output cap); `effort`: low/medium/high/xhigh/max; `service_tier`: auto/standard_only |
+| Google generate-content | `thinking_level`: minimal/low/medium/high OR nonnegative integer `thinking_budget` |
 
-| Pair | Additional fields and accepted values |
-| --- | --- |
-| OpenAI chat/responses | `service_tier`: auto/default/flex/fast/priority; `reasoning_effort`: none/minimal/low/medium/high/xhigh/max. Responses also `reasoning_mode`: standard/pro |
-| DeepSeek chat | `thinking`: enabled/disabled; `reasoning_effort`: low/high/max, incompatible with explicitly disabled thinking |
-| Anthropic messages | `thinking`: `{ "type": "adaptive" }`, `{ "type": "disabled" }`, or `{ "type": "enabled", "budget_tokens": N }` with integer N >=1024 and below output cap; `effort`: low/medium/high/xhigh/max; `service_tier`: auto/standard_only |
-| Google generate-content | `thinking_level`: minimal/low/medium/high OR `thinking_budget`: nonnegative integer |
+Verify upstream support. `cache`: `mode` auto/no-hints, optional nonempty `key` (OpenAI), `retention` (OpenAI/Anthropic), `backend` generic/llama.cpp (latter requires chat). `compact`: nonnegative `keep_recent_turns` (2), positive `max_output_tokens` (512), optional positive `compact.trigger_tokens`. Trigger needs context metadata/output reserve.
 
-Other pairs accept only the common output cap. Upstream checks model support. These fields cannot override messages, tools, model or credentials.
+## Variables and providers
 
-`cache`: `mode` auto/no-hints; optional nonempty `key` (OpenAI only), nonempty `retention` (OpenAI/Anthropic only), `backend` generic/llama.cpp (llama.cpp requires chat-completions).
+`vars.<name>` requires nonempty `description`, `access:"read"|"use"`, and `source`. Read allows read/consume; use only consume. Commands can still print values. Optional `type`: string/number/boolean/object/array/null/json. Optional `cache_ttl_ms`: integer 0..2147483647, default 0 (resolve each call). Names: `[a-z][a-z0-9_.-]{0,63}`; constructor/prototype reserved.
 
-`compact`: nonnegative integer `keep_recent_turns` (2), positive integer `max_output_tokens` (512), optional positive integer `compact.trigger_tokens`. Automatic compact requires model context metadata and room for output plus safety margin; without trigger it is manual.
+Source shapes:
+- `{kind:"literal",value:JSON}`: type inferred, including false/0/empty/null.
+- `{kind:"env",name:"ENV_NAME"}`: string; unset errors, empty works.
+- `{kind:"file",path:"data.json",format:"json"}`: config-relative/absolute. text(default) preserves whitespace; json parses. UTF-8, <=65536 bytes.
+- `{kind:"provider",name:"provider_name",params:{}}`: params: config-defined object. No recursive refs. Built-in system.time requires empty params, returns UTC ISO time.
 
-## MCP, sessions and verification
+Type defaults: env/text/time string, literal inferred, others json. Values checked on resolution. Env consumption accepts string/finite number/boolean only; rejects NUL.
 
-`mcp.servers.<name>`: stdio `{ "transport": "stdio", "command": nonempty string, "args": string[], "env": string map }` (args/env optional), or remote `{ "transport": "streamable-http", "url": HTTP(S) URL, "headers": string map }` (headers optional). Env/header strings are literal, not `${VAR}` interpolation. Defining a server does not activate it; select exact `mcp/name/tool` IDs. Use `add_mcp` for discovery and a connection check.
+`var_providers.<name>` requires string `command`; optional `args`: string array ([]), `cwd`: config-relative/absolute path (config directory), `timeout_ms`: integer 1..2147483647 (5000), `max_output_bytes`: integer 1..1048576 (65536, combined stdout/stderr). system.time is reserved. Bare commands use PATH; command paths resolve from config. Args stay literal and run from provider cwd. No shell/template expansion; process inherits environment.
 
-`sessions: { "retention_days": positive integer }` (default 7) is allowed only in canonical global config. Resume binds config path, agent name, model/provider/method/endpoint and effective prompt. Changing those may reject resume. Tool/schema/source changes advance revision and rotate the generated cache key; skill-only changes preserve it and may append a reload notice. Old schemas are not migrated.
+Providers receive `{protocol_version:1,name,params}` on stdin, return `{value,observed_at?}` JSON on stdout, exit 0. Errors/timeout/overflow fail without stale fallback. `create_tool` covers script authoring.
 
-Back up before edits, preserve unrelated/default fields, validate before replacement, and keep config mode 0600. Use `raw --config candidate.json config list` for a portable candidate without sessions. For a **canonical** candidate containing sessions, save this as `validate-config.sh` and run `bash validate-config.sh /path/to/candidate.json`:
+`raw [--config PATH] [--agent NAME] vars list|get NAME` needs no model/assets/MCP/session. List is metadata only; get requires read access. Only config/agent flags apply.  Bash consumes `{"commands":[{"command":"test -n \"$TOKEN\"","env_refs":{"TOKEN":"token"}}]}` after approval, without rewriting shell source.
+
+Cache: successful values, per runtime; restart/resume starts empty. Old readings remain history. Vars changes preserve prefix/cache key.
+
+## UI, MCP and sessions
+
+Root `ui`: `density` compact/normal/verbose; `reasoning` hidden/summary/full (default summary, verbose full); `color` auto/always/never; `icons` auto/unicode/ascii; `theme` terminal/dark/light. Flags --display (density), --reasoning, --color, --icons, --theme override config. Show thinking with `"ui":{"reasoning":"full"}`. Palette/TTY: installed docs/terminal-output.md; UI preserves session identity.
+
+`mcp.servers.<name>`: stdio `{transport:"stdio",command:string,args?:string[],env?:string-map}` or remote `{transport:"streamable-http",url:HTTP(S),headers?:string-map}`. Env/headers stay literal; no vars interpolation. Activate by exact tools.use IDs, not the declaration alone.
+
+Canonical-only `sessions.retention_days`: positive integer, default 7. Resume binds config path/agent/model/provider/method/endpoint/prompt; changes may reject it. Tool/schema/source changes rotate generated keys; skill-only edits keep keys with possible reload notices. No migration.
+
+## Edit and verify
+
+Back up, keep mode 0600, validate before replacing. Portable candidate: `raw --config candidate.json config list`. Canonical candidate with sessions:
 
 <!-- example:validate-canonical -->
 ```sh
@@ -75,17 +81,13 @@ cp "$1" "$stage/raw/config.json"
 XDG_CONFIG_HOME="$stage" raw --config "$stage/raw/config.json" config list
 ```
 
-This validates structure while preserving sessions and the source file; no prompt/tool copies are needed. For asset changes, load the prompt/plugin or invoke the intended MCP tool. Report changed settings, actual checks, missing dependencies and resume effects. Config parsing is not an upstream test.
+Test affected assets/services: vars list, readable get or nonprinting consumption. Report edits/checks/prerequisites.
 
 ## Complete example
 
-Replace the model ID/context limit with actual capabilities; preserve unrelated existing fields.
+Replace model ID/limits.
 
 <!-- example:config -->
 ```json
-{
-  "default_agent": "raw",
-  "models": { "local": { "provider": "ollama", "method": "openai-chat-completions", "model_id": "YOUR_INSTALLED_MODEL", "context_window_tokens": 32768 } },
-  "agents": { "raw": { "model": "local", "tools": { "use": ["builtin/read_file", "builtin/bash"], "rules": [{ "match": "builtin/bash", "effect": "ask", "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)" } }] }, "compact": { "trigger_tokens": 24000 } } }
-}
+{"default_agent":"raw","models":{"local":{"provider":"ollama","method":"openai-chat-completions","model_id":"YOUR_INSTALLED_MODEL","context_window_tokens":32768}},"vars":{"now":{"description":"Current UTC time","access":"read","source":{"kind":"provider","name":"system.time"}}},"agents":{"raw":{"model":"local","vars":["now"],"tools":{"use":["builtin/read_file","builtin/bash","builtin/list_vars","builtin/read_var"]},"compact":{"trigger_tokens":24000}}}}
 ```

@@ -34,7 +34,7 @@ test("T-01d: config init creates a setup-capable raw agent, refuses overwrite, l
   assert.equal(data.default_agent, "raw");
   assert.equal(data.models.local.provider, "ollama");
   assert.equal(data.agents.raw.model, "local");
-  assert.deepEqual(data.agents.raw.tools.use, ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"]);
+  assert.deepEqual(data.agents.raw.tools.use, ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill", "builtin/list_vars", "builtin/read_var"]);
   assert.deepEqual(data.agents.raw.skills.use, ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp"]);
   assert.match(data.agents.raw.system_prompt, /list_skills|list selected skills/);
   assert.match(data.agents.raw.system_prompt, /load_skill|load only relevant/);
