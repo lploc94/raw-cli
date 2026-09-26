@@ -1,0 +1,12 @@
+# Configure installed package bindings
+
+Use this reference when the requested edit involves a package, package alias, agent instance, or resume after a change. Read `docs/packages.md` from the installed Raw package for the complete manifest/input contract; these are the config fields to edit.
+
+- `agents.NAME={"from":"pkg/ALIAS/agents/EXPORT","model":"LOCAL_MODEL","inputs":{},"overrides":{}}` binds a complete agent. The package does not supply the recipient model alias. Overrides replace whole `tools`, `skills`, `vars`, `request` or `compact` blocks; do not merge lists implicitly. `system_prompt` and `system_prompt_file` remain mutually exclusive.
+- A direct agent's `tools.use` or `skills.use` may contain `pkg/ALIAS/tools/EXPORT` or `pkg/ALIAS/skills/EXPORT`. Use `{"ref":"pkg/ALIAS/tools/EXPORT","as":"visible_name"}` to avoid a selected name collision. Keep `builtin/list_skills` and `builtin/load_skill` when selecting skills.
+- Root `vars.NAME`, `var_providers.NAME` or `mcp.servers.NAME` may be `{"from":"pkg/ALIAS/KIND/EXPORT","inputs":{}}`. The local key remains the agent's var/server name. A var reading is still lazy; an input is a definition value, not that reading.
+- Package-owned tool policy matches `@owner/name#tools/EXPORT`; package MCP policy matches `@owner/name#mcp/EXPORT/TOOL`. `as` does not change those identities. Keep conditional Bash `rm` approval scoped to matching commands.
+
+Run `raw package list --config CONFIG` to inspect installed aliases. `raw config list --config CONFIG` reports each agent's source/effective selection. `raw vars list|get` remains independent of model credentials/session state. Change the desired config binding directly or use `raw agent add NAME --from REF --model MODEL --inputs FILE --config CONFIG`. A selected missing export or required input is an error; an unselected broken package does not block another agent.
+
+`raw package update ALIAS --from FILE.rawpkg --config CONFIG` checks affected current bindings and changes the next attach. Resume the existing conversation ID; a meaningful prompt/tool/helper change may rotate the generated cache key once, then unchanged resumes stabilize. Release labels alone are not a runtime compatibility gate. For rollback, update from the previous archive. For editable source, fork to a directory, then link under a development alias. Do not clear sessions or copy an author's state database.

@@ -7,6 +7,26 @@ import { loadToolPlugins } from "./loader.js";
 import { loadSelectedSkills } from "../../skills/loader.js";
 import type { SelectedSkill } from "../../skills/contract.js";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { relative, sep } from "node:path";
+
+async function mcpSource(runtime: RuntimeConfig, serverName: string): Promise<unknown> {
+  const server = runtime.availableMcpServers[serverName];
+  const packageSource = runtime.packageMcpSources[serverName];
+  if (!packageSource) return server;
+  const normalize = async (value: unknown): Promise<unknown> => {
+    if (typeof value === "string" && value.startsWith(`${packageSource.root}${sep}`)) {
+      const bytes = await readFile(value);
+      return { path: relative(packageSource.root, value).replaceAll("\\", "/"),
+        sha256: createHash("sha256").update(bytes).digest("hex") };
+    }
+    if (Array.isArray(value)) return Promise.all(value.map(normalize));
+    if (value && typeof value === "object") return Object.fromEntries(await Promise.all(Object.entries(value)
+      .map(async ([key, child]) => [key, await normalize(child)])));
+    return value;
+  };
+  return { identity: packageSource.identity, config: await normalize(server) };
+}
 
 export interface RuntimeTools {
   vars: VariableContext;
@@ -71,11 +91,11 @@ export async function createRuntimeTools(options: {
       }
     }
     if (new Set(names).size !== names.length) throw new Error("duplicate model-visible tool name");
-    const toolSourceDigest = createHash("sha256").update(JSON.stringify(runtime.toolIds.map((id) =>
-      id.startsWith("mcp/") ? { id, source: runtime.availableMcpServers[id.split("/")[1]!],
-        identity: runtime.packageMcpIdentities[id.split("/")[1]!] }
+    const sources = await Promise.all(runtime.toolIds.map(async (id) =>
+      id.startsWith("mcp/") ? { id, source: await mcpSource(runtime, id.split("/")[1]!) }
         : { id: runtime.packageTools[id]?.canonicalIdentity ?? id,
-          source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }))).digest("hex");
+          source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }));
+    const toolSourceDigest = createHash("sha256").update(JSON.stringify(sources)).digest("hex");
     return { vars, registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest };
   } catch (error) { await mcp.close(); throw error; }
 }

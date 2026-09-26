@@ -1,0 +1,5 @@
+{
+  "transport": "stdio",
+  "command": "node",
+  "args": ["assets/mcp/echo.mjs"]
+}

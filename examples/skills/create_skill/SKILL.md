@@ -1,12 +1,14 @@
 ---
 name: create-skill
-description: "Use when creating or improving a discoverable Raw skill; write its description and instructions, choose a root, register it on an agent and verify loading."
+description: "Use when creating, improving or packaging a discoverable Raw skill; write its description and instructions, register it on an agent and verify loading."
 ---
 # Create a Raw skill
 
 Use when creating or improving reusable instructions that a Raw agent should discover and load. An ordinary Markdown document does not need skill registration; a new callable action belongs in `create_tool`.
 
 For a how-to, explain the format, authoring approach and registration with examples. For a requested creation, use the workflow below. For a load failure, inspect the selected ID, frontmatter, body size and error before rewriting instructions.
+
+For a shareable skill package, read `references/packages.md` with `read_file` before authoring; it covers manifest files/exports, install, registration and resume.
 
 ## Establish the useful task
 
@@ -96,7 +98,7 @@ Nonempty `skills.use` requires both skill tools. Do not change `default_agent` j
 4. Assess content using a normal task, a boundary case and a near miss. For the example: draft from a known range with verifiable citations; handle an empty range; do ordinary code review without treating it as release-note generation. Review outputs and tool traces for incorrect advice or missing steps. Extra model work is diagnostic.
 5. Improve instructions around evidenced errors. Compare versions on the same inputs/model when useful; record which version produced the result. A mock list/load test proves wiring, not writing quality, and no model test guarantees every future action.
 
-The first request contains no catalog/body; list/load appends them at the tail. Editing a selected skill on resume advances revision but keeps Raw's generated cache key; previously visible content may get a reload notice. The agent must list/load again. If a body is too large, remove redundancy before deliberately changing the agent's cap.
+The first request has no catalog/body; list/load appends them at the tail. A changed selected skill may add a reload notice on resume without rotating the generated key. List/load again. Trim oversized bodies before increasing the cap.
 
 Report paths, registration, checks and prerequisites.
 

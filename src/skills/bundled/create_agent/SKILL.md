@@ -1,6 +1,6 @@
 ---
 name: create-agent
-description: "Use to create or share a Raw agent with its model, prompt, tools, skills, vars, providers and policy. For changing one setting of an existing agent, use configure_raw."
+description: "Use to create or package a complete Raw agent with prompt, tools, skills, vars, MCP and policy, then bind the recipient model. For one existing setting, use configure_raw."
 ---
 # Create a Raw agent
 
@@ -12,7 +12,7 @@ For how-to, explain the layout; for creation, establish role/name/location/model
 
 Personal config: $XDG_CONFIG_HOME/raw/config.json or ~/.config/raw/config.json. Reuse model aliases; preserve other agents/default.
 
-For sharing, create a directory containing `raw.json`, `prompt.md`, and any custom `tools/<id>/` and `skills/<id>/`. Select `agent/<id>` to resolve these beside that config, independent of the working directory. `local/<id>` needs the recipient's global installation and does not travel with the folder. `builtin/<id>` comes from their installed Raw version. Exact MCP selections also require server definitions and the recipient's command/endpoint prerequisites.
+For portable sharing, read `references/packages.md` with `read_file` before authoring. It covers package exports, recipient model/inputs, installation and resume. A copied config directory is also valid: config-adjacent `agent/<id>` assets travel with it; `local/<id>` assets do not.
 
 Copy examples/agents/project-helper/ for a forkable layout. This complete example selects a prompt, setup tools/skill and conditional Bash rule. Choose capabilities for the role.
 
@@ -68,9 +68,9 @@ Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_t
 1. Select a unique name and destination; back up an existing config before adding fields. Keep its mode 0600. For a portable config omit `sessions`, which is canonical-only.
 2. Add/reuse the model, create the prompt and selected custom assets, then add the agent with exact IDs. Keep the existing default unless asked; a new standalone file may set its own `default_agent`. `raw --agent writer "query"` selects explicitly; `raw "query"` follows configured selection.
 3. Run `raw --config /path/to/raw.json config list`. It verifies schema and references to model aliases, not file contents or live MCP. If the installed library is importable, use `loadConfig({configPath,requireModel:false})` to check the prompt and `createRuntimeTools({runtime,cwd})` to load selected tools/skills and connect selected MCP. Close `tools.mcp` afterward. Otherwise use a harmless task with the intended agent when model access exists and report what remains unverified.
-4. For sharing, copy the directory to an unrelated path and repeat loading. Check config-relative prompt/custom assets, required external commands, global dependencies and literal server paths. Exercise a requested policy with harmless calls. Include setup instructions for the recipient; exclude private conversation state and machine-specific paths.
+4. For a copied-config share, relocate the directory and repeat loading. For an archive, follow `references/packages.md`: export or author, validate, pack, install, bind a recipient model/inputs and run. Check owned assets, external commands and selected policy with harmless calls. Exclude private session state and machine-specific paths.
 
-Report the agent name, config, model, prompt/capabilities, checks and prerequisites. Sessions can resume with `raw --resume ID --agent NAME "query"` or replacement `--config`; successful selection becomes the default. Runtime/tool changes rotate the generated key once; skill-only changes may append a reload notice. Sharing an agent does not transfer session identity.
+Report agent/config/model, selected assets, checks and prerequisites. `raw --resume ID --agent NAME "query"` adopts the current agent on the same conversation; meaningful runtime changes rotate once, while skill changes may add a reload notice. Sharing an agent does not transfer session identity.
 
 ## Select and share variables
 

@@ -7,6 +7,8 @@ import { test } from "node:test";
 import { loadConfig } from "../src/config.js";
 import { loadSelectedSkills } from "../src/skills/loader.js";
 import { createRuntimeTools } from "../src/tools/plugins/runtime.js";
+import { parseSkillMarkdown } from "../src/skills/frontmatter.js";
+import { inspectPackage } from "../src/packages/inspect.js";
 
 function body(id: string): string {
   return readFileSync(join("src", "skills", "bundled", id, "SKILL.md"), "utf8");
@@ -29,6 +31,30 @@ function fence(id: string, language: string, index: number | string = 0): string
 function model() {
   return { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" };
 }
+
+test("five shipped setup skills link complete package guidance and examples validate", async () => {
+  for (const id of ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp"]) {
+    const source = body(id);
+    const parsed = parseSkillMarkdown(source, id);
+    assert.ok(Buffer.byteLength(parsed.markdown) <= 8192, `${id} exceeds load cap`);
+    assert.match(parsed.markdown, /references\/packages\.md/);
+    const reference = join("src", "skills", "bundled", id, "references", "packages.md");
+    assert.match(readFileSync(reference, "utf8"), /raw package/);
+    assert.equal(readFileSync(join("dist", "skills", "builtin", id, "SKILL.md"), "utf8"), source);
+    assert.equal(readFileSync(join("examples", "skills", id, "references", "packages.md"), "utf8"),
+      readFileSync(reference, "utf8"));
+  }
+  const mixed = await inspectPackage(join("examples", "packages", "mixed-kit"));
+  assert.deepEqual(mixed.exports.agents, ["helper"]);
+  assert.deepEqual(mixed.exports.tools, ["echo"]);
+  assert.deepEqual(mixed.exports.skills, ["repo-review"]);
+  assert.deepEqual(mixed.exports.vars, ["host_label"]);
+  assert.deepEqual(mixed.exports.var_providers, ["host_label"]);
+  assert.deepEqual(mixed.exports.mcp, ["search"]);
+  assert.deepEqual(mixed.prerequisites, ["node"]);
+  assert.deepEqual((await inspectPackage(join("examples", "packages", "tool-only"))).exports.tools, ["echo"]);
+  assert.deepEqual((await inspectPackage(join("examples", "packages", "skill-only"))).exports.skills, ["repo-review"]);
+});
 
 test("create_skill example registers a config-adjacent selected skill", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-skill-example-"));

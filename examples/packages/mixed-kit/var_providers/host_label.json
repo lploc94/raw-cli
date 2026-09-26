@@ -1,0 +1,6 @@
+{
+  "command": "node",
+  "args": ["assets/providers/host-label.mjs"],
+  "timeout_ms": 5000,
+  "max_output_bytes": 4096
+}

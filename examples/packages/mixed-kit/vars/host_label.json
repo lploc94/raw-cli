@@ -1,0 +1,5 @@
+{
+  "description": "A current label returned by the package's example provider",
+  "access": "read",
+  "source": { "kind": "provider", "name": "host_label", "params": {} }
+}

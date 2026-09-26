@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "name": "@raw/tool-only",
+  "version": "1.0.0",
+  "description": "A standalone tool package for direct agents",
+  "files": ["tools/echo"],
+  "exports": { "tools": { "echo": "tools/echo" } },
+  "requires": ["raw.tool-api/1"]
+}

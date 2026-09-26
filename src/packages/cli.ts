@@ -64,7 +64,7 @@ export async function addPackageAgent(options: AddPackageAgentOptions): Promise<
     const context = createPackageResolutionContext();
     const agent = await resolvePackageAgentBinding(binding, { configPath }, context);
     const selected = await resolvePackageSelections(agent, { configPath }, context);
-    const { mcpIdentities: _mcpIdentities, ...definitions } = await resolvePackageDefinitions(selected.agent,
+    const { mcpIdentities: _mcpIdentities, mcpSources: _mcpSources, ...definitions } = await resolvePackageDefinitions(selected.agent,
       document.data, { configPath }, parsed.alias, context, inputs as Record<string, unknown>);
     validateEffectiveConfigData({ ...document.data, ...definitions,
       agents: { [name]: selected.agent }, default_agent: name });

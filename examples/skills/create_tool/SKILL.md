@@ -1,10 +1,12 @@
 ---
 name: create-tool
-description: "Use to create or customize a Raw tool plugin or executable variable provider, including input/output contracts, host vars consumption, registration and verification."
+description: "Use to create, customize or package a Raw tool plugin or executable variable provider, including contracts, registration and verification."
 ---
 # Create a Raw tool plugin
 
 Create callable tools or executable variable providers; reusable instructions belong in create_skill. Tools have manifests and ESM handlers; providers are scripts returning configured data.
+
+For a shareable tool/provider package, read `references/packages.md` with `read_file` before authoring; it covers owned helpers, exports, recipient bindings and snapshots.
 
 ## Choose the task and contract
 
@@ -113,4 +115,4 @@ process.stdout.write(JSON.stringify({value:hostname()}) + "\n");
 
 Root `var_providers.host={command:"node",args:["host.mjs"]}` and `vars.host={description:"Host name",access:"read",type:"string",source:{kind:"provider",name:"host"}}`; append `host` to agent.vars. Select builtin/list_vars and builtin/read_var for discovery/reads. Test `raw --config PATH vars get host`. No model call is needed. Provider receives `{protocol_version:1,name,params}`; params come from config. Output exactly `{value,observed_at?}` JSON, exit 0; logs stderr. Raw bounds time/bytes. Paths/cwd default to config directory; configure_raw covers limits/cache/source schema.
 
-All selected local handlers receive context.vars: list(), read(name,{signal}), validateEnvRefs(refs), resolveEnv(refs,{signal}). For an API tool, resolve `{TOKEN:args.token_ref}` and pass env.TOKEN to its client; return the API result, not the credential. Pass context.signal. Host rejects unselected names and use-only reads. Bash supports commands[].env_refs. Values enter child env, never shell interpolation; plugins can still print them. MCP gets no implicit vars rewriting.
+Selected handlers receive context.vars: list(), read(name,{signal}), validateEnvRefs(refs), resolveEnv(refs,{signal}). Pass selected scalar values to a child through env, not shell interpolation; code can still print them. Respect context.signal. Unselected names and use-only reads fail. Bash supports commands[].env_refs; MCP has no implicit vars rewriting.

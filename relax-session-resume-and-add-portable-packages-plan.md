@@ -505,6 +505,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: run package agents and components through raw configuration`
 
 ## Phase 8: Ship authoring guidance and qualify the installed sharing workflow
+Status: complete (2026-09-26).
 
 ### Goal
 Deliver a usable author/recipient workflow with accurate setup skills and prove that the original session problem remains fixed after package integration.
@@ -534,9 +535,9 @@ The recipient must not import code from the checkout, read author absolute paths
 ### Implementation obligations
 Include package schema/docs/examples and skill resources in published artifacts. Record exact source commit, archive digest, installed binary path and observed results in evidence. Native platform evidence must be labeled; macOS tests alone do not establish Windows/Linux runtime qualification. No GitHub Actions are enabled.
 ### Acceptance criteria
-- [ ] AC-24: Installed author→artifact→recipient workflow works for mixed and standalone components with no source-checkout dependency — installed witness.
-- [ ] AC-25: All five English setup skills accurately teach the final schema/workflows and their examples validate — skill/package tests.
-- [ ] AC-26: Final full regression and installed package gates pass; evidence distinguishes verified behavior from deferred marketplace/platform work — final report.
+- [x] AC-24: Installed author→artifact→recipient workflow works for mixed and standalone components with no source-checkout dependency — installed witness.
+- [x] AC-25: All five English setup skills accurately teach the final schema/workflows and their examples validate — skill/package tests.
+- [x] AC-26: Final full regression and installed package gates pass; evidence distinguishes verified behavior from deferred marketplace/platform work — final report.
 ### Focused verification
 `npm run test:package`
 ### Phase gates
@@ -562,6 +563,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
+- 2026-09-26: Phase 8 complete. Added a six-export mixed source package plus standalone tool/skill examples, English package workflow references for all five shipped setup skills, and an installed npm consumer witness with schema-4 legacy state, helper/skill/provider/MCP calls, package update/resume stability, version-only update, standalone selections, fork/link and SDK declaration checks. Docs-first and an installed-witness red failure preceded implementation. `npm run test:package` passed 3/3, `npm run check` passed 462/462, setup skill examples passed 7/7, and `git diff --check` passed. Self-review APPROVE: recipient processes use installed binary/SDK and separate XDG homes; author source is removed before use; mock wire prefix and saved keys show B→B stability. Phase-8 commit and exact committed-source rerun follow in finalization.
 - 2026-09-26: Phase 7 complete. Package commands and `agent add` dispatch before model/session startup; selected package agents, exact dependency tools, standalone tools/skills/vars/MCP, recipient inputs and policy identities flow through existing runtime/CLI/SDK/ACP paths. Linked package resolution is pinned per attachment, and package aliases/release labels do not enter tool/skill behavioral fingerprints. Red tests preceded implementation. `npm run test:phase -- sharing` passed 50/50, `npm run test:phase -- sessions` passed 130/130, final `npm run check` passed 460/460, `npm run typecheck` and `git diff --check` passed; targeted package CLI/config/runtime tests passed after the final policy refinement. Self-review APPROVE: package commands remain data-only; current selected references and inputs fail explicitly, unselected package bindings stay inert, and resume uses the same ID with one stable transition.
 - 2026-09-26: Phase 6 complete. Added per-config atomic install authority, owned writer lock and stale-process recovery, immutable artifact/dependency publication, update/removal binding checks, and linked/forked development snapshots. Docs and red tests preceded implementation. `npm run test:phase -- sharing` passed 36/36, `npm run typecheck` passed, `git diff --check` passed. Self-review APPROVE: concurrent writers retain both aliases; injected faults leave old locks intact; runtime snapshots keep helper bytes; package operations do not open sessions or start executable components.
 - 2026-09-26: Phase 5 complete. Added data-only mixed-agent export with explicit include/binding choices and missing-asset draft reports; bounded deterministic ZIP packing, integrity inventory, safe archive validation/extraction and nested exact dependency checks. Static selected tool imports and agent references must be covered by the declared graph. `npm run test:phase -- sharing` passed 29/29, `npm run typecheck` passed, `npm run test:package` passed 2/2, `git diff --check` passed; final export-path refinement passed focused export/archive tests 7/7 and typecheck. Self-review APPROVE: no runtime plugin/provider/MCP/model/session startup in packaging APIs; author-only paths and secret model fields are absent from the artifact by default.

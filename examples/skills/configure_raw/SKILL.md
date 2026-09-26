@@ -1,6 +1,6 @@
 ---
 name: configure-raw
-description: "Use to explain, edit or diagnose existing Raw configuration: models, agents, prompts, UI, vars, executable provider declarations, limits and policy. Use creation skills for new assets or MCP connections."
+description: "Use to explain, edit or diagnose Raw configuration, including installed package bindings, models, agents, prompts, UI, vars, limits and policy. Use creation skills for new assets or MCP connections."
 ---
 # Configure Raw
 
@@ -11,6 +11,8 @@ Explain, edit or diagnose existing settings; preserve unrelated fields. Creation
 File: `$XDG_CONFIG_HOME/raw/config.json` or `~/.config/raw/config.json`; --config selects an alternate. Strict JSON: no unknown/duplicate fields, comments or trailing commas. `raw config init` creates once; `raw config list` validates structure only.
 
 Root: `models`, `agents`; optional `default_agent`, `mcp`, `sessions`, `ui`, `vars`, `var_providers`. Agent precedence: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt precedence: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt. No --model; agents reference model aliases.
+
+For installed package bindings, read `references/packages.md` with `read_file` before editing; it gives the `from`/`inputs`/`overrides`, selection, policy and resume contracts.
 
 ## Model: `models.<alias>`
 
@@ -61,7 +63,7 @@ Providers receive `{protocol_version:1,name,params}` on stdin, return `{value,ob
 
 `raw [--config PATH] [--agent NAME] vars list|get NAME` needs no model/assets/MCP/session. List is metadata only; get requires read access. Only config/agent flags apply.  Bash consumes `{"commands":[{"command":"test -n \"$TOKEN\"","env_refs":{"TOKEN":"token"}}]}` after approval, without rewriting shell source.
 
-Cache: successful values, per runtime; restart/resume starts empty. Old readings remain history. Vars changes preserve prefix/cache key.
+Successful values are cached per runtime; resume starts empty. Old readings remain history. Vars changes preserve the prefix/key.
 
 ## UI, MCP and sessions
 
@@ -69,7 +71,7 @@ Root `ui`: `density` compact/normal/verbose; `reasoning` hidden/summary/full; `c
 
 `mcp.servers.<name>`: stdio `{transport:"stdio",command:string,args?:string[],env?:string-map}` or remote `{transport:"streamable-http",url:HTTP(S),headers?:string-map}`. Env/headers stay literal; no vars interpolation. Activate by exact tools.use IDs, not the declaration alone.
 
-Canonical-only `sessions.retention_days`: positive integer, default 7. Resume uses current config/agent on the same ID. `--config` or `--agent` overrides become saved defaults; a replacement config recovers a missing old file. Runtime/tool changes rotate keys once; unchanged resumes stay stable. Skill-only edits keep keys with possible reload notices. Old stores cannot block new work.
+Canonical-only `sessions.retention_days`: positive integer, default 7. Resume uses current config/agent on the same ID; explicit overrides become saved defaults. Meaningful changes rotate once, unchanged resumes stabilize, and skill edits may append reload notices. Old stores cannot block new work.
 
 ## Edit and verify
 
@@ -85,7 +87,7 @@ cp "$1" "$stage/raw/config.json"
 XDG_CONFIG_HOME="$stage" raw --config "$stage/raw/config.json" config list
 ```
 
-Test affected assets/services: vars list, readable get or nonprinting consumption. Report edits/checks/prerequisites.
+Test affected assets; report checks.
 
 ## Complete example
 

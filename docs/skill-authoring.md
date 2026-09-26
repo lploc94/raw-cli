@@ -40,6 +40,8 @@ skills/my-skill/
 
 `SKILL.md` starts with `---`, a lowercase kebab-case `name` matching the folder, a nonempty `description` (at most 1024 characters), and a closing `---`. Optional standard frontmatter fields include `license`, `compatibility` and string-valued `metadata`. Register exact `local/<id>` or `agent/<id>` in `skills.use`; select both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. The shipped `create_skill` instructions provide a complete example.
 
+For sharing, place the skill directory in a package's declared `files` and `exports.skills`, validate the source with `raw package validate DIR`, then pack it with `raw package pack DIR --out FILE.rawpkg`. A recipient installs the artifact under an alias and selects `pkg/ALIAS/skills/EXPORT`, optionally using `{"ref":"...","as":"visible-name"}` when another selected skill already uses the same name. The folder/frontmatter name remains the underlying skill identity; the local `as` name is what `load_skill` receives. Editing a linked source takes effect on the next runtime snapshot. An existing session resumes with the current selection and appends a reload notice if earlier skill information became stale; adding a skill does not prepend its Markdown to the cached request prefix.
+
 Raw exposes names/descriptions only after `list_skills`; `load_skill` returns the body after frontmatter at the conversation tail. The loader validates that body against `max_output_bytes` (default **8192 bytes**, not tokens). The catalog must also fit. No arbitrary minimum word/byte count establishes quality.
 
 Keep the five shipped bodies self-contained within that cap. The copy script preserves entire skill folders, including references, scripts and assets. A `load_skill` result contains the body, not automatic resource contents; mention relative resources in instructions and use the agent's file tools to read them when needed. Do not rely on a source checkout or undeclared files for portable packages.
@@ -79,6 +81,8 @@ This is a writing aid, not a parser schema or a mandatory list of headings. A cr
 ## Dynamic data
 
 Teach skills to discover/read selected vars on demand or pass references to consuming tools. Do not capture current time, location, credentials or provider output in static skill text. configure_raw covers variable declarations; create_tool covers executable provider scripts; create_agent covers portable selections. MCP values remain literal.
+
+Distinguish source package definitions from recipient bindings. The package carries declared file closures and typed input sites; the recipient supplies local model aliases, environment names, paths and endpoints. A source change can rotate a generated cache key once, but an unchanged subsequent resume of the same session is stable. Do not instruct users to clear or migrate their sessions merely because a skill, tool, agent or package changed. `package link` is an authoring snapshot, `package fork` produces editable source, and `package update` changes one installed alias after checking current bindings.
 
 ## Rules specific to the setup kit
 

@@ -79,6 +79,7 @@ export interface RuntimeConfig {
   readonly packageTools: Readonly<Record<string, PackageAsset>>;
   readonly packageSkills: Readonly<Record<string, PackageAsset>>;
   readonly packageMcpIdentities: Readonly<Record<string, string>>;
+  readonly packageMcpSources: Readonly<Record<string, { root: string; identity: string }>>;
   readonly toolRules: readonly ToolPolicyRule[];
   resolveCompactModelConfig(): Readonly<ResolvedModelConfig>;
 }
@@ -679,10 +680,11 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const originAlias = agentData && typeof agentData === "object" && !Array.isArray(agentData)
     && typeof (agentData as { from?: unknown }).from === "string"
     ? /^pkg\/([a-z][a-z0-9_-]*)\/agents\//.exec((agentData as { from: string }).from)?.[1] : undefined;
-  const packageDefinitions = packageSelection === undefined ? { mcpIdentities: {} as Record<string, string> }
+  const packageDefinitions = packageSelection === undefined ? { mcpIdentities: {} as Record<string, string>,
+    mcpSources: {} as Record<string, { root: string; identity: string }> }
     : await resolvePackageDefinitions(packageSelection.agent, document.data, { configPath: document.path, env }, originAlias,
       packageContext, originAlias ? (agentData as { inputs?: JsonObject }).inputs : undefined);
-  const { mcpIdentities, ...definitions } = packageDefinitions;
+  const { mcpIdentities, mcpSources, ...definitions } = packageDefinitions;
   const effectiveDocument: ConfigDocument = { ...document, data: { ...document.data, agents: activeAgents,
     ...definitions,
     ...(wanted === undefined ? { default_agent: undefined } : { default_agent: wanted }) } };
@@ -761,6 +763,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     packageTools: Object.freeze(packageSelection?.tools ?? {}),
     packageSkills: Object.freeze(packageSelection?.skills ?? {}),
     packageMcpIdentities: Object.freeze(mcpIdentities ?? {}),
+    packageMcpSources: Object.freeze(mcpSources ?? {}),
     toolRules,
     resolveCompactModelConfig() {
       if (!selected) throw new Error("agent is required for compact");

@@ -174,12 +174,14 @@ async function exportedDefinition(reference: string, inputs: unknown, options: P
 }
 
 export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObject, options: PackageStoreOptions,
-  originAlias?: string, context?: PackageResolutionContext, inheritedInputs?: JsonObject): Promise<JsonObject & { mcpIdentities: Record<string, string> }> {
+  originAlias?: string, context?: PackageResolutionContext, inheritedInputs?: JsonObject): Promise<JsonObject & {
+  mcpIdentities: Record<string, string>; mcpSources: Record<string, { root: string; identity: string }> }> {
   const data = structuredClone(root);
   const vars = { ...((data.vars ?? {}) as JsonObject) };
   const providers = { ...((data.var_providers ?? {}) as JsonObject) };
   const servers = { ...(((data.mcp as { servers?: JsonObject } | undefined)?.servers ?? {})) };
   const mcpIdentities: Record<string, string> = Object.create(null);
+  const mcpSources: Record<string, { root: string; identity: string }> = Object.create(null);
   const rawSelected = Array.isArray(agent.vars) ? agent.vars : [];
   const selectedVars: string[] = [];
   for (const raw of rawSelected) {
@@ -263,6 +265,7 @@ export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObj
         ? join(item.root, arg) : arg);
     servers[name] = value;
     mcpIdentities[name] = item.canonicalIdentity;
+    mcpSources[name] = { root: item.root, identity: item.canonicalIdentity };
     const rules = (agent.tools as { rules?: unknown } | undefined)?.rules;
     if (Array.isArray(rules)) for (const rule of rules) {
       if (!rule || typeof rule !== "object") continue;
@@ -272,5 +275,5 @@ export async function resolvePackageDefinitions(agent: JsonObject, root: JsonObj
       }
     }
   }
-  return { vars, var_providers: providers, mcp: { servers }, mcpIdentities };
+  return { vars, var_providers: providers, mcp: { servers }, mcpIdentities, mcpSources };
 }

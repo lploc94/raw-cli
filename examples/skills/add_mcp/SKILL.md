@@ -1,10 +1,12 @@
 ---
 name: add-mcp
-description: "Use when connecting an actual MCP server to Raw, explaining the connection format, or diagnosing its tools. Discover original tool names, select exact IDs and distinguish config checks from real server calls."
+description: "Use when connecting or packaging an MCP server for Raw, explaining its binding, or diagnosing tools. Discover original names, select exact IDs and verify live calls."
 ---
 # Add an MCP server to Raw
 
 Use when connecting a new MCP capability to a Raw agent or diagnosing that connection. For a how-to, explain connection schema, exact selection and verification. For an actual setup, use the requested server; creating the optional echo fixture below is not a prerequisite or a replacement for that server.
+
+For a package MCP export or recipient binding, read `references/packages.md` with `read_file`; it covers typed inputs, local aliases, canonical rules and update/resume.
 
 ## Establish the connection
 
@@ -87,6 +89,6 @@ With this fixture, verify a real `echo_text` call with `{"text":"hello"}` return
 - Authentication failure: check the server's real credential mechanism and literal headers/environment, not model-provider credentials.
 - Image content failure: native images need a capable model/adapter; text-only agents can use OCR tools returning text.
 
-Raw validates selected schemas/arguments and closes connections on failed startup or shutdown. Selected schema/selection changes can rotate the generated cache key; unselected edits do not affect the prefix. Valid config, agent, model/endpoint and prompt changes resume on the same ID. Missing historical MCP aliases leave saved ACP views; invalid current selections still fail. Report transport, selections, checks and prerequisites.
+Raw validates selected schemas/arguments and closes connections. Selected changes may rotate the generated key once; unselected edits stay inert. Valid changes resume on the same ID. Missing historical aliases leave saved ACP views, while invalid current selections fail. Report checks and prerequisites.
 
 Raw vars do not interpolate MCP env/headers or tool arguments. Use a server's inherited environment/auth mechanism, or a local tool consuming context.vars. Executable var_providers use a separate one-request JSON protocol, not MCP.

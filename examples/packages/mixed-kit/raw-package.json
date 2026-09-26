@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "name": "@raw/mixed-kit",
+  "version": "1.0.0",
+  "description": "A portable Raw agent with a prompt, tool, skill, variable provider and MCP server",
+  "files": [
+    "agents/helper.json",
+    "prompts/helper.md",
+    "tools/echo",
+    "skills/repo-review",
+    "vars/host_label.json",
+    "var_providers/host_label.json",
+    "assets/providers/host-label.mjs",
+    "mcp/search.json",
+    "assets/mcp/echo.mjs"
+  ],
+  "exports": {
+    "agents": { "helper": "agents/helper.json" },
+    "tools": { "echo": "tools/echo" },
+    "skills": { "repo-review": "skills/repo-review" },
+    "vars": { "host_label": "vars/host_label.json" },
+    "var_providers": { "host_label": "var_providers/host_label.json" },
+    "mcp": { "search": "mcp/search.json" }
+  },
+  "requires": ["raw.agent/1", "raw.tool-api/1", "raw.skill/1", "raw.var-provider/1", "raw.mcp/1"],
+  "metadata": { "external_executables": ["node"] }
+}

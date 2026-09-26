@@ -1,0 +1,24 @@
+{
+  "system_prompt_file": "prompts/helper.md",
+  "tools": {
+    "use": [
+      "builtin/read_file",
+      "builtin/list_skills",
+      "builtin/load_skill",
+      "builtin/list_vars",
+      "builtin/read_var",
+      "builtin/bash",
+      "#tools/echo",
+      "mcp/search/echo_text"
+    ],
+    "rules": [
+      {
+        "match": "builtin/bash",
+        "effect": "ask",
+        "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)" }
+      }
+    ]
+  },
+  "skills": { "use": ["#skills/repo-review"] },
+  "vars": ["#vars/host_label"]
+}
