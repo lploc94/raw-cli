@@ -1,20 +1,24 @@
 # Configure Raw
 
-Explain, change or diagnose existing Raw configuration. For a new skill, tool, agent or MCP connection, use its creation skill.
+Use creation skills for assets.
 
 ## Choose the task
 
-- **Explain:** answer from this reference with a relevant example and its insertion location; inspecting or editing the installation is not required.
-- **Change:** identify config/agent, preserve unrelated fields and ordering, apply the requested edit, then validate. Ask only for missing choices, not repeated authorization.
-- **Diagnose:** start from the reported error; distinguish schema, missing assets, credentials and remote API failures.
+- **Explain:** give a relevant example and insertion location.
+- **Change:** preserve unrelated settings, edit and validate; ask only for missing choices.
+- **Diagnose:** distinguish schema, asset, credential and remote API errors.
 
 ## File, selection and common changes
 
 Strict JSON: `$XDG_CONFIG_HOME/raw/config.json`, otherwise `~/.config/raw/config.json`; `--config PATH` selects one alternate file. Duplicate/unknown keys, comments and trailing commas fail. `raw config init` creates once. `raw config list` validates structure and lists agents; it does not load prompt files, plugins or connect MCP.
 
-Root: `models`, `agents`, optional `default_agent`, `mcp`, `sessions`, `ui` (terminal options; see installed `docs/terminal-output.md`). Agent selection: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt.
+Root: `models`, `agents`, optional `default_agent`, `mcp`, `sessions`, `ui`. Agent selection: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt.
 
-Add a model alias, then assign it to `agents.<name>.model`. `raw --agent NAME "query"` selects an agent, not a model alias. There is no direct `--model` or `raw model add`.
+## Terminal UI: root `ui`
+
+`density`: compact/normal/verbose; `reasoning`: hidden/summary/full (default summary; verbose full); `color`: auto/always/never; `icons`: auto/unicode/ascii; `theme`: terminal/dark/light. Flags `--display` (density), `--reasoning`, `--color`, `--icons`, `--theme` override config. Example: `"ui":{"reasoning":"full"}`. For `palette` and TTY rules, see installed `docs/terminal-output.md`. UI edits preserve cache/session identity.
+
+Add a model alias, then set `agents.<name>.model`. `--agent` selects agents; there is no `--model` or `raw model add`.
 
 ## Model: `models.<alias>`
 
