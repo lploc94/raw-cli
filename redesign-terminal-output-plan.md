@@ -473,6 +473,8 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Phase 6: Visual qualification, installed-consumer coverage, and documentation
 
+Status: complete (2026-09-26). Implementation self-review: APPROVE.
+
 ### Goal
 Qualify the complete design in the actual built/installed CLI and make its configuration understandable to users and the shipped setup agent.
 
@@ -507,9 +509,9 @@ A source-only pass cannot substitute for an installed dependency-resolution test
 Run the full matrix and local package gate, fix actual readability/integration failures, record exact evidence and update this plan's checkboxes/reviews. Inspect diff for accidental provider/schema-policy changes. Leave GitHub Actions disabled and leave the user's global installation/config/database untouched.
 
 ### Acceptance criteria
-- [ ] AC-6.1: Built and packed installed CLI pass the visual/pipe/dependency matrix outside the checkout — package tests and evidence report.
-- [ ] AC-6.2: README/help/config docs and the shipped configure skill agree with actual UI schema and behavior — parser/example/skill tests plus inspection.
-- [ ] AC-6.3: Complete repository regression suite passes and recorded visual inspection confirms readable themes/icons/code/layout — local check and evidence report.
+- [x] AC-6.1: Built and packed installed CLI pass the visual/pipe/dependency matrix outside the checkout — package tests and evidence report.
+- [x] AC-6.2: README/help/config docs and the shipped configure skill agree with actual UI schema and behavior — parser/example/skill tests plus inspection.
+- [x] AC-6.3: Complete repository regression suite passes and recorded visual inspection confirms readable themes/icons/code/layout — local check and evidence report.
 
 ### Focused verification
 `npm run test:package`
@@ -535,13 +537,13 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Completion Criteria
 
-- [ ] All six phases and their acceptance criteria pass with implementation review APPROVE and cohesive commits.
-- [ ] One-shot, REPL and saved history share consistent header/text/tool/status/footer formatting, semantic themes/icons and genuine code highlighting.
-- [ ] Streaming remains progressive and source-preserving under chunk splits, resize, incomplete syntax, tool transitions and interruption.
-- [ ] Redirected stdout, model requests/cache identity, policies, MCP and ACP preserve their contracts.
-- [ ] Metrics are scoped/truthful; context estimates and coverage are explicit; continuation uses the active durable session.
-- [ ] New display records use schema 5, old sessions fail clearly without migration/deletion, and ordinary UI changes do not affect schema or cache identity.
-- [ ] Full local checks, installed-consumer evidence, documentation and setup-skill updates are complete; no CI enablement/global install/user-state mutation occurred.
+- [x] All six phases and their acceptance criteria pass with implementation review APPROVE and cohesive commits.
+- [x] One-shot, REPL and saved history share consistent header/text/tool/status/footer formatting, semantic themes/icons and genuine code highlighting.
+- [x] Streaming remains progressive and source-preserving under chunk splits, resize, incomplete syntax, tool transitions and interruption.
+- [x] Redirected stdout, model requests/cache identity, policies, MCP and ACP preserve their contracts.
+- [x] Metrics are scoped/truthful; context estimates and coverage are explicit; continuation uses the active durable session.
+- [x] New display records use schema 5, old sessions fail clearly without migration/deletion, and ordinary UI changes do not affect schema or cache identity.
+- [x] Full local checks, installed-consumer evidence, documentation and setup-skill updates are complete; no CI enablement/global install/user-state mutation occurred.
 
 ## Progress Log
 
@@ -558,3 +560,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 4 complete, implementation self-review APPROVE. Introduced one event renderer for rich and append-only CLI paths, semantic tool formatter, bounded transient writer, explicit no-color ASCII presentation, and control-byte display escaping. Screen/PTY tests cover final visible scrollback, densities, syntax colors, approval, cancellation, and piping. Focused CLI tests passed 31/31; final `npm run check` passed 359/359. Evidence: `/tmp/raw-terminal-phase4-red.log`, `/tmp/raw-terminal-phase4-repair.log`, `/tmp/raw-terminal-phase4-head-check.log`.
 - 2026-09-26: Phase 4 commit `c4e5ebb`; Phase 5 in progress.
 - 2026-09-26: Phase 5 complete, implementation self-review APPROVE. Extracted the effective context budget, added honest usage/cache coverage, and unified one-shot/REPL footers and static history rendering. The final `npm run check` passed 367/367; `/clear` uses its new durable ID, UI changes retain request cache identity, and persistence failures omit resume advice. Evidence: `/tmp/raw-terminal-phase5-final-focused.log`, `/tmp/raw-terminal-phase5-head-check2.log`.
+- 2026-09-26: Phase 5 commit `6ab62f8`; Phase 6 complete, implementation self-review APPROVE. Packed CLI TTY read/answer syntax and plain redirected byte contract passed 2/2 package tests; source regression passed 368/368. Fixed compact/resumed headers, explicit context warning labels and verbose canonical identity after red focused tests. Gallery inspected in 40/80/120 columns and light/dark/terminal themes with NO_COLOR behavior. Source commit `0945f1c`; detailed evidence in `docs/evidence/terminal-output.md`. No CI/global installation/user state changes.

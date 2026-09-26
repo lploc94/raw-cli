@@ -1,5 +1,9 @@
 # Verification matrix
 
+## Terminal output redesign qualification
+
+On 2026-09-26, the implementation at source commit `0945f1cee89d04e1b74bd122ea523e715cdd71a9` passed `npm run check` (368/368) and `npm run test:package` (2/2) locally. The packed consumer exercised a highlighted PTY answer and read preview, byte-exact redirected output, installed docs/skills/tools, MCP, ACP and public imports. A fixed no-network gallery was inspected at 40/80/120 columns with light/dark/terminal themes and ASCII/Unicode icons. [Terminal output evidence](evidence/terminal-output.md) records the artifact hash, commands, representative transcript, and limits. The user's global installation and state were not modified.
+
 ## Persistent-session qualification
 
 On 2026-09-25, the persistent-session implementation passed the same source manifest SHA-256 `80f1b6a45908b802a01daaec0a44f289b492b09ccb9eff71818a122943c0d0e5` on macOS and Linux with Node 22.13.0 and 24.21.0. Each runtime ran `scripts/verify-runtime.mjs`: `npm run check` (278/278), `npm run test:overhead` (41 prompt tokens, 1,315 combined prompt/tool tokens, three built-ins), and `npm run test:package` (1/1). The packed consumer creates and resumes sessions across processes, pages visible history, runs standard ACP list/load/resume/delete, and typechecks public imports. Tests use isolated `XDG_STATE_HOME` fixtures; the real user state store is not opened. Retention tests cover the exact inactivity cutoff, active writer protection, crash-safe payload staging and retirement, SQLite free-space reclamation, and canonical policy changes in a long-lived ACP process.
