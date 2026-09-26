@@ -87,3 +87,6 @@ export { ComponentManager } from "./management/components.js";
 export type { ComponentInfo, EditableComponentKind } from "./management/components.js";
 export { ManagementError } from "./management/files.js";
 export { parseToolManifest, compileToolSchema } from "./tools/plugins/manifest.js";
+
+export { startDashboard } from "./dashboard/server.js";
+export type { DashboardOptions, DashboardServer, DashboardContext, DashboardRoute } from "./dashboard/server.js";

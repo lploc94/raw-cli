@@ -36,3 +36,7 @@ Exit codes are 0 for completed turns and informational commands, 1 for runtime/p
 ## Portable packages
 
 `raw package list|inspect|validate|pack|export|install|update|remove|link|fork` and `raw agent add` run before session/model startup. They report JSON to stdout and take `--config PATH` to select a per-config installation lock. Typical flow: `raw package export --agent NAME --name @owner/name --version 1.0.0 --out DIR`, `raw package pack DIR --out FILE.rawpkg`, `raw package install FILE.rawpkg --as ALIAS`, then `raw agent add NAME --from pkg/ALIAS/agents/EXPORT --model MODEL_ALIAS`. `--inputs FILE` reads recipient input values from a JSON object. `package update ALIAS --from PATH` checks current bindings before switching the alias; `package fork ALIAS --out DIR` produces editable source, while `package link DIR --as ALIAS` snapshots edited source on the next run. No package command opens the session store or uses model credentials. See [packages](packages.md).
+
+## Local dashboard
+
+`raw dashboard` opens the bundled browser chat and management application on loopback port 8787. Use `--port 0` for a free port, `--no-open` to print the link only, `--config PATH` for the managed config, and `--agent NAME` to preselect a new-chat agent. The foreground process owns sessions and cleanup; Ctrl-C stops it. See [the dashboard guide](dashboard.md).

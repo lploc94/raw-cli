@@ -24,6 +24,7 @@ async function inputAsync<T>(read: () => Promise<T>): Promise<T> {
 function help(): string {
   return `raw-cli ${version}
 Usage: raw [options] [task]
+       raw dashboard [--port PORT] [--no-open] [--config PATH] [--agent NAME]
        raw vars list|get NAME
        raw config init|list
        raw package list|inspect|validate|pack|export|install|update|remove|link|fork
@@ -67,6 +68,10 @@ Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 }
 
 async function run(): Promise<void> {
+  if (process.argv[2] === "dashboard") {
+    const { parseDashboardArgs, runDashboardCli } = await import("../src/dashboard/cli.js");
+    await runDashboardCli(input(() => parseDashboardArgs(process.argv.slice(3)))); return;
+  }
   if (process.argv[2] === "package" || process.argv[2] === "agent") {
     await inputAsync(() => runPackageCli(process.argv.slice(2)));
     return;

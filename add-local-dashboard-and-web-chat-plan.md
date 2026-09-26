@@ -453,9 +453,9 @@ An arbitrary webpage with a valid-looking localhost URL cannot mutate config or 
 ### Implementation obligations
 Keep ACP validation unchanged, authenticate all data routes, print only the actual listening URL and perform browser opening without shell interpolation. Expose structured operational errors while preserving the settings repair path.
 ### Acceptance criteria
-- [ ] AC-3.1: The CLI starts/closes a loopback server and reports its real address without a model dependency — proven by subprocess tests.
-- [ ] AC-3.2: Unauthorized/cross-origin requests and escaping static paths cannot access data or mutate state — proven by HTTP boundary tests.
-- [ ] AC-3.3: Shutdown and failed startup leave no owned child/listener/lease — proven by lifecycle tests.
+- [x] AC-3.1: The CLI starts/closes a loopback server and reports its real address without a model dependency — proven by subprocess tests.
+- [x] AC-3.2: Unauthorized/cross-origin requests and escaping static paths cannot access data or mutate state — proven by HTTP boundary tests.
+- [x] AC-3.3: Shutdown and failed startup leave no owned child/listener/lease — proven by lifecycle tests.
 ### Focused verification
 `node --import tsx --test tests/dashboard-server.test.ts tests/dashboard-cli.test.ts tests/acp-transport.test.ts`
 ### Phase gates
@@ -690,8 +690,8 @@ Implementation review is required; verdict must be APPROVE.
 | Phase | Status | Evidence / commit |
 | --- | --- | --- |
 | 1 | complete | `dfed949`; 12 focused, 142 session, 475 full tests; self-review APPROVE |
-| 2 | complete | 20 focused tests, 484 full tests; self-review APPROVE |
-| 3 | pending | Depends on 1–2 |
+| 2 | complete | `4365df3`; 20 focused, 484 full tests; self-review APPROVE |
+| 3 | complete | 16 focused tests (including ACP), 494 full tests; self-review APPROVE |
 | 4 | pending | Depends on 1–3 |
 | 5 | pending | Depends on 3–4 |
 | 6 | pending | Depends on 2–5 |
@@ -700,3 +700,4 @@ Implementation review is required; verdict must be APPROVE.
 
 - 2026-09-26 Phase 1: Completed docs-first implementation of durable operation acceptance/atomic user consumption, host-owned startup/runtime/cleanup leases, nonthrowing observers, stable visible segment IDs, mixed history projection and manual/automatic compaction markers. Meaningful red evidence: the focused contracts failed before the new services existed. Final build/typecheck, 12 focused tests, 142 session-suite tests, `npm run check` (475/475) and `git diff --check` passed. Implementation self-review APPROVE: checked duplicate lookup before ownership, killed-process effect recovery, rollback triggers, startup heartbeat, receipt transitions, unchanged prefix regressions, cleanup and typed preview limits. No phase scope deviation.
 - 2026-09-26 Phase 2: Extracted config source validation and the shared starter factory; CLI initialization and package-agent binding now use revision-aware atomic config writers. Added agent/model CRUD, passive component catalogs/manifest-schema parsing, per-file revisions, staged creation/forks, explicit selection and deletion usage checks. A regression test exposed local/agent aliases sharing a folder; fixed physical-folder usage detection before deletion. Linked package inspection reads authored sources directly without snapshot/import side effects. Focused contracts were red before implementation; final build/typecheck, 20 focused tests, `npm run check` (484/484) and whitespace checks passed. Self-review APPROVE, including credentials/order preservation, stale/external edits, strict/canonical config validation, symlink containment, read-only artifacts and isolated invalid rows. Agent/model edit helpers share one cohesive module; no user-facing scope change.
+- 2026-09-26 Phase 3: Added `raw dashboard`, loopback HTTP/static routing, per-process fragment tokens, exact Host/Origin checks, bounded JSON bodies, safe bootstrap diagnostics and owned shutdown. CLI works from unrelated cwd, prints its actual port-0 URL and keeps running after a browser-opener failure. Fixed abort-during-listen ordering to prevent a late listener escaping cleanup. Verified invalid/missing config and unavailable store stay scoped, old tokens/foreign requests fail, API/missing assets do not receive the SPA entrypoint, and shutdown cancels an owned startup child/releases its lease. Build/typecheck, 16 focused tests, full `npm run check` (494/494) and whitespace checks passed. Self-review APPROVE. Static-route tests use fixture assets as planned; the real browser bundle is Phase 5.
