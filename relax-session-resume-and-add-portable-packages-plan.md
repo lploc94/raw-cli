@@ -368,6 +368,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: define portable package and component contracts`
 
 ## Phase 5: Export and pack complete portable artifacts
+Status: complete (2026-09-26).
 
 ### Goal
 Let an author turn an existing agent or authored component folder into an inspectable, reproducible distribution artifact.
@@ -397,9 +398,9 @@ Unpack into a new temporary directory after hiding the author's source tree; ins
 ### Implementation obligations
 Use a pinned maintained ZIP library with bounded decompression and deterministic writing. Keep paths portable across slash conventions/case-insensitive filesystems. Separate artifact transport hash from per-component behavior digest. Reuse common traversal in validate/pack/export so their definitions of closure cannot drift.
 ### Acceptance criteria
-- [ ] AC-14: Exported mixed agent has a complete declared owned/dependency closure and a precise recipient-input report — export tests.
-- [ ] AC-15: Identical source inputs produce identical artifacts and corrupted/escaping artifacts cannot validate — archive tests.
-- [ ] AC-16: All packaging operations remain free of model/plugin/provider/MCP/session side effects — marker and isolated-process tests.
+- [x] AC-14: Exported mixed agent has a complete declared owned/dependency closure and a precise recipient-input report — export tests.
+- [x] AC-15: Identical source inputs produce identical artifacts and corrupted/escaping artifacts cannot validate — archive tests.
+- [x] AC-16: All packaging operations remain free of model/plugin/provider/MCP/session side effects — marker and isolated-process tests.
 ### Focused verification
 `npm run test:phase -- sharing`
 ### Phase gates
@@ -559,6 +560,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
+- 2026-09-26: Phase 5 complete. Added data-only mixed-agent export with explicit include/binding choices and missing-asset draft reports; bounded deterministic ZIP packing, integrity inventory, safe archive validation/extraction and nested exact dependency checks. Static selected tool imports and agent references must be covered by the declared graph. `npm run test:phase -- sharing` passed 29/29, `npm run typecheck` passed, `npm run test:package` passed 2/2, `git diff --check` passed; final export-path refinement passed focused export/archive tests 7/7 and typecheck. Self-review APPROVE: no runtime plugin/provider/MCP/model/session startup in packaging APIs; author-only paths and secret model fields are absent from the artifact by default.
 - 2026-09-26: Phase 4 complete. Added `raw-package.schema.json` and data-only manifest, reference, input and component APIs; exact SemVer and YAML parsers are pinned. Migrated selected skills and five bundled examples to one Agent Skills frontmatter source, copied full skill directories, and removed `skill.json`. Docs explain six exports, aliases, input sites and package identity. Red tests preceded implementation. `npm run test:phase -- sharing` passed 19/19, `npm run typecheck` passed, `npm run check` passed 428/428, `npm run test:package` passed 2/2, `git diff --check` passed. Self-review APPROVE: parser/resolver imports no handlers or providers; release-only tool/package labels do not change fingerprints; selected skill bodies still load at the tail.
 - 2026-09-26: Phase 3 complete. CLI explicit agent/config overrides now become saved defaults, SDK returns refreshed metadata, ACP uses current base selection while retaining compatible explicit views and pruning unavailable historical aliases. Removed-config recovery and A→B→B CLI/SDK/ACP tests added; selected bundled skill instructions updated within the 8 KiB load cap. `npm run test:phase -- sessions` passed 130/130; final `npm run check` passed 419/419; `git diff --check` passed. Local evidence: `docs/evidence/milestone-a-session-continuity.md`. Self-review APPROVE: no saved-runtime equality gate remains on these surfaces; current invalid references still fail and existing policy/vars/UI regressions pass.
 - 2026-09-26: Phase 2 complete. Docs-first and red tests preceded transactional runtime transitions, canonical/provider replay projection and complete selected-tool folder snapshots. `npm run test:phase -- sessions` passed 127/127, `npm run typecheck` and `git diff --check` passed. Self-review APPROVE: transition notice is host-only, prior transcript remains canonical, stable B→B key and request prefix are asserted, helper-only source changes execute new bytes. ACP integration remains part of Phase 3's surface qualification.

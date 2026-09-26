@@ -1,11 +1,13 @@
 import { readFile, lstat, readdir, realpath } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { join, posix, relative, resolve } from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import semver from "semver";
 import schema from "../../schemas/raw-package.schema.json" with { type: "json" };
 import { componentKinds, deepFreeze, packagePath, type RawPackageManifest } from "./contract.js";
 import { parseInputSchema } from "./inputs.js";
+import { parseComponentReference } from "./references.js";
 
 const ajv = new Ajv2020.default({ strict: true, allErrors: true });
 const validate = ajv.compile(schema);
@@ -76,6 +78,80 @@ export async function loadPackageManifest(root: string): Promise<LoadedPackageMa
     if (!files.has(path) && ![...files.keys()].some((file) => file.startsWith(`${path}/`))) {
       throw new Error(`uncovered package export ${kind}/${name}: ${path}`);
     }
+  }
+  for (const path of Object.values(manifest.exports.tools ?? {})) {
+    for (const file of files.keys()) {
+      if (!file.startsWith(`${path}/`) || !/\.(?:mjs|js|cjs)$/.test(file)) continue;
+      const source = await readFile(join(absolute, file), "utf8");
+      const referenced = new Set<string>();
+      for (const pattern of [/(?:import|export)\s+(?:[^;\n]*?\s+from\s+)?["'](\.[^"']+)["']/g,
+        /(?:import|require)\s*\(\s*["'](\.[^"']+)["']\s*\)/g,
+        /new\s+URL\s*\(\s*["'](\.[^"']+)["']\s*,\s*import\.meta\.url\s*\)/g]) {
+        for (const match of source.matchAll(pattern)) referenced.add(match[1]!);
+      }
+      for (const specifier of referenced) {
+        const target = posix.normalize(posix.join(posix.dirname(file), specifier));
+        packagePath(target);
+        if (!files.has(target)) throw new Error(`undeclared package helper or asset ${target} referenced by ${file}`);
+      }
+    }
+  }
+  const covered = (path: string) => files.has(path) || [...files.keys()].some((file) => file.startsWith(`${path}/`));
+  const requireReference = (reference: string, expected: string): void => {
+    const parsed = parseComponentReference(reference);
+    if (parsed.kind !== expected) throw new Error(`invalid ${expected} package reference: ${reference}`);
+    if (parsed.source === "self" && !manifest.exports[parsed.kind]?.[parsed.exportName]) {
+      throw new Error(`unresolved package reference: ${reference}`);
+    }
+    if (parsed.source === "dependency" && !manifest.dependencies?.[parsed.dependency]) {
+      throw new Error(`undeclared package dependency reference: ${reference}`);
+    }
+    if (parsed.source === "installed") throw new Error(`installed alias is not portable inside a package: ${reference}`);
+  };
+  for (const path of Object.values(manifest.exports.agents ?? {})) {
+    let agent: Record<string, unknown>;
+    try { agent = JSON.parse(await readFile(join(absolute, path), "utf8")) as Record<string, unknown>; }
+    catch { throw new Error(`invalid exported agent JSON: ${path}`); }
+    if (!agent || typeof agent !== "object" || Array.isArray(agent)) throw new Error(`invalid exported agent: ${path}`);
+    const tools = (agent.tools as { use?: unknown } | undefined)?.use;
+    if (Array.isArray(tools)) for (const item of tools) {
+      const reference = typeof item === "string" ? item : (item as { ref?: unknown } | undefined)?.ref;
+      if (typeof reference !== "string") throw new Error(`invalid exported tool selection: ${path}`);
+      if (reference.startsWith("#") || reference.startsWith("dep:")) requireReference(reference, "tools");
+      else if (reference.startsWith("mcp/")) {
+        const server = reference.split("/")[1];
+        if (!server || !manifest.exports.mcp?.[server]) throw new Error(`unresolved package MCP selection: ${reference}`);
+      } else if (!reference.startsWith("builtin/")) throw new Error(`nonportable exported tool selection: ${reference}`);
+    }
+    const skills = (agent.skills as { use?: unknown } | undefined)?.use;
+    if (Array.isArray(skills)) for (const item of skills) {
+      const reference = typeof item === "string" ? item : (item as { ref?: unknown } | undefined)?.ref;
+      if (typeof reference !== "string") throw new Error(`invalid exported skill selection: ${path}`);
+      if (reference.startsWith("#") || reference.startsWith("dep:")) requireReference(reference, "skills");
+      else if (!reference.startsWith("builtin/")) throw new Error(`nonportable exported skill selection: ${reference}`);
+    }
+    if (Array.isArray(agent.vars)) for (const reference of agent.vars) {
+      if (typeof reference !== "string") throw new Error(`invalid exported var selection: ${path}`);
+      requireReference(reference, "vars");
+    }
+    if (typeof agent.system_prompt_file === "string" && !covered(packagePath(agent.system_prompt_file))) {
+      throw new Error(`uncovered exported prompt file: ${agent.system_prompt_file}`);
+    }
+  }
+  for (const path of Object.values(manifest.exports.vars ?? {})) {
+    const variable = JSON.parse(await readFile(join(absolute, path), "utf8")) as { source?: { kind?: string; name?: unknown; path?: unknown } };
+    if (variable.source?.kind === "provider" && typeof variable.source.name === "string"
+      && variable.source.name !== "system.time" && !manifest.exports.var_providers?.[variable.source.name]) {
+      throw new Error(`unresolved exported variable provider: ${variable.source.name}`);
+    }
+    if (variable.source?.kind === "file" && typeof variable.source.path === "string"
+      && !covered(packagePath(variable.source.path))) throw new Error(`uncovered exported variable file: ${variable.source.path}`);
+  }
+  for (const [alias, dependency] of Object.entries(manifest.dependencies ?? {})) {
+    const archive = files.get(dependency.archive);
+    if (!archive) throw new Error(`missing dependency archive ${alias}: ${dependency.archive}`);
+    const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
+    if (digest !== dependency.digest) throw new Error(`dependency archive digest mismatch: ${alias}`);
   }
   return { root: absolute, manifest, files: Object.freeze([...files.keys()].sort()) };
 }

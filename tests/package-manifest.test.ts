@@ -47,3 +47,35 @@ test("data-only package validation checks owned closure and rejects links", asyn
   symlinkSync(join(root, "agents/agent.json"), join(root, "skills/review/linked.json"));
   await assert.rejects(loadPackageManifest(root), /link|symlink/i);
 });
+
+test("an exact dependency archive with the wrong digest cannot validate", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-package-dependency-"));
+  mkdirSync(join(root, "deps")); mkdirSync(join(root, "agents"));
+  writeFileSync(join(root, "deps", "other.rawpkg"), "archive bytes");
+  writeFileSync(join(root, "agents", "root.json"), "{}");
+  writeFileSync(join(root, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@example/root", version: "1.0.0",
+    description: "Root", files: ["deps/other.rawpkg", "agents/root.json"], exports: { agents: { root: "agents/root.json" } },
+    dependencies: { other: { name: "@example/other", version: "1.0.0", digest: "0".repeat(64), archive: "deps/other.rawpkg" } } }));
+  await assert.rejects(loadPackageManifest(root), /dependency archive digest mismatch/);
+});
+
+test("a statically imported tool helper must be covered by the declared file graph", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-package-helper-"));
+  mkdirSync(join(root, "tools", "helper"), { recursive: true });
+  writeFileSync(join(root, "tools", "helper", "tool.json"), "{}");
+  writeFileSync(join(root, "tools", "helper", "index.mjs"), 'import "./helper.mjs";');
+  writeFileSync(join(root, "tools", "helper", "helper.mjs"), "export const value = 1;");
+  writeFileSync(join(root, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@example/helper", version: "1.0.0",
+    description: "Helper", files: ["tools/helper/tool.json", "tools/helper/index.mjs"],
+    exports: { tools: { helper: "tools/helper" } } }));
+  await assert.rejects(loadPackageManifest(root), /undeclared package helper or asset.*helper\.mjs/);
+});
+
+test("exported agent references must resolve inside the package or a declared dependency", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-package-refs-"));
+  mkdirSync(join(root, "agents"));
+  writeFileSync(join(root, "agents", "a.json"), JSON.stringify({ tools: { use: ["#tools/missing"] } }));
+  writeFileSync(join(root, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@example/refs", version: "1.0.0",
+    description: "Refs", files: ["agents/a.json"], exports: { agents: { a: "agents/a.json" } } }));
+  await assert.rejects(loadPackageManifest(root), /unresolved package reference.*tools\/missing/);
+});
