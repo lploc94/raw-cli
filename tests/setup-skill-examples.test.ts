@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -11,7 +12,14 @@ function body(id: string): string {
   return readFileSync(join("src", "skills", "bundled", id, "SKILL.md"), "utf8");
 }
 
-function fence(id: string, language: string, index = 0): string {
+function fence(id: string, language: string, index: number | string = 0): string {
+  if (typeof index === "string") {
+    const section = body(id).split(`<!-- example:${index} -->`)[1];
+    assert.ok(section, `${id} missing named example ${index}`);
+    const value = section.match(new RegExp(`\\x60\\x60\\x60${language}\\n([\\s\\S]*?)\\n\\x60\\x60\\x60`))?.[1];
+    assert.ok(value, `${id}/${index} missing ${language}`);
+    return value;
+  }
   const matches = [...body(id).matchAll(new RegExp(`\\x60\\x60\\x60${language}\\n([\\s\\S]*?)\\n\\x60\\x60\\x60`, "g"))];
   const value = matches[index]?.[1];
   assert.ok(value, `${id} missing ${language} example ${index}`);
@@ -26,16 +34,40 @@ test("create_skill example registers a config-adjacent selected skill", async ()
   const root = mkdtempSync(join(tmpdir(), "raw-skill-example-"));
   const skillRoot = join(root, "skills", "release_notes");
   mkdirSync(skillRoot, { recursive: true });
-  writeFileSync(join(skillRoot, "skill.json"), JSON.stringify(JSON.parse(fence("create_skill", "json"))));
-  writeFileSync(join(skillRoot, "SKILL.md"), fence("create_skill", "markdown") + "\n");
-  const registration = JSON.parse(fence("create_skill", "json", 1));
+  writeFileSync(join(skillRoot, "skill.json"), JSON.stringify(JSON.parse(fence("create_skill", "json", "manifest"))));
+  writeFileSync(join(skillRoot, "SKILL.md"), fence("create_skill", "markdown", "body") + "\n");
+  const registration = JSON.parse(fence("create_skill", "json", "registration"));
   const configPath = join(root, "raw.json");
-  writeFileSync(configPath, JSON.stringify({ default_agent: "helper", models: { local: model() },
+  writeFileSync(configPath, JSON.stringify({ default_agent: "helper", models: { local: {
+    provider: "openai", method: "openai-chat-completions", model_id: "fixture", api_key_env: "RAW_TEST_MISSING_KEY" } },
     agents: { helper: { model: "local", ...registration } } }));
-  const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
+  const runtime = await loadConfig({ configPath, env: {}, requireModel: false });
   const selected = await loadSelectedSkills({ selectedIds: runtime.skillIds, configPath, maxOutputBytes: 8192, cwd: root });
   assert.deepEqual(selected.map((skill) => skill.name), ["release_notes"]);
   assert.match(selected[0]!.markdown, /commit hash/);
+});
+
+test("configure_raw canonical candidate validation accepts sessions and rejects invalid models without editing the source", () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-config-validation-"));
+  try {
+    const bin = join(root, "bin"); mkdirSync(bin);
+    const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
+    writeFileSync(join(bin, "raw"), `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(process.cwd(), "dist/raw.js"))} "$@"\n`, { mode: 0o700 });
+    const script = join(root, "validate.sh");
+    writeFileSync(script, fence("configure_raw", "sh", "validate-canonical"));
+    const candidate = join(root, "candidate.json");
+    const document = { default_agent: "raw", models: { lab: { provider: "custom", method: "openai-chat-completions", model_id: "fixture", base_url: "http://127.0.0.1:9999/v1" } }, agents: { raw: { model: "lab", tools: { use: [] } } }, sessions: { retention_days: 30 } };
+    writeFileSync(candidate, JSON.stringify(document));
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    const good = spawnSync("bash", [script, candidate], { env, encoding: "utf8" });
+    assert.equal(good.status, 0, good.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(candidate, "utf8")), document);
+    const invalid = structuredClone(document); invalid.models.lab.base_url = "not-a-url";
+    writeFileSync(candidate, JSON.stringify(invalid));
+    const bad = spawnSync("bash", [script, candidate], { env, encoding: "utf8" });
+    assert.notEqual(bad.status, 0);
+    assert.deepEqual(JSON.parse(readFileSync(candidate, "utf8")), invalid);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("create_tool example validates a later batch row before side effects", async () => {

@@ -1,7 +1,7 @@
 {
   "api_version": 1,
   "id": "create_skill",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "create_skill",
-  "description": "Create a real Raw skill folder, write a strict manifest and useful Markdown, register it on an agent, and verify list/load visibility."
+  "description": "Use when creating or improving a discoverable Raw skill: write its description and instructions, choose a root, register it on an agent and verify loading. Also covers how-to questions; ordinary Markdown documents do not need skill installation."
 }

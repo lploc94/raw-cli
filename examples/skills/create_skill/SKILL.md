@@ -1,51 +1,106 @@
 # Create a Raw skill
 
-Use when the user asks for reusable instructions that an agent can discover and load during a run. First inspect the target agent's config, available tools, and existing selected skill names. A skill is an instruction package, not executable code and not a new tool. Write instructions that are specific enough to accomplish the requested work: inputs, decision rules, paths, exact edits, verification, common failures, and a working example. Avoid a one-paragraph reminder. Keep the body under that agent's `max_output_bytes` (8192 by default), because `load_skill` returns it as one linked result without truncation.
+Use when creating or improving reusable instructions that a Raw agent should discover and load. An ordinary Markdown document does not need skill registration; a new callable action belongs in `create_tool`.
 
-## Choose a root and identity
+For a how-to, explain the format, authoring approach and registration with examples. For a requested creation, use the workflow below. For a load failure, inspect the selected ID, manifest, body size and error before rewriting instructions.
 
-`local/<id>` lives in `$XDG_CONFIG_HOME/raw/skills/<id>/`, or `~/.config/raw/skills/<id>/` when XDG_CONFIG_HOME is unset. It is available to any config using that global root, but still invisible until selected. `agent/<id>` lives in `skills/<id>/` beside the selected config file and travels with a shareable agent directory. `builtin/<id>` is installed package-owned content; users should fork a packaged example to `local/` or `agent/` before editing. `--config` changes the agent root but not the global root. IDs begin with lowercase a–z and continue with lowercase letters, digits, `_` or `-`; names must start with a letter or `_`, use at most 64 letters/digits/`_`/`-`, and be unique across the agent's selected skills. Pick a stable ID and a distinct model-visible name.
+## Establish the useful task
 
-Each folder must contain a strict JSON `skill.json` and UTF-8 `SKILL.md`. Manifest fields are exactly `api_version: 1` (number), `id` (same as folder), `version` (`major.minor.patch` string), `name` (model-visible name), and `description` (nonempty selection hint). Unknown/duplicate fields, invalid UTF-8, symlink escapes, oversized manifest or Markdown, duplicate selected IDs/names, and a selected missing folder fail before inference. Unselected folders are inert. A useful description says *when* to load the skill, not simply that it exists.
+1. Identify the repeated task, expected deliverable, available inputs and tools. Use real examples or corrections from the conversation. Ask only for missing information that changes the result.
+2. Choose one coherent responsibility. Describe its boundaries against neighboring skills; avoid both a vague catch-all and many tiny skills needed for a single task.
+3. Write the description first: what the user wants, when to use this skill, and a meaningful nearby case that does not need it. The model sees this description in `list_skills` before seeing the body. Describe intent, not just filenames.
+4. Write the body and description in English. Spend words on project-specific facts, decisions, working procedures and common errors. Avoid padding and generic explanations.
 
-## Complete minimal example
+## Build the instructions
 
-For a portable config at `/work/helper/raw.json`, create `/work/helper/skills/release_notes/skill.json`:
+Use these parts where useful; combine short sections rather than filling a rigid form:
 
+- **Purpose/routing:** intended outcome; explanation, action and diagnosis paths if relevant. Put conditions before action steps.
+- **Inputs:** information to obtain, defaults, paths and actual tool/dependency availability. Reuse supplied answers and authorization.
+- **Procedure:** a default sequence with decisions at the point they matter. Make fragile steps precise; allow judgment for flexible work.
+- **Contract/example:** exact formats, supported fields and realistic example. Label complete files versus fragments and their insertion points.
+- **Verification/recovery:** observable success, important boundary cases and what to do with a specific failure. Distinguish checks performed from assumptions.
+- **Output:** what artifact or answer to deliver and what remaining uncertainty to report.
+
+Keep instructions task-specific: a release-notes skill should not inherit Raw configuration-edit steps. Avoid assumed checkout paths or mandatory external documentation for core behavior.
+
+## Raw package contract
+
+Each skill folder contains strict `skill.json` and UTF-8 `SKILL.md`. Raw does not parse YAML frontmatter as metadata or automatically load supporting resources. The current `load_skill` returns the entire Markdown in one linked result; keep it within the target agent's `max_output_bytes` (8192 bytes by default). Catalog descriptions must collectively fit that cap too.
+
+| Root | Location and use |
+| --- | --- |
+| `agent/<id>` | `skills/<id>/` beside the selected config; travels with a portable agent |
+| `local/<id>` | `$XDG_CONFIG_HOME/raw/skills/<id>/`, otherwise `~/.config/raw/skills/<id>/`; shared local installation |
+| `builtin/<id>` | Package-owned; fork a shipped example into a user root to customize |
+
+`--config` changes the config-adjacent root, not the global root. Folder IDs match `[a-z][a-z0-9_-]*`. Manifest has exactly five fields: numeric `api_version: 1`, matching `id`, numeric-three-component `version` string, model-visible `name` matching `[A-Za-z_][A-Za-z0-9_-]{0,63}`, and nonempty `description`. Selected IDs and names must be unique. Duplicate/unknown JSON fields, invalid UTF-8, missing selected files, symlink escapes or oversized content fail before inference; unselected folders are inert.
+
+## Worked example: release notes
+
+For `/work/helper/raw.json`, create `skills/release_notes/skill.json` beside it:
+
+<!-- example:manifest -->
 ```json
 {
   "api_version": 1,
   "id": "release_notes",
   "version": "1.0.0",
   "name": "release_notes",
-  "description": "Prepare release notes from committed changes when the user requests a changelog or release summary."
+  "description": "Use when drafting a changelog or release summary from a Git comparison range. Group user-visible changes and cite commits; ordinary code review does not need this skill."
 }
 ```
 
-Create `/work/helper/skills/release_notes/SKILL.md` with real instructions. For example:
+Create `skills/release_notes/SKILL.md`:
 
+<!-- example:body -->
 ```markdown
-# Prepare release notes
+# Draft release notes
 
-When asked for release notes, ask for the target version and comparison range only if neither is available from the request or repository tags. Read the existing changelog format and commits in that range. Group user-visible changes as Added, Changed, Fixed, and Removed; skip test-only and refactor-only commits unless they alter behavior. For each item, cite a commit hash or PR identifier from the local history. Check renamed files and breaking config changes against README and migration notes. Draft the release notes in the repository's existing format, ask for approval only if publishing externally, and run the project's Markdown/link checks. Report omitted ambiguous commits and any unverifiable claim.
+Produce release notes from committed changes. A request to explain the process
+needs guidance only; a request for a draft uses the workflow below.
+
+## Inputs
+Use the supplied version and Git comparison range. If absent, inspect existing
+release tags and changelog conventions; ask only when the intended range remains
+ambiguous. Do not invent a version or include uncommitted changes silently.
+
+## Workflow
+1. Read the existing changelog format and commits in the chosen range.
+2. Inspect changed behavior where commit subjects are insufficient. Group items
+   as Added, Changed, Fixed and Removed, or use the project's established format.
+3. Include user-visible effects and breaking changes. Omit test-only/internal
+   refactors unless they alter behavior. Cite a commit hash or PR for each item.
+4. Draft the requested artifact; keep existing release entries intact. Publish
+   only when the user has authorized publishing, not merely drafting.
+
+## Check and deliver
+Verify cited hashes belong to the comparison range and claims match their diffs.
+Run existing Markdown checks when available. If the range is empty, report that
+fact; if a change is ambiguous, identify it rather than inventing an effect.
+Return the draft, comparison range and any unverifiable or omitted changes.
 ```
 
-Register the exact ID in the chosen agent entry in `raw.json`; the JSON fragment below belongs inside `agents.helper` (other agent fields remain as they were):
+The following fragment belongs inside `agents.helper`. Append missing IDs to existing arrays without replacing their contents or order:
 
+<!-- example:registration -->
 ```json
 {
-  "tools": { "use": ["builtin/read_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] },
+  "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] },
   "skills": { "use": ["agent/release_notes"] }
 }
 ```
 
-Keep any existing selected tools and skills that the user still needs. A nonempty `skills.use` requires **both** skill tools in `tools.use`. Use `local/release_notes` instead when the files are in the global root. Do not change `default_agent` merely to add a skill. For a new standalone config, also define `models`, the `agents.helper.model` alias, and optionally `default_agent`; use the `create_agent` skill if that setup is missing.
+Nonempty `skills.use` requires both skill tools. Do not change `default_agent` just to register a skill. If the agent does not exist, use `create_agent`; otherwise preserve its other fields. For global files, select `local/release_notes` instead.
 
-## Verify the real path
+## Create, verify and improve
 
-1. Back up the config and preserve mode 0600. Read the actual target agent and calculate the config-adjacent or global path before writing. Create both files as UTF-8, with the manifest ID matching the folder and a body beneath the output cap.
-2. Make the smallest JSON edit to `agents.<name>.skills.use` and `tools.use`. Reject duplicates and check the selected name does not clash with another skill.
-3. Run `raw --config /work/helper/raw.json config list` for portable config (or `raw config list` for global config). Then run a harmless task with that agent and have it call `list_skills`; verify the catalog contains `release_notes` only when selected. Have it call `load_skill` with `{ "name": "release_notes" }`; verify the exact Markdown arrives as a linked tool result. A local library test may call `loadSelectedSkills` with the same config path to avoid provider traffic.
-4. Confirm the initial provider request has only generic `list_skills`/`load_skill` tool schemas, not the skill catalog/body. On resume, editing a selected skill advances the context revision without rotating Raw's generated cache key; if previously visible metadata/body is stale, Raw appends a reload notice at the tail. The agent should list/load again. An explicit provider cache key retains its own precedence.
+1. Establish the actual config/agent and chosen root. Check existing selected names, create both files, and make the smallest registration edit with a backup of existing config. Keep config mode 0600.
+2. Run `raw --config /work/helper/raw.json config list` (or `raw config list` for canonical config). This checks config, not skill files.
+3. Verify loading without another model call when the `raw-cli` library is available: `loadConfig({configPath, requireModel:false})`, then `loadSelectedSkills({selectedIds: runtime.skillIds, configPath, maxOutputBytes: runtime.maxOutputBytes})`. Or use the configured agent's `list_skills` and `load_skill({name:"release_notes"})` in a suitable run. Confirm the selected name and exact body, not just a successful config parse.
+4. Assess content using a normal task, a boundary case and a near miss. For the example: draft from a known range with verifiable citations; handle an empty range; do ordinary code review without treating it as release-note generation. Review outputs and tool traces for incorrect advice or missing steps. Extra model work is diagnostic.
+5. Improve instructions around evidenced errors. Compare versions on the same inputs/model when useful; record which version produced the result. A mock list/load test proves wiring, not writing quality, and no model test guarantees every future action.
 
-If `config list` succeeds but the skill cannot load, check the selected ID, root relative to the config, UTF-8, symlink containment, output cap, and skill-tool selection. An unselected invalid folder is irrelevant. If a body is too large, tighten the instructions or raise that agent's `max_output_bytes` deliberately; never rely on silent truncation. Do not add secret values to skill Markdown or publish a copied agent directory containing credentials.
+The first request contains no catalog/body; list/load appends them at the tail. Editing a selected skill on resume advances revision but keeps Raw's generated cache key; previously visible content may get a reload notice. The agent must list/load again. If a body is too large, remove redundancy before deliberately changing the agent's cap.
+
+Report paths, selected ID/agent, actual checks and missing dependencies. A valid manifest alone does not prove instruction quality.

@@ -5,7 +5,7 @@ loop-plan/v1
 
 ## Target
 
-Research skill-authoring practice, provide a reusable cheatsheet, and rewrite `configure_raw`, `create_skill`, `create_tool`, `create_agent`, and `add_mcp` into accurate, task-directed instructions usable from an installed Raw package. Prove their examples and evaluate real model behavior, including the user's observed how-to session failure.
+Research skill-authoring practice, provide a reusable cheatsheet, and rewrite `configure_raw`, `create_skill`, `create_tool`, `create_agent`, and `add_mcp` into accurate, task-directed instructions usable from an installed Raw package. Prove that their schemas, examples, registration and verification instructions match Raw. Model behavior is diagnostic evidence, not a deterministic release contract.
 
 ## Scope
 
@@ -20,9 +20,9 @@ Research skill-authoring practice, provide a reusable cheatsheet, and rewrite `c
 1. Initial provider context has no skill catalog/body; discovery and loads remain linked tail results. Preserve selection, cache, resume and compaction behavior.
 2. All five skills work without the source checkout and fit the default 8192-byte cap; catalog also fits. Preserve substantive schema/type guidance rather than replacing it with generic advice.
 3. Explain-only requests do not authorize edits or mandatory smoke tests. Authorized edits proceed without redundant permission requests and preserve unrelated configuration.
-4. Config credentials must not be requested in model-visible output. This rewrite teaches safe inspection; it does not claim that free-form tools enforce secret isolation.
+4. Per the latest user decision, preventing Raw from reading/disclosing config secrets is outside this rewrite's required scope. Do not build a secret-filtering feature or make secret-disclosure observations an acceptance gate.
 5. Examples match current code, including exact tool IDs, model/agent distinction, optional unauthenticated custom endpoints, literal MCP env/header values and canonical-only `sessions`.
-6. Offline tests cannot stand in for real-model skill-quality evidence. Live evaluation is explicit, bounded and local; never part of `npm test` or CI.
+6. Exact schemas, executable examples and installed-package checks are the acceptance gates. Model routing, additional work, tool counts and disclosure are observations only; do not require a 12/12 behavioral pass or iterate solely to enforce model behavior. Any live diagnostic is explicit and local, never part of `npm test` or CI.
 7. All five `SKILL.md` bodies, manifest descriptions and authored example skill bodies/descriptions are English, per the user's implementation clarification. Evaluation prompts may be multilingual.
 
 ## Baseline
@@ -48,7 +48,7 @@ Use the guide's seven adaptable parts: selection, routing, inputs, procedure, co
 
 | Skill | Required outcome and corrections |
 | --- | --- |
-| configure_raw | Explain/change/diagnose existing config; full field/type and provider/request coverage; safe targeted reads and edits; endpoint/auth defaults; model alias versus agent choice; canonical candidate validation; check levels and resume implications |
+| configure_raw | Explain/change/diagnose existing config; full field/type and provider/request coverage; targeted edits and preservation; endpoint/auth defaults; model alias versus agent choice; canonical candidate validation; check levels and resume implications |
 | create_skill | Gather actual tasks and failure examples; write a useful description/body with the cheatsheet's method; strict manifest/root/registration; positive, boundary and near-miss evaluation; exact list/load visibility |
 | create_tool | Decide whether a callable action is needed; clear schema/handler/output/side-effect contract; whole-batch semantic preflight; existing standalone ESM example; correct registration/policy and functional checks |
 | create_agent | Role/prompt/model/tools/skills/MCP/policy composition; reuse existing model where appropriate; preserve default_agent unless requested; distinguish local dependencies from portable assets; verify a copied agent outside the original path |
@@ -58,6 +58,8 @@ Keep model capability examples as user-supplied placeholders; do not claim curre
 
 ### Evaluation design
 
+User amendment (2026-09-26): Phase 1 below is retained as completed diagnostic history. For final qualification, use deterministic contract/example/package checks and content review. Optional candidate diagnostics are limited to the five how-to cases, one per skill; no behavioral pass count, disclosure check or tool-call budget is a release gate. Do not spend retries merely to make a model perform fewer actions. Existing evaluator credential isolation protects its own test infrastructure but is not a requested Raw feature.
+
 Use the existing exported `loadConfig`, `createProvider`, `createRuntimeTools`, `createAgent`, `AgentSession.run`, `transcript` and `stats()` surfaces. A small development runner uses per-case temporary homes/XDG roots/cwd, fake configuration/assets and no persisted production session. Skills from a specified source directory are copied into config-adjacent fixtures; names stay unchanged. All five remain selected so routing is tested against the real competing catalog. Keep prompt, provider settings and tools constant between versions.
 
 Resolve only the selected evaluator model in trusted host code. Real credentials stay in provider memory, never in fixture files, prompts, traces, shell arguments or tool child environments. Sanitize inherited tool environment in the evaluator process. Temporary directories and environment control are not an OS sandbox; no personal paths or production MCP servers are part of the cases. Fake secret markers deliberately remain visible if an unsafe read occurs so grading can detect it. Do not silently redact away a failed behavior.
@@ -66,9 +68,9 @@ Store twelve named cases in `tests/fixtures/setup-skill-evals.json`: one how-to 
 
 Run current and candidate cases once each (24 initial runs total), same selected model/request settings, maximum 12 requests and 120 seconds per case; stop timed-out runs and close sessions/MCP. After a correction, rerun every affected candidate case, including earlier passes, with at most one additional candidate run per case (at most 36 total runs). The runner is explicitly invoked, not an npm test side effect. Capture per-case requests, tool calls, available usage, artifact checks and full model-facing trace; omit reasoning deltas from review artifacts. Report real-model variability and missing usage honestly.
 
-Bind each result to the ordered model-visible catalog hash, per-skill manifest/body hashes, case prompt/fixture hash, evaluator/system-prompt version, and non-secret model/request-settings fingerprint. Record both expected skill dependencies and actual loaded skills. Any catalog description/name/order change invalidates all twelve routing results. A body change invalidates every case expected to use or actually loading that body, including a previously passing how-to or near-miss case. Changes to fixture, prompt, evaluator or model settings invalidate their affected results. Reuse an earlier pass only when all relevant inputs still match the final candidate, with its provenance explicit. Re-run deterministic loading/packaging checks against all final bytes regardless of which live results can be reused. The final report must not aggregate stale passes into AC-11; exhausted retry budget or remaining stale/failing cases leaves live qualification pending without claiming completion or automatically increasing the budget.
+Bind each result to the ordered model-visible catalog hash, per-skill manifest/body hashes, case prompt/fixture hash, evaluator/system-prompt version, and non-secret model/request-settings fingerprint. Record both expected skill dependencies and actual loaded skills. Any catalog description/name/order change invalidates all twelve routing results. A body change invalidates every case expected to use or actually loading that body, including a previously passing how-to or near-miss case. Changes to fixture, prompt, evaluator or model settings invalidate their affected results. Reuse an earlier pass only when all relevant inputs still match the final candidate, with its provenance explicit. Re-run deterministic loading/packaging checks against all final bytes regardless of which live results can be reused. Any diagnostic comparison must identify its evaluated content and limitations. Stale or failing behavioral results do not block this user-amended instruction-correctness scope; do not claim those observations are passing contract tests.
 
-For generic how-to fixtures, the expected trace is list/load followed by an answer without Bash/file exploration or mutation. Execution fixtures must produce the requested usable artifact and preserve unrelated data. Near misses must not load a setup skill. Mechanical grading plus human review must distinguish wrong claims, pointless work, and honest unverified behavior. No exact-prose grading or mock-generated success reports.
+The original twelve-case rubric remains useful for diagnosing model behavior, but its routing, disclosure and detour checks are no longer acceptance requirements. Inspect any final diagnostic answers for incorrect instructions, fix actual content errors, and report model-dependent extra work honestly. No exact-prose grading or mock-generated success reports.
 
 ## Global Gates
 
@@ -76,7 +78,7 @@ For generic how-to fixtures, the expected trace is list/load followed by an answ
 - Focused suites after a build: `node --import tsx --test tests/bundled-skills.test.ts tests/setup-skill-examples.test.ts tests/skill-tools.test.ts`.
 - `git diff --check` and inspection that generated assets match source, every body/catalog fits, all examples have tested insertion locations, and new guide links/package paths exist.
 - No minimum-length or exact-heading test may be used as proof of skill quality. New tests must exercise examples, observable artifacts or evaluation collection/grading.
-- All twelve candidate evaluation cases meet their hard assertions with results valid for the final catalog and relevant body/case/settings hashes; no stale pass counts. Record any limitation instead of claiming universal model reliability. If provider access fails or the fixed retry budget cannot qualify final inputs, mark live qualification pending and do not declare the quality goal complete.
+- Acceptance depends on correct English instructions, actual schema/example/registration checks and installed-package behavior. Live results are optional diagnostics and cannot block completion solely for extra tool work, skill selection or disclosure. Clearly identify final content hashes for any reported observations.
 
 ## Plan Review
 
@@ -161,7 +163,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Phase 2: Rewrite configuration and skill creation guidance
 
-Status: in_progress
+Status: complete
 
 ### Goal
 
@@ -189,7 +191,7 @@ Phase 1 baseline and guide.
 
 ### Behavioral contract
 
-Preserve complete config field/type/request guidance within the cap. Include accurate matching provider/method endpoints, key defaults and unauthenticated custom endpoints. Agent selection never masquerades as a direct model override. Safe reads must exclude secret values before tool output; targeted editing must preserve them locally. Canonical candidate validation retains sessions data. Explain static schema checks separately from prompt/asset/runtime checks.
+Preserve complete config field/type/request guidance within the cap. Include accurate matching provider/method endpoints, key defaults and unauthenticated custom endpoints. Agent selection never masquerades as a direct model override. Targeted editing must preserve unrelated configuration. Canonical candidate validation retains sessions data. Explain static schema checks separately from prompt/asset/runtime checks.
 
 `create_skill` teaches coherent scope, selection description, inputs, procedures, examples, verification, output expectations and near-miss evaluation, then registration. Its worked skill must demonstrate those principles and remain usable when copied to a config-local root.
 
@@ -199,11 +201,11 @@ Use the guide's terminology. Clearly label complete documents versus fragments. 
 
 ### Tests first
 
-Extend executable examples with a synthetic secret-bearing existing config, retained unrelated values and canonical sessions. Verify taught safe-inspection/edit example output omits sentinel values and invalid candidate handling leaves the original intact. Validate custom endpoint without a key, alias assignment, and a newly created skill's actual manifest/list/load behavior. Replace fragile fence-order selection with explicit example labels where needed.
+Test the taught canonical-candidate validation command with sessions and an unauthenticated custom endpoint; reject an invalid candidate without changing the source document. Validate model alias assignment and a newly created skill's actual manifest/list/load behavior. Replace fragile fence-order selection with explicit example labels where needed. No dedicated secret-safe edit helper or leakage regression is required by the updated scope.
 
 ### Anti-shortcut coverage
 
-A rewrite that merely says 'never display secrets', drops schema detail to fit, or passes only keyword/length checks fails review. A temporary alternate config that drops `sessions` to pass validation also fails. General how-to must not run repository discovery or nested model tests.
+A rewrite that drops schema detail to fit or passes only keyword/length checks fails review. A temporary alternate config that drops `sessions` to pass validation also fails. The prose must distinguish explanation from requested changes without promising control over every model action.
 
 ### Implementation obligations
 
@@ -211,10 +213,10 @@ Rewrite both bodies/descriptions, bump versions to `1.1.0`, preserve identities 
 
 ### Acceptance criteria
 
-- [ ] AC-5: Both descriptions/bodies satisfy the authoring guide and existing schema coverage under 8192 bytes — source/loader inspection.
-- [ ] AC-6: Safe example preserves unrelated config and credentials, validates canonical sessions, and emits no sentinel — executable examples.
-- [ ] AC-7: New skill example can be registered, listed and loaded and teaches evaluation beyond file format — loader tests and review.
-- [ ] AC-8: A walkthrough against the fixed how-to/effectful cases finds unambiguous routing, correct model-auth advice and no instruction to expose complete config — implementation review; final model behavior is gated by AC-11.
+- [x] AC-5: Both descriptions/bodies satisfy the authoring guide and existing schema coverage under 8192 bytes — source/loader inspection.
+- [x] AC-6: Taught canonical-candidate validation accepts sessions and an unauthenticated custom endpoint, rejects an invalid candidate, and leaves the source document intact — executable examples.
+- [x] AC-7: New skill example can be registered, listed and loaded and teaches evaluation beyond file format — loader tests and review.
+- [x] AC-8: A walkthrough against the fixed how-to/effectful cases finds unambiguous routing, correct model-auth advice and correct verification scope — implementation review; final content correctness is gated by AC-11.
 
 ### Focused verification
 
@@ -239,6 +241,8 @@ Implementation review is required; verdict must be APPROVE.
 `docs: rewrite Raw configuration and skill authoring instructions`
 
 ## Phase 3: Rewrite tool, agent and MCP guidance and qualify the kit
+
+Status: in_progress
 
 ### Goal
 
@@ -290,7 +294,7 @@ Rewrite the remaining descriptions/bodies, set versions `1.1.0`, regenerate exam
 
 - [ ] AC-9: Three remaining skills follow routing/contract/verification requirements and preserve their working examples — review and functional tests.
 - [ ] AC-10: All five final installed skill bodies and generated copies match, fit caps and work outside checkout; guide is packaged — package tests.
-- [ ] AC-11: All twelve candidate real-model cases pass hard outcome/disclosure/scope assertions with non-stale evidence for the final catalog and relevant body/case/settings hashes; quality and usage comparison records provenance — final evaluation report and stale-result checks.
+- [ ] AC-11: All five English bodies/descriptions are reviewed against the actual Raw contracts; diagnostic observations, if run, identify their content and remain distinct from contract-test results — content review and evidence report. No 12/12 model-behavior gate.
 - [ ] AC-12: Local regression suite and diff checks pass; no unrelated config/runtime/CI change — test output and final diff review.
 
 ### Focused verification
@@ -299,9 +303,9 @@ Rewrite the remaining descriptions/bodies, set versions `1.1.0`, regenerate exam
 
 `node --import tsx --test tests/bundled-skills.test.ts tests/setup-skill-examples.test.ts tests/skill-tools.test.ts tests/setup-skill-evaluation.test.ts`
 
-`node --import tsx scripts/evaluate-setup-skills.mjs --variant candidate --agent raw --skills-root src/skills/bundled --output /tmp/raw-setup-skills-candidate`
+Optional per-skill diagnostic: `node --import tsx scripts/evaluate-setup-skills.mjs --variant candidate --agent raw --skills-root src/skills/bundled --output /tmp/raw-setup-skills-candidate --case config-how` (similarly skill-how, tool-how, agent-how, mcp-how). The old aggregate may exit 1 for unrun or behavioral cases; that is not a release-gate failure.
 
-Expected: deterministic checks pass and live report supplies real evidence for each candidate case; compare against Phase 1 baseline, then correct evidenced failures and rerun all affected cases (including earlier passes) within the stated retry bound. If a correction leaves any final-input case unqualified after the budget is spent, report live qualification pending instead of combining stale passes.
+Expected: deterministic checks pass and review finds accurate instructions/examples. Correct actual content defects. If live diagnostics are run, report their limitations; do not retry simply to eliminate model-dependent extra actions or disclosure.
 
 ### Phase gates
 
@@ -322,9 +326,9 @@ Implementation review is required; verdict must be APPROVE.
 - [ ] Research-backed authoring cheatsheet is finalized, linked and shipped.
 - [ ] All five skills and descriptions are rewritten, versioned and synchronized with examples.
 - [ ] Exact Raw schema/registration/runtime boundaries are preserved and correctly taught.
-- [ ] Reported how-to disclosure/over-exploration failure is covered with fake credentials and evaluated against the final kit.
+- [ ] Explanation/change/diagnosis routes are clear; no enforcement or acceptance promise is made about model-dependent extra work or secret reads.
 - [ ] Functional, installed-package and local repository checks pass.
-- [ ] Real-model evidence distinguishes quality improvements from deterministic wiring tests, qualifies the final relevant inputs rather than mixed stale revisions, and acknowledges limitations.
+- [ ] Any real-model evidence identifies its evaluated inputs and limitations, separately from deterministic instruction/example/package acceptance.
 - [ ] All phase reviews are APPROVE and cohesive local commits exist; user config and GitHub Actions remain untouched.
 
 ## Progress Log
@@ -338,3 +342,7 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: User clarified that skill bodies and descriptions must be English. Applied as invariant 7 and a final content-review requirement.
 
 - 2026-09-26: Phase 1 complete, self-review APPROVE. Seven runner tests/typecheck/diff checks pass. Baseline: 12 live runs, 88 requests, 95 tool calls; raw mechanical 2/12, human-adjudicated 3/12 after documented interpreter-cache false positive. Snapshot/traces retained privately; nine synthetic-disclosure traces and three max-step runs confirm the target gaps. Phase 2 in_progress.
+
+- 2026-09-26: User explicitly removed Raw secret-disclosure concerns and model extra-work control from scope. Updated invariants, Phase 2 tests/AC-6/AC-8, global gates and Phase 3 AC-11: focus on correct English guidance, schemas, runnable examples and registration. The completed baseline remains diagnostic history; no 12/12 behavioral gate, no new secret-safe editing helper, no retries solely to enforce model behavior.
+
+- 2026-09-26: Phase 2 complete, self-review APPROVE under the user-amended scope. Both English skills/descriptions rewritten at 1.1.0, generated copies synchronized; 14 focused tests, typecheck and diff checks pass. Named examples verify canonical sessions validation, invalid endpoint rejection without source mutation, and skill loading without provider credentials. All bodies fit 8192 bytes. Phase 3 in_progress.

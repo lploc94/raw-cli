@@ -1,7 +1,7 @@
 {
   "api_version": 1,
   "id": "configure_raw",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "configure_raw",
-  "description": "Edit and validate Raw's strict JSON config: models, agents, prompts, tools, skills, MCP, policies, limits and resume behavior."
+  "description": "Use to explain, edit or diagnose existing Raw config fields: model connections, agent settings, prompts, limits and policies. For creating a new skill, tool, agent or MCP connection, use its dedicated setup skill."
 }

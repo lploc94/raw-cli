@@ -2,6 +2,8 @@
 
 Implementation in progress. This report distinguishes deterministic contract tests from actual model behavior; mock-provider success is not a quality claim.
 
+User scope amendment (2026-09-26): correct English skill guidance is the acceptance target. Raw secret disclosure and extra model work are not requirements to enforce. The original twelve-case rubric below is historical diagnostic evidence, not a 12/12 release gate. Final acceptance uses content review and executable schema/example/registration/package checks; optional final diagnostics cover the five how-to cases without behavior-driven retries.
+
 ## Reproduce locally
 
 Build once with `npm run build`. Then explicitly run:
@@ -45,3 +47,7 @@ Phase 1 red/green: the new test file first failed because the runner module did 
 ## Candidate
 
 Pending final rewrite and evaluation. No quality pass is claimed yet.
+
+## Phase 2 contract verification
+
+The rewritten English `configure_raw` and `create_skill` descriptions/bodies are version 1.1.0. Red evidence: named example tests failed before the examples existed. Green: 14 focused bundled/example/skill-tool tests, typecheck and diff checks passed. The canonical validation snippet preserves `sessions`, accepts an unauthenticated custom endpoint and rejects an invalid endpoint without changing the input. The creation example loads even when the selected upstream credential is absent (`requireModel:false`). Source/generated assets fit the existing 8192-byte cap. Implementation self-review: **APPROVE**. No behavior-control or secret-filtering feature was added.

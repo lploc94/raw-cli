@@ -76,14 +76,13 @@ This is a writing aid, not a parser schema or a mandatory list of headings. A cr
 
 ## Rules specific to the setup kit
 
-- **Read only what the task needs.** For generic how-to questions, the loaded instructions should be sufficient. Do not inspect a repository, create a test server, or clone configs merely to explain a field.
-- **Keep credentials out of tool results as well as answers.** Start with `raw config list` for its supported summary. For other fields, parse locally and emit an explicit selection of non-secret values. Do not dump complete config, environment, credential-bearing URLs, headers, or unfiltered diffs. A local editing process can preserve secret fields without printing them. This is agent guidance, not an enforced runtime boundary.
+- **Match the procedure to the request.** For generic how-to questions, the loaded instructions should be sufficient. Avoid making repository inspection or a demo server a mandatory prerequisite to explaining a field.
 - **Respect the requested edit.** Preserve unrelated agents, defaults, selected tools/skills and ordering. Reuse authorization already given; ask only for missing choices that prevent a correct edit.
 - **Make examples honest.** Label placeholders and fragments. Do not invent available model IDs, context capacities, MCP tool names, environment interpolation, or CLI flags.
 - **Distinguish verification levels.** `raw config list` validates configuration structure. Loading a prompt/plugin and calling a selected MCP tool require their own checks. In particular, `sessions` is canonical-only: validating a copied canonical config as an arbitrary alternate file will fail. Stage such a candidate as `raw/config.json` under a temporary `XDG_CONFIG_HOME`, preserving its `sessions` data; static config validation does not require copying prompt/tool/skill folders.
 - **Stop when the request is answered.** Smoke tests are conditional on the requested change. Do not start a recursive model task solely to prove a prose explanation.
 
-These rules come from Raw's contracts and session `81e1b669-7fba-4f85-91a6-f971309c6dcc`: a generic model-configuration question triggered extensive exploration and a full credential-bearing config read. Do not copy the private transcript into fixtures; use synthetic sentinel credentials.
+These rules are grounded in Raw's contracts and real setup sessions. The user clarified that the target is correct, useful instructions: extra model actions and Raw config secret reads are not acceptance criteria or new runtime controls.
 
 ## Evaluate discovery and execution separately
 
@@ -94,11 +93,10 @@ For each of the five setup skills, include a how-to request and an execution req
 - Whether the appropriate skill was listed/loaded and whether unrelated skills stayed unloaded.
 - Whether examples parse/load/execute under Raw's real contracts.
 - Whether the requested files/settings changed while unrelated data survived.
-- Whether any synthetic secret appeared in model-facing calls/results or final text.
 - Whether validation claims match checks actually run.
 - Tool calls, requests, context/usage when available, and unnecessary work.
 
-Use deterministic tests for schemas, manifests, artifact behavior and packaging. Use real-model runs and human inspection for selection, instruction-following and response quality. Scripted mock-provider calls test wiring; they cannot prove that a model understood the skill. Avoid exact-sentence assertions and word-count gates. A bounded successful evaluation is evidence for those cases/model settings, not a guarantee for every model.
+Use deterministic tests for schemas, manifests, artifact behavior and packaging. Use real-model runs and human inspection for selection, instruction-following and response quality. Scripted mock-provider calls test wiring; they cannot prove that a model understood the skill. Avoid exact-sentence assertions and word-count gates. A bounded evaluation is diagnostic evidence for those cases/model settings, not a guarantee of every model action. Correct schemas, runnable examples and accurate instructions are this kit's acceptance criteria; model-dependent extra work is not a release gate.
 
 ## Pre-ship checklist
 
@@ -107,7 +105,6 @@ Use deterministic tests for schemas, manifests, artifact behavior and packaging.
 - Body supplies Raw-specific knowledge and a clear next action.
 - How-to, change and diagnosis paths do only their relevant work.
 - Examples have exact insertion locations and pass real contract checks.
-- Secret-safe inspection and preservation apply before any config read/edit.
 - Required information is available from the installed package.
 - Body and catalog fit the actual byte cap.
 - Source and generated examples match; packed consumers load all five bodies.
