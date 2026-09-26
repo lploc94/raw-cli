@@ -569,10 +569,10 @@ Create a tool with import-time side effects, browse/edit its files and assert th
 ### Implementation obligations
 Expose all existing advanced settings through the validated editor without duplicating schemas in form-only defaults. Load CodeMirror lazily; protect dirty drafts; retain unknown-to-form supported fields. Report real prerequisites/errors instead of treating a save as a successful MCP connection.
 ### Acceptance criteria
-- [ ] AC-6.1: Users create/edit/select each declared component type and run a composed agent — proven by API and browser tests.
-- [ ] AC-6.2: Passive management has no execution side effects and stale/invalid saves preserve original data — proven by sentinels/conflict tests.
-- [ ] AC-6.3: Saved changes affect the next turn and existing sessions remain usable — proven by multi-turn browser/CLI tests.
-- [ ] AC-6.4: Settings search, setup/repair, dirty-draft protection and explicit persistence scopes work without hidden runtime calls or unrelated-file writes — proven by settings API/browser tests.
+- [x] AC-6.1: Users create/edit/select each declared component type and run a composed agent — proven by API and browser tests.
+- [x] AC-6.2: Passive management has no execution side effects and stale/invalid saves preserve original data — proven by sentinels/conflict tests.
+- [x] AC-6.3: Saved changes affect the next turn and existing sessions remain usable — proven by multi-turn browser/CLI tests.
+- [x] AC-6.4: Settings search, setup/repair, dirty-draft protection and explicit persistence scopes work without hidden runtime calls or unrelated-file writes — proven by settings API/browser tests.
 ### Focused verification
 `node --import tsx --test tests/dashboard-management.test.ts tests/management-config.test.ts tests/management-components.test.ts`
 `npm run test:web -- tests/dashboard-ui/management.spec.ts tests/dashboard-ui/settings.spec.ts --project=chromium`
@@ -693,8 +693,8 @@ Implementation review is required; verdict must be APPROVE.
 | 2 | complete | `4365df3`; 20 focused, 484 full tests; self-review APPROVE |
 | 3 | complete | `1f3911a`; 16 focused tests (including ACP), 494 full tests; self-review APPROVE |
 | 4 | complete | `80d15fe`; 41 focused, 512 full tests; self-review APPROVE |
-| 5 | complete | 25 Chromium scenarios, 513 Node tests; screenshots and self-review APPROVE |
-| 6 | pending | Depends on 2–5 |
+| 5 | complete | `1d4c725`; 25 Chromium scenarios, 513 Node tests; screenshots and self-review APPROVE |
+| 6 | complete | 19 focused, 523 Node, 36 Chromium scenarios; self-review APPROVE |
 | 7 | pending | Depends on 2–6 |
 | 8 | pending | Depends on 1–7 |
 
@@ -705,3 +705,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26 Phase 4: Added authenticated workspace/session/history/receipt/metrics/activity APIs, typed replayable SSE, fixed-deadline conditional approvals, explicit Stop and compaction, and UTF-8 paged live spooling. Red HTTP tests initially returned 404. Real-provider/tool tests prove duplicate submissions execute one sentinel, two tabs converge after disconnect, stale cursors reset, large multibyte output survives replay eviction, approvals deny/expire/cancel, and CLI → web → CLI selections stabilize. Manual/automatic compact and rollback keep old history; reads neither infer nor refresh retention. Review found and fixed concurrent SDK MCP closes returning before child reaping, and expired dead-writer tokens blocking idle deletion. Final sequential build/check passed 512/512; the prescribed focused CLI/ACP/dashboard command passed 41/41; whitespace passed. An earlier overlapping rebuild invalidated a CLI test run; only the final sequential gates are qualification evidence. Self-review APPROVE. Metrics/activity remain in the cohesive session adapter; no product scope change.
 
 - 2026-09-26 Phase 5: Shipped the bundled React/Vite chat workspace, typed fetch-SSE client, receipt recovery, Markdown/highlighting, work/tool/compaction views, current/last context and capability inspector, responsive navigation, activity, keyboard palette and validated browser-only preferences. Tests first: built-asset GET returned 503 before the app existed; browser cases then exposed fixture wire-field/option issues, focus/label issues, a late-response state/draft race, legacy reused call-ID grouping and clipped 320 px navigation. Fixed each with focused regressions. Dynamic library styles use a per-document nonce without allowing arbitrary inline scripts/styles. Final build/typecheck and `npm run check` passed 513/513; prescribed focused Chromium files and the all-Chromium gate passed 25/25; whitespace passed. Reviewed screenshot/reflow/keyboard evidence is in docs/evidence/local-dashboard.md. Self-review APPROVE for this phase; installed/all-engine and remaining manual qualification remain Phase 8. Management/package pages are completed by their dependent phases.
+
+- 2026-09-26 Phase 6: Added revision-aware management routes, passive catalogs, agent/model/source editors, ordered selections and shared-parser policy samples, explicit cancellable var/MCP checks, scoped Settings/search/setup/repair, lazy nonce-aware CodeMirror and protected drafts. Initial HTTP/browser contracts were red on missing routes/editors. Regression coverage exposed and fixed object-key agent creation, policy preview visibility, navigation-history duplication and stale credential form state. Real source/prompt edits during an active tool prove current snapshot isolation and next-turn reconciliation/stable follow-up on one session ID. Final prescribed focused checks passed 19/19 Node and 11/11 Chromium; `npm run check` passed 523/523; all Chromium passed 36/36; whitespace passed. An overlapping earlier rebuild invalidated one PTY run; only the final complete gate logs qualify this phase. Reviewed three management screenshots and light/dark/narrow accessibility checks. Self-review APPROVE: checked passive reads, credential operations, canonical retention, source containment, revisions/drafts, check deadlines/cleanup and exact MCP identities. Definitions expose the existing strict JSON schema; no new component/config format was introduced.

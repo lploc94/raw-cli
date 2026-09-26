@@ -34,3 +34,42 @@ Pending approval includes a random approval ID, operation ID, tool call ID, exac
 Stop requests cancellation; the receipt becomes terminal after owned startup/runtime cleanup finishes. Concurrent MCP initialization failure and host cancellation share one transport-close promise, and a stdio child must report close before that cleanup settles.
 
 `GET /api/activity` returns bounded metadata for this server's active/recent operations and pending approval identities. It excludes transcript and argument bodies. Polling never starts a runtime, renews retention or extends approval deadlines. Work owned by another CLI/ACP process has committed-history refresh only, without fabricated live deltas or control rights.
+
+## Management
+
+All paths below are relative to `/api`. Writes use the displayed config authority.
+`revision` is the content hash returned by the corresponding read. A stale write
+returns `409 conflict` with `error.details.revision`; it never overwrites the file.
+Validation failures return `422 invalid_input` and leave disk unchanged.
+
+| Method / path | Request and result |
+| --- | --- |
+| GET `/config` | Path, canonical flag, revision, existence/validity, default agent, resource names and safe model metadata; no literal credentials or variable readings |
+| POST `/config/initialize` | Shared CLI starter; fails if the file already exists |
+| GET `/config/document` | Explicit advanced editor: full `{source, revision, path, canonical, exists, diagnostic?}` held only in editor memory |
+| PUT `/config/document` | `{revision, source}`; strict JSON, validated at the actual config path |
+| POST `/config/validate` | `{source}`; static validation only |
+| PATCH `/config` | `{revision, patch}`; top-level replacement, `null` removes a field; absent fields preserved |
+| GET `/agents/:name`, `/models/:name` | Explicit resource editor `{value, revision}`; model keys omitted, with credential presence/reference metadata |
+| POST `/agents`, `/models` | `{revision, action, name, value?, newName?, credential?}`; create/patch/duplicate/rename/delete/default (default only for agents) |
+| GET `/components/:kind` | Passive catalog (`tools` or `skills`), provenance, usages and per-row validation |
+| GET `/components/:kind/:id` | Component detail; ID URL-encoded as one segment |
+| POST `/components/:kind` | `{id, files}` to create, or `{id, cloneFrom}` to fork; no implicit selection |
+| GET/PUT `/components/:kind/:id/file?path=...` | Read `{source,revision}` or save `{source,revision}`; contained owned text file only |
+| POST `/components/:kind/:id/selection` | `{agent,revision,selected}`; attach/detach, skill prerequisites checked |
+| DELETE `/components/:kind/:id` | Refuses used/read-only assets; does not remove sessions |
+| POST `/policy/test` | `{identity,rules,args}`; returns effective `effect` using runtime policy, without dispatching a command |
+| POST `/checks` | `{kind:"var"|"mcp",agent,name,revision}`; returns `202` receipt with ID; explicit execution only |
+| GET `/checks/:id` | State (`running/completed/error/cancelled`), result/error; no rerun on GET |
+| POST `/checks/:id/cancel` | Cancels owned check; terminal state follows provider/MCP cleanup |
+| GET `/diagnostics` | Allowlisted version/platform/config/store counts, no transcript, credentials, env/header values, command arguments or check readings |
+
+Model credential changes use `{mode:"keep"}`, `{mode:"clear"}`, or
+`{mode:"set",value:"..."}` / `{mode:"set",env:"ENV_NAME"}`. A missing credential
+operation means keep; masked placeholders are never written. Full section edits
+for vars/providers/MCP and advanced settings use the explicit document editor.
+Checks have a fixed 30-second deadline, at most eight concurrent jobs and bounded
+in-memory receipts; disconnect does not restart a check. MCP checks discover and
+validate advertised schemas, never invoke a tool, and close the connection before
+completion. Variable checks obey the selected agent's access contract and use a
+fresh resolver (returned `cached` is honest; runtime TTL caching is independent).

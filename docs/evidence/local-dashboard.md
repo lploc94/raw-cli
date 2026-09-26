@@ -16,3 +16,21 @@ Host: macOS 26.6.2, arm64, Node 26.0.0. Chromium 153.0.8010.12. Tests use tempor
 The 320 CSS px checks are reflow evidence, not a claim that native browser zoom or a screen reader was exercised. Full final qualification and its remaining manual limitations will be recorded below. Automated accessibility scans alone do not establish full WCAG conformance.
 
 Screenshots and their reproduction command are in [the dashboard guide](../dashboard.md#layout-examples). Source-server checks do not substitute for the later installed-artifact test.
+
+## Management layer
+
+The authenticated HTTP tests cover actual config/source writes and fixed-revision
+conflicts, strict repair, legal resource names, read-only forks, detach-before-delete,
+no passive imports, explicit var access, MCP discovery/cancellation and diagnostic
+allowlists. A running real tool retains its imported helper snapshot while its
+helper, selected skill and prompt are edited; the next turn sees the edits and an
+unchanged third turn preserves its prefix on the same session ID.
+
+Chromium management/Settings scenarios cover creating and running a composed agent,
+forking/attaching skills, editing tool code without importing it until a turn starts,
+vars definitions/read, MCP definitions/discovery/exact selection, model edits and
+credential keep/clear, setup/repair, key-based Settings search, stale draft review,
+Ctrl/Cmd-S and Back/Discard history behavior. Editors pass light/dark accessibility
+scans and 320 CSS px reflow with no CSP/page errors. Three management screenshots
+were visually inspected; reproduction is in the dashboard guide. Source edits and
+browser credentials remain in editor memory, outside the preferences store.

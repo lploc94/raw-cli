@@ -16,7 +16,7 @@ function validName(name: string): void {
 
 export function editAgent(options: ConfigEditOptions, edit: ResourceEdit) {
   return mutateConfig(options, (data) => {
-    validName(edit.name); const agents = record(data.agents); data.agents = agents;
+    validName(edit.name); const agents = Object.assign(Object.create(null) as Record<string, unknown>, record(data.agents)); data.agents = agents;
     const exists = Object.hasOwn(agents, edit.name);
     if (edit.action === "create") {
       if (exists) throw new ManagementError("conflict", "agent already exists");
@@ -50,7 +50,7 @@ export function patchRecord(current: Record<string, unknown>, fields: Record<str
 }
 export function editModel(options: ConfigEditOptions, edit: ResourceEdit) {
   return mutateConfig(options, (data) => {
-    validName(edit.name); const models = record(data.models); data.models = models;
+    validName(edit.name); const models = Object.assign(Object.create(null) as Record<string, unknown>, record(data.models)); data.models = models;
     if (edit.action === "default") throw new ManagementError("invalid_input", "models have no default; select a default agent");
     if (edit.action === "create") {
       if (Object.hasOwn(models, edit.name)) throw new ManagementError("conflict", "model already exists");

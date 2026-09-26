@@ -13,6 +13,7 @@ import { DASHBOARD_API_VERSION, type DashboardBootstrap } from "./contract.js";
 import { DashboardError, json, readJson, sendError } from "./errors.js";
 import { serveDashboardStatic } from "./static.js";
 import { createSessionRoutes } from "./sessions.js";
+import { createManagementRoutes } from "./management.js";
 
 export type DashboardRoute = (request: IncomingMessage, response: ServerResponse, context: DashboardContext) => Promise<boolean>;
 export interface DashboardContext {
@@ -49,7 +50,7 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
   } catch (error) { context.store?.close(); delete context.store; context.storeDiagnostic = error instanceof Error ? error.message : String(error); }
   const assetsRoot = options.assetsRoot ?? join(packageRoot(), "dist", "dashboard");
   let routes: DashboardRoute[];
-  try { routes = [...createSessionRoutes(context, options.attach), ...(options.routes?.(context) ?? [])]; }
+  try { routes = [...createSessionRoutes(context, options.attach), ...createManagementRoutes(context), ...(options.routes?.(context) ?? [])]; }
   catch (error) {
     controller.abort(); await context.operations?.close();
     await Promise.allSettled(cleanup.map((fn) => Promise.resolve().then(fn)));

@@ -45,3 +45,41 @@ These screenshots use a disposable workspace and a mock provider. Reproduce them
 | Narrow, 320×900 | [View](dashboard/chat-light-narrow.png) | [View](dashboard/chat-dark-narrow.png) |
 
 [Context inspector](dashboard/chat-dark-inspector.png) shows estimates, available usage, measurement coverage and the last attached capabilities. Older measurements may be unavailable or stale; viewing them does not start a model or tool.
+
+## Customize your agents
+
+Agents selects a model, a literal or file prompt, and ordered tools, skills and
+vars. JSON views expose all existing request/cache/compact/policy fields and
+package overrides. Skill selections require the list/load skill tools. Policy
+samples evaluate the actual ordered rules without running the sample command.
+
+Library shows component provenance, usages and static validation. Fork a builtin
+or immutable package into a local component before editing it. Each source file
+has its own Save and revision. Creating/forking leaves the component unselected;
+attach it to an agent explicitly. Linked package files are their authored source.
+A tool's manifest name controls its model-facing name; package selections also
+support the existing `{ref, as, inputs}` binding. No new alias syntax is added.
+
+Changes apply on the next turn, including in an existing session. Saving never
+cancels an active run. Unsaved editor state has Save/Discard controls and a
+navigation guard; a conflict keeps the draft and offers reload or explicit
+reapplication after reviewing the latest revision. Ctrl/Cmd-S saves the active
+editor. Advanced config is strict JSON, with no comments or trailing commas.
+
+Settings separates **This browser**, **Raw config** and **This agent**. Search
+matches labels and actual config keys. Missing config can initialize the same
+starter as `raw config init`; invalid config opens the source repair editor.
+Retention belongs to the canonical config, so alternate-config dashboards show
+its location without writing that other file. Diagnostics copy uses an allowlist.
+Model saves perform validation only; Start test chat uses the ordinary composer.
+Vars Read and MCP Discover are explicit, cancellable actions. Merely opening
+Library or saving a definition does not execute a provider or connect to MCP.
+
+Agent and source editor examples (isolated fixture data):
+
+![Agent editor in dark mode](dashboard/agent-dark-desktop.png)
+![Agent editor in light mode](dashboard/agent-light-desktop.png)
+![Read-only tool source with syntax highlighting](dashboard/tool-dark-desktop.png)
+
+Reproduce these images after building with
+`node --import tsx tests/dashboard-ui/capture-management.ts`.

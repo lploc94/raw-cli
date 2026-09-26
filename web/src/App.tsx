@@ -22,6 +22,10 @@ import { usePreferences } from "./preferences.js";
 import { Link, useRouter } from "./router.js";
 import { Empty, ErrorMessage, Field, Modal } from "./ui.js";
 import { PreferencesPage } from "./pages/Preferences.js";
+import { AgentsPage } from "./pages/Agents.js";
+import { ComponentsPage } from "./pages/Components.js";
+import { DefinitionsPage } from "./pages/Definitions.js";
+import { SettingsPage, SettingsSearch } from "./pages/Settings.js";
 
 interface ActivityView {
   operations: Array<{
@@ -314,6 +318,7 @@ export function App() {
         </>
       ) : page === "settings" ? (
         <nav aria-label="Settings categories" className="context-nav">
+          <SettingsSearch />
           <div className="group-label">Settings</div>
           {categories.map((name) => (
             <Link
@@ -321,9 +326,11 @@ export function App() {
               href={`/settings/${name}`}
               aria-current={path.endsWith(`/${name}`) ? "page" : undefined}
             >
-              {name === "chat"
-                ? "Chat"
-                : name[0]!.toUpperCase() + name.slice(1)}
+              {name === "models"
+                ? "Models & connections"
+                : name === "chat"
+                  ? "Chat"
+                  : name[0]!.toUpperCase() + name.slice(1)}
             </Link>
           ))}
         </nav>
@@ -534,39 +541,31 @@ export function App() {
                 setValue={setPreferences}
               />
             ) : page === "agents" ? (
-              <div className="management-page">
-                <span className="scope">Raw config</span>
-                <h1>Agents</h1>
-                <p className="muted">
-                  Choose an agent to start a new conversation.
-                </p>
-                <div className="resource-list">
-                  {bootstrap.config.agents.map((name) => (
-                    <div className="resource-row" key={name}>
-                      <Bot size={20} aria-hidden="true" />
-                      <strong>{name}</strong>
-                      <button
-                        onClick={() => {
-                          void create(name);
-                        }}
-                      >
-                        New chat <ArrowRight size={16} aria-hidden="true" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <AgentsPage changed={refreshBootstrap} createChat={create} />
+            ) : page === "settings" ? (
+              <SettingsPage
+                key={path}
+                changed={refreshBootstrap}
+                createChat={create}
+              />
+            ) : page === "library" &&
+              ["tools", "skills"].includes(path.split("/")[2] ?? "tools") ? (
+              <ComponentsPage
+                key={path}
+                kind={path.split("/")[2] === "skills" ? "skills" : "tools"}
+                changed={refreshBootstrap}
+              />
+            ) : page === "library" &&
+              ["vars", "mcp"].includes(path.split("/")[2] ?? "") ? (
+              <DefinitionsPage
+                key={path}
+                kind={path.split("/")[2] === "mcp" ? "mcp" : "vars"}
+                changed={refreshBootstrap}
+              />
             ) : (
               <div className="management-page">
-                <span className="scope">Raw config</span>
-                <h1>{page === "settings" ? "Settings" : "Library"}</h1>
-                <p className="muted">{bootstrap.configPath}</p>
-                <p>Use the navigation to choose a category.</p>
-                {!bootstrap.config.valid && (
-                  <ErrorMessage>
-                    {bootstrap.config.diagnostic ?? "No config exists yet."}
-                  </ErrorMessage>
-                )}
+                <h1>Packages</h1>
+                <p>Portable package management.</p>
               </div>
             )}
           </main>

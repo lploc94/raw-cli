@@ -328,10 +328,14 @@ function toolSpec(raw: unknown, where: string): { ids: readonly string[]; rules:
     return name;
   });
   if (new Set(ids).size !== ids.length) throw new Error(where + ".use contains duplicate IDs");
-  if (value.rules === undefined) return { ids, rules: [] };
-  if (!Array.isArray(value.rules)) throw new Error(where + ".rules must be an array");
-  const rules = value.rules.map((rawRule, index) => {
-    const ruleWhere = `${where}.rules[${index}]`;
+  return { ids, rules: parseToolPolicyRules(value.rules, where + ".rules") };
+}
+
+export function parseToolPolicyRules(raw: unknown, where = "tools.rules"): ToolPolicyRule[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error(where + " must be an array");
+  return raw.map((rawRule, index) => {
+    const ruleWhere = `${where}[${index}]`;
     const rule = object(rawRule, ruleWhere);
     keys(rule, ["match", "effect", "when"], ruleWhere);
     const match = string(rule.match, ruleWhere + ".match");
@@ -348,7 +352,6 @@ function toolSpec(raw: unknown, where: string): { ids: readonly string[]; rules:
     }
     return { match, effect, ...(when ? { when } : {}) };
   });
-  return { ids, rules };
 }
 
 function skillSpec(raw: unknown, where: string): readonly string[] {

@@ -73,7 +73,11 @@ export class ToolRegistry {
   }
 
   private effect(tool: ToolRegistration, args?: Record<string, unknown>): ToolPolicyRule["effect"] {
-    const identity = tool.canonicalName ?? tool.name;
+    return this.policyEffect(tool.canonicalName ?? tool.name, args);
+  }
+
+  /** Inspect policy without registering, importing, or dispatching a tool. */
+  policyEffect(identity: string, args?: Record<string, unknown>): ToolPolicyRule["effect"] {
     let effect: ToolPolicyRule["effect"] = "allow";
     for (const rule of this.rules) if (rule.match.matches(identity)
       && (rule.when === undefined || (args !== undefined && matchesWhen(rule.when, args)))) effect = rule.effect;

@@ -20,5 +20,5 @@ export function isDashboardPage(path: string): boolean {
   return path === "/" || /^\/chat(?:\/[^/]+)?\/?$/.test(path)
     || /^\/agents(?:\/[^/]+)?\/?$/.test(path)
     || /^\/library(?:\/(?:tools|skills|vars|mcp|packages)(?:\/[^/]+)?)?\/?$/.test(path)
-    || /^\/settings(?:\/(?:general|models|appearance|chat|sessions|diagnostics))?\/?$/.test(path);
+    || /^\/settings(?:\/(?:general|models(?:\/[^/]+)?|appearance|chat|sessions|diagnostics))?\/?$/.test(path);
 }
