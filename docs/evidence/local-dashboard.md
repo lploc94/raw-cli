@@ -1,6 +1,6 @@
 # Local dashboard qualification
 
-The eight-phase dashboard implementation is undergoing its final exact-HEAD gates.
+The eight-phase dashboard implementation and its final committed-HEAD gates are complete.
 The phase qualification results below are actual runs on macOS 26.6.2 (25G83),
 arm64, Node 26.0.0. Linux and Windows were not qualified in this work. GitHub
 Actions stayed disabled; no global install, personal Raw config edit or publication
@@ -90,7 +90,7 @@ verdict in this session on 2026-09-26.
 Automated accessibility scans and this bounded manual smoke do not establish full
 WCAG conformance or comprehensive assistive-technology coverage.
 
-Screenshots and their reproduction command are in [the dashboard guide](../dashboard.md#layout-examples). Source-server checks do not substitute for the later installed-artifact test.
+Screenshots and their reproduction command are in [the dashboard guide](../dashboard.md#layout-examples). Source-server checks do not substitute for the installed-artifact test.
 
 ## Management layer
 
@@ -146,3 +146,61 @@ criteria and exclusions. CLI/ACP continue using the existing runtime; the browse
 introduces no second conversation store, config format, automatic tool retry or
 session compatibility gate. Package install and recipient activation remain
 separate; no marketplace or remote publishing was added.
+
+
+## Final committed-HEAD qualification
+
+All commands below ran sequentially against product revision
+`1766791a999c007bf88fc680fb61e0b2b1149c8f` with a clean worktree. No build overlapped a
+browser run. The final installed dashboard archive is byte-identical to the final
+focused pre-commit consumer above.
+
+| Command | Result | Captured log SHA-256 |
+| --- | --- | --- |
+| `npm run check` | 532/532, build and both typechecks passed | `42cf49731b51ebaa537b0a8fab883f1a24e438d26e8f342a1b30ffece02b0d4b` |
+| `npm run test:web` | 114/114 across three engines | `c0933b65716844f185576a3bdf6924e33987d9fae1999d43d858f24f4750dace` |
+| `npm run test:package` | 4/4 installed consumers | `3bc0af7ef5a753c28b0bfc32899680c79d2e826ce1bb5475bf1ac02c79d5a0dd` |
+| `git diff --check` | Passed | No whitespace errors |
+
+Logs are `/tmp/raw-dashboard-final-{check,web,package}.log` on the qualification
+host. The final installed run reported:
+
+```json
+{
+  "sourceCommit": "1766791a999c007bf88fc680fb61e0b2b1149c8f",
+  "artifactSha256": "cf0a763cf4a650a5c2c8a11676293ff0dd5164cd31173e2efff436d7075eacb5",
+  "sourceManifestSha256": "b16bd115aed62899d01870949c618e7d6dbc89f37827dbf0178cd27b18eff378",
+  "installedLockSha256": "c0d56d6ea17f8b264e53f7021da2236c137073832837b6599b25ab6554806dbc",
+  "node": "v26.0.0",
+  "platform": "darwin",
+  "release": "25.6.0",
+  "architecture": "arm64",
+  "browser": "chromium",
+  "browserVersion": "153.0.8010.12",
+  "assets": [
+    "CodeEditor-DIQqnq0-.js",
+    "index-B5k4LgUS.js",
+    "index-CUYdKA_J.css"
+  ],
+  "loadedAssetCount": 3
+}
+```
+
+Final integration self-review: **APPROVE**. Direct source inspection resolved two
+ordering concerns raised by the bounded CTXE trace (record 72):
+
+- `SessionOperations.execute` persists/publishes `running` before calling
+  `AgentSession.run`, so the first-user transaction's `running` predicate is met.
+  The existing consumption/rollback tests and final full suite pass.
+- Core `run_end` updates live metrics/history only; it is not a terminal operation
+  SSE event. `SessionStreams.observe` publishes the terminal receipt from the
+  host's operation event after runtime cleanup and durable persistence, and the
+  web reducer keys completion on that operation state. Existing reconnect and
+  operation tests pass. No behavior change was needed for either concern.
+
+Every phase acceptance criterion and the plan's ownership/invariant boundaries
+were mapped to the evidence above. The final bookkeeping commit changes only this
+report and the plan, neither of which enters the npm artifact or executable-source
+manifest. Qualification is limited to this host/runtime, these browser versions,
+local mock providers and the bounded user-observed VoiceOver smoke. It is not a
+paid-provider, native Linux/Windows, complete WCAG or model-behavior certification.

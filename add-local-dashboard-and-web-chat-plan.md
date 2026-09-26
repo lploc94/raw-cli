@@ -666,18 +666,18 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Completion Criteria
 
-- [ ] `raw dashboard` starts the installed local browser experience with a printed usable URL and owned shutdown.
-- [ ] A user creates/selects a workspace/session, chats with visible streaming/tool/reasoning states, handles conditional permissions and resumes from either CLI or browser.
-- [ ] Duplicate delivery, tab refresh, reconnect, multiple tabs and process interruption do not replay submitted tasks or historical tool effects.
-- [ ] Agent/model/skill/tool/var/provider/MCP/package workflows in scope work against ordinary Raw configuration and owned files.
-- [ ] Configuration/source changes apply on the next turn, preserve existing conversation IDs and stabilize caching when unchanged.
-- [ ] Context/usage/cache UI distinguishes measurements, estimates and unavailable data; history/settings/activity reads do not execute runtime code.
-- [ ] Chat separates visible history from active model context; manual/automatic compact has durable honest outcomes and summaries, and tool details reflect only recorded evidence.
-- [ ] Searchable Settings, browser-only appearance/chat preferences, dirty-state handling, command palette and cross-page task attention behave according to D10/D11.
-- [ ] Light/dark/dense/narrow/zoomed states have recorded accessibility and visual evidence; theme/UI changes do not alter configuration or model prefixes.
-- [ ] Static assets, editors, docs and six setup skills are present in the installed artifact; all global gates pass.
-- [ ] Every phase has reviewed evidence and a cohesive commit; pre-existing skill work is preserved separately.
-- [ ] No hosted service, unsolicited publication/global installation, new compatibility gate or enabled GitHub Actions was introduced.
+- [x] `raw dashboard` starts the installed local browser experience with a printed usable URL and owned shutdown.
+- [x] A user creates/selects a workspace/session, chats with visible streaming/tool/reasoning states, handles conditional permissions and resumes from either CLI or browser.
+- [x] Duplicate delivery, tab refresh, reconnect, multiple tabs and process interruption do not replay submitted tasks or historical tool effects.
+- [x] Agent/model/skill/tool/var/provider/MCP/package workflows in scope work against ordinary Raw configuration and owned files.
+- [x] Configuration/source changes apply on the next turn, preserve existing conversation IDs and stabilize caching when unchanged.
+- [x] Context/usage/cache UI distinguishes measurements, estimates and unavailable data; history/settings/activity reads do not execute runtime code.
+- [x] Chat separates visible history from active model context; manual/automatic compact has durable honest outcomes and summaries, and tool details reflect only recorded evidence.
+- [x] Searchable Settings, browser-only appearance/chat preferences, dirty-state handling, command palette and cross-page task attention behave according to D10/D11.
+- [x] Light/dark/dense/narrow/zoomed states have recorded accessibility and visual evidence; theme/UI changes do not alter configuration or model prefixes.
+- [x] Static assets, editors, docs and six setup skills are present in the installed artifact; all global gates pass.
+- [x] Every phase has reviewed evidence and a cohesive commit; pre-existing skill work is preserved separately.
+- [x] No hosted service, unsolicited publication/global installation, new compatibility gate or enabled GitHub Actions was introduced.
 
 ## Progress Log
 
@@ -696,7 +696,7 @@ Implementation review is required; verdict must be APPROVE.
 | 5 | complete | `1d4c725`; 25 Chromium scenarios, 513 Node tests; screenshots and self-review APPROVE |
 | 6 | complete | `59d8d61`; 19 focused, 523 Node, 36 Chromium scenarios; self-review APPROVE |
 | 7 | complete | `79ab9b2`; 11 prescribed + 7 server checks, 531 Node, 38 Chromium scenarios; self-review APPROVE |
-| 8 | complete | 532 Node, 114 three-engine browser, 4 installed-consumer checks; native zoom/user-observed VoiceOver; self-review APPROVE; commit follows |
+| 8 | complete | `1766791`; 532 Node, 114 three-engine browser, 4 installed-consumer checks; native zoom/user-observed VoiceOver; self-review APPROVE |
 
 - 2026-09-26 Phase 1: Completed docs-first implementation of durable operation acceptance/atomic user consumption, host-owned startup/runtime/cleanup leases, nonthrowing observers, stable visible segment IDs, mixed history projection and manual/automatic compaction markers. Meaningful red evidence: the focused contracts failed before the new services existed. Final build/typecheck, 12 focused tests, 142 session-suite tests, `npm run check` (475/475) and `git diff --check` passed. Implementation self-review APPROVE: checked duplicate lookup before ownership, killed-process effect recovery, rollback triggers, startup heartbeat, receipt transitions, unchanged prefix regressions, cleanup and typed preview limits. No phase scope deviation.
 - 2026-09-26 Phase 2: Extracted config source validation and the shared starter factory; CLI initialization and package-agent binding now use revision-aware atomic config writers. Added agent/model CRUD, passive component catalogs/manifest-schema parsing, per-file revisions, staged creation/forks, explicit selection and deletion usage checks. A regression test exposed local/agent aliases sharing a folder; fixed physical-folder usage detection before deletion. Linked package inspection reads authored sources directly without snapshot/import side effects. Focused contracts were red before implementation; final build/typecheck, 20 focused tests, `npm run check` (484/484) and whitespace checks passed. Self-review APPROVE, including credentials/order preservation, stale/external edits, strict/canonical config validation, symlink containment, read-only artifacts and isolated invalid rows. Agent/model edit helpers share one cohesive module; no user-facing scope change.
@@ -712,3 +712,6 @@ Implementation review is required; verdict must be APPROVE.
 
 
 - 2026-09-26 Phase 8: Shipped dashboard docs/screenshots and six English skill references within the existing 8 KiB body cap, extended required test selectors and qualified the real npm installation outside the checkout. The installed test was meaningfully red on missing packaged docs before the allowlist change; its final run configures through the browser, reloads during a real effect, updates an installed package, removes the author source and resumes with the installed CLI on one ID. `npm run check` passed 532/532, all three browser engines passed 114/114, `npm run test:package` passed 4/4, the final focused installed run passed, and whitespace passed. Native Chromium reached 400% with no horizontal document overflow; the complete viewport screenshot was reviewed. The user granted macOS permission and confirmed hearing both Message and Session details in a manual VoiceOver smoke. Automated speech extraction was unreliable and is explicitly not claimed; the manual driver and observed verdict are recorded separately. Self-review APPROVE: inspected packaged resources, artifact/source/dependency hashes, six guidance references, stale-draft selector correction, passive/executable boundaries and the cumulative acceptance/invariant mapping. No product scope change. Final exact-HEAD global gates and completion bookkeeping follow this phase commit.
+
+
+- 2026-09-26 Finalization: All exact global commands ran sequentially on clean product HEAD `1766791a999c007bf88fc680fb61e0b2b1149c8f`: `npm run check` 532/532 with build/typechecks, `npm run test:web` 114/114 on Chromium/Firefox/WebKit, `npm run test:package` 4/4, and `git diff --check` passed. The final installed archive SHA-256 is `cf0a763cf4a650a5c2c8a11676293ff0dd5164cd31173e2efff436d7075eacb5`, matching the pre-commit artifact; executable-source manifest `b16bd115aed62899d01870949c618e7d6dbc89f37827dbf0178cd27b18eff378`. Cumulative integration self-review APPROVE: direct source inspection rejected two partial-trace ordering concerns because running is persisted before the first user commit and core run_end is not a terminal web operation event. No runtime repair or scope expansion was needed. All acceptance/completion criteria and invariant/exclusion mappings are recorded in docs/evidence/local-dashboard.md. Only the plan and evidence report change in the final bookkeeping commit; Actions remain disabled and global installation/push remain outside this work.
