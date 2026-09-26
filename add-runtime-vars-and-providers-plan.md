@@ -168,7 +168,7 @@ Keep model/agent selection in one shared implementation. Deep-copy/freeze defini
 `npm run typecheck`
 `git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — implementation self-review completed; evidence and verification are recorded in Progress Log.
 ### Commit
 `feat: define agent-scoped runtime variable contracts`
 
@@ -205,7 +205,7 @@ Always finish process/stream cleanup and remove abort/timer listeners. Return st
 `npm run typecheck`
 `git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — implementation self-review completed; evidence and verification are recorded in Progress Log.
 ### Commit
 `feat: resolve variables through bounded executable providers`
 
@@ -243,7 +243,7 @@ Update every explicit bundle list and regenerate examples via build; do not patc
 `npm run typecheck`
 `git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — implementation self-review completed; evidence and verification are recorded in Progress Log.
 ### Commit
 `feat: add variable tools and Bash environment bindings`
 
@@ -281,7 +281,7 @@ Factor utility selection cleanly; avoid spinning up full agent runtime for inspe
 `npm run typecheck`
 `git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — implementation self-review completed; evidence and verification are recorded in Progress Log.
 ### Commit
 `feat: expose vars CLI and preserve session continuity`
 
@@ -319,17 +319,17 @@ Regenerate copies through build; package every referenced mandatory artifact. Pr
 `npm run check`
 `git diff --check`
 ### Review
-Implementation review is required; verdict must be APPROVE.
+APPROVE — implementation self-review completed; evidence and verification are recorded in Progress Log.
 ### Commit
 `docs: ship variable provider guidance and installed workflow coverage`
 
 ## Completion Criteria
-- [ ] All phase ACs and review gates are complete; no deferred core integration.
-- [ ] A user can configure a literal/env/file/provider var, select it for an agent, discover/read it, or pass a reference to Bash/custom tool according to access.
-- [ ] Actual provider subprocess, policy, env, TTL, error/cancellation and resume behavior are covered by meaningful tests.
-- [ ] All five English setup skills and shipped docs/examples match implementation; full default-cap bodies and installed package are verified.
-- [ ] No eager dynamic values in prompt/tool definitions, no automatic persistence of use-only binding values, and no changes to existing MCP contracts.
-- [ ] Final report states commits, validation performed, any platform qualification limits and installation status accurately.
+- [x] All phase ACs and review gates are complete; no deferred core integration.
+- [x] A user can configure a literal/env/file/provider var, select it for an agent, discover/read it, or pass a reference to Bash/custom tool according to access.
+- [x] Actual provider subprocess, policy, env, TTL, error/cancellation and resume behavior are covered by meaningful tests.
+- [x] All five English setup skills and shipped docs/examples match implementation; full default-cap bodies and installed package are verified.
+- [x] No eager dynamic values in prompt/tool definitions, no automatic persistence of use-only binding values, and no changes to existing MCP contracts.
+- [x] Final report states commits, validation performed, any platform qualification limits and installation status accurately.
 
 ## Progress Log
 - 2026-09-26: User agreed to vars and executable provider design and requested related documentation/skill updates. Started loop-plan only per global workflow.
@@ -341,3 +341,6 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 3 complete; review APPROVE. Red: unknown bundled vars tools and missing custom context service. Green: 33 focused tests including MCP/Bash/approval/fork regressions; typecheck/build/diff checks passed. Updated intentional Bash schema digest golden for env_refs. Denied conditional calls have zero provider marker writes, and invalid later refs prevent the first command. Phase 4 in_progress.
 - 2026-09-26: Phase 4 complete; review APPROVE. Red: missing vars command/init defaults. Green: 72 CLI/ACP/session/cache regression tests, then 7 affected vars CLI/session tests including real CLI and ACP provider cancellation; typecheck/build/diff passed. Actual persisted history and mock requests excluded the use-only sentinel while child output file verified receipt. Vars-only metadata/file changes retained tool/system prefix and cache key; SDK resumed the same session. Phase 5 in_progress.
 - 2026-09-26: Phase 5 complete; review APPROVE. Red: skills lacked vars and provider example missing. Green: documented/skill examples execute, all five bodies load within 8192 bytes (source/example/dist equal), and npm run check passed 395/395 including relocated installed CLI/provider/Bash/SDK type checks. Rewrote configure_raw compactly while retaining UI/model/policy contracts. All five skill manifests are version 1.2.0. No live service/model calls or GitHub Actions. Final cumulative audit in_progress.
+- 2026-09-26: Final cumulative self-audit APPROVE. Configuration -> resolver -> plugin -> Bash/CLI/ACP/SDK boundaries checked against all 14 ACs. No session/MCP storage-contract changes; no personal state modifications. POSIX supervision qualified on this macOS host; native Windows behavior was not separately qualified.
+- 2026-09-26: Phase commits: 1 `80d03d4`; 2 `d9d78de`; 3 `9f312bf`; 4 `596a83e`; 5 `7d0fb7d`. Final committed-source gate at `7d0fb7d`: `npm run check` (typecheck/build and 395/395 tests), `git diff 8000625..HEAD --check`, all PASS. Packed consumer exercised relocated provider CLI/get, discovery/read/Bash env_refs, SDK declarations, and complete installed skills. No new changes justified further test expansion.
+- 2026-09-26: All phases and completion criteria complete. This final plan-only commit records results; global installation, personal config edits and GitHub push were not performed.
