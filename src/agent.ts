@@ -12,8 +12,9 @@ import type { SessionOwner, SessionStore } from "./sessions/store.js";
 import type { SkillVisibility } from "./sessions/store.js";
 import type { SelectedSkill } from "./skills/contract.js";
 import { isEphemeralPeerAlias, validateStoredAgentState } from "./sessions/restore.js";
-import { acpUpdate, resultPreview, toolArguments } from "./sessions/display.js";
+import { acpUpdate } from "./sessions/display.js";
 import type { AgentMetadata, VisibleRecord } from "./sessions/store.js";
+import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./sessions/visible.js";
 
 export type AgentState = "idle" | "running" | "cancelling" | "compacting" | "closing" | "closed";
 
@@ -45,8 +46,8 @@ export type RunEvent =
   | { type: "text_delta"; text: string }
   | { type: "reasoning_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: Record<string, unknown> }
-  | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown> }
-  | { type: "tool_result"; id: string; name: string; result: ToolResult }
+  | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown>; display?: VisibleToolCall }
+  | { type: "tool_result"; id: string; name: string; result: ToolResult; display?: VisibleToolResult }
   | { type: "usage"; raw: unknown }
   | { type: "compact_start"; estimatedTokens: number }
   | { type: "compact_end"; result: CompactResult }
@@ -179,6 +180,7 @@ export class AgentSession {
   get cwd(): string { return this.options.cwd; }
   get contextRevision(): number { return this.contextGenerationRevision; }
   get toolDefinitions(): readonly ToolDefinition[] { return structuredClone(this.schemaView); }
+  toolIdentity(name: string): string | undefined { return this.options.registry.canonicalIdentity(name); }
   stats(): UsageSummary { return summarizeUsage(this.usageEntries); }
   estimatedContextTokens(): number {
     return Math.ceil(estimateRequestTokens(this.options.system, this.messages, this.schemaView) * this.tokenCalibration);
@@ -378,6 +380,7 @@ export class AgentSession {
       else visibleSegments.push({ kind, text });
     };
     const startedCalls = new Set<string>();
+    const startedAt = new Map<string, number>();
     const emit = (event: RunEvent) => {
       if (observerError) return;
       try {
@@ -385,9 +388,10 @@ export class AgentSession {
         if (event.type === "text_delta") appendVisible("assistant", event.text);
         else if (event.type === "reasoning_delta") appendVisible("reasoning", event.text);
         else if (event.type === "tool_start" && this.persistence?.surface === "cli") {
-          this.recordVisible("tool_call", { id: event.id, name: event.name,
-            arguments: toolArguments(event.name, event.arguments), started: true });
+          const display = projectToolCall(event.name, this.toolIdentity(event.name), event.arguments, true);
+          this.recordVisible("tool_call", { display: { ...display, id: event.id } });
           startedCalls.add(event.id);
+          startedAt.set(event.id, performance.now());
         }
         else if (this.persistence?.surface === "acp" && ["tool_start", "compact_start", "compact_end"].includes(event.type)) {
           const update = acpUpdate(event);
@@ -449,21 +453,22 @@ export class AgentSession {
         ? { type: "text", text: `[${block.mimeType} image, ${block.byteSize ?? Buffer.from(block.data, "base64").length} bytes]` }
         : block) };
       const display: VisibleRecord[] = [];
+      const identity = this.toolIdentity(call.name);
       if (this.persistence?.surface === "cli" && !startedCalls.has(call.id)) {
-        const args = call.name === "write_file" && !Array.isArray(call.arguments.operations)
-          ? JSON.stringify({ argument_keys: Object.keys(call.arguments) }) : toolArguments(call.name, call.arguments);
-        display.push({ kind: "tool_call", payload: { id: call.id, name: call.name, arguments: args, started: false } });
+        display.push({ kind: "tool_call", payload: {
+          display: { ...projectToolCall(call.name, identity, call.arguments, false), id: call.id },
+        } });
       }
-      if (this.persistence?.surface === "cli") display.push({ kind: "tool_result", payload: { id: call.id, name: call.name,
-        preview: resultPreview(call.name, publicResult), code: result.code ?? null, isError: result.isError,
-        exitCode: result.exitCode ?? null, truncated: result.truncated ?? false } });
+      const projected = { ...projectToolResult(call.name, identity, publicResult,
+        startedAt.has(call.id) ? performance.now() - startedAt.get(call.id)! : undefined), id: call.id };
+      if (this.persistence?.surface === "cli") display.push({ kind: "tool_result", payload: { display: projected } });
       if (this.persistence?.surface === "acp") display.push({ kind: "tool_result", payload: {
         update: acpUpdate({ type: "tool_result", id: call.id, name: call.name, result: publicResult }),
       } });
       this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) },
         visibility ? { skillVisibility: visibility } : {}, display);
       if (visibility) this.skillVisibility = visibility;
-      emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult });
+      emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected });
     };
     const firstTask = this.originalTask === undefined;
     let autoCompacted = false;

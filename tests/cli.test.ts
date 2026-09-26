@@ -142,7 +142,7 @@ test("TTY starts tool activity on a new line after unfinished assistant text", a
   } finally { child.kill("SIGTERM"); await fixture.close(); }
 });
 
-test("tool result preview keeps head and tail within 2000 characters and 10 lines", async () => {
+test("tool result preview retains statuses and bounds body to 2000 characters and 9 lines", async () => {
   const fixture = await startMockProvider([
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "shell", type: "function", function: {
       name: "bash", arguments: JSON.stringify({ commands: [{ command:
@@ -157,8 +157,10 @@ test("tool result preview keeps head and tail within 2000 characters and 10 line
     const start = result.stderr.indexOf("raw: ↳ bash result");
     assert.ok(start >= 0);
     const lines = result.stderr.slice(start).split(/\nraw: (?:session usage:|context:|continue:)/, 1)[0]!.trimEnd().split("\n");
-    assert.ok(lines.length <= 10, `preview used ${lines.length} lines`);
-    const preview = lines.slice(1).join("\n");
+    assert.ok(lines.length <= 11, `preview used ${lines.length} lines including status summary`);
+    assert.match(lines[1]!, /^statuses:/);
+    const preview = lines.slice(2).join("\n");
+    assert.ok(lines.length - 2 <= 9);
     assert.ok(Array.from(preview).length <= 2000);
     assert.match(preview, /HEAD/);
     assert.match(preview, /TAIL/);

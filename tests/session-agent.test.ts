@@ -408,8 +408,10 @@ test("successful compact retains full CLI Bash arguments and ACP raw result in d
     assert.ok(JSON.stringify(agent.transcript).length < JSON.stringify(oldContext).length);
     await agent.close();
     const history = store.getSessionHistory({ sessionId: id, limit: 100 }).items;
-    const displayedArgs = history.find((item) => item.kind === "tool_call")?.payload.arguments;
-    assert.equal(displayedArgs, JSON.stringify({ commands: [{ command: bashArgument }] }));
+    const displayedArgs = (history.find((item) => item.kind === "tool_call")?.payload.display as {
+      arguments: Record<string, unknown>;
+    }).arguments;
+    assert.deepEqual(displayedArgs, { commands: [{ command: bashArgument }] });
     assert.ok(history.some((item) => item.kind === "tool_result"));
     assert.ok(history.some((item) => item.kind === "reasoning" && item.payload.text === "visible reasoning"));
     const resumed = createAgent({ cwd: root, provider: runtime, system: "system", persistence: { store, sessionId: id, surface: "cli" } });

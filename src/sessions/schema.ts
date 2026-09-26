@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SESSION_SCHEMA_VERSION = 4;
+export const SESSION_SCHEMA_VERSION = 5;
 
 export function initializeSessionSchema(database: DatabaseSync): void {
   database.exec("PRAGMA foreign_keys = ON");
@@ -86,7 +86,7 @@ export function initializeSessionSchema(database: DatabaseSync): void {
         byte_length INTEGER NOT NULL,
         ref_count INTEGER NOT NULL DEFAULT 0
       );
-      PRAGMA user_version = 4;
+      PRAGMA user_version = 5;
     `);
     }
     database.exec("CREATE INDEX IF NOT EXISTS payloads_relative_path ON payloads(relative_path)");

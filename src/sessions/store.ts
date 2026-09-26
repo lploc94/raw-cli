@@ -9,6 +9,7 @@ import type { ModelMessage, ResolvedModelConfig, UserInput } from "../llm/types.
 import type { ToolDefinition } from "../tools/registry.js";
 import type { SelectedSkill } from "../skills/contract.js";
 import { errorResult } from "../tools/results.js";
+import { projectToolResult } from "./visible.js";
 import { initializeSessionSchema } from "./schema.js";
 import { validateStoredAgentState } from "./restore.js";
 
@@ -712,7 +713,9 @@ export class SessionStore {
           .run(sessionId, position, JSON.stringify(message));
         const sequence = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM history WHERE session_id = ?").get(sessionId)?.next);
         this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
-          .run(sessionId, sequence, this.now(), "tool_result", JSON.stringify({ id: call.id, name: call.name, result }), "interrupted");
+          .run(sessionId, sequence, this.now(), "tool_result", JSON.stringify({
+            display: { ...projectToolResult(call.name, undefined, result), id: call.id },
+          }), "interrupted");
       }
       if (unresolved.length) this.renewSession(sessionId, owner);
   }

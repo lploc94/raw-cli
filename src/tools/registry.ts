@@ -95,6 +95,11 @@ export class ToolRegistry {
     this.tools.set(tool.name, tool);
   }
 
+  canonicalIdentity(name: string): string | undefined {
+    const tool = this.tools.get(name);
+    return tool?.canonicalName ?? tool?.name;
+  }
+
   definitions(whitelist?: readonly string[]): readonly ToolDefinition[] {
     const ordered = whitelist === undefined ? [...this.tools.values()]
       : [...new Set(whitelist)].map((name) => this.tools.get(name)).filter((item): item is ToolRegistration => item !== undefined);

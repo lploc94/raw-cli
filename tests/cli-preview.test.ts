@@ -14,9 +14,9 @@ test("MCP JSON results arrays remain generic and do not throw on null rows", () 
 
 test("only valid built-in batch rows get indexed status summaries", () => {
   const valid = { results: [{ index: 0, status: "ok", stdout: "x" }, { index: 1, status: "error", error: "nope" }] };
-  assert.match(resultPreview("bash", { isError: true, content: [{ type: "json", value: valid }] }),
+  assert.match(resultPreview("bash", { isError: true, content: [{ type: "json", value: valid }] }, "builtin/bash"),
     /^statuses: 0:ok 1:error\n/);
   const malformed = { results: [null] };
-  assert.equal(resultPreview("bash", { isError: false, content: [{ type: "json", value: malformed }] }),
+  assert.equal(resultPreview("bash", { isError: false, content: [{ type: "json", value: malformed }] }, "builtin/bash"),
     JSON.stringify(malformed));
 });

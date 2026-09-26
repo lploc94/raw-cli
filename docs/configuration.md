@@ -14,6 +14,8 @@ The canonical global file alone may set `"sessions": {"retention_days": 7}`. The
 
 The session store lives at `$XDG_STATE_HOME/raw/sessions.sqlite`, or `~/.local/state/raw/sessions.sqlite` when that variable is unset. Its directory and database are private to the OS user. Back up the entire state directory, including the database and payload files, before the retention cutoff if saved history must survive local disk loss. There is no automatic export or pin exemption; cleanup is permanent. There is no migration for unreleased session formats.
 
+The current unreleased session schema is version 5. Terminal themes and UI settings are not stored as model identity; a user can change them between runs without rewriting a session. Raw does not migrate old test sessions automatically.
+
 The unreleased schema is breaking. It has no old flat-agent parser or migration aliases. The root has models, agents and optional default_agent. A model key is a local alias; model_id is the exact value sent upstream. An agent names one model alias and supplies run settings.
 
 ~~~json

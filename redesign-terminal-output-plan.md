@@ -241,6 +241,8 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Phase 2: Structured display records and durable tool previews
 
+Status: complete (2026-09-26). Implementation self-review: APPROVE.
+
 ### Goal
 Make live and replayed tool presentation consume the same bounded semantic data.
 
@@ -275,9 +277,9 @@ Reject implementations that store colored output, parse escaped JSON previews to
 One pure display projection supplies both live presentation and stored records. Measure tool time outside UI callbacks. Adapt store/history consumers and remove legacy CLI payload-shape branches; do not delete ACP surface handling. No SQL migration or user database cleanup command runs automatically.
 
 ### Acceptance criteria
-- [ ] AC-2.1: Stored display records retain bounded code/path/state data and replay independently of model context — records/session tests.
-- [ ] AC-2.2: Tool provenance prevents custom/MCP misclassification and all batch statuses survive truncation — projection tests.
-- [ ] AC-2.3: Schema 5 works across processes; schema 4 is rejected without mutation; ACP/provider payloads are unchanged — store/session/ACP tests.
+- [x] AC-2.1: Stored display records retain bounded code/path/state data and replay independently of model context — records/session tests.
+- [x] AC-2.2: Tool provenance prevents custom/MCP misclassification and all batch statuses survive truncation — projection tests.
+- [x] AC-2.3: Schema 5 works across processes; schema 4 is rejected without mutation; ACP/provider payloads are unchanged — store/session/ACP tests.
 
 ### Focused verification
 `npm run build`
@@ -542,3 +544,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Drafted six phases and completed intent/integration/test/phase self-review: APPROVE. Corrected cache coverage, shared-terminal detection, and packaged skill-reference requirements. Implementation has not started; awaiting user approval.
 - 2026-09-26: User approved implementation. Phase 1 in progress.
 - 2026-09-26: Phase 1 complete, implementation self-review APPROVE. Red options/layout tests failed before code; focused tests passed. `npm run build` passed; `npm run check` passed 340/340 after final Phase 1 edits. PTY bridge now supports test resize, semantic theme/options are host-only, and configure skill remains 8,154 bytes. Evidence: `/tmp/raw-terminal-phase1-red.log`, `/tmp/raw-terminal-phase1-focused.log`, `/tmp/raw-terminal-phase1-final-check.log`.
+- 2026-09-26: Phase 1 commit `ba16093`; Phase 2 in progress.
+- 2026-09-26: Phase 2 complete, implementation self-review APPROVE. New record tests were red before production code; isolated focused suite passed 35/35, repair-focused suites passed 60/60, and final `npm run check` passed 346/346. Repaired the crash-recovery writer found by full regression and preserved head/tail under a near-budget preview. One direct focused invocation inherited the user's old global schema; it was stopped and rerun with isolated XDG state. Evidence: `/tmp/raw-terminal-phase2-red.log`, `/tmp/raw-terminal-phase2-final-focused.log`, `/tmp/raw-terminal-phase2-repair-focused.log`, `/tmp/raw-terminal-phase2-head-check.log`.

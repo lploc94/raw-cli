@@ -8,7 +8,8 @@ import { runSessionMaintenance } from "./sessions/maintenance.js";
 import type { SessionStore, SessionSummary } from "./sessions/store.js";
 
 export { resultPreview } from "./sessions/display.js";
-import { resultPreview, toolArguments } from "./sessions/display.js";
+import { toolArguments } from "./sessions/display.js";
+import { projectToolCall, projectToolResult, renderPlainToolResult } from "./sessions/visible.js";
 
 function textRun(session: AgentSession, task: string): Promise<RunResult> {
   let wrote = false;
@@ -47,7 +48,7 @@ function textRun(session: AgentSession, task: string): Promise<RunResult> {
       finishTextLine();
       finishThinking();
       const label = color ? style(`⚙ ${event.name}`, "1;36") : event.name;
-      const args = ` ${style(toolArguments(event.name, event.arguments), "2")}`;
+      const args = ` ${style(JSON.stringify(event.display?.arguments ?? projectToolCall(event.name, session.toolIdentity(event.name), event.arguments, true).arguments), "2")}`;
       process.stderr.write(`raw: ${label}${args}\n`);
     }
     else if (event.type === "tool_result") {
@@ -56,19 +57,18 @@ function textRun(session: AgentSession, task: string): Promise<RunResult> {
       const pending = pendingCalls.get(event.id);
       if (pending) {
         pendingCalls.delete(event.id);
-        const args = pending.name === "write_file" && !Array.isArray(pending.arguments.operations)
-          ? JSON.stringify({ argument_keys: Object.keys(pending.arguments) })
-          : toolArguments(pending.name, pending.arguments);
+        const args = JSON.stringify(projectToolCall(pending.name, session.toolIdentity(pending.name), pending.arguments, false).arguments);
         process.stderr.write(`raw: ${style(`⚠ ${pending.name}`, "1;33")} ${style(args, "2")}\n`);
       }
       const result = event.result;
-      const failed = result.isError || (typeof result.exitCode === "number" && result.exitCode !== 0);
+      const display = event.display ?? projectToolResult(event.name, session.toolIdentity(event.name), result);
+      const failed = display.failed;
       const meta = [
         ...(typeof result.exitCode === "number" ? [`exit ${result.exitCode}`] : []),
         ...(result.code ? [result.code] : []),
         ...(result.truncated ? ["model output capped"] : []),
       ];
-      const preview = resultPreview(event.name, result);
+      const preview = renderPlainToolResult(display);
       const label = `${failed ? "✗" : "↳"} ${event.name} result${meta.length ? ` (${meta.join(", ")})` : ""}${preview ? "" : " (empty)"}`;
       process.stderr.write(`raw: ${style(label, failed ? "1;31" : "2")}\n`);
       if (preview) process.stderr.write(`${style(preview, "2")}\n`);
@@ -132,10 +132,10 @@ function lineQueue(rl: ReadlineInterface): {
   return { next: (signal) => take(0, signal), nextAfter: take, mark: () => lastId };
 }
 
-async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
+async function askPermission(lines: ReturnType<typeof lineQueue>, name: string, args: Record<string, unknown>, signal?: AbortSignal, identity?: string): Promise<boolean> {
   if (signal?.aborted) return false;
   const mark = lines.mark();
-  process.stderr.write(`raw: allow ${name} ${toolArguments(name, args, true)}? [y/N] `);
+  process.stderr.write(`raw: allow ${name} ${toolArguments(name, args, true, identity)}? [y/N] `);
   const answer = await lines.nextAfter(mark, signal);
   return answer !== undefined && /^(?:y|yes)$/i.test(answer.trim());
 }
@@ -177,7 +177,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
     requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
     persistence: { store, sessionId: id, surface: "cli" },
-    ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal) } : {}) });
+    ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal, tools.registry.canonicalIdentity(name)) } : {}) });
   let session: AgentSession;
   let record: SessionSummary;
   try {
