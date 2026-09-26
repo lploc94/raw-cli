@@ -1,3 +1,4 @@
+import type { VariableContext } from "../../vars/contract.js";
 import AjvDraft7 from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
@@ -12,7 +13,7 @@ import type { ToolRegistration } from "../registry.js";
 import type { ToolManifest, ToolPlugin } from "./contract.js";
 import type { SelectedSkill } from "../../skills/contract.js";
 
-const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill"]);
+const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var"]);
 const manifestKeys = ["api_version", "id", "version", "name", "description", "input_schema", "entry"];
 
 export interface LoadToolPluginsOptions {
@@ -23,6 +24,7 @@ export interface LoadToolPluginsOptions {
   cwd?: string;
   globalConfigRoot?: string;
   skills?: readonly SelectedSkill[];
+  vars?: VariableContext;
 }
 
 export function bundledToolsRoot(): string {
@@ -151,6 +153,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
       handler(args, context) {
         const pluginContext: ToolContext = {
           cwd: context.cwd, maxOutputBytes: context.maxOutputBytes,
+          ...((options.vars ?? context.vars) ? { vars: options.vars ?? context.vars } : {}),
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),

@@ -40,6 +40,7 @@ async function runBash(options) {
   const isPosix = process.platform !== "win32";
   const child = spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
     cwd: options.cwd,
+    ...options.env ? { env: options.env } : {},
     stdio: ["ignore", "pipe", "pipe"],
     detached: isPosix
   });
@@ -176,21 +177,41 @@ async function bashTool(args, context) {
   if (!indexedResultFits(rows, context.maxOutputBytes)) {
     return errorResult("output_budget_too_small", "bash batch outcomes exceed output budget");
   }
+  for (const command of args.commands) if (command.env_refs && Object.keys(command.env_refs).length) {
+    if (!context.vars) return errorResult("vars_unavailable", "variable services are unavailable");
+    try {
+      context.vars.validateEnvRefs(command.env_refs);
+    } catch (error) {
+      return errorResult("var_env_refs_invalid", error instanceof Error ? error.message : "invalid variable references");
+    }
+  }
   let stopped = false;
+  let stopReason = "prior_timeout";
   for (const [index, command] of args.commands.entries()) {
     if (stopped || context.signal?.aborted) {
-      rows[index] = { index, status: "skipped", error: context.signal?.aborted ? "aborted" : "prior_timeout" };
+      rows[index] = { index, status: "skipped", error: context.signal?.aborted ? "aborted" : stopReason };
       continue;
     }
     const serialized = Buffer.byteLength(JSON.stringify({ results: rows }), "utf8");
     const share = Math.max(0, Math.floor((context.maxOutputBytes - serialized) / (args.commands.length - index)));
     const reservedItemBytes = Buffer.byteLength(JSON.stringify(rows[index]), "utf8");
     let result;
+    let bindings;
+    try {
+      if (command.env_refs && Object.keys(command.env_refs).length) bindings = await context.vars.resolveEnv(command.env_refs, { ...context.signal ? { signal: context.signal } : {} });
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "var_error";
+      rows[index] = { index, status: context.signal?.aborted ? "aborted" : "error", error: code };
+      stopped = true;
+      stopReason = "prior_var_error";
+      continue;
+    }
     try {
       result = await runBash({
         command: command.command,
         cwd: context.cwd,
         maxOutputBytes: share,
+        ...bindings ? { env: { ...process.env, ...bindings } } : {},
         ...command.timeout_ms !== void 0 ? { timeoutMs: command.timeout_ms } : {},
         ...context.signal ? { signal: context.signal } : {},
         ...context.bashPath ? { bashPath: context.bashPath } : {}
@@ -241,8 +262,11 @@ function validateArgs(value) {
   for (const [index, raw] of args.commands.entries()) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return `commands[${index}] must be an object with a command field, e.g. {"command":"pwd"}; strings are invalid`;
     const command = raw;
-    if (Object.keys(command).some((key) => !["command", "timeout_ms"].includes(key))) return `commands[${index}] has an unknown property`;
+    if (Object.keys(command).some((key) => !["command", "timeout_ms", "env_refs"].includes(key))) return `commands[${index}] has an unknown property`;
     if (typeof command.command !== "string" || !command.command) return `commands[${index}].command must be a nonempty string`;
+    if (command.env_refs !== void 0) {
+      if (!command.env_refs || typeof command.env_refs !== "object" || Array.isArray(command.env_refs) || Object.entries(command.env_refs).some(([key, value2]) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value2 !== "string" || !value2)) return `commands[${index}].env_refs must map environment identifiers to variable names`;
+    }
     if (command.timeout_ms !== void 0 && (!Number.isSafeInteger(command.timeout_ms) || command.timeout_ms < 1 || command.timeout_ms > 2147483647)) return `commands[${index}].timeout_ms must be a positive integer`;
   }
   return void 0;

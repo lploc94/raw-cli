@@ -1,3 +1,4 @@
+import type { VariableContext } from "../vars/contract.js";
 import { open, mkdir, writeFile, readFile, appendFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
@@ -7,6 +8,7 @@ import type { ToolResult } from "./types.js";
 import type { SelectedSkill } from "../skills/contract.js";
 
 export interface ToolContext {
+  vars?: VariableContext;
   cwd: string;
   maxOutputBytes: number;
   autoApprove?: boolean;
@@ -242,7 +244,7 @@ export async function writeFileTool(args: { operations: WriteOperation[] }, cont
   return indexedResult(rows, context.maxOutputBytes, rows.some((row) => row.status !== "ok"));
 }
 
-export async function bashTool(args: { commands: Array<{ command: string; timeout_ms?: number }> }, context: ToolContext): Promise<ToolResult> {
+export async function bashTool(args: { commands: Array<{ command: string; timeout_ms?: number; env_refs?: Record<string, string> }> }, context: ToolContext): Promise<ToolResult> {
   const reserve = (index: number): IndexedResult => ({ index, status: "error", exit_code: 2147483647,
     signal: "SIGKILL", timed_out: true, truncated: true, stdout: "", stderr: "", observed_bytes: 2147483647,
     error: "x".repeat(80) });
@@ -250,18 +252,33 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
   if (!indexedResultFits(rows, context.maxOutputBytes)) {
     return errorResult("output_budget_too_small", "bash batch outcomes exceed output budget");
   }
+  for (const command of args.commands) if (command.env_refs && Object.keys(command.env_refs).length) {
+    if (!context.vars) return errorResult("vars_unavailable", "variable services are unavailable");
+    try { context.vars.validateEnvRefs(command.env_refs); }
+    catch (error) { return errorResult("var_env_refs_invalid", error instanceof Error ? error.message : "invalid variable references"); }
+  }
   let stopped = false;
+  let stopReason = "prior_timeout";
   for (const [index, command] of args.commands.entries()) {
     if (stopped || context.signal?.aborted) {
-      rows[index] = { index, status: "skipped", error: context.signal?.aborted ? "aborted" : "prior_timeout" };
+      rows[index] = { index, status: "skipped", error: context.signal?.aborted ? "aborted" : stopReason };
       continue;
     }
     const serialized = Buffer.byteLength(JSON.stringify({ results: rows }), "utf8");
     const share = Math.max(0, Math.floor((context.maxOutputBytes - serialized) / (args.commands.length - index)));
     const reservedItemBytes = Buffer.byteLength(JSON.stringify(rows[index]), "utf8");
     let result: ToolResult;
+    let bindings: Record<string, string> | undefined;
+    try {
+      if (command.env_refs && Object.keys(command.env_refs).length) bindings = await context.vars!.resolveEnv(command.env_refs, { ...(context.signal ? { signal: context.signal } : {}) });
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "var_error";
+      rows[index] = { index, status: context.signal?.aborted ? "aborted" : "error", error: code };
+      stopped = true; stopReason = "prior_var_error"; continue;
+    }
     try {
       result = await runBash({ command: command.command, cwd: context.cwd, maxOutputBytes: share,
+        ...(bindings ? { env: { ...process.env, ...bindings } } : {}),
         ...(command.timeout_ms !== undefined ? { timeoutMs: command.timeout_ms } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
         ...(context.bashPath ? { bashPath: context.bashPath } : {}),

@@ -101,3 +101,28 @@ An `ask` rule may add `"when": {"any": "commands[*].command", "regex": "(^|[;&|(
 The `bash` tool requires Bash on `PATH`, or an explicit `RAW_BASH_PATH`. Each invocation supervises one process group. Abort or deadline sends TERM to that group, then KILL if needed. Long-lived, deliberately detached jobs can escape the group and are outside this guarantee; use an MCP server designed for managed persistent processes when needed.
 
 The development-only `npm run test:overhead` reports the exact canonical input and `o200k_base` token count for the production default prompt and built-in definitions. It measures combined overhead without imposing an arbitrary combined-token ceiling; essential tool guidance remains in the definitions. External tools, custom prompts, and provider framing add separate overhead.
+
+## Variables in local tool handlers
+
+Select `builtin/list_vars` and `builtin/read_var` for discovery and reads, and
+select exact variable names in `agents.<name>.vars`. The host passes an
+agent-scoped `context.vars` service to every selected local plugin, including
+forked bundled tools. `list()` is metadata only; `read(name,{signal})` resolves a
+readable value; `validateEnvRefs(refs)` checks names/types without I/O;
+`resolveEnv(refs,{signal})` returns scalar environment bindings for trusted tool
+code. Standalone handlers must report an unavailable service if refs require it.
+
+Bash accepts `env_refs` inside each `commands[]` row. The registry checks policy
+and approval before any resolution. The handler validates all reference metadata
+before starting the batch, then resolves each row immediately before its process.
+A resolution failure stops remaining rows; prior rows are not rolled back.
+Bindings override only that child's environment. Raw keeps references in original
+arguments and never substitutes resolved values into shell command text.
+
+```json
+{"commands":[{"command":"test -n \"$GH_TOKEN\"","env_refs":{"GH_TOKEN":"github_token"}}]}
+```
+
+`access: "use"` prevents Raw's read tool returning a value, but trusted commands
+and plugins can still print it. This is not OS isolation. MCP does not acquire
+`env_refs` or variable interpolation automatically. See [variables](vars.md).

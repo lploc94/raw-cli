@@ -13,9 +13,9 @@ test("packaged bundled plugins preserve exact definitions and semantic batch pre
   const registry = new ToolRegistry();
   for (const plugin of plugins) registry.register(plugin);
   assert.deepEqual(registry.definitions(), createTestToolRegistry([], true).definitions());
-  // Frozen from the pre-refactor four-tool definition array at 3681c12.
+  // Intentional contract revision: Bash now supports per-command env_refs.
   assert.equal(createHash("sha256").update(JSON.stringify(registry.definitions())).digest("hex"),
-    "ebb9316cba1a92401a88e5a17955e89f64bd17bd559e756209c82b414e8bfe3d");
+    "fa6d6ded1cde9668d377b6fa94f772c254f00f74fee8ad6bf749beb9d412b9a1");
 
   const cwd = await mkdtemp(join(tmpdir(), "raw-bundled-"));
   const marker = join(cwd, "side-effect");

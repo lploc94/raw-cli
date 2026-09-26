@@ -233,9 +233,9 @@ Mutating env_refs args or interpolating values into command text must fail senti
 ### Implementation obligations
 Update every explicit bundle list and regenerate examples via build; do not patch generated bundles manually. Keep service methods signal-aware; ensure direct imported handlers fail clearly only if variables are requested. Update descriptions in English without embedding user catalog values.
 ### Acceptance criteria
-- [ ] AC-6: Both new tools load as selected standalone plugins and enforce catalog/read contracts — proven through registry and fork tests.
-- [ ] AC-7: Bash receives exact per-command env without argument mutation, early provider execution or cross-command env leakage — proven with actual subprocesses.
-- [ ] AC-8: Selective approval and complete-batch metadata validation prevent denied/invalid side effects — proven with sentinels and existing regression tests.
+- [x] AC-6: Both new tools load as selected standalone plugins and enforce catalog/read contracts — proven through registry and fork tests.
+- [x] AC-7: Bash receives exact per-command env without argument mutation, early provider execution or cross-command env leakage — proven with actual subprocesses.
+- [x] AC-8: Selective approval and complete-batch metadata validation prevent denied/invalid side effects — proven with sentinels and existing regression tests.
 ### Focused verification
 `npm run build`
 `node --import tsx --test tests/vars-tools.test.ts tests/agent-tools.test.ts tests/primitives.test.ts tests/registry.test.ts tests/mcp.test.ts`
@@ -338,3 +338,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 1 in_progress; phases 2–5 pending.
 - 2026-09-26: Phase 1 complete; review APPROVE. Red: missing loadVariableConfig export. Green: 10 config tests; typecheck and diff checks passed. Reviewed strict metadata-only projection, path resolution, immutable declarations, and no eager credentials/prompt/source access. Phase 2 in_progress.
 - 2026-09-26: Phase 2 complete; review APPROVE. Red: missing resolver/provider modules. Green: 12 resolver/provider/Bash lifecycle tests, typecheck. Real subprocess fixtures covered timeout, abort, inherited pipes, invalid protocol and counting TTL. Corrected one trailing blank line in docs/vars.md reported by the Phase 1 staged diff check (the earlier log overstated that whitespace check); current diff check passes. Phase 3 in_progress.
+- 2026-09-26: Phase 3 complete; review APPROVE. Red: unknown bundled vars tools and missing custom context service. Green: 33 focused tests including MCP/Bash/approval/fork regressions; typecheck/build/diff checks passed. Updated intentional Bash schema digest golden for env_refs. Denied conditional calls have zero provider marker writes, and invalid later refs prevent the first command. Phase 4 in_progress.

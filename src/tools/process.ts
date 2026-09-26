@@ -4,6 +4,7 @@ import type { ToolResult } from "./types.js";
 import { errorResult, utf8Prefix } from "./results.js";
 
 export interface BashOptions {
+  env?: NodeJS.ProcessEnv;
   command: string;
   cwd: string;
   maxOutputBytes: number;
@@ -18,6 +19,7 @@ export async function runBash(options: BashOptions): Promise<ToolResult> {
   const isPosix = process.platform !== "win32";
   const child = spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
     cwd: options.cwd,
+    ...(options.env ? { env: options.env } : {}),
     stdio: ["ignore", "pipe", "pipe"],
     detached: isPosix,
   });

@@ -1,3 +1,5 @@
+import { createVariableResolver } from "../../vars/resolver.js";
+import type { VariableContext } from "../../vars/contract.js";
 import type { RuntimeConfig } from "../../config.js";
 import { connectMcpServers, type McpConnection, type McpServerConfig } from "../mcp-client.js";
 import { ToolRegistry } from "../registry.js";
@@ -7,6 +9,7 @@ import type { SelectedSkill } from "../../skills/contract.js";
 import { createHash } from "node:crypto";
 
 export interface RuntimeTools {
+  vars: VariableContext;
   registry: ToolRegistry;
   mcp: McpConnection;
   selectedNames: readonly string[];
@@ -18,6 +21,7 @@ export async function createRuntimeTools(options: {
   runtime: RuntimeConfig;
   cwd: string;
   signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
   discoverableMcp?: Readonly<Record<string, McpServerConfig>>;
 }): Promise<RuntimeTools> {
   const { runtime, cwd, signal } = options;
@@ -32,7 +36,11 @@ export async function createRuntimeTools(options: {
     && Buffer.byteLength(JSON.stringify({ skills: skills.map(({ name, description }) => ({ name, description })) })) > runtime.maxOutputBytes) {
     throw new Error("selected skill catalog exceeds max_output_bytes");
   }
-  const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills,
+  const vars = createVariableResolver({ config: runtime.variableConfig, ...(options.env ? { env: options.env } : {}) });
+  if (runtime.toolIds.includes("builtin/list_vars") && Buffer.byteLength(JSON.stringify({ vars: vars.list() })) > runtime.maxOutputBytes) {
+    throw new Error("selected variable catalog exceeds max_output_bytes");
+  }
+  const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills, vars,
     globalConfigRoot: runtime.globalConfigRoot });
   if (signal?.aborted) throw new Error("tool startup aborted");
   const registry = new ToolRegistry(runtime.toolRules);
@@ -63,6 +71,6 @@ export async function createRuntimeTools(options: {
     if (new Set(names).size !== names.length) throw new Error("duplicate model-visible tool name");
     const toolSourceDigest = createHash("sha256").update(JSON.stringify(runtime.toolIds.map((id) =>
       id.startsWith("mcp/") ? { id } : { id, source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }))).digest("hex");
-    return { registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest };
+    return { vars, registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest };
   } catch (error) { await mcp.close(); throw error; }
 }

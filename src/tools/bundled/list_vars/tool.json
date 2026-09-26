@@ -1,0 +1,13 @@
+{
+  "api_version": 1,
+  "id": "list_vars",
+  "version": "1.0.0",
+  "name": "list_vars",
+  "description": "List selected variable names, descriptions, types and read/use access without resolving values or running providers. Read accessible values with read_var; pass use references to consuming tools. No variables are added automatically.",
+  "input_schema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "entry": "./index.mjs"
+}
