@@ -281,6 +281,7 @@ Implementation review is required; verdict must be APPROVE.
 `refactor: reconcile session runtime changes without blocking resume`
 
 ## Phase 3: Apply current configuration consistently across CLI, SDK and ACP
+Status: complete (2026-09-26).
 
 ### Goal
 Complete and qualify the user-visible session fix before starting package work.
@@ -309,9 +310,9 @@ Exercise installed CLI subprocesses and ACP requests, not only a direct `initial
 ### Implementation obligations
 Replace obsolete refusal tests with positive continuity tests; ensure startup errors release claims/MCP handles; keep footer resume instructions usable after successful overrides. Record Milestone A evidence separately before proceeding.
 ### Acceptance criteria
-- [ ] AC-8: CLI, SDK and ACP all satisfy edit→resume→unchanged-resume with one ID — integration tests.
-- [ ] AC-9: Old saved selections cannot block an otherwise valid current selection; current invalid config still fails locally — MCP/ACP/CLI tests.
-- [ ] AC-10: Full suite passes with all original persistence, vars, policy and UI guarantees preserved — `npm run check` and milestone evidence.
+- [x] AC-8: CLI, SDK and ACP all satisfy edit→resume→unchanged-resume with one ID — integration tests.
+- [x] AC-9: Old saved selections cannot block an otherwise valid current selection; current invalid config still fails locally — MCP/ACP/CLI tests.
+- [x] AC-10: Full suite passes with all original persistence, vars, policy and UI guarantees preserved — `npm run check` and milestone evidence.
 ### Focused verification
 `npm run test:phase -- sessions`
 ### Phase gates
@@ -545,10 +546,10 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Completion Criteria
 
-- [ ] AC-1 through AC-10 and AC-7a pass before any package implementation starts.
-- [ ] Unsupported old state never prevents a new task; readable current sessions keep their IDs/history.
-- [ ] CLI, SDK and ACP accept valid current runtime changes, recover historical calls without dispatch, and stabilize after the transition.
-- [ ] Request prefix stability is proven by captured provider payloads; version/provenance-only changes do not create artificial incompatibility or rotation.
+- [x] AC-1 through AC-10 and AC-7a pass before any package implementation starts.
+- [x] Unsupported old state never prevents a new task; readable current sessions keep their IDs/history.
+- [x] CLI, SDK and ACP accept valid current runtime changes, recover historical calls without dispatch, and stabilize after the transition.
+- [x] Request prefix stability is proven by captured provider payloads; version/provenance-only changes do not create artificial incompatibility or rotation.
 - [ ] AC-11 through AC-26 pass, covering the six export categories, complete owned/dependency closure, recipient inputs, lifecycle and current-agent integration.
 - [ ] Package operations are independent of session schema, model credentials, executable plugin startup and runtime var resolution.
 - [ ] Five shipped setup skills and all installed examples match the final contracts; docs clearly defer hosted marketplace/Git transport/range solving.
@@ -557,6 +558,7 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
+- 2026-09-26: Phase 3 complete. CLI explicit agent/config overrides now become saved defaults, SDK returns refreshed metadata, ACP uses current base selection while retaining compatible explicit views and pruning unavailable historical aliases. Removed-config recovery and A→B→B CLI/SDK/ACP tests added; selected bundled skill instructions updated within the 8 KiB load cap. `npm run test:phase -- sessions` passed 130/130; final `npm run check` passed 419/419; `git diff --check` passed. Local evidence: `docs/evidence/milestone-a-session-continuity.md`. Self-review APPROVE: no saved-runtime equality gate remains on these surfaces; current invalid references still fail and existing policy/vars/UI regressions pass.
 - 2026-09-26: Phase 2 complete. Docs-first and red tests preceded transactional runtime transitions, canonical/provider replay projection and complete selected-tool folder snapshots. `npm run test:phase -- sessions` passed 127/127, `npm run typecheck` and `git diff --check` passed. Self-review APPROVE: transition notice is host-only, prior transcript remains canonical, stable B→B key and request prefix are asserted, helper-only source changes execute new bytes. ACP integration remains part of Phase 3's surface qualification.
 - 2026-09-26: Phase 1 complete. Docs first, then 5 red integration/storage cases (`unsupported session schema version`); implemented read-only location selection, scoped missing-ID diagnostics for CLI/SDK/ACP and isolated active payload root. Final `npm run test:phase -- sessions` passed 106/106, `npm run typecheck` passed, `git diff --check` passed. AC-1–AC-3 reviewed APPROVE; commit below.
 - 2026-09-26: Phase 1 in_progress. Plan reviewer APPROVE finalized in `/Users/lploc94/projects/raw-cli/.codex-review/sessions/codex-plan-review-20260926-002` (2 rounds, 1 accepted/fixed issue). Implementation started from clean main plus this untracked plan.

@@ -202,9 +202,6 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     if (resumeId !== undefined) {
       if (!saved) throw rawError(rawErrors.unknownSession, `unknown or expired session: ${store.missingSessionMessage()}`);
       if (realpathSync(saved.cwd) !== canonicalCwd) throw RequestError.invalidParams(undefined, "session cwd differs from saved cwd");
-      if (saved.configPath !== options.runtime.configPath || saved.agentName !== modelConfig.agentName) {
-        throw RequestError.invalidParams(undefined, "session config/agent differs from saved identity");
-      }
       if (sessions.has(resumeId)) throw rawError(rawErrors.busy, "session is already attached to this peer");
     }
     let claimed: SessionOwner | undefined;
@@ -227,10 +224,19 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         registry = tools.registry;
         mcp = tools.mcp;
         if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
+        let selectedNames: readonly string[] = tools.selectedNames;
+        let explicitToolView = false;
         if (saved) {
           id = saved.id;
           const view = store.getStoredToolView(id);
-          if (view?.explicit && view.selection) mcp.activate(view.selection.filter((name) => !isEphemeralPeerAlias(name)));
+          if (view?.explicit && view.selection
+            && JSON.stringify(view.baseSelection) === JSON.stringify(tools.selectedNames)) {
+            const known = new Set(registry.definitions().map((item) => item.name));
+            const aliases = new Set(mcp.catalog.map((item) => item.alias));
+            selectedNames = view.selection.filter((name) => !isEphemeralPeerAlias(name) && (known.has(name) || aliases.has(name)));
+            mcp.activate(selectedNames.filter((name) => aliases.has(name)));
+            explicitToolView = true;
+          }
         } else {
           id = store.createSession({ cwd, title: "New session", agentName: modelConfig.agentName,
             configPath: options.runtime.configPath, modelId: modelConfig.model, provider: modelConfig.provider,
@@ -240,9 +246,9 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         }
         const sessionId = id;
         const agentSession = createAgent({ provider: providerFactory(modelConfig), registry,
-          whitelist: tools.selectedNames,
+          whitelist: selectedNames, baseToolSelection: tools.selectedNames, explicitToolView,
           toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
-          cwd, system: options.runtime.systemPrompt,
+          cwd, system: options.runtime.systemPrompt, configPath: options.runtime.configPath,
           maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
           requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
           persistence: { store, sessionId, surface: "acp", ...(claimed ? { owner: claimed } : {}) },
@@ -264,9 +270,6 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         if (saved && claimed) store.releaseSession(saved.id, claimed);
         if (created && id) store.deleteSession(id);
         if (error instanceof Error && /busy|ownership/i.test(error.message)) throw rawError(rawErrors.busy, "session is busy");
-        if (error instanceof Error && /unknown MCP alias|session runtime identity changed/i.test(error.message)) {
-          throw RequestError.invalidParams(undefined, "saved tool selection or runtime identity differs");
-        }
         throw error;
       }
     })();

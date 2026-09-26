@@ -70,6 +70,9 @@ export interface SessionStorageStats {
 export interface SessionOwner { token: string; generation: number }
 export interface AgentIdentity {
   cwd: string;
+  configPath?: string;
+  baseToolSelection?: readonly string[];
+  selectionExplicit?: boolean;
   system: string;
   modelConfig: Readonly<ResolvedModelConfig>;
   toolDefinitions: readonly ToolDefinition[];
@@ -317,11 +320,13 @@ export class SessionStore {
     };
   }
 
-  getStoredToolView(sessionId: string): { selection: readonly string[] | null; explicit: boolean } | undefined {
+  getStoredToolView(sessionId: string): { selection: readonly string[] | null; explicit: boolean; baseSelection?: readonly string[] } | undefined {
     const row = this.database.prepare("SELECT selected_tools_json, selection_explicit FROM sessions WHERE id = ?").get(sessionId);
     if (row?.selected_tools_json === null || row?.selected_tools_json === undefined) return undefined;
+    const baseSelection = this.runtimeMetadata(sessionId)?.baseSelection;
     return { selection: JSON.parse(String(row.selected_tools_json)) as readonly string[] | null,
-      explicit: Number(row.selection_explicit) === 1 };
+      explicit: Number(row.selection_explicit) === 1,
+      ...(baseSelection ? { baseSelection } : {}) };
   }
 
   initializeAgent(sessionId: string, owner: SessionOwner, identity: AgentIdentity): StoredAgentState {
@@ -345,12 +350,14 @@ export class SessionStore {
       if (row.tool_schema_digest === null) {
         this.database.prepare(`UPDATE sessions SET agent_name = ?, model_id = ?, provider = ?, method = ?, endpoint = ?,
           system_prompt = ?, cache_key = ?, selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
-          skill_snapshot_json = ?, skill_visibility_json = ?, runtime_digest = ? WHERE id = ?`)
+          skill_snapshot_json = ?, skill_visibility_json = ?, runtime_digest = ?, selection_explicit = ?, config_path = coalesce(?, config_path) WHERE id = ?`)
           .run(identity.modelConfig.agentName, identity.modelConfig.model, identity.modelConfig.provider, identity.modelConfig.method,
             endpointHash, identity.system, row.cache_key === null ? identity.cacheKey : String(row.cache_key),
             JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
-            JSON.stringify({ listed: false, loaded: [] }), runtimeDigest, sessionId);
-        this.writeRuntimeMetadata(sessionId, { replayBefore: 0, replaySignature });
+            JSON.stringify({ listed: false, loaded: [] }), runtimeDigest, identity.selectionExplicit ? 1 : 0,
+            identity.configPath ?? null, sessionId);
+        this.writeRuntimeMetadata(sessionId, { replayBefore: 0, replaySignature,
+          ...(identity.baseToolSelection ? { baseSelection: [...identity.baseToolSelection] } : {}) });
       } else {
         this.recoverInterruptedCallsInTransaction(sessionId, owner);
         const previousState = this.readAgentState(sessionId, owner);
@@ -373,14 +380,16 @@ export class SessionStore {
           const stale = skillChanged ? staleSkillNames(previousSkills, skillSnapshot, visibility) : [];
           this.database.prepare(`UPDATE sessions SET agent_name = ?, model_id = ?, provider = ?, method = ?, endpoint = ?,
             system_prompt = ?, runtime_digest = ?, selected_tools_json = ?, tool_schema_digest = ?, tool_source_digest = ?,
-            skill_snapshot_json = ?, context_revision = context_revision + 1, cache_key = ?, token_calibration = ? WHERE id = ?`)
+            skill_snapshot_json = ?, context_revision = context_revision + 1, cache_key = ?, token_calibration = ?,
+            selection_explicit = ?, config_path = coalesce(?, config_path) WHERE id = ?`)
             .run(identity.modelConfig.agentName, identity.modelConfig.model, identity.modelConfig.provider,
               identity.modelConfig.method, endpointHash, identity.system, runtimeDigest,
               JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
               runtimeChanged || toolChanged ? randomUUID() : String(row.cache_key),
-              replayChanged ? 1 : Number(row.token_calibration), sessionId);
+              replayChanged ? 1 : Number(row.token_calibration), identity.selectionExplicit ? 1 : 0,
+              identity.configPath ?? null, sessionId);
           this.writeRuntimeMetadata(sessionId, { replayBefore: replayChanged ? previousState.messages.length : previousMeta?.replayBefore ?? 0,
-            replaySignature });
+            replaySignature, ...(identity.baseToolSelection ? { baseSelection: [...identity.baseToolSelection] } : {}) });
           const changes = [
             ...(runtimeChanged ? ["runtime"] : []),
             ...(toolCatalogChanged ? ["tools"] : toolChanged ? ["tool source"] : []),
@@ -405,9 +414,16 @@ export class SessionStore {
               .run(digest(skillSnapshotJson), sessionId);
           }
         } else {
-          if (row.agent_name !== identity.modelConfig.agentName) this.database.prepare("UPDATE sessions SET agent_name = ? WHERE id = ?")
-            .run(identity.modelConfig.agentName, sessionId);
-          if (!previousMeta) this.writeRuntimeMetadata(sessionId, { replayBefore: 0, replaySignature });
+          if (row.agent_name !== identity.modelConfig.agentName
+            || (identity.configPath !== undefined && row.config_path !== identity.configPath)
+            || Number(row.selection_explicit) !== (identity.selectionExplicit ? 1 : 0)) {
+            this.database.prepare("UPDATE sessions SET agent_name = ?, config_path = coalesce(?, config_path), selection_explicit = ? WHERE id = ?")
+              .run(identity.modelConfig.agentName, identity.configPath ?? null, identity.selectionExplicit ? 1 : 0, sessionId);
+          }
+          if (!previousMeta || JSON.stringify(previousMeta.baseSelection) !== JSON.stringify(identity.baseToolSelection)) {
+            this.writeRuntimeMetadata(sessionId, { replayBefore: previousMeta?.replayBefore ?? 0, replaySignature,
+              ...(identity.baseToolSelection ? { baseSelection: [...identity.baseToolSelection] } : {}) });
+          }
         }
       }
     });
@@ -430,12 +446,12 @@ export class SessionStore {
     };
   }
 
-  private runtimeMetadata(sessionId: string): { replayBefore: number; replaySignature: string } | undefined {
+  private runtimeMetadata(sessionId: string): { replayBefore: number; replaySignature: string; baseSelection?: readonly string[] } | undefined {
     const row = this.database.prepare("SELECT payload_json FROM session_runtime_metadata WHERE session_id = ?").get(sessionId);
-    return row ? JSON.parse(String(row.payload_json)) as { replayBefore: number; replaySignature: string } : undefined;
+    return row ? JSON.parse(String(row.payload_json)) as { replayBefore: number; replaySignature: string; baseSelection?: readonly string[] } : undefined;
   }
 
-  private writeRuntimeMetadata(sessionId: string, metadata: { replayBefore: number; replaySignature: string }): void {
+  private writeRuntimeMetadata(sessionId: string, metadata: { replayBefore: number; replaySignature: string; baseSelection?: readonly string[] }): void {
     this.database.prepare(`INSERT INTO session_runtime_metadata(session_id, payload_json) VALUES (?, ?)
       ON CONFLICT(session_id) DO UPDATE SET payload_json = excluded.payload_json`).run(sessionId, JSON.stringify(metadata));
   }
@@ -459,7 +475,8 @@ export class SessionStore {
     if (fields.length) this.database.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values, sessionId);
     if (metadata.replayBefore !== undefined) {
       const current = this.runtimeMetadata(sessionId);
-      this.writeRuntimeMetadata(sessionId, { replayBefore: metadata.replayBefore, replaySignature: current?.replaySignature ?? "" });
+      this.writeRuntimeMetadata(sessionId, { replayBefore: metadata.replayBefore, replaySignature: current?.replaySignature ?? "",
+        ...(current?.baseSelection ? { baseSelection: current.baseSelection } : {}) });
     }
   }
 
@@ -478,7 +495,8 @@ export class SessionStore {
         .run(JSON.stringify(selection), toolDigest, revision, cacheKey, explicit ? 1 : 0, sessionId);
       if (replayBefore !== undefined) {
         const current = this.runtimeMetadata(sessionId);
-        this.writeRuntimeMetadata(sessionId, { replayBefore, replaySignature: current?.replaySignature ?? "" });
+        this.writeRuntimeMetadata(sessionId, { replayBefore, replaySignature: current?.replaySignature ?? "",
+          ...(current?.baseSelection ? { baseSelection: current.baseSelection } : {}) });
       }
       this.renewSession(sessionId, owner);
     });

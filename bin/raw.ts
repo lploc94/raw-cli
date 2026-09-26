@@ -198,12 +198,9 @@ async function run(): Promise<void> {
       const savedConfigPath = selected.configPath;
       const savedAgentName = selected.agentName;
       if (!savedConfigPath || !savedAgentName) throw new InputError("saved session has no config/agent identity");
-      if (parsed.flags.agent && parsed.flags.agent !== savedAgentName) throw new InputError("explicit --agent differs from saved session");
-      if (parsed.flags.configPath && configFilePath({ flags: parsed.flags }) !== savedConfigPath) {
-        throw new InputError("explicit --config differs from saved session");
-      }
       runtime = await inputAsync(() => loadConfig({ cwd: selected.cwd, flags: {
-        ...parsed.flags, configPath: savedConfigPath, agent: savedAgentName,
+        ...parsed.flags, configPath: parsed.flags.configPath ? configFilePath({ flags: parsed.flags }) : savedConfigPath,
+        ...(!parsed.flags.agent && !parsed.flags.configPath ? { agent: savedAgentName } : {}),
       }, requireModel: true }));
       process.stderr.write(`raw: resuming in ${selected.cwd}\n`);
     } else runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true }));

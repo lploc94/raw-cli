@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -154,11 +154,15 @@ test("one-shot footer shows reported session token usage without inventing cache
   } finally { await provider.close(); }
 });
 
-test("--continue is workspace-scoped and explicit --agent conflict fails before provider work", async () => {
+test("--continue is workspace-scoped and explicit agent/config overrides become saved defaults", async () => {
   const { a, b, env } = fixture();
-  const provider = await startMockProvider([answer("a-first"), answer("b-first"), answer("a-next")]);
+  const provider = await startMockProvider([answer("a-first"), answer("b-first"), answer("a-next"),
+    answer("agent-changed"), answer("config-changed"), answer("saved-default")]);
   try {
     const config = testConfig("openai", "fixture", provider.url);
+    const document = JSON.parse(readFileSync(config, "utf8"));
+    document.agents.other = { model: "fixture", system_prompt: "other agent", tools: { use: [] } };
+    writeFileSync(config, JSON.stringify(document));
     assert.equal((await raw(["--config", config, "A"], a, env)).code, 0);
     assert.equal((await raw(["--config", config, "B"], b, env)).code, 0);
     const next = await raw(["--continue", "A again"], a, env);
@@ -168,16 +172,43 @@ test("--continue is workspace-scoped and explicit --agent conflict fails before 
     const listed = await raw(["sessions"], a, env);
     const id = listed.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)?.[0];
     assert.ok(id);
-    const before = provider.requests.length;
-    const mismatch = await raw(["--resume", id, "--agent", "other", "do not call"], a, env);
-    assert.equal(mismatch.code, 2);
-    assert.match(mismatch.stderr, /agent/i);
-    assert.equal(provider.requests.length, before);
+    const changedAgent = await raw(["--resume", id, "--agent", "other", "switch agent"], a, env);
+    assert.equal(changedAgent.code, 0, changedAgent.stderr);
+    assert.equal(changedAgent.stdout, "agent-changed\n");
+    assert.match(JSON.stringify(provider.requests[3]?.body), /switch agent/);
     const alternate = testConfig("openai", "fixture", provider.url);
-    const configMismatch = await raw(["--resume", id, "--config", alternate, "do not call"], a, env);
-    assert.equal(configMismatch.code, 2);
-    assert.match(configMismatch.stderr, /config/i);
-    assert.equal(provider.requests.length, before);
+    const changedConfig = await raw(["--resume", id, "--config", alternate, "switch config"], a, env);
+    assert.equal(changedConfig.code, 0, changedConfig.stderr);
+    assert.equal(changedConfig.stdout, "config-changed\n");
+    const saved = await raw(["--resume", id, "resume defaults"], a, env);
+    assert.equal(saved.code, 0, saved.stderr);
+    assert.equal(saved.stdout, "saved-default\n");
+    const store = openSessionStore({ env });
+    try { assert.equal(store.getSession(id)?.configPath, alternate); assert.equal(store.getSession(id)?.agentName, "fixture"); }
+    finally { store.close(); }
+  } finally { await provider.close(); }
+});
+
+test("an explicit replacement config resumes after the saved config file disappears", async () => {
+  const { a, env } = fixture();
+  const provider = await startMockProvider([answer("first"), answer("replaced"), answer("again")]);
+  try {
+    const original = testConfig("openai", "fixture", provider.url);
+    const replacement = testConfig("openai", "fixture", provider.url);
+    const first = await raw(["--config", original, "first"], a, env);
+    assert.equal(first.code, 0, first.stderr);
+    const id = first.stderr.match(/raw --resume ([0-9a-f-]+) "query"/)?.[1];
+    assert.ok(id);
+    renameSync(original, `${original}.removed`);
+    const missing = await raw(["--resume", id, "retry"], a, env);
+    assert.equal(missing.code, 2);
+    assert.match(missing.stderr, /config|ENOENT|no such file/i);
+    assert.equal(provider.requests.length, 1);
+    const second = await raw(["--resume", id, "--config", replacement, "retry"], a, env);
+    assert.equal(second.code, 0, second.stderr);
+    const third = await raw(["--resume", id, "again"], a, env);
+    assert.equal(third.code, 0, third.stderr);
+    assert.equal(third.stdout, "again\n");
   } finally { await provider.close(); }
 });
 

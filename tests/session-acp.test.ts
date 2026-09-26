@@ -81,6 +81,42 @@ test("standard ACP list, load replay, resume without replay, and delete survive 
   } finally { fourthConnection.close(); await fourth.close(); }
 });
 
+test("ACP resumes with a new agent and keeps the changed runtime stable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-session-acp-agent-"));
+  const state = mkdtempSync(join(tmpdir(), "raw-session-acp-agent-state-"));
+  const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
+  const firstPath = testConfig("ollama", "model-one");
+  const secondPath = testConfig("ollama", "model-two");
+  const changedDocument = JSON.parse(readFileSync(secondPath, "utf8"));
+  changedDocument.default_agent = "second";
+  changedDocument.agents.second = { model: "fixture", system_prompt: "changed prompt", tools: { use: [] } };
+  writeFileSync(secondPath, JSON.stringify(changedDocument));
+  const original = await loadConfig({ flags: { configPath: firstPath }, env: {}, requireModel: true });
+  const changed = await loadConfig({ flags: { configPath: secondPath }, env: {}, requireModel: true });
+  const requests: ProviderRequest[] = [];
+  const attach = async (runtime: typeof original, resumeId?: string) => {
+    const server = createAcpServer({ runtime, storeOptions, providerFactory: () => ({ modelConfig: runtime.modelConfig!,
+      generate: async (request) => { requests.push(request); return { text: "done", toolCalls: [], finishReason: "stop" }; } }) });
+    const connection = client({ name: "runtime-change" }).connect(server.app);
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    const id = resumeId ?? (await connection.agent.request("session/new", { cwd: root, mcpServers: [] })).sessionId;
+    if (resumeId) await connection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] });
+    await connection.agent.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "hello" }] });
+    connection.close(); await server.close();
+    return id;
+  };
+  const id = await attach(original);
+  await attach(changed, id);
+  await attach(changed, id);
+  assert.equal(requests.length, 3);
+  assert.notEqual(requests[0]?.cacheKey, requests[1]?.cacheKey);
+  assert.equal(requests[1]?.cacheKey, requests[2]?.cacheKey);
+  assert.deepEqual(requests[2]?.messages.slice(0, requests[1]!.messages.length), requests[1]?.messages);
+  const store = openSessionStore(storeOptions);
+  try { assert.equal(store.getSession(id)?.agentName, "second"); assert.equal(store.getSession(id)?.configPath, secondPath); }
+  finally { store.close(); }
+});
+
 test("ACP list pages older IDs and rejects wrong cwd, unknown IDs, and a second writer", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-session-acp-pages-"));
   const other = mkdtempSync(join(tmpdir(), "raw-session-acp-other-"));
@@ -229,7 +265,7 @@ test("ACP reports maintenance contention as busy", async () => {
   }
 });
 
-test("ACP configured MCP alias survives restart and missing alias fails closed", async () => {
+test("ACP drops an unavailable historical MCP alias and keeps the next attachment stable", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-session-acp-selection-"));
   const state = mkdtempSync(join(tmpdir(), "raw-session-acp-selection-state-"));
   const storeOptions = { env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state } };
@@ -259,16 +295,17 @@ test("ACP configured MCP alias survives restart and missing alias fails closed",
   const missingConnection = client({ name: "selection-missing" }).connect(missing.app);
   try {
     await missingConnection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
-    await assert.rejects(missingConnection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] }), /unknown MCP alias|schema|selection/i);
-    assert.equal(requests.length, 1);
+    await missingConnection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] });
+    await missingConnection.agent.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "two" }] });
+    assert.deepEqual(requests[1]?.tools.map((item) => item.name), []);
   } finally { missingConnection.close(); await missing.close(); }
   const second = makeServer(true);
   const secondConnection = client({ name: "selection-second" }).connect(second.app);
   try {
     await secondConnection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     await secondConnection.agent.request("session/resume", { sessionId: id, cwd: root, mcpServers: [] });
-    await secondConnection.agent.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "two" }] });
-    assert.deepEqual(requests[1]?.tools.map((item) => item.name), [alias]);
+    await secondConnection.agent.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "three" }] });
+    assert.deepEqual(requests[2]?.tools.map((item) => item.name), []);
   } finally { secondConnection.close(); await second.close(); }
 });
 

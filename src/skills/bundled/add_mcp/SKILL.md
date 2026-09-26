@@ -83,6 +83,6 @@ With this fixture, verify a real `echo_text` call with `{"text":"hello"}` return
 - Authentication failure: check the server's real credential mechanism and literal headers/environment, not model-provider credentials.
 - Image content failure: native images need a capable model/adapter; text-only agents can use OCR tools returning text.
 
-Raw validates selected tool schemas/arguments and closes owned connections on failed startup or shutdown. Selected schema/selection changes can rotate the generated cache key on resume; unselected server edits do not affect the active prefix. Changing config path, agent, model/endpoint or effective prompt can reject resume entirely. Report server/transport, exact selections, actual checks and remaining prerequisites.
+Raw validates selected schemas/arguments and closes connections on failed startup or shutdown. Selected schema/selection changes can rotate the generated cache key; unselected edits do not affect the prefix. Valid config, agent, model/endpoint and prompt changes resume on the same ID. Missing historical MCP aliases leave saved ACP views; invalid current selections still fail. Report transport, selections, checks and prerequisites.
 
 Raw vars do not interpolate MCP env/headers or tool arguments. Use a server's inherited environment/auth mechanism, or a local tool consuming context.vars. Executable var_providers use a separate one-request JSON protocol, not MCP.

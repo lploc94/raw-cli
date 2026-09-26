@@ -61,11 +61,11 @@ Cache: successful values, per runtime; restart/resume starts empty. Old readings
 
 ## UI, MCP and sessions
 
-Root `ui`: `density` compact/normal/verbose; `reasoning` hidden/summary/full (default summary, verbose full); `color` auto/always/never; `icons` auto/unicode/ascii; `theme` terminal/dark/light. Flags --display (density), --reasoning, --color, --icons, --theme override config. Show thinking with `"ui":{"reasoning":"full"}`. Palette/TTY: installed docs/terminal-output.md; UI preserves session identity.
+Root `ui`: `density` compact/normal/verbose; `reasoning` hidden/summary/full; `color` auto/always/never; `icons` auto/unicode/ascii; `theme` terminal/dark/light. Matching UI flags override config. Show thinking with `"ui":{"reasoning":"full"}`. See installed docs/terminal-output.md; UI preserves session identity.
 
 `mcp.servers.<name>`: stdio `{transport:"stdio",command:string,args?:string[],env?:string-map}` or remote `{transport:"streamable-http",url:HTTP(S),headers?:string-map}`. Env/headers stay literal; no vars interpolation. Activate by exact tools.use IDs, not the declaration alone.
 
-Canonical-only `sessions.retention_days`: positive integer, default 7. Resume binds config path/agent/model/provider/method/endpoint/prompt; changes may reject it. Tool/schema/source changes rotate generated keys; skill-only edits keep keys with possible reload notices. No migration.
+Canonical-only `sessions.retention_days`: positive integer, default 7. Resume uses current config/agent on the same ID. `--config` or `--agent` overrides become saved defaults; a replacement config recovers a missing old file. Runtime/tool changes rotate keys once; unchanged resumes stay stable. Skill-only edits keep keys with possible reload notices. Old stores cannot block new work.
 
 ## Edit and verify
 

@@ -13,7 +13,7 @@ import type { ToolResult } from "./tools/types.js";
 import type { SessionOwner, SessionStore } from "./sessions/store.js";
 import type { SkillVisibility } from "./sessions/store.js";
 import type { SelectedSkill } from "./skills/contract.js";
-import { isEphemeralPeerAlias, validateStoredAgentState } from "./sessions/restore.js";
+import { validateStoredAgentState } from "./sessions/restore.js";
 import { acpUpdate } from "./sessions/display.js";
 import type { AgentMetadata, VisibleRecord } from "./sessions/store.js";
 import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./sessions/visible.js";
@@ -61,6 +61,9 @@ export interface AgentOptions {
   toolSourceDigest?: string;
   selectedSkills?: readonly SelectedSkill[];
   cwd?: string;
+  configPath?: string;
+  baseToolSelection?: readonly string[];
+  explicitToolView?: boolean;
   system?: string;
   maxSteps?: number;
   maxOutputBytes?: number;
@@ -130,23 +133,20 @@ export class AgentSession {
       const { store, sessionId, surface } = options.persistence;
       const owner = options.persistence.owner ?? store.claimSession(sessionId);
       try {
-        const savedView = store.getStoredToolView(sessionId);
-        if (savedView && (options.whitelist === undefined || (surface === "acp" && savedView.explicit))) {
-          if (savedView.selection === null) delete this.options.whitelist;
-          else {
+        if (options.whitelist === undefined && surface === "cli") {
+          const savedView = store.getStoredToolView(sessionId);
+          if (savedView?.selection) {
             const known = new Set(this.options.registry.definitions().map((item) => item.name));
-            if (surface === "acp") {
-              for (const name of savedView.selection) {
-                if (!known.has(name) && !isEphemeralPeerAlias(name)) throw new Error(`saved tool selection unavailable or denied: ${name}`);
-              }
-              this.options.whitelist = savedView.selection.filter((name) => known.has(name));
-            } else this.options.whitelist = [...savedView.selection];
+            this.options.whitelist = savedView.selection.filter((name) => known.has(name));
+            this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
           }
-          this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
         }
         const saved = store.initializeAgent(sessionId, owner, {
           cwd: this.options.cwd, system: this.options.system, modelConfig: this.options.provider.modelConfig,
           toolDefinitions: this.schemaView, selectedTools: this.options.whitelist ?? null, cacheKey: this.cacheKey,
+          ...(options.configPath ? { configPath: options.configPath } : {}),
+          ...(options.baseToolSelection ? { baseToolSelection: options.baseToolSelection } : {}),
+          selectionExplicit: options.explicitToolView ?? false,
           ...(options.toolSourceDigest ? { toolSourceDigest: options.toolSourceDigest } : {}),
           selectedSkills: this.selectedSkills,
         });

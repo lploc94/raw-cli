@@ -123,7 +123,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     systemPrompt: runtime.systemPrompt });
   const createRuntimeAgent = (id: string) => createAgent({ provider, registry: tools.registry, whitelist: tools.selectedNames,
     toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
-    cwd, system: runtime.systemPrompt, maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
+    cwd, system: runtime.systemPrompt, configPath: runtime.configPath,
+    maxSteps: runtime.maxSteps, maxOutputBytes: runtime.maxOutputBytes,
     requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, compact: runtime.compact,
     persistence: { store, sessionId: id, surface: "cli" },
     ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal, tools.registry.canonicalIdentity(name), currentRenderer) } : {}) });

@@ -62,7 +62,7 @@ export function resumeSession(options: ResumeSessionOptions): ResumedSession {
     const agent = createAgent({ ...options.agentOptions, cwd: session.cwd,
       persistence: { store, sessionId: session.id, surface: "cli" } });
     let closed = false;
-    return { session, agent, async close() {
+    return { session: store.getSession(session.id) ?? session, agent, async close() {
       if (closed) return;
       closed = true;
       try { await agent.close(); }

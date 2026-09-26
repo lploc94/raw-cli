@@ -66,7 +66,7 @@ Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_t
 3. Run `raw --config /path/to/raw.json config list`. It verifies schema and references to model aliases, not file contents or live MCP. If the installed library is importable, use `loadConfig({configPath,requireModel:false})` to check the prompt and `createRuntimeTools({runtime,cwd})` to load selected tools/skills and connect selected MCP. Close `tools.mcp` afterward. Otherwise use a harmless task with the intended agent when model access exists and report what remains unverified.
 4. For sharing, copy the directory to an unrelated path and repeat loading. Check config-relative prompt/custom assets, required external commands, global dependencies and literal server paths. Exercise a requested policy with harmless calls. Include setup instructions for the recipient; exclude private conversation state and machine-specific paths.
 
-Report the agent name, directory/config, model alias, prompt/capabilities, checks and remaining prerequisites. Existing sessions bind config path, agent name, model/endpoint and effective prompt; changing those can reject resume. Tool changes can rotate the generated cache key; skill-only changes may append a reload notice while keeping it. Sharing an agent does not transfer session identity.
+Report the agent name, config, model, prompt/capabilities, checks and prerequisites. Sessions can resume with `raw --resume ID --agent NAME "query"` or replacement `--config`; successful selection becomes the default. Runtime/tool changes rotate the generated key once; skill-only changes may append a reload notice. Sharing an agent does not transfer session identity.
 
 ## Select and share variables
 
