@@ -21,7 +21,7 @@ export default defineConfig([
     outDir: "dist",
     clean: false,
     dts: false,
-    splitting: false,
+    splitting: true,
     external: ["node:sqlite"],
     removeNodeProtocol: false,
     banner: { js: "#!/usr/bin/env node" },

@@ -3,8 +3,6 @@ import { dirname } from "node:path";
 import { configFilePath, loadConfig, parseCliArgs, readConfigDocument, readSessionRetentionDays, redact } from "../src/config.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
-import { runCli } from "../src/cli.js";
-import { renderTerminalHistory } from "../src/terminal/history.js";
 import { parseUiDocument, resolveUiOptions, terminalCapabilities } from "../src/terminal/options.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { runSessionMaintenance } from "../src/sessions/maintenance.js";
@@ -155,6 +153,7 @@ async function run(): Promise<void> {
         }
         if (page.nextCursor) process.stdout.write(`next: ${page.nextCursor}\n`);
       } else if (parsed.command === "sessions-show") {
+        const { renderTerminalHistory } = await import("../src/terminal/history.js");
         const ui = input(() => resolveUiOptions(parseUiDocument(readConfigDocument({ flags: parsed.flags }).data.ui), parsed.flags));
         const caps = terminalCapabilities(Boolean(process.stdout.isTTY), process.env, ui);
         const page = input(() => store.getSessionHistory({ sessionId: parsed.sessionId!,
@@ -186,6 +185,7 @@ async function run(): Promise<void> {
       }, requireModel: true }));
       process.stderr.write(`raw: resuming in ${selected.cwd}\n`);
     } else runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true }));
+    const { runCli } = await import("../src/cli.js");
     process.exitCode = await runCli(runtime, parsed.command === "task" ? parsed.task : undefined, store, selected);
   } finally {
     try { runSessionMaintenance(store); }

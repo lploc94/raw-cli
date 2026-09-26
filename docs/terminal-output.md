@@ -35,7 +35,7 @@ The normal footer shows `Done`, `Failed`, `Cancelled`, or `Stopped: max steps`, 
 
 `raw sessions show ID` and resume-history playback format retained display records using the current UI settings without re-running tools, opening full model payloads or requesting a model response. A page that begins with a result still shows that result's saved status and name. An alternate `--config` can supply only terminal appearance for history viewing; the selected model's credential is not required for viewing.
 
-The terminal renderer does not affect ACP protocol output. A theme change does not change the model request, cache key, or session schema.
+The terminal renderer does not affect ACP protocol output. ACP startup does not load the Markdown/highlighting modules; CLI execution and `sessions show` load them only when needed. A theme change does not change the model request, cache key, or session schema.
 
 Developers can inspect fixed, local examples without an API key or config file:
 
