@@ -18,6 +18,8 @@ export interface UsageSummary {
   outputCoverage: number;
   cacheReadTokensKnown: number;
   cacheWriteTokensKnown: number;
+  cacheReadCoverage: number;
+  cacheWriteCoverage: number;
   cacheRatioCoverage: number;
   cacheReadRatio?: number;
 }
@@ -80,6 +82,8 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
   let outputCoverage = 0;
   let cacheReadTokensKnown = 0;
   let cacheWriteTokensKnown = 0;
+  let cacheReadCoverage = 0;
+  let cacheWriteCoverage = 0;
   let cacheRatioCoverage = 0;
   let ratioInputs = 0;
   let ratioReads = 0;
@@ -87,8 +91,8 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
     const usage = normalizeUsage(record.method, record.raw, record.provider);
     if (usage.inputTokensTotal !== undefined) { inputTokensKnown += usage.inputTokensTotal; inputCoverage++; }
     if (usage.outputTokens !== undefined) { outputTokensKnown += usage.outputTokens; outputCoverage++; }
-    if (usage.cacheReadTokens !== undefined) cacheReadTokensKnown += usage.cacheReadTokens;
-    if (usage.cacheWriteTokens !== undefined) cacheWriteTokensKnown += usage.cacheWriteTokens;
+    if (usage.cacheReadTokens !== undefined) { cacheReadTokensKnown += usage.cacheReadTokens; cacheReadCoverage++; }
+    if (usage.cacheWriteTokens !== undefined) { cacheWriteTokensKnown += usage.cacheWriteTokens; cacheWriteCoverage++; }
     if (usage.inputTokensTotal !== undefined && usage.cacheReadTokens !== undefined && usage.cacheReadTokens <= usage.inputTokensTotal) {
       cacheRatioCoverage++;
       ratioInputs += usage.inputTokensTotal;
@@ -97,7 +101,7 @@ export function summarizeUsage(records: readonly UsageRecord[]): UsageSummary {
   }
   return {
     requests: records.length, inputTokensKnown, inputCoverage, outputTokensKnown, outputCoverage,
-    cacheReadTokensKnown, cacheWriteTokensKnown, cacheRatioCoverage,
+    cacheReadTokensKnown, cacheWriteTokensKnown, cacheReadCoverage, cacheWriteCoverage, cacheRatioCoverage,
     ...(ratioInputs > 0 ? { cacheReadRatio: ratioReads / ratioInputs } : {}),
   };
 }

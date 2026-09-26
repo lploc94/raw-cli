@@ -4,7 +4,8 @@ import { configFilePath, loadConfig, parseCliArgs, readConfigDocument, readSessi
 import { createAcpServer } from "../src/acp/methods.js";
 import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
 import { runCli } from "../src/cli.js";
-import { renderStoredHistory } from "../src/sessions/display.js";
+import { renderTerminalHistory } from "../src/terminal/history.js";
+import { parseUiDocument, resolveUiOptions, terminalCapabilities } from "../src/terminal/options.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { runSessionMaintenance } from "../src/sessions/maintenance.js";
 
@@ -154,9 +155,11 @@ async function run(): Promise<void> {
         }
         if (page.nextCursor) process.stdout.write(`next: ${page.nextCursor}\n`);
       } else if (parsed.command === "sessions-show") {
+        const ui = input(() => resolveUiOptions(parseUiDocument(readConfigDocument({ flags: parsed.flags }).data.ui), parsed.flags));
+        const caps = terminalCapabilities(Boolean(process.stdout.isTTY), process.env, ui);
         const page = input(() => store.getSessionHistory({ sessionId: parsed.sessionId!,
           ...(parsed.flags.before ? { before: parsed.flags.before } : {}) }));
-        for (const item of page.items) process.stdout.write(`${renderStoredHistory(item)}\n`);
+        for (const item of page.items) process.stdout.write(renderTerminalHistory(item, ui, caps, process.stdout.columns || 80));
         if (page.nextCursor) process.stdout.write(`next: ${page.nextCursor}\n`);
       } else if (parsed.command === "sessions-delete") {
         if (!store.getSession(parsed.sessionId!)) throw new InputError("session not found or expired");

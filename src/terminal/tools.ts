@@ -34,7 +34,7 @@ function shortArguments(call: VisibleToolCall): string {
 
 export function formatToolStart(call: VisibleToolCall, ui: UiOptions, caps: TerminalCapabilities, width: number): string {
   const label = paint("accent", `${icon(typeIcon(call.identity), ui, caps)} ${call.name}`, ui, caps);
-  const detail = safeTerminalText(shortArguments(call));
+  const detail = safeTerminalText(call.started ? shortArguments(call) : JSON.stringify(call.arguments));
   const prefix = call.started ? label : `${paint("warning", icon("attention", ui, caps), ui, caps)} ${label}`;
   const lines = wrapStyled(`${prefix}${detail ? `  ${paint("path", detail, ui, caps)}` : ""}`, width);
   return lines.join("\n") + "\n";

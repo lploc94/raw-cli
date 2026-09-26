@@ -157,7 +157,7 @@ test("tool result preview retains statuses and bounds body to 2000 characters an
     assert.equal(result.stdout, "Done\n");
     const start = result.stderr.indexOf("raw: ↳ bash result");
     assert.ok(start >= 0);
-    const lines = result.stderr.slice(start).split(/\nraw: (?:session usage:|context:|continue:)/, 1)[0]!.trimEnd().split("\n");
+    const lines = result.stderr.slice(start).split(/\n\[ok\] Done/, 1)[0]!.trimEnd().split("\n");
     assert.ok(lines.length <= 11, `preview used ${lines.length} lines including status summary`);
     assert.match(lines[1]!, /^statuses:/);
     const preview = lines.slice(2).join("\n");
@@ -369,7 +369,7 @@ test("T-08 review: queued REPL command follows an automatic tool call", async ()
   const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "--interactive"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
-    await waitFor(output, "> ");
+    await waitFor(output, "❯ ");
     child.stdin.write("run write\n/exit\n");
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 0, output());
@@ -405,13 +405,13 @@ test("T-08b: REPL Ctrl-C aborts active work, then Ctrl-C while idle exits", asyn
   const { child, output } = ptyRaw(["--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
     { ...process.env, OPENAI_API_KEY: "key" });
   try {
-    await waitFor(output, "> ");
+    await waitFor(output, "❯ ");
     child.stdin.write("run shell\n");
     await waitFor(output, "$ bash");
     child.stdin.write("\x03");
-    await waitFor(output, "raw: cancelled");
+    await waitFor(output, "Cancelled");
     const until = Date.now() + 3000;
-    while (output().lastIndexOf("\n> ") <= output().indexOf("raw: cancelled")) {
+    while (output().lastIndexOf("\n❯ ") <= output().indexOf("Cancelled")) {
       if (Date.now() > until) throw new Error(`REPL did not return to prompt: ${output()}`);
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -448,7 +448,7 @@ test("T-08b: EOF during an active piped REPL turn aborts owned Bash", async () =
 test("T-08b: idle PTY EOF closes REPL cleanly", async () => {
   const { child, output } = ptyRaw(["--config", testConfig("ollama"), "--interactive"], process.env);
   try {
-    await waitFor(output, "> ");
+    await waitFor(output, "❯ ");
     child.stdin.write("\x04");
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 0, output());

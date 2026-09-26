@@ -38,9 +38,9 @@ test("T-08c: REPL retains turns, compact costs one request, stats/clear cost zer
     send("second task"); await waitFor(() => stdout, "second-");
     send("third task"); await waitFor(() => stdout, "third-");
     const before = fixture.requests.length;
-    send("/stats"); await waitFor(() => stderr, '"requests":3');
+    send("/stats"); await waitFor(() => stderr, "Requests    3");
     assert.equal(fixture.requests.length, before);
-    send("/compact"); await waitFor(() => stderr, "raw: compact compacted");
+    send("/compact"); await waitFor(() => stderr, "Compact compacted");
     assert.equal(fixture.requests.length, before + 1);
     send("fourth task"); await waitFor(() => stdout, "fourth-answer");
     const fourth = JSON.stringify(fixture.requests[4]?.body);
@@ -74,7 +74,7 @@ test("T-08 review: REPL preserves adjacent lines delivered in one stdin chunk", 
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 0, stderr);
     assert.match(stdout, /batched-answer/);
-    assert.match(stderr, /"requests":1/);
+    assert.match(stderr, /Requests\s+1/);
     assert.equal(fixture.requests.length, 1);
   } finally { child.kill("SIGKILL"); await fixture.close(); }
 });

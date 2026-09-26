@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
 import type { ProviderAdapter } from "../src/llm/types.js";
-import { renderStoredHistory } from "../src/sessions/display.js";
+import { renderTerminalHistory } from "../src/terminal/history.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { createTestToolRegistry } from "./fixtures/registry.js";
 
@@ -119,9 +119,9 @@ test("killing a side-effecting tool never dispatches it again on resume", async 
       assert.equal(agent.transcript.at(-1)?.role, "tool");
       assert.equal((agent.transcript.at(-1) as { result: { code: string } }).result.code, "outcome_unknown");
       const history = recovery.getSessionHistory({ sessionId: id }).items;
-      const warning = renderStoredHistory(history.find((item) => item.kind === "tool_result")!);
-      assert.match(warning, /✗.*outcome_unknown/);
-      assert.match(warning, /inspect the workspace before retrying/);
+      const warning = renderTerminalHistory(history.find((item) => item.kind === "tool_result")!);
+      assert.match(warning, /\[error\].*outcome_unknown/);
+      assert.match(warning.replace(/\s+/g, " "), /inspect the workspace before retrying/);
       assert.equal((await agent.run("what happened?")).status, "completed");
       assert.equal(readFileSync(marker, "utf8"), "x");
     } finally { await agent.close(); recovery.close(); }

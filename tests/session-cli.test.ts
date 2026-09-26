@@ -59,9 +59,9 @@ test("one-shot session lists, resumes in another process, pages history, and del
     assert.equal(listed.code, 0, listed.stderr);
     const id = listed.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)?.[0];
     assert.ok(id);
-    assert.match(first.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
-    assert.doesNotMatch(first.stderr, /raw: session usage:/);
-    const firstContext = Number(first.stderr.match(/raw: context: ~(\d+) tokens \(window unknown\)/)?.[1]);
+    assert.match(first.stderr, new RegExp(`raw --resume ${id} "query"`));
+    assert.doesNotMatch(first.stderr, /Session\s+\d+ input/);
+    const firstContext = Number(first.stderr.match(/Context\s+~([\d.]+)/)?.[1]);
     assert.ok(firstContext > 0);
     assert.match(listed.stdout, /first task/);
     const noTask = await raw(["--resume", id], a, env, "/exit\n");
@@ -71,9 +71,9 @@ test("one-shot session lists, resumes in another process, pages history, and del
     const continued = await raw(["--continue", "second task"], a, env);
     assert.equal(continued.code, 0, continued.stderr);
     assert.equal(continued.stdout, "second-answer\n");
-    assert.match(continued.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
-    const continuedContext = Number(continued.stderr.match(/raw: context: ~(\d+) tokens \(window unknown\)/)?.[1]);
-    assert.ok(continuedContext > firstContext);
+    assert.match(continued.stderr, new RegExp(`raw --resume ${id} "query"`));
+    const continuedContext = Number(continued.stderr.match(/Context\s+~([\d.]+)/)?.[1]);
+    assert.ok(continuedContext >= firstContext);
     assert.match(JSON.stringify(provider.requests[1]?.body), /first-answer/);
     const shown = await raw(["sessions", "show", id], a, env);
     assert.equal(shown.code, 0, shown.stderr);
@@ -81,7 +81,7 @@ test("one-shot session lists, resumes in another process, pages history, and del
     const explicit = await raw(["--resume", id, "third task"], b, env);
     assert.equal(explicit.code, 0, explicit.stderr);
     assert.equal(explicit.stdout, "third-answer\n");
-    assert.match(explicit.stderr, new RegExp(`raw: continue: raw --resume ${id} "query"`));
+    assert.match(explicit.stderr, new RegExp(`raw --resume ${id} "query"`));
     assert.match(explicit.stderr, /resuming in/);
     assert.ok(explicit.stderr.includes(a));
     assert.match(JSON.stringify(provider.requests[2]?.body), /second-answer/);
@@ -110,13 +110,13 @@ test("one-shot footer shows reported session token usage without inventing cache
     const result = await raw(["--config", config, "measure"], a, env);
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.stdout, "measured-answer\n");
-    assert.match(result.stderr, /raw: session usage: 1 request, 120 input \/ 24 output tokens, 80 cache-read tokens/);
+    assert.match(result.stderr, /Session\s+120 input · 24 output · 80 cache read/);
     assert.doesNotMatch(result.stderr, /cache miss/i);
-    const context = result.stderr.match(/raw: context: ~(\d+) \/ 20000 tokens \((\d+\.\d)% used\)/);
+    const context = result.stderr.match(/Context\s+[#-]+\s+~([\d.]+)k \/ 20k · (\d+\.\d)% used/);
     assert.ok(context, result.stderr);
-    assert.equal(Number(context[2]), Number((Number(context[1]) / 20000 * 100).toFixed(1)));
-    assert.notEqual(Number(context[1]), 144, "current context is not cumulative provider usage");
-    assert.match(result.stderr, /raw: context: .*\nraw: continue: raw --resume [0-9a-f-]+ "query"\n$/);
+    assert.ok(Math.abs(Number(context[2]) - Number(context[1]) * 1000 / 20000 * 100) < 0.3);
+    assert.notEqual(Number(context[1]) * 1000, 144, "current context is not cumulative provider usage");
+    assert.match(result.stderr, /Continue this session\n  raw --resume [0-9a-f-]+ "query"\n$/);
   } finally { await provider.close(); }
 });
 
@@ -175,8 +175,27 @@ test("REPL /clear preserves old session and creates a second ID", async () => {
       const recent = sessions.find((item) => item.title === "new task");
       assert.ok(old && recent && old.id !== recent.id);
       assert.match(JSON.stringify(store.getSessionHistory({ sessionId: old.id }).items), /before-clear/);
+      assert.match(stderr, new RegExp(`raw --resume ${recent.id} "query"`));
+      assert.doesNotMatch(stderr, new RegExp(`raw --resume ${old.id} "query"`));
     } finally { store.close(); }
   } finally { child.kill("SIGKILL"); await provider.close(); }
+});
+
+test("provider failure offers the saved session and a later request resumes it", async () => {
+  const { a, env } = fixture();
+  const provider = await startMockProvider([{ status: 400, body: { error: { message: "fixture failure" } } }, answer("recovered")]);
+  try {
+    const config = testConfig("openai", "fixture", provider.url);
+    const failed = await raw(["--config", config, "first fails"], a, env);
+    assert.equal(failed.code, 1, failed.stderr);
+    assert.match(failed.stderr, /Failed.*provider_error/);
+    const id = failed.stderr.match(/raw --resume ([0-9a-f-]+) "query"/)?.[1];
+    assert.ok(id, failed.stderr);
+    const resumed = await raw(["--resume", id, "retry"], a, env);
+    assert.equal(resumed.code, 0, resumed.stderr);
+    assert.equal(resumed.stdout, "recovered\n");
+    assert.match(resumed.stderr, new RegExp(`raw --resume ${id} "query"`));
+  } finally { await provider.close(); }
 });
 
 test("SIGINT keeps REPL ownership; SIGTERM releases it after a later prompt", async () => {
@@ -197,7 +216,7 @@ test("SIGINT keeps REPL ownership; SIGTERM releases it after a later prompt", as
     store.close();
     assert.ok(id);
     child.kill("SIGINT");
-    await waitUntil(() => stderr.includes("raw: cancelled"), "SIGINT cancellation");
+    await waitUntil(() => stderr.includes("Cancelled"), "SIGINT cancellation");
     const competing = await raw(["--resume", id, "competing"], a, env);
     assert.notEqual(competing.code, 0);
     assert.match(competing.stderr, /busy/i);
@@ -241,14 +260,14 @@ test("sessions show reproduces a complete rejected Bash argument after restart a
     try {
       await waitUntil(() => stdout.includes("> "), "resumed prompt");
       child.stdin.write("/compact\n");
-      await waitUntil(() => stderr.includes("raw: compact compacted"), "compact result");
+      await waitUntil(() => stderr.includes("Compact compacted"), "compact result");
       child.stdin.write("/exit\n");
       assert.equal(await new Promise<number | null>((resolve) => child.once("exit", resolve)), 0, stderr);
     } finally { child.kill("SIGKILL"); }
     const shown = await raw(["sessions", "show", id], a, env);
     assert.equal(shown.code, 0, shown.stderr);
-    assert.ok(shown.stdout.includes(JSON.stringify(args)));
-    assert.ok(shown.stdout.includes(command));
+    assert.ok(shown.stdout.replace(/\r?\n/g, "").includes(JSON.stringify(args)));
+    assert.ok(shown.stdout.replace(/\r?\n/g, "").includes(command));
   } finally { await provider.close(); }
 });
 

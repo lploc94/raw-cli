@@ -217,11 +217,11 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
     assert.equal(listed.code, 0, listed.stderr);
     const sessionId = listed.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)?.[0];
     assert.ok(sessionId);
-    assert.match(saved.stderr, new RegExp(`raw: continue: raw --resume ${sessionId} "query"`));
+    assert.match(saved.stderr, new RegExp(`raw --resume ${sessionId} "query"`));
     const resumed = await run(bin, ["--resume", sessionId, "installed followup"], consumer, env);
     assert.equal(resumed.code, 0, resumed.stderr);
     assert.equal(resumed.stdout, "installed-session-second\n");
-    assert.match(resumed.stderr, new RegExp(`raw: continue: raw --resume ${sessionId} "query"`));
+    assert.match(resumed.stderr, new RegExp(`raw --resume ${sessionId} "query"`));
     assert.match(JSON.stringify(fixture.requests[7]?.body), /installed-session-first/);
     const shown = await run(bin, ["sessions", "show", sessionId], consumer, env);
     assert.equal(shown.code, 0, shown.stderr);

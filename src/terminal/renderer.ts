@@ -36,6 +36,15 @@ export class TerminalRenderer {
   private thinkingEndedWithNewline = false;
   private answerOpen = false;
   private readonly pendingCalls = new Map<string, { name: string; arguments: Record<string, unknown> }>();
+  private readonly startedIds = new Set<string>();
+  private notRun = 0;
+  private startedAt = 0;
+  private firstTextAt: number | undefined;
+
+  get startedToolCalls(): number { return this.startedIds.size; }
+  get notRunToolCalls(): number { return this.notRun; }
+  get elapsedMs(): number { return Math.max(0, performance.now() - this.startedAt); }
+  get firstTextMs(): number | undefined { return this.firstTextAt === undefined ? undefined : Math.max(0, this.firstTextAt - this.startedAt); }
 
   constructor(private readonly session: AgentSession, private readonly runtime: RuntimeConfig,
     private readonly cwd: string, private readonly showHeader: boolean) {
@@ -50,6 +59,7 @@ export class TerminalRenderer {
   }
 
   start(): void {
+    this.startedAt = performance.now();
     if ((this.rich || this.decoratedPlain) && this.showHeader) {
       const agent = this.runtime.modelConfig?.agentName ?? this.runtime.agentName ?? "raw";
       const model = this.runtime.modelConfig?.model ?? "unknown";
@@ -132,6 +142,9 @@ export class TerminalRenderer {
   }
 
   event = (event: RunEvent): void => {
+    if (event.type === "text_delta" && event.text && this.firstTextAt === undefined) this.firstTextAt = performance.now();
+    if (event.type === "tool_start") this.startedIds.add(event.id);
+    if (event.type === "tool_result" && !this.startedIds.has(event.id)) this.notRun++;
     if (!this.rich) { this.plainEvent(event); return; }
     if (event.type === "text_delta") { this.addAnswer(event.text); return; }
     if (event.type === "reasoning_delta" && event.text && this.runtime.ui.reasoning !== "hidden") {
@@ -241,11 +254,6 @@ export class TerminalRenderer {
     if (this.rich) {
       if (!this.wrote && result.text) this.addAnswer(result.text);
       this.flushAnswer();
-      if (result.status !== "completed") {
-        const label = result.status === "cancelled" ? "Cancelled" : result.status === "max_steps" ? "Stopped: max steps" : "Failed";
-        process.stderr.write(`${paint("error", `${icon("failure", this.runtime.ui, this.caps)} ${label}`, this.runtime.ui, this.caps)}`
-          + `${result.code ? ` · ${result.code}` : ""}${result.message ? ` · ${result.message}` : ""}\n`);
-      }
     } else {
       this.finishThinking();
       if (!this.wrote && result.text) {

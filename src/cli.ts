@@ -3,7 +3,11 @@ import { createAgent, type AgentSession, type RunResult } from "./agent.js";
 import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { createRuntimeTools } from "./tools/plugins/runtime.js";
-import { renderStoredHistory } from "./sessions/display.js";
+import { renderTerminalHistory } from "./terminal/history.js";
+import { terminalCapabilities } from "./terminal/options.js";
+import { formatResumeCommand, formatStats, formatTurnFooter } from "./terminal/footer.js";
+import { effectiveInputBudget } from "./llm/context.js";
+import { icon, paint } from "./terminal/theme.js";
 import { runSessionMaintenance } from "./sessions/maintenance.js";
 import type { SessionStore, SessionSummary } from "./sessions/store.js";
 
@@ -22,12 +26,11 @@ async function textRun(session: AgentSession, task: string, renderer: TerminalRe
   }
 }
 
-function statusCode(result: RunResult, quiet = false): number {
+function statusCode(result: RunResult): number {
   if (result.status === "completed") return 0;
   if (result.status === "cancelled") return 130;
-  if (result.status === "max_steps") { if (!quiet) process.stderr.write("raw: maximum steps reached\n"); return 3; }
-  if (result.code === "approval_required") { if (!quiet) process.stderr.write("raw: tool approval required by caller\n"); return 2; }
-  if (!quiet) process.stderr.write(`raw: ${result.code ?? "agent_error"}\n`);
+  if (result.status === "max_steps") return 3;
+  if (result.code === "approval_required") return 2;
   return 1;
 }
 
@@ -99,6 +102,20 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   let closed = false;
   let cancelledWhileIdle = false;
   let currentRenderer: TerminalRenderer | undefined;
+  let lastTurn: { elapsedMs: number; firstTextMs?: number } | undefined;
+  let sessionResumable = true;
+  const caps = terminalCapabilities(Boolean(process.stderr.isTTY), process.env, runtime.ui);
+  const stdoutCaps = terminalCapabilities(Boolean(process.stdout.isTTY), process.env, runtime.ui);
+  const formatFooter = (result: RunResult, renderer: TerminalRenderer, id: string, resumable: boolean, repl = false) => {
+    const window = runtime.modelConfig!.contextWindow;
+    const reserve = runtime.modelConfig!.request?.maxOutputTokens ?? runtime.modelConfig!.maxOutputTokens ?? 1024;
+    return formatTurnFooter({ status: result.status, ...(result.code ? { code: result.code } : {}),
+      elapsedMs: renderer.elapsedMs, startedToolCalls: renderer.startedToolCalls, notRunToolCalls: renderer.notRunToolCalls,
+      stats: session.stats(), contextTokens: session.estimatedContextTokens(),
+      ...(window === undefined ? {} : { contextWindow: window, inputBudget: effectiveInputBudget(window, reserve) }),
+      ...(runtime.compact.triggerTokens === undefined ? {} : { compactTrigger: runtime.compact.triggerTokens }),
+      sessionId: id, resumable, repl, ui: runtime.ui, caps });
+  };
   const createSavedSession = (title: string) => store.createSession({ cwd, title,
     agentName: runtime.modelConfig!.agentName, configPath: runtime.configPath, modelId: runtime.modelConfig!.model,
     provider: runtime.modelConfig!.provider, method: runtime.modelConfig!.method,
@@ -118,7 +135,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   } catch (error) { rl?.close(); await tools.mcp.close(); throw error; }
   const interrupt = () => {
     currentRenderer?.beforeInput();
-    if (session.abort()) { if (!currentRenderer?.rich) process.stderr.write("\nraw: cancelled\n"); return; }
+    if (session.abort()) return;
     cancelledWhileIdle = true;
     rl?.close();
   };
@@ -135,36 +152,21 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     if (task !== undefined) {
       currentRenderer = new TerminalRenderer(session, runtime, cwd, true);
       const result = await textRun(session, task, currentRenderer);
-      const code = statusCode(result, currentRenderer.rich);
-      if (result.status === "completed") {
-        const stats = session.stats();
-        const usage: string[] = [];
-        if (stats.requests > 0 && stats.inputCoverage === stats.requests && stats.outputCoverage === stats.requests) {
-          usage.push(`${stats.inputTokensKnown} input / ${stats.outputTokensKnown} output tokens`);
-        } else {
-          if (stats.requests > 0 && stats.inputCoverage === stats.requests) usage.push(`${stats.inputTokensKnown} input tokens`);
-          if (stats.requests > 0 && stats.outputCoverage === stats.requests) usage.push(`${stats.outputTokensKnown} output tokens`);
-        }
-        if (stats.requests > 0 && stats.cacheRatioCoverage === stats.requests) usage.push(`${stats.cacheReadTokensKnown} cache-read tokens`);
-        if (usage.length) process.stderr.write(`raw: session usage: ${stats.requests} request${stats.requests === 1 ? "" : "s"}, ${usage.join(", ")}\n`);
-        const contextTokens = session.estimatedContextTokens();
-        const contextWindow = runtime.modelConfig!.contextWindow;
-        process.stderr.write(contextWindow === undefined
-          ? `raw: context: ~${contextTokens} tokens (window unknown)\n`
-          : `raw: context: ~${contextTokens} / ${contextWindow} tokens (${(contextTokens / contextWindow * 100).toFixed(1)}% used)\n`);
-        process.stderr.write(`raw: continue: raw --resume ${record.id} "query"\n`);
-      }
-      return code;
+      let resumable = result.code !== "persistence_error";
+      if (resumable) try { resumable = store.getSession(record.id) !== undefined; } catch { resumable = false; }
+      process.stderr.write(formatFooter(result, currentRenderer, record.id, resumable));
+      return statusCode(result);
     }
     if (!rl || !lines) throw new Error("interactive input unavailable");
     new TerminalRenderer(session, runtime, cwd, true).start();
     if (selected) for (const item of store.getSessionHistory({ sessionId: selected.id }).items) {
-      process.stdout.write(`${renderStoredHistory(item)}\n`);
+      process.stdout.write(renderTerminalHistory(item, runtime.ui,
+        terminalCapabilities(Boolean(process.stdout.isTTY), process.env, runtime.ui), process.stdout.columns || 80));
     }
     while (!closed) {
       try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
       catch { process.stderr.write("raw: session maintenance deferred\n"); }
-      process.stdout.write("> ");
+      process.stdout.write(`${paint("accent", icon("user", runtime.ui, stdoutCaps), runtime.ui, stdoutCaps)} `);
       const line = await lines.next();
       if (line === undefined) break;
       if (closed) break;
@@ -172,27 +174,36 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       if (line === "/exit") break;
       if (line === "/clear") {
         await session.close();
-        session = createRuntimeAgent(createSavedSession("New session").id);
+        record = createSavedSession("New session");
+        session = createRuntimeAgent(record.id);
+        lastTurn = undefined;
+        sessionResumable = true;
         process.stderr.write("raw: conversation cleared\n");
+        new TerminalRenderer(session, runtime, cwd, true).start();
         continue;
       }
-      if (line === "/stats") { process.stderr.write(`${JSON.stringify(session.stats())}\n`); continue; }
+      if (line === "/stats") { process.stderr.write(formatStats(session.stats(), runtime.ui, caps, lastTurn)); continue; }
       if (line === "/compact") {
         try {
           const modelConfig = runtime.resolveCompactModelConfig();
-          process.stderr.write(`raw: compacting with ${modelConfig.agentName}\n`);
+          process.stderr.write(`${paint("thinking", icon("thinking", runtime.ui, caps), runtime.ui, caps)} Compacting with ${modelConfig.agentName}\n`);
           const result = await session.compact({ provider: createProvider(modelConfig),
             keepRecentTurns: runtime.compact.keepRecentTurns, maxOutputTokens: runtime.compact.maxOutputTokens });
-          process.stderr.write(`raw: compact ${result.status}\n`);
+          process.stderr.write(`${paint(result.status === "compacted" ? "success" : "warning",
+            icon(result.status === "compacted" ? "success" : "attention", runtime.ui, caps), runtime.ui, caps)} Compact ${result.status}\n`);
         } catch { process.stderr.write("raw: compaction failed\n"); }
         continue;
       }
       currentRenderer = new TerminalRenderer(session, runtime, cwd, false);
       const result = await textRun(session, line, currentRenderer);
-      if (result.code === "approval_required" && !process.stdin.isTTY) return statusCode(result, currentRenderer.rich);
-      if (result.status !== "completed" && result.status !== "cancelled") statusCode(result, currentRenderer.rich);
+      lastTurn = { elapsedMs: currentRenderer.elapsedMs,
+        ...(currentRenderer.firstTextMs === undefined ? {} : { firstTextMs: currentRenderer.firstTextMs }) };
+      if (result.code === "persistence_error") sessionResumable = false;
+      process.stderr.write(formatFooter(result, currentRenderer, record.id, false, true));
+      if (result.code === "approval_required" && !process.stdin.isTTY) return statusCode(result);
       currentRenderer = undefined;
     }
+    if (sessionResumable && store.getSession(record.id)) process.stderr.write(formatResumeCommand(record.id, runtime.ui, caps));
     return cancelledWhileIdle ? 130 : 0;
   } finally {
     rl?.close();

@@ -1,6 +1,5 @@
 import type { RunEvent } from "../agent.js";
 import type { ContentBlock, SessionUpdate } from "@agentclientprotocol/sdk";
-import { renderUserInput } from "../llm/types.js";
 import type { UserInput } from "../llm/types.js";
 import type { HistoryItem } from "./store.js";
 import { projectToolCall, renderPlainToolResult, type VisibleToolCall, type VisibleToolResult } from "./visible.js";
@@ -24,40 +23,6 @@ export function acpUpdate(event: RunEvent): SessionUpdate | undefined {
   if (event.type === "compact_end") return { sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compact ${event.result.status}.` } };
   return undefined;
-}
-
-export function renderStoredHistory(item: HistoryItem): string {
-  const payload = item.payload;
-  if (item.kind === "user") return `user: ${renderUserInput(payload.input as Parameters<typeof renderUserInput>[0])}`;
-  if (item.kind === "assistant") {
-    const update = payload.update as { content?: { text?: string } } | undefined;
-    return String(update?.content?.text ?? payload.text ?? "");
-  }
-  if (item.kind === "reasoning") return `raw: thinking\n${String(payload.text ?? "")}`;
-  if (item.kind === "status") return String(payload.text ?? "");
-  if (item.kind === "tool_call" && !payload.update) {
-    const display = payload.display as VisibleToolCall;
-    return `raw: ${display.started ? "" : "⚠ "}${display.name} ${JSON.stringify(display.arguments)}`;
-  }
-  if (item.kind === "tool_result" && !payload.update) {
-    const display = payload.display as VisibleToolResult;
-    const meta = [
-      ...(typeof display.exitCode === "number" ? [`exit ${display.exitCode}`] : []),
-      ...(display.code ? [display.code] : []),
-      ...(display.truncated ? ["model output capped"] : []),
-    ];
-    const preview = renderPlainToolResult(display);
-    return `raw: ${display.failed ? "✗" : "↳"} ${display.name} result${meta.length ? ` (${meta.join(", ")})` : ""}${preview ? `\n${preview}` : " (empty)"}`;
-  }
-  const update = payload.update as Record<string, unknown> | undefined;
-  if (update?.sessionUpdate === "tool_call") return `raw: ${String(update.name ?? update.title)} ${JSON.stringify(update.rawInput)}`;
-  if (update?.sessionUpdate === "tool_call_update") {
-    return `raw: ${String(update.toolCallId)} ${String(update.status)}${update.rawOutput === undefined ? "" : `\n${JSON.stringify(update.rawOutput)}`}`;
-  }
-  if (update?.sessionUpdate === "agent_thought_chunk") {
-    return `raw: ${String((update.content as { text?: string } | undefined)?.text ?? "")}`;
-  }
-  return JSON.stringify(payload);
 }
 
 export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {

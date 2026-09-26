@@ -415,6 +415,8 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Phase 5: Session footer, REPL statistics, and history replay
 
+Status: complete (2026-09-26). Implementation self-review: APPROVE.
+
 ### Goal
 Complete the same visual language across saved-session outcomes, REPL commands and history pages.
 
@@ -449,9 +451,9 @@ Changing only `ui` between save and resume preserves cache key/context revision 
 Bind timing/record state to the active session and turn, keep footer emission single and centralized, and make history a static renderer path. Extract the effective input-budget calculation once and run existing compact tests to prove behavior unchanged. Do not try to diagnose general session recoverability by starting inference.
 
 ### Acceptance criteria
-- [ ] AC-5.1: All saved-session outcomes show truthful status/context/usage and valid continuation when appropriate — footer/process tests.
-- [ ] AC-5.2: REPL statistics, clear and resume use the correct active state without extra provider requests — REPL/session tests.
-- [ ] AC-5.3: History preserves readable highlighted content under different display settings and paging without changing model/cache state — history/ACP/cache tests.
+- [x] AC-5.1: All saved-session outcomes show truthful status/context/usage and valid continuation when appropriate — footer/process tests.
+- [x] AC-5.2: REPL statistics, clear and resume use the correct active state without extra provider requests — REPL/session tests.
+- [x] AC-5.3: History preserves readable highlighted content under different display settings and paging without changing model/cache state — history/ACP/cache tests.
 
 ### Focused verification
 `npm run build`
@@ -554,3 +556,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26: Phase 3 complete, implementation self-review APPROVE. Pinned Marked 18.0.14 and Lowlight 3.3.0 (public lexer/HAST APIs). Focused syntax/Markdown/layout suite passed 9/9; `npm run check` passed 352/352. Incremental formatter reparses only the bounded active block, displays partial frames immediately, and falls back to literal text after 32 KiB. Evidence: `/tmp/raw-terminal-phase3-red.log`, `/tmp/raw-terminal-phase3-focused3.log`, `/tmp/raw-terminal-phase3-check.log`.
 - 2026-09-26: Phase 3 commit `2640e6b`; Phase 4 in progress.
 - 2026-09-26: Phase 4 complete, implementation self-review APPROVE. Introduced one event renderer for rich and append-only CLI paths, semantic tool formatter, bounded transient writer, explicit no-color ASCII presentation, and control-byte display escaping. Screen/PTY tests cover final visible scrollback, densities, syntax colors, approval, cancellation, and piping. Focused CLI tests passed 31/31; final `npm run check` passed 359/359. Evidence: `/tmp/raw-terminal-phase4-red.log`, `/tmp/raw-terminal-phase4-repair.log`, `/tmp/raw-terminal-phase4-head-check.log`.
+- 2026-09-26: Phase 4 commit `c4e5ebb`; Phase 5 in progress.
+- 2026-09-26: Phase 5 complete, implementation self-review APPROVE. Extracted the effective context budget, added honest usage/cache coverage, and unified one-shot/REPL footers and static history rendering. The final `npm run check` passed 367/367; `/clear` uses its new durable ID, UI changes retain request cache identity, and persistence failures omit resume advice. Evidence: `/tmp/raw-terminal-phase5-final-focused.log`, `/tmp/raw-terminal-phase5-head-check2.log`.

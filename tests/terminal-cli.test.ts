@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -103,5 +103,33 @@ test("ASCII icons still distinguish read and success when color is disabled", as
     assert.match(result.stdout, /\[read\] read_file/);
     assert.match(result.stdout, /\[ok\] read_file/);
     assert.doesNotMatch(result.stdout, /\u001b\[/);
+  } finally { await provider.close(); }
+});
+
+test("changing only UI settings on resume preserves the OpenAI cache key and tool schema", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-terminal-resume-ui-"));
+  const provider = await startMockProvider([
+    { frames: [openAiFrame({ content: "first" }, "stop"), openAiDone] },
+    { frames: [openAiFrame({ content: "second" }, "stop"), openAiDone] },
+  ]);
+  try {
+    const config = testConfig("openai", "fixture", provider.url);
+    const env = { ...process.env, OPENAI_API_KEY: "key", XDG_STATE_HOME: join(root, "state"), XDG_CONFIG_HOME: join(root, "config") };
+    const first = await run(["--config", config, "one"], env, false);
+    assert.equal(first.code, 0, first.stderr);
+    const id = first.stderr.match(/raw --resume ([0-9a-f-]+) "query"/)?.[1];
+    assert.ok(id);
+    const document = JSON.parse(readFileSync(config, "utf8"));
+    document.ui = { density: "verbose", color: "never", icons: "ascii" };
+    writeFileSync(config, JSON.stringify(document));
+    const next = await run(["--resume", id, "two"], env, false);
+    assert.equal(next.code, 0, next.stderr);
+    const before = provider.requests[0]?.body as { prompt_cache_key: string; tools: unknown; messages: Array<unknown> };
+    const after = provider.requests[1]?.body as { prompt_cache_key: string; tools: unknown; messages: Array<unknown> };
+    assert.ok(before.prompt_cache_key);
+    assert.equal(after.prompt_cache_key, before.prompt_cache_key);
+    assert.deepEqual(after.tools, before.tools);
+    assert.deepEqual(after.messages[0], before.messages[0]);
+    assert.match(next.stderr, new RegExp(`raw --resume ${id} "query"`));
   } finally { await provider.close(); }
 });

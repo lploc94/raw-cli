@@ -2,6 +2,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { randomUUID } from "node:crypto";
 import { estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
+import { effectiveInputBudget } from "./llm/context.js";
 import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
@@ -488,7 +489,7 @@ export class AgentSession {
           const modelConfig = this.options.provider.modelConfig;
           const context = modelConfig.contextWindow!;
           const outputReserve = modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
-          const inputBudget = context - outputReserve - Math.max(64, Math.ceil(context * 0.05));
+          const inputBudget = effectiveInputBudget(context, outputReserve);
           const estimate = () => {
             baseEstimate = estimateRequestTokens(this.options.system, this.messages, this.schemaView);
             return Math.ceil(baseEstimate * this.tokenCalibration);
