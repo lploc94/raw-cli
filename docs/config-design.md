@@ -52,3 +52,7 @@ The normal system/tool/history prefix and selected tool order remain stable acro
   "mcp": { "servers": {} }
 }
 ```
+
+## Runtime variables
+
+Optional root `vars` and `var_providers` declare lazy values and executable sources. `agents.<name>.vars` selects exact names; omitted means none. Static validation performs no resolution. See [variables](vars.md) for the complete schema, access and provider protocol.

@@ -123,3 +123,7 @@ raw config init writes this schema once with mode 0600. raw config list displays
 Supported: --agent, --config, --system-prompt, --max-steps, --max-output-bytes, --request-timeout-ms, --interactive, --acp transport flags and -y/--auto-approve. RAW_SYSTEM_PROMPT can override the minimal default prompt. Unmatched tools run automatically; -y does not override an explicit agent ask rule when tool policy is added.
 
 The method-specific request, cache and compact behavior is documented in docs/providers.md and docs/context.md.
+
+## Runtime variables
+
+Optional root `vars` and `var_providers` declare lazy values and executable sources. `agents.<name>.vars` selects exact names; omitted means none. Static validation performs no resolution. See [variables](vars.md) for the complete schema, access and provider protocol.

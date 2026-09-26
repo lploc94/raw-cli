@@ -1,3 +1,5 @@
+import { parseVariableDefinitions, selectVariables } from "./vars/config.js";
+import type { VariableConfig } from "./vars/contract.js";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -52,6 +54,7 @@ export interface CompactSettings {
 }
 
 export interface RuntimeConfig {
+  readonly variableConfig: VariableConfig;
   readonly ui: UiOptions;
   readonly agentName?: string;
   readonly modelConfig?: Readonly<ResolvedModelConfig>;
@@ -188,7 +191,7 @@ function parseConfigDocument(options: LoadConfigOptions, validateAgents: boolean
   if (!tree || errors.length) throw new Error(`invalid JSON config: ${path}`);
   checkDuplicates(tree);
   const data = object(getNodeValue(tree), "config root");
-  keys(data, ["default_agent", "models", "agents", "mcp", "sessions", "ui"], "config");
+  keys(data, ["default_agent", "models", "agents", "mcp", "sessions", "ui", "vars", "var_providers"], "config");
   parseUiDocument(data.ui);
   if (data.sessions !== undefined && path !== canonicalConfigPath(options)) {
     throw new Error("sessions settings are allowed only in the canonical global config");
@@ -479,7 +482,7 @@ function compactSpec(raw: unknown, where: string): CompactSettings {
 function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): AgentSpec {
   const where = "agent " + name;
   const value = object(raw, where);
-  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "system_prompt", "system_prompt_file"], where);
+  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "system_prompt", "system_prompt_file", "vars"], where);
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
@@ -522,6 +525,7 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
 }
 
 function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; agents: Map<string, AgentSpec>; servers: Map<string, McpServerConfig>; defaultName?: string } {
+  const varDefinitions = parseVariableDefinitions(root.vars, root.var_providers, ".");
   const servers = mcpServersSpec(root.mcp);
   const modelsData = root.models === undefined ? {} : object(root.models, "models");
   const models = new Map<string, ModelSpec>();
@@ -529,6 +533,7 @@ function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; agen
   const agentsData = root.agents === undefined ? {} : object(root.agents, "agents");
   const agents = new Map<string, AgentSpec>();
   for (const [name, raw] of Object.entries(agentsData)) agents.set(string(name, "agent name"), agentSpec(name, raw, models));
+  for (const [name, raw] of Object.entries(agentsData)) selectVariables((raw as JsonObject).vars, varDefinitions.variables, `agents.${name}.vars`);
   const defaultName = root.default_agent === undefined ? undefined : string(root.default_agent, "default_agent");
   if (defaultName !== undefined && !agents.has(defaultName)) throw new Error("unknown agent: " + defaultName);
   return { models, agents, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
@@ -569,6 +574,26 @@ function freezeModelConfig(modelConfig: ResolvedModelConfig): Readonly<ResolvedM
   return Object.freeze(modelConfig);
 }
 
+function selectAgentName(parsed: ReturnType<typeof parseDocument>, flags: RawFlags, env: NodeJS.ProcessEnv): string | undefined {
+  const selected = flags.agent ?? env.RAW_AGENT ?? parsed.defaultName;
+  if (selected !== undefined && !parsed.agents.has(selected)) throw new Error("unknown agent: " + selected);
+  return selected;
+}
+function variableProjection(document: ConfigDocument, agentName?: string): VariableConfig {
+  const configDir = dirname(document.path);
+  const definitions = parseVariableDefinitions(document.data.vars, document.data.var_providers, configDir);
+  const agents = document.data.agents as Record<string, JsonObject> | undefined;
+  return Object.freeze({ ...(agentName === undefined ? {} : { agentName }), configDir,
+    variables: selectVariables(agentName === undefined ? undefined : agents?.[agentName]?.vars, definitions.variables, "agent.vars"),
+    providers: definitions.providers });
+}
+export function loadVariableConfig(options: LoadConfigOptions = {}): VariableConfig {
+  const document = readConfigDocument(options);
+  const selected = selectAgentName(parseDocument(document.data), options.flags ?? {}, options.env ?? process.env);
+  if (selected === undefined) throw new Error("agent is required");
+  return variableProjection(document, selected);
+}
+
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<RuntimeConfig> {
   const env = options.env ?? process.env;
   if (env.RAW_PROFILE !== undefined) throw new Error("RAW_PROFILE was removed; use RAW_AGENT");
@@ -580,8 +605,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const ui = resolveUiOptions(parseUiDocument(document.data.ui), flags);
   const sessionsRetentionDays = readSessionRetentionDays(options);
   const parsed = parseDocument(document.data);
-  const selectedName = flags.agent ?? env.RAW_AGENT ?? parsed.defaultName;
-  if (selectedName !== undefined && !parsed.agents.has(selectedName)) throw new Error("unknown agent: " + selectedName);
+  const selectedName = selectAgentName(parsed, flags, env);
   const selectedSpec = selectedName === undefined ? undefined : parsed.agents.get(selectedName);
   const model = selectedSpec === undefined ? undefined : parsed.models.get(selectedSpec.modelAlias);
   let selected: ResolvedModelConfig | undefined;
@@ -633,6 +657,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const toolRules = Object.freeze((selectedSpec?.toolRules ?? []).map((rule) => Object.freeze({ ...rule,
     ...(rule.when ? { when: Object.freeze({ ...rule.when }) } : {}) })));
   return Object.freeze({
+    variableConfig: variableProjection(document, selectedName),
     ui,
     ...(selectedName === undefined ? {} : { agentName: selectedName }),
     ...(selected === undefined ? {} : { modelConfig: selected }),

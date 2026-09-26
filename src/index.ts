@@ -1,6 +1,7 @@
 export {
   configFilePath,
   loadConfig,
+  loadVariableConfig,
   parseCliArgs,
   readConfigDocument,
   readSessionRetentionDays,
@@ -41,3 +42,6 @@ export { openSessionStore, sessionStorePath, SessionStore } from "./sessions/sto
 export type { CreateSessionOptions, HistoryItem, Page, SessionStoreOptions, SessionSummary } from "./sessions/store.js";
 export { listSessions, getSessionHistory, resumeSession, deleteSession } from "./sessions/api.js";
 export type { SessionPageOptions, SessionHistoryOptions, SessionIdOptions, ResumeSessionOptions, ResumedSession } from "./sessions/api.js";
+
+export type { VariableConfig, VariableContext, VariableDefinition, VariableMetadata, VariableProvider, VariableSource, VariableType, ResolvedVariable, JsonValue } from "./vars/contract.js";
+export { VariableError } from "./vars/contract.js";
