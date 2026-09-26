@@ -75,6 +75,10 @@ test("the six setup skills have distinct catalog entries and complete linked bod
       const markdown = (body.content[0] as { text: string }).text;
       assert.equal(markdown, parseSkillMarkdown(readFileSync(join("dist", "skills", "builtin", id, "SKILL.md"), "utf8"), id).markdown);
       assert.ok(markdown.trim(), `${id} has an empty body`);
+      assert.match(markdown, /references\/dashboard\.md/);
+      const reference = readFileSync(join("dist", "skills", "builtin", id, "references", "dashboard.md"), "utf8");
+      assert.match(reference, /dashboard|Library|Agents/);
+      assert.equal(reference, readFileSync(join("examples", "skills", id, "references", "dashboard.md"), "utf8"));
       assert.ok(Buffer.byteLength(markdown) <= 8192, `${id} exceeds the default cap`);
       assert.match(markdown, /```json\n[\s\S]*?\n```/);
     }

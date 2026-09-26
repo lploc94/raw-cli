@@ -43,7 +43,7 @@ test("invalid config repair uses a lazy strict JSON editor and never discards a 
   await expect(editor).toBeVisible();
   await editor.fill('{"models": {},}');
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.locator("section").filter({ has: editor }).getByRole("alert")).toContainText("invalid JSON config");
   expect(readFileSync(raw.configPath, "utf8")).toBe("{broken");
   await editor.fill(before);
   await page.getByRole("button", { name: "Save", exact: true }).click();

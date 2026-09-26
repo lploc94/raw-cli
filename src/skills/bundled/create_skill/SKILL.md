@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: "Use when creating or improving a discoverable Raw skill; write its description and instructions, register it on an agent and verify loading. Use create-package to distribute existing skills."
+description: "Use when creating or improving a discoverable Raw skill, including browser authoring; write its description and instructions, register it on an agent and verify loading. Use create-package to share skills."
 ---
 # Create a Raw skill
 
@@ -8,7 +8,7 @@ Use when creating or improving reusable instructions that a Raw agent should dis
 
 For a how-to, explain the format, authoring approach and registration with examples. For a requested creation, use the workflow below. For a load failure, inspect the selected ID, frontmatter, body size and error before rewriting instructions.
 
-For a shareable skill package, read `references/packages.md` with `read_file` before authoring; it covers manifest files/exports, install, registration and resume.
+Read `references/packages.md` for sharing and `references/dashboard.md` for browser authoring with `read_file`.
 
 ## Establish the useful task
 

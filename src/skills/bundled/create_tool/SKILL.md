@@ -1,12 +1,12 @@
 ---
 name: create-tool
-description: "Use to create or customize a Raw tool plugin or executable variable provider, including contracts, registration and verification. Use create-package to distribute existing components."
+description: "Use to create or customize a Raw tool plugin or executable variable provider through files or dashboard. Covers contracts, registration and verification; use create-package to distribute components."
 ---
 # Create a Raw tool plugin
 
 Create callable tools or executable variable providers; reusable instructions belong in create_skill. Tools have manifests and ESM handlers; providers are scripts returning configured data.
 
-For a shareable tool/provider package, read `references/packages.md` with `read_file` before authoring; it covers owned helpers, exports, recipient bindings and snapshots.
+Read `references/packages.md` for sharing and `references/dashboard.md` for browser authoring with `read_file`.
 
 ## Choose the task and contract
 

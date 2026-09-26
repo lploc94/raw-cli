@@ -46,6 +46,16 @@ These screenshots use a disposable workspace and a mock provider. Reproduce them
 
 [Context inspector](dashboard/chat-dark-inspector.png) shows estimates, available usage, measurement coverage and the last attached capabilities. Older measurements may be unavailable or stale; viewing them does not start a model or tool.
 
+[Native 400% zoom](dashboard/chat-native-400-percent.png) shows the complete browser
+view at a 320×228 CSS-pixel viewport. Content remains reachable through vertical
+scrolling without document-level horizontal overflow. On macOS, reproduce the native
+zoom smoke with `node --import tsx tests/dashboard-ui/native-smoke.ts`. It opens a
+disposable browser and restores the previously focused application. The optional
+`--voiceover` smoke starts the system screen reader and requires the user's macOS
+permission. A person listens to the Message editor and Session details button and
+records the actual announcements; a successful driver exit alone is not a
+screen-reader verdict. This is separate from the automated browser suite.
+
 ## Customize your agents
 
 Agents selects a model, a literal or file prompt, and ordered tools, skills and

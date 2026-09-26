@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const suites = {
+  dashboard: ["dashboard-cli", "dashboard-server", "dashboard-assets", "dashboard-sessions", "dashboard-streams", "dashboard-approval", "dashboard-management", "dashboard-packages", "dashboard-installed", "management-config", "management-components"],
   foundation: ["config", "prompt", "foundation-cli"],
   tools: ["primitives", "registry", "overhead"],
   providers: ["providers", "provider-content"],

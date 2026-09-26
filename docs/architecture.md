@@ -48,3 +48,32 @@ Variable definitions are validated config; the runtime-tools instance owns its r
 ## Portable package resolution
 
 `raw-package.json` and `.rawpkg` archives are data contracts. Install/link/update writes a per-config atomic alias index and publishes content-addressed artifacts outside session state. `loadConfig` resolves only the selected agent and its referenced package exports into the existing runtime config. Selected tools and skills are then loaded by the ordinary registry/catalog paths; package tool helpers use immutable snapshots. Vars and MCP definitions pass through the existing validators and startup paths. The package release label and installation path are provenance, while effective prompt/schema/source bytes determine runtime transitions. Session history remains canonical and the current selection wins on resume. Package commands and agent binding avoid provider/plugin/MCP/session initialization.
+
+## Local dashboard adapter
+
+The loopback HTTP host authenticates commands and fetch-SSE with one process token.
+`SessionOperations` owns durable request receipts and writer leases across runtime
+attachment, inference/compaction and MCP cleanup. Disconnecting a browser affects
+its observer only. Reconnect replays bounded events or replaces transient state
+with a history-watermarked snapshot; it never submits a prompt again. Each new
+operation attaches the current config and immutable selected source snapshots.
+
+The React application renders structured history/tool/compaction views, not terminal
+output. History pagination, usage estimates and the active model summary remain
+separate projections. Browser appearance/navigation preferences never enter the
+model request or become an additional Raw config layer. Lazy CodeMirror assets are
+bundled locally, with a per-document style nonce under the host content policy.
+
+Management routes call shared revision-aware config/component services. Static
+catalogs and package operations remain passive. Explicit var/MCP checks own their
+signals, deadlines and cleanup independently from chat operations. Package upload
+staging validates an immutable artifact before installation; activation separately
+writes recipient bindings. Dirty drafts and stale revisions are UI state, while
+config files, component files and the package lock remain authoritative.
+
+The build ships `dist/dashboard` with the CLI. Installed qualification packs Raw,
+installs it into an unrelated consumer, configures it through the browser, reloads
+an active real tool, updates a package, and resumes the same ID with the installed
+CLI. No source-server test substitutes for that artifact path. See the
+[dashboard API](dashboard-api.md). Contributors record qualification in the
+repository's `docs/evidence/local-dashboard.md`.

@@ -1,6 +1,6 @@
 # raw-cli
 
-`raw` is a local coding agent for models with limited context. Each agent selects an ordered set of tools and can supply a system prompt and skills. Raw ships six tools as editable plugins: `read_file`, `write_file`, `bash`, `view_image`, `list_skills`, and `load_skill`. Tools and skills can also live in the user's config directory or beside a selected agent config. Selected MCP tools remain available. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
+`raw` is a local coding agent for models with limited context. Each agent selects an ordered set of tools and can supply a system prompt and skills. Raw ships eight tools as editable plugins: `read_file`, `write_file`, `bash`, `view_image`, `list_skills`, `load_skill`, `list_vars`, and `read_var`. Tools and skills can also live in the user's config directory or beside a selected agent config. Selected MCP tools remain available. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
 
 ## Install and run
 
@@ -24,9 +24,18 @@ raw --continue "Follow up on that change"
 raw sessions
 raw sessions show SESSION_ID
 raw --acp --stdio           # IDE/parent agent transport
+raw dashboard              # local browser chat and setup
+raw dashboard --port 0 --no-open
 ```
 
-Tool calls run automatically in terminal, headless and ACP modes, using your OS account's full permissions. `cwd` resolves relative paths; it is not a sandbox. An agent can set `tools.rules` to `ask` or `deny` specific tools or patterns. Unmatched tools run without a permission prompt; `-y` cannot bypass an explicit `ask` rule.
+`raw dashboard` serves the bundled browser app locally. Create or continue sessions,
+inspect reasoning/tool activity and context usage, handle matching approvals, and
+manage agents, models, skills, tools, vars, MCP and packages. Setup and history work
+without a model connection. Browser preferences stay separate from Raw config;
+saved config/source changes apply to the next turn of the same session. See the
+[dashboard guide](docs/dashboard.md) for layout, setup and sharing workflows.
+
+Tool calls run automatically in terminal, headless, dashboard and ACP modes, using your OS account's full permissions. `cwd` resolves relative paths; it is not a sandbox. An agent can set `tools.rules` to `ask` or `deny` specific tools or patterns. Unmatched tools run without a permission prompt; `-y` cannot bypass an explicit `ask` rule.
 
 ## Models and agents
 
@@ -111,9 +120,11 @@ Raw highlights Markdown code fences and source previews in an interactive termin
 `raw --acp --stdio` serves standard Agent Client Protocol v1. `raw --acp --ws --host 127.0.0.1 --port 8765` serves a local WebSocket endpoint. Parent agents can import `createAcpClient` and register temporary reverse tools; [ACP](docs/acp.md) and [the parent example](examples/parent-agent.ts) document the flow.
 
 ```sh
+npx playwright install chromium firefox webkit
 npm run check
 npm run test:overhead
 npm run test:package
+npm run test:web
 npm exec --yes --package=node@22 -- node scripts/verify-runtime.mjs
 npm exec --yes --package=node@24 -- node scripts/verify-runtime.mjs
 ```

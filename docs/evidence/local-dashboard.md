@@ -1,6 +1,63 @@
 # Local dashboard qualification
 
-This report is in progress. The chat layer is verified below; management, package workflows, all-engine final gates and installed-artifact qualification are completed in the remaining implementation phases.
+The eight-phase dashboard implementation is undergoing its final exact-HEAD gates.
+The phase qualification results below are actual runs on macOS 26.6.2 (25G83),
+arm64, Node 26.0.0. Linux and Windows were not qualified in this work. GitHub
+Actions stayed disabled; no global install, personal Raw config edit or publication
+was performed.
+
+## Phase 8 gates
+
+| Command | Result |
+| --- | --- |
+| `npm run check` | 532 Node tests passed, including installed CLI/SDK/ACP and dashboard coverage; both TypeScript projects and build passed |
+| `npm run test:web` | 114 passed: 38 each on Chromium 153.0.8010.12, Firefox 155.0 and WebKit 26.6 |
+| `npm run test:package` | 4 installed-consumer tests passed |
+| `git diff --check` | Passed |
+
+Logs were inspected at `/tmp/raw-dashboard-phase8-{check,all-engines,package}.log`.
+An initial browser run had two ambiguous test locators where both the config
+summary and editor exposed an alert. Scoping the assertion to the active editor
+fixed the test; no product behavior was weakened. Only the subsequent complete
+passing run qualifies the three engines.
+
+## Installed delivery
+
+`tests/dashboard-installed.test.ts` packs the current installation, installs it
+with production dependencies in an unrelated temporary consumer, and launches its
+actual `.bin/raw dashboard --port 0 --no-open` from another workspace. The browser
+blocks requests to every origin except this server. No Vite is installed in the
+consumer, and all three static/lazy asset files load locally.
+
+The browser initializes the shared six-skill starter, edits a model connection,
+inspects and installs an authored package, creates a typed agent binding, sends a
+turn and reloads during a real tool's file effect. It verifies one effect, updates
+the package, deletes its authored source, continues the same session, shuts down
+the host and resumes that ID with the installed CLI. The changed package rotates
+the runtime key once; the unchanged CLI follow-up keeps the key, tool schema and
+prior message prefix. Two effects remain exactly two after reconnect/resume.
+
+All six installed skills link to their shipped dashboard references. Source,
+generated examples and installed bodies are checked, including the default 8 KiB
+body limit. Actual model instruction-following quality is not inferred from mock
+provider tests.
+
+Pre-commit qualification ran on `79ab9b2` plus the Phase 8 worktree. The final
+focused installed run used these exact bytes:
+
+| Item | SHA-256 |
+| --- | --- |
+| npm archive | `cf0a763cf4a650a5c2c8a11676293ff0dd5164cd31173e2efff436d7075eacb5` |
+| Executable-source manifest | `b16bd115aed62899d01870949c618e7d6dbc89f37827dbf0178cd27b18eff378` |
+| Consumer dependency lock | `29c71c8f2c4c9fe73516cdde30ba0561ae8e2fd99191093d10031647a894f23d` |
+
+The source manifest covers sorted paths and file bytes in `src`, `bin`, `web`,
+`scripts`, package manifests and build/typecheck configs. The consumer lock hash
+identifies that installation, including its temporary archive reference; it is not
+a claim that separate temporary installs have identical lock bytes. The test loads
+`index-B5k4LgUS.js`, `index-CUYdKA_J.css` and `CodeEditor-DIQqnq0-.js` from the packed
+app and reports all three successful loads. A later rebuild does not substitute
+for these tested bytes. Final committed-HEAD qualification follows below.
 
 ## Browser chat layer
 
@@ -13,7 +70,25 @@ Host: macOS 26.6.2, arm64, Node 26.0.0. Chromium 153.0.8010.12. Tests use tempor
 - Accessibility scans cover light/dark, desktop/tablet/narrow layouts. Keyboard checks cover palette dismissal/focus restoration, panel resizing and narrow-inspector focus containment. Visible targets and horizontal clipping are asserted, including every navigation target at 320 CSS px.
 - The screenshot run uses reduced motion and reports no page errors or horizontal overflow at 1440×900, 800×900 and 320×900. Desktop/tablet/narrow screenshots and the inspector were visually inspected. A clipped narrow Settings label was found through image review and corrected with a bounding-box regression.
 
-The 320 CSS px checks are reflow evidence, not a claim that native browser zoom or a screen reader was exercised. Full final qualification and its remaining manual limitations will be recorded below. Automated accessibility scans alone do not establish full WCAG conformance.
+The separate native macOS smoke uses a disposable headed Chromium profile and
+actual Cmd-plus zoom: 1280×913 at 100% becomes 320×228 CSS pixels at 400%, with a
+device-pixel-ratio change from 1 to 4 and no document-level horizontal overflow.
+Sending and receiving chat remains reachable through vertical scrolling. The
+complete browser-view bitmap was visually inspected; a CSS-sized surface capture
+had cropped it and was replaced with a native view capture.
+
+A user-observed VoiceOver smoke ran with native macOS permission on the same
+Chromium page. The user confirmed hearing both “Message” and “Session details”
+when focus moved to the editor and button. The owned browser and reader then
+closed; the reader's stopped state was checked. Automated speech extraction via
+AppleScript timed out or returned unavailable output on this host, so it is not
+reported as a passing automated assertion. `native-smoke.ts --voiceover` now drives
+the two listening positions and explicitly requires a separately recorded human
+verdict. The native driver finished successfully, and the user supplied that
+verdict in this session on 2026-09-26.
+
+Automated accessibility scans and this bounded manual smoke do not establish full
+WCAG conformance or comprehensive assistive-technology coverage.
 
 Screenshots and their reproduction command are in [the dashboard guide](../dashboard.md#layout-examples). Source-server checks do not substitute for the later installed-artifact test.
 
@@ -50,3 +125,24 @@ Chromium tests drive inspect → install → bind → chat → export → downlo
 and keep invalid update/removal errors in their dialogs. All package code executes
 only when a selected agent starts a turn or an explicit var/MCP check runs.
 A package inspection screenshot was visually reviewed alongside semantic tests.
+
+
+## Contract and ownership audit
+
+| Plan boundary | Evidence |
+| --- | --- |
+| One agent loop/store, format 5, passive history | `session-operations`, `session-view`, existing session/ACP tests and `dashboard-sessions` |
+| One writer, durable acceptance, no replay after crash/reconnect | Process/sentinel tests, lease/receipt tests, HTTP streams, browser reconnect and installed consumer |
+| Current config on the next turn; stable unchanged prefix | Management source/helper/prompt/skill snapshot tests, package update tests and installed browser-to-CLI flow |
+| Explicit skill loading and conditional policy | Existing skill/policy suites, passive sentinels, HTTP approval lifecycle and browser Allow/Deny |
+| Authoritative revision-checked config/files; passive catalogs | Shared management tests, stale-draft browser tests, explicit var/MCP checks and package sentinels |
+| Loopback authentication and owned shutdown | Host/Origin/token/static-path tests, in-flight startup and MCP child reaping, partial upload/body cleanup |
+| History versus active context; truthful outcomes | Compaction atomicity/rollback, historical projection, UTF-8 spooling/paging and usage coverage tests |
+| Browser-only preferences and accessible navigation | Config-byte/model-prefix comparisons, keyboard/focus/reflow/contrast tests in three engines and reviewed screenshots |
+| Installed assets, editors and English guidance | Installed consumer and bundled-skill tests, generated example parity and reviewed six dashboard references |
+
+The cumulative review checked these interfaces against all phase acceptance
+criteria and exclusions. CLI/ACP continue using the existing runtime; the browser
+introduces no second conversation store, config format, automatic tool retry or
+session compatibility gate. Package install and recipient activation remain
+separate; no marketplace or remote publishing was added.

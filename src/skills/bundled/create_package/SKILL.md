@@ -1,12 +1,14 @@
 ---
 name: create-package
-description: "Use when packaging or sharing Raw agents, tools, skills, vars or MCP as a .rawpkg, or preparing an updated package release. Covers exports, recipient inputs and installation checks."
+description: "Use when packaging or sharing Raw agents, tools, skills, vars or MCP as a .rawpkg, or preparing an updated release. Covers CLI and dashboard exports, recipient inputs and installation checks."
 ---
 # Create a shareable Raw package
 
 Produce editable package source, a validated `.rawpkg` archive and instructions the recipient can follow. Use for packaging existing components or assembling a package. Creating a new tool, skill, agent or MCP connection belongs to its creation skill when selected; use that guidance only for components the request actually needs.
 
 For a how-to, explain the relevant commands and contract. For a requested artifact, carry out the workflow below. For a failed package, start from its validation or activation error and preserve unrelated configuration.
+
+For browser import/export and typed binding forms, read `references/dashboard.md` with `read_file`.
 
 ## Choose the source and contents
 

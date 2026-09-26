@@ -32,3 +32,10 @@ Raw snapshots selected skill metadata and Markdown for a live session. On resume
 For structure, examples and review criteria, see the [skill authoring cheatsheet](skill-authoring.md). The guide and all six English setup skills ship with Raw. Contract tests execute their examples; model traces are diagnostic and do not enforce a fixed amount of work.
 
 Managed dashboard edits use [revision-checked configuration and owned component services](management.md). Viewing a catalog never imports tool code or starts providers/MCP; changes take effect on the next turn.
+
+The six setup skills also carry `references/dashboard.md` for the relevant browser
+workflow. Their main bodies route to that reference only when useful; loading a
+skill does not automatically load its references. Library inspection stays passive.
+Creating/forking a skill leaves it unselected until attachment, and editing it takes
+effect on the next turn of an existing conversation. A model still uses
+`list_skills`/`load_skill` to append instructions to context.

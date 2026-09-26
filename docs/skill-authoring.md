@@ -119,3 +119,17 @@ Use deterministic tests for schemas, manifests, artifact behavior and packaging.
 - Body and catalog fit the actual byte cap.
 - Source and generated examples match; packed consumers load all six bodies and their linked references are available.
 - Evaluation report contains failures and limitations as well as successes.
+
+## Browser authoring
+
+`raw dashboard` offers **Library → Skills** for creating from a shipped example,
+forking builtins/immutable exports, and editing `SKILL.md` or contained text
+resources. Each file saves independently with a revision check. Attach the saved
+skill to a direct agent explicitly; package-agent selection overrides are complete
+replacements in Agent JSON. Keep the body within that agent's `max_output_bytes`.
+
+Browsing a catalog or Markdown preview is static inspection. Verification still
+requires selecting/listing/loading the skill through its ordinary tools when the
+request calls for it. Save applies on the next turn and preserves the conversation
+ID; opening the editor never injects its source into model context. Browser guidance
+belongs in optional references when it would crowd a concise main skill body.

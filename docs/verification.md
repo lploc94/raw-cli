@@ -1,5 +1,15 @@
 # Verification matrix
 
+## Local dashboard qualification
+
+The [dashboard evidence](evidence/local-dashboard.md) records the installed
+browser-to-CLI flow, Chromium/Firefox/WebKit scenarios, native zoom and the
+screen-reader smoke's actual result and limits. Developer checks now include an
+installed Chromium consumer: install engines with
+`npx playwright install chromium firefox webkit` before `npm run check`,
+`npm run test:web` and `npm run test:package`. Normal installed dashboard use needs
+no Playwright or frontend build tool.
+
 The current schema-isolation and edit→resume→unchanged-resume contract has a separate [Milestone A local qualification record](evidence/milestone-a-session-continuity.md). Package-sharing qualification follows in Milestone B.
 
 ## Terminal output redesign qualification

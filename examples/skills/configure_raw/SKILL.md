@@ -1,6 +1,6 @@
 ---
 name: configure-raw
-description: "Use to explain, edit or diagnose Raw configuration, including installed package bindings, models, agents, prompts, UI, vars, limits and policy. Use creation skills for new assets or MCP connections."
+description: "Use to explain, edit or diagnose Raw configuration through files, CLI or dashboard, including package bindings, models, agents, prompts, UI, vars, limits and policy. Use creation skills for new assets or MCP connections."
 ---
 # Configure Raw
 
@@ -12,7 +12,7 @@ File: `$XDG_CONFIG_HOME/raw/config.json` or `~/.config/raw/config.json`; --confi
 
 Root: `models`, `agents`; optional `default_agent`, `mcp`, `sessions`, `ui`, `vars`, `var_providers`. Agent precedence: `--agent NAME`, `RAW_AGENT`, `default_agent`. Prompt precedence: `--system-prompt`, `RAW_SYSTEM_PROMPT`, agent prompt, built-in prompt. No --model; agents reference model aliases.
 
-For installed package bindings, read `references/packages.md` with `read_file` before editing; it gives the `from`/`inputs`/`overrides`, selection, policy and resume contracts.
+Read `references/packages.md` for package bindings and `references/dashboard.md` for web editing, using `read_file`.
 
 ## Model: `models.<alias>`
 

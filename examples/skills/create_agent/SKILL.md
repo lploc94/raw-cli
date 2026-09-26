@@ -1,6 +1,6 @@
 ---
 name: create-agent
-description: "Use to create or customize a Raw agent with prompt, tools, skills, vars, MCP and policy. Use create-package to distribute an existing setup; configure-raw for one existing setting."
+description: "Use to create or customize a Raw agent through files or dashboard, with prompt, tools, skills, vars, MCP and policy. Use create-package to distribute an existing setup; configure-raw for one setting."
 ---
 # Create a Raw agent
 
@@ -12,7 +12,7 @@ For how-to, explain the layout; for creation, establish role/name/location/model
 
 Personal config: $XDG_CONFIG_HOME/raw/config.json or ~/.config/raw/config.json. Reuse model aliases; preserve other agents/default.
 
-For packaging an existing setup, use `create-package` when selected. For portable sharing while creating an agent, read `references/packages.md` with `read_file` before authoring. It covers package exports, recipient model/inputs, installation and resume. A copied config directory is also valid: config-adjacent `agent/<id>` assets travel with it; `local/<id>` assets do not.
+Use `create-package` to distribute an existing setup. Read `references/packages.md` for package authoring and `references/dashboard.md` for browser composition with `read_file`. Copied config directories also work: `agent/<id>` assets travel with the config; `local/<id>` assets do not.
 
 Copy examples/agents/project-helper/ for a forkable layout. This complete example selects a prompt, setup tools/skill and conditional Bash rule. Choose capabilities for the role.
 

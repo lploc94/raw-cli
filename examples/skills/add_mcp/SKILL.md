@@ -1,12 +1,12 @@
 ---
 name: add-mcp
-description: "Use when connecting an MCP server for Raw, explaining its binding, or diagnosing tools. Discover original names, select exact IDs and verify live calls. Use create-package to distribute a definition."
+description: "Use when connecting an MCP server for Raw, explaining its binding, or diagnosing tools, including dashboard discovery. Select exact original names and verify live calls. Use create-package to share definitions."
 ---
 # Add an MCP server to Raw
 
 Use when connecting a new MCP capability to a Raw agent or diagnosing that connection. For a how-to, explain connection schema, exact selection and verification. For an actual setup, use the requested server; creating the optional echo fixture below is not a prerequisite or a replacement for that server.
 
-For a package MCP export or recipient binding, read `references/packages.md` with `read_file`; it covers typed inputs, local aliases, canonical rules and update/resume.
+Read `references/packages.md` for package bindings and `references/dashboard.md` for browser discovery with `read_file`.
 
 ## Establish the connection
 
