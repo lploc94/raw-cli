@@ -5,6 +5,7 @@ import { effectiveInputBudget } from "../llm/context.js";
 import type { ResolvedModelConfig } from "../llm/types.js";
 
 export interface SessionMetrics {
+  capabilities?: { tools: readonly string[]; skills: readonly string[]; vars: readonly string[] };
   historyWatermark?: number;
   measuredAt: number;
   elapsedMs: number;

@@ -7,7 +7,7 @@ import { DashboardError } from "./errors.js";
 
 const mime: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2", ".json": "application/json" };
-export async function serveDashboardStatic(request: IncomingMessage, response: ServerResponse, assetsRoot: string, pathname: string): Promise<void> {
+export async function serveDashboardStatic(request: IncomingMessage, response: ServerResponse, assetsRoot: string, pathname: string, styleNonce: string): Promise<void> {
   if (request.method !== "GET" && request.method !== "HEAD") throw new DashboardError(404, "not_found", "Route not found");
   let relative: string;
   if (isDashboardPage(pathname)) relative = "index.html";
@@ -20,8 +20,9 @@ export async function serveDashboardStatic(request: IncomingMessage, response: S
     if (!contained(actualRoot, actual) || !(await stat(actual)).isFile()) throw new DashboardError(404, "not_found", "Asset not found");
     const contentType = mime[extname(actual)];
     if (!contentType) throw new DashboardError(404, "not_found", "Asset type not served");
-    const bytes = await readFile(actual);
-    response.writeHead(200, { "Content-Type": contentType, "Content-Length": bytes.length, "Cache-Control": "no-cache" });
+    let bytes = await readFile(actual);
+    if (relative === "index.html") bytes = Buffer.from(bytes.toString("utf8").replace("</head>", `<meta name="raw-style-nonce" content="${styleNonce}"></head>`));
+    response.writeHead(200, { "Content-Type": contentType, "Content-Length": bytes.length, "Cache-Control": relative === "index.html" ? "no-store" : "no-cache" });
     response.end(request.method === "HEAD" ? undefined : bytes);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new DashboardError(relative === "index.html" ? 503 : 404,

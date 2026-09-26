@@ -12,6 +12,7 @@ export type { OperationIntent, OperationState, SessionOperation } from "./operat
 export { SessionOperationError } from "./operation-types.js";
 
 export interface SessionRuntime {
+  capabilities?: SessionMetrics["capabilities"];
   agent: AgentSession;
   modelConfig: Readonly<ResolvedModelConfig>;
   compactOptions: CompactOptions;
@@ -113,7 +114,8 @@ export class SessionOperations {
       firstRequest = runtime.agent.stats().requests;
       const attached = runtime;
       active.measure = () => ({ ...measureSession(attached.agent, attached.modelConfig, { startedAt, firstRequest, startedTools, failedTools,
-        ...(attached.compact ? { compact: attached.compact } : {}) }), historyWatermark: store.historyWatermark(operation.sessionId) });
+        ...(attached.compact ? { compact: attached.compact } : {}) }), historyWatermark: store.historyWatermark(operation.sessionId),
+        ...(attached.capabilities ? { capabilities: attached.capabilities } : {}) });
       if (active.controller.signal.aborted) throw new Error("operation cancelled");
       publishState(operation.kind === "turn" ? "running" : "compacting");
       if (operation.kind === "turn") {

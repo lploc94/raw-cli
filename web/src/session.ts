@@ -1,0 +1,280 @@
+import { useEffect, useState } from "react";
+import type { SessionSnapshot } from "../../src/dashboard/sessions.js";
+import type {
+  DashboardEvent,
+  DashboardEventData,
+} from "../../src/dashboard/streams.js";
+import type { SessionOperation } from "../../src/sessions/operations.js";
+import type { HistoryView } from "../../src/sessions/view.js";
+import type { Page } from "../../src/sessions/store.js";
+import { api, ApiError, errorText, subscribe } from "./api.js";
+
+export type LiveTool = DashboardEventData["tool"] & { operationId: string };
+export interface ChatState extends SessionSnapshot {
+  tools: Record<string, LiveTool>;
+  compactions: Record<string, DashboardEventData["compaction"]>;
+}
+export const isTerminal = (state: string) =>
+  ["completed", "max_steps", "cancelled", "error", "interrupted"].includes(
+    state,
+  );
+export function mergeHistory(
+  a: HistoryView[],
+  b: HistoryView[],
+): HistoryView[] {
+  return [
+    ...new Map([...a, ...b].map((item) => [item.id, item])).values(),
+  ].sort((x, y) => x.sequence - y.sequence);
+}
+export function reduceEvent(
+  state: ChatState | undefined,
+  event: DashboardEvent,
+): ChatState | undefined {
+  if (event.type === "snapshot" || event.type === "reset") {
+    const olderLoaded =
+      !!state?.history.items.length &&
+      state.history.items[0]!.sequence <=
+        (event.data.history.items[0]?.sequence ?? Infinity);
+    const before = olderLoaded
+      ? state!.history.nextCursor
+      : event.data.history.nextCursor;
+    return {
+      ...event.data,
+      history: {
+        items: mergeHistory(
+          state?.history.items ?? [],
+          event.data.history.items,
+        ),
+        ...(before ? { nextCursor: before } : {}),
+      },
+      tools: {},
+      compactions: {},
+    };
+  }
+  if (!state) return state;
+  switch (event.type) {
+    case "history": {
+      const ids = new Set(event.data.items.map((item) => item.id));
+      const tools = { ...state.tools };
+      const compactions = { ...state.compactions };
+      for (const item of event.data.items) {
+        if (item.callId && item.operationId)
+          delete tools[`${item.operationId}:${item.callId}`];
+        if (item.compaction?.status !== "running" && item.compaction)
+          delete compactions[item.compaction.id];
+      }
+      return {
+        ...state,
+        history: {
+          ...state.history,
+          items: mergeHistory(state.history.items, event.data.items),
+        },
+        historyWatermark: event.data.historyWatermark,
+        live: state.live.filter((item) => !ids.has(item.segmentId)),
+        tools,
+        compactions,
+      };
+    }
+    case "text": {
+      if (state.history.items.some((item) => item.id === event.data.segmentId))
+        return state;
+      const old = state.live.find(
+        (item) => item.segmentId === event.data.segmentId,
+      );
+      const segment = {
+        ...event.data,
+        operationId: event.operationId!,
+        text: old?.paged ? old.text : (old?.text ?? "") + event.data.text,
+        paged: old?.paged ?? false,
+      };
+      // Large streams remain paged in the UI too. More can be loaded explicitly without growing every tab indefinitely.
+      if (segment.text.length > 128 * 1024) {
+        segment.text = segment.text.slice(0, 128 * 1024);
+        segment.paged = true;
+      }
+      return {
+        ...state,
+        live: [
+          ...state.live.filter((item) => item.segmentId !== segment.segmentId),
+          segment,
+        ],
+      };
+    }
+    case "tool": {
+      const key = `${event.operationId}:${event.data.callId}`;
+      return {
+        ...state,
+        tools: {
+          ...state.tools,
+          [key]: {
+            ...state.tools[key],
+            ...event.data,
+            operationId: event.operationId!,
+          },
+        },
+      };
+    }
+    case "operation":
+      return {
+        ...state,
+        operations: [
+          event.data,
+          ...state.operations.filter((op) => op.id !== event.data.id),
+        ],
+        ownership: isTerminal(event.data.state) ? "idle" : "here",
+        ...(isTerminal(event.data.state)
+          ? {
+              live: state.live.filter(
+                (segment) => segment.operationId !== event.data.id,
+              ),
+              tools: Object.fromEntries(
+                Object.entries(state.tools).filter(
+                  ([, tool]) => tool.operationId !== event.data.id,
+                ),
+              ),
+            }
+          : {}),
+      };
+    case "metrics":
+      return { ...state, metrics: event.data, metricsStale: false };
+    case "approval":
+      return {
+        ...state,
+        approvals: [
+          ...state.approvals.filter(
+            (approval) => approval.id !== event.data.id,
+          ),
+          ...(event.data.status === "pending" ? [event.data] : []),
+        ],
+      };
+    case "compaction":
+      return event.data.details
+        ? {
+            ...state,
+            compactions: {
+              ...state.compactions,
+              [event.data.details.id]: event.data,
+            },
+          }
+        : state;
+    case "ownership":
+      return { ...state, ownership: event.data.ownership };
+    default:
+      return state;
+  }
+}
+export function useSession(sessionId: string | undefined) {
+  const [state, setState] = useState<ChatState>();
+  const [connection, setConnection] = useState("Connecting");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setState(undefined);
+    setError("");
+    if (!sessionId) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cursor: string | undefined;
+    let lastSequence = -1;
+    let epoch = "";
+    const connect = async () => {
+      setConnection("Connecting");
+      try {
+        await subscribe(
+          sessionId,
+          cursor,
+          controller.signal,
+          (event) => {
+            const nextEpoch = event.id.slice(0, event.id.lastIndexOf(":"));
+            if (
+              event.type !== "reset" &&
+              event.type !== "snapshot" &&
+              nextEpoch === epoch &&
+              event.sequence <= lastSequence
+            )
+              return;
+            epoch = nextEpoch;
+            lastSequence = event.sequence;
+            cursor = event.id;
+            setConnection("Connected");
+            setError("");
+            setState((old) => reduceEvent(old, event));
+            if (event.type === "operation" && isTerminal(event.data.state))
+              void api<SessionSnapshot>(
+                `/sessions/${sessionId}`,
+                "GET",
+                undefined,
+                controller.signal,
+              )
+                .then((snapshot) =>
+                  setState((old) =>
+                    old
+                      ? {
+                          ...old,
+                          context: snapshot.context,
+                          metrics: snapshot.metrics,
+                          metricsStale: snapshot.metricsStale,
+                        }
+                      : old,
+                  ),
+                )
+                .catch(() => {});
+            if (event.type === "host_error") setError(event.data.message);
+          },
+          () => {
+            setConnection("Connected");
+            setError("");
+          },
+        );
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        setConnection("Disconnected");
+        setError(errorText(cause));
+        if (!(cause instanceof ApiError && [401, 404].includes(cause.status)))
+          timer = setTimeout(() => {
+            void connect();
+          }, 1500);
+      }
+    };
+    void connect();
+    return () => {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [sessionId]);
+  const earlier = async () => {
+    if (!state?.history.nextCursor || !sessionId) return;
+    const page = await api<Page<HistoryView>>(
+      `/sessions/${sessionId}/history?before=${encodeURIComponent(state.history.nextCursor)}&limit=50`,
+    );
+    setState((old) =>
+      old
+        ? {
+            ...old,
+            history: {
+              ...page,
+              items: mergeHistory(page.items, old.history.items),
+            },
+          }
+        : old,
+    );
+  };
+  const receipt = (operation: SessionOperation) =>
+    setState((old) => {
+      if (!old) return old;
+      const current = old.operations.find((op) => op.id === operation.id);
+      if (
+        current &&
+        (isTerminal(current.state) || current.updatedAt > operation.updatedAt)
+      )
+        return old;
+      return {
+        ...old,
+        operations: [
+          operation,
+          ...old.operations.filter((op) => op.id !== operation.id),
+        ],
+        ownership: isTerminal(operation.state) ? "idle" : "here",
+      };
+    });
+  return { state, setState, connection, error, earlier, receipt };
+}

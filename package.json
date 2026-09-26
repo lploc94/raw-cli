@@ -30,13 +30,14 @@
     "examples/providers"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",
     "test": "npm run build && node scripts/test.mjs",
     "test:phase": "node scripts/test-phase.mjs",
     "test:overhead": "node --import tsx scripts/overhead.mjs",
     "test:package": "npm run build && node --import tsx --test tests/package.test.ts tests/package-agent.test.ts tests/package-sharing-installed.test.ts",
-    "build": "tsup && tsup --config tsup.tools.config.ts && node scripts/copy-tool-manifests.mjs && node scripts/build-tool-examples.mjs && node scripts/copy-bundled-skills.mjs",
-    "check": "npm run typecheck && npm test"
+    "build": "tsup && tsup --config tsup.tools.config.ts && node scripts/copy-tool-manifests.mjs && node scripts/build-tool-examples.mjs && node scripts/copy-bundled-skills.mjs && vite build",
+    "check": "npm run typecheck && npm test",
+    "test:web": "playwright test"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.0",
@@ -58,12 +59,29 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/lang-json": "6.0.2",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/theme-one-dark": "6.1.3",
+    "@playwright/test": "1.63.0",
     "@types/node": "24.10.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@types/semver": "7.8.0",
     "@types/ws": "8.18.1",
+    "@vitejs/plugin-react": "6.1.1",
+    "codemirror": "6.0.2",
     "js-tiktoken": "1.0.21",
+    "lucide-react": "1.48.0",
+    "radix-ui": "1.6.7",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "tsup": "8.5.1",
     "tsx": "4.23.15",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
   }
 }

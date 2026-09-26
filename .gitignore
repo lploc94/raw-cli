@@ -4,3 +4,5 @@ coverage/
 .codex-review/
 *.tgz
 .DS_Store
+test-results/
+playwright-report/

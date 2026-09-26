@@ -58,7 +58,8 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
   const version = String((JSON.parse(readFileSync(join(packageRoot(), "package.json"), "utf8")) as { version?: string }).version ?? "unknown");
   let origin = ""; let closing: Promise<void> | undefined; let listeningReady = false;
   const handle = async (request: IncomingMessage, response: ServerResponse) => {
-    responseHeaders(response);
+    const styleNonce = createDashboardToken();
+    responseHeaders(response, styleNonce);
     if (controller.signal.aborted) throw new DashboardError(503, "closing", "Dashboard is stopping");
     if (!request.url?.startsWith("/") || request.url.startsWith("//")) throw new DashboardError(400, "invalid_path", "Invalid request target");
     const rawPath = request.url.split("?")[0]!;
@@ -85,7 +86,7 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
       for (const route of routes) if (await route(request, response, context)) return;
       throw new DashboardError(404, "not_found", "API route not found");
     }
-    await serveDashboardStatic(request, response, assetsRoot, url.pathname);
+    await serveDashboardStatic(request, response, assetsRoot, url.pathname, styleNonce);
   };
   const http = createServer((request, response) => {
     response.on("error", () => {});

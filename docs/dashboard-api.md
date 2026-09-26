@@ -8,6 +8,8 @@ Ordinary JSON requests are at most 1 MiB and use `Content-Type: application/json
 
 Only defined browser routes return the application entrypoint on refresh. Unknown API paths, missing static assets and unknown page routes return their actual errors. Static files are contained in the installed `dist/dashboard` directory; config/source files are never served through static routes.
 
+The entrypoint receives a fresh style nonce matching its response CSP. This permits styles created by the bundled dialog/editor libraries while inline scripts and unrelated inline styles remain blocked. The nonce is independent of the access token; all scripts and network connections remain restricted to this origin.
+
 Further session, stream and management schemas are specified alongside their adapters in the shared TypeScript contract. API versioning is separate from session persistence compatibility.
 
 ## Sessions and operations
@@ -17,7 +19,7 @@ Further session, stream and management schemas are specified alongside their ada
 - `GET /api/sessions/:id` returns the session, latest chronological history page, history watermark, current/last metrics, context summary, recent operation receipts and ownership (`idle`, `here`, `elsewhere`). `GET /api/sessions/:id/history?before=&limit=` loads older history. `PATCH` the session with `{title}` renames it; `DELETE` refuses an active writer.
 - `POST /api/sessions/:id/operations` accepts `{clientRequestId, kind:"turn"|"compact", agent, input?}`. The displayed server config is authoritative. It returns the durable receipt with 202; a matching duplicate returns the original receipt. A reused ID with different intent is 409. Manual compact has no user input.
 - `GET /api/sessions/:id/operations?clientRequestId=` finds a receipt after a lost submit response; omitting the ID returns recent receipts. `GET /api/operations/:id` reads one receipt. `POST /api/operations/:id/cancel` cancels only work owned here. No GET, refresh or reconnect submits work.
-- `GET /api/sessions/:id/metrics` returns `{metrics, metricsStale}`. Missing measurements are null/absent, never zero by invention. A measurement carries its time and history watermark; later external history makes it stale. The session snapshot separately includes `{context:{summary?,messageCount}}`.
+- `GET /api/sessions/:id/metrics` returns `{metrics, metricsStale}`. Missing measurements are null/absent, never zero by invention. A measurement carries its time and history watermark; later external history makes it stale. `metrics.capabilities`, when available, lists the tools, skills and variable names selected by that runtime, without values or credentials. The session snapshot separately includes `{context:{summary?,messageCount}}`.
 
 ## Streams and approvals
 

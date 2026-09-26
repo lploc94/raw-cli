@@ -28,6 +28,7 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
       ...(options.approve ? { approve: options.approve } : {}),
       persistence: { store, sessionId: session.id, surface: "web", owner, ownership: "host", operationId: operation.id } });
     return { agent, modelConfig: runtime.modelConfig!, compact: runtime.compact, compactOptions,
+      capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },
       close: () => tools.mcp.close() };
   } catch (error) { await tools.mcp.close(); throw error; }
 };

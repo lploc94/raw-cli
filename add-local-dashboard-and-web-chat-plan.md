@@ -529,10 +529,10 @@ Tests drive the real HTTP server and mock provider, not a hardcoded client trans
 ### Implementation obligations
 Bundle local assets, add accessible controls and error/empty/reconnect states, keep stats estimates explicit, and ensure the browser stream cannot cause duplicate user bubbles/history records. No client-only transcript authority or model API keys in request payloads to upstream services.
 ### Acceptance criteria
-- [ ] AC-5.1: A user completes new/resumed chat with streaming, typed tool details, permissions, cancellation and compact/summary inspection while older history stays readable — proven by Playwright.
-- [ ] AC-5.2: Refresh/IME/history scrolling/drafts remain correct and unsafe content does not execute — proven by behavioral browser tests.
-- [ ] AC-5.3: Both themes, density modes and narrow/zoomed layouts keep controls legible, reachable and keyboard-usable — proven by screenshots, automated checks and keyboard/zoom inspection.
-- [ ] AC-5.4: Appearance/chat preferences affect only the browser, navigation/command palette restore context, and task/approval attention survives page switches — proven by shell/preferences/activity tests.
+- [x] AC-5.1: A user completes new/resumed chat with streaming, typed tool details, permissions, cancellation and compact/summary inspection while older history stays readable — proven by Playwright.
+- [x] AC-5.2: Refresh/IME/history scrolling/drafts remain correct and unsafe content does not execute — proven by behavioral browser tests.
+- [x] AC-5.3: Both themes, density modes and narrow/zoomed layouts keep controls legible, reachable and keyboard-usable — proven by screenshots, automated checks and keyboard/zoom inspection.
+- [x] AC-5.4: Appearance/chat preferences affect only the browser, navigation/command palette restore context, and task/approval attention survives page switches — proven by shell/preferences/activity tests.
 ### Focused verification
 `npm run build`
 `npm run test:web -- tests/dashboard-ui/shell.spec.ts tests/dashboard-ui/chat.spec.ts tests/dashboard-ui/reconnect.spec.ts tests/dashboard-ui/approval.spec.ts tests/dashboard-ui/accessibility.spec.ts --project=chromium`
@@ -692,8 +692,8 @@ Implementation review is required; verdict must be APPROVE.
 | 1 | complete | `dfed949`; 12 focused, 142 session, 475 full tests; self-review APPROVE |
 | 2 | complete | `4365df3`; 20 focused, 484 full tests; self-review APPROVE |
 | 3 | complete | `1f3911a`; 16 focused tests (including ACP), 494 full tests; self-review APPROVE |
-| 4 | complete | 41 focused, 512 full tests; self-review APPROVE |
-| 5 | pending | Depends on 3–4 |
+| 4 | complete | `80d15fe`; 41 focused, 512 full tests; self-review APPROVE |
+| 5 | complete | 25 Chromium scenarios, 513 Node tests; screenshots and self-review APPROVE |
 | 6 | pending | Depends on 2–5 |
 | 7 | pending | Depends on 2–6 |
 | 8 | pending | Depends on 1–7 |
@@ -703,3 +703,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-26 Phase 3: Added `raw dashboard`, loopback HTTP/static routing, per-process fragment tokens, exact Host/Origin checks, bounded JSON bodies, safe bootstrap diagnostics and owned shutdown. CLI works from unrelated cwd, prints its actual port-0 URL and keeps running after a browser-opener failure. Fixed abort-during-listen ordering to prevent a late listener escaping cleanup. Verified invalid/missing config and unavailable store stay scoped, old tokens/foreign requests fail, API/missing assets do not receive the SPA entrypoint, and shutdown cancels an owned startup child/releases its lease. Build/typecheck, 16 focused tests, full `npm run check` (494/494) and whitespace checks passed. Self-review APPROVE. Static-route tests use fixture assets as planned; the real browser bundle is Phase 5.
 
 - 2026-09-26 Phase 4: Added authenticated workspace/session/history/receipt/metrics/activity APIs, typed replayable SSE, fixed-deadline conditional approvals, explicit Stop and compaction, and UTF-8 paged live spooling. Red HTTP tests initially returned 404. Real-provider/tool tests prove duplicate submissions execute one sentinel, two tabs converge after disconnect, stale cursors reset, large multibyte output survives replay eviction, approvals deny/expire/cancel, and CLI → web → CLI selections stabilize. Manual/automatic compact and rollback keep old history; reads neither infer nor refresh retention. Review found and fixed concurrent SDK MCP closes returning before child reaping, and expired dead-writer tokens blocking idle deletion. Final sequential build/check passed 512/512; the prescribed focused CLI/ACP/dashboard command passed 41/41; whitespace passed. An earlier overlapping rebuild invalidated a CLI test run; only the final sequential gates are qualification evidence. Self-review APPROVE. Metrics/activity remain in the cohesive session adapter; no product scope change.
+
+- 2026-09-26 Phase 5: Shipped the bundled React/Vite chat workspace, typed fetch-SSE client, receipt recovery, Markdown/highlighting, work/tool/compaction views, current/last context and capability inspector, responsive navigation, activity, keyboard palette and validated browser-only preferences. Tests first: built-asset GET returned 503 before the app existed; browser cases then exposed fixture wire-field/option issues, focus/label issues, a late-response state/draft race, legacy reused call-ID grouping and clipped 320 px navigation. Fixed each with focused regressions. Dynamic library styles use a per-document nonce without allowing arbitrary inline scripts/styles. Final build/typecheck and `npm run check` passed 513/513; prescribed focused Chromium files and the all-Chromium gate passed 25/25; whitespace passed. Reviewed screenshot/reflow/keyboard evidence is in docs/evidence/local-dashboard.md. Self-review APPROVE for this phase; installed/all-engine and remaining manual qualification remain Phase 8. Management/package pages are completed by their dependent phases.

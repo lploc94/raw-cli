@@ -11,8 +11,8 @@ export function verifyDashboardRequest(request: IncomingMessage, origin: string,
   const expected = Buffer.from(`Bearer ${token}`); const actual = Buffer.from(value);
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) throw new DashboardError(401, "unauthorized", "Open the current authenticated dashboard launch link");
 }
-export function responseHeaders(response: ServerResponse): void {
-  response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+export function responseHeaders(response: ServerResponse, styleNonce: string): void {
+  response.setHeader("Content-Security-Policy", `default-src 'self'; script-src 'self'; style-src 'self' 'nonce-${styleNonce}'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Referrer-Policy", "no-referrer");

@@ -27,6 +27,8 @@ test("HTTP duplicate submissions execute one real Bash effect and return the sav
     const lookup = await f.json<SessionOperation>(`/sessions/${session.id}/operations?clientRequestId=one`); assert.equal(lookup.id, a!.id);
     assert.equal((await f.api(`/sessions/${session.id}/operations`, "POST", { ...intent, input: "different" })).status, 409);
     assert.equal(f.provider.requests.length, 2); assert.equal(readFileSync(join(f.root, "effect.txt"), "utf8"), "x");
+    const measured = await f.json<{ metrics: { capabilities: { tools: string[]; skills: string[]; vars: string[] } } }>(`/sessions/${session.id}/metrics`);
+    assert.deepEqual(measured.metrics.capabilities, { tools: ["builtin/bash"], skills: [], vars: [] });
     const history = await f.json<{ items: Array<{ kind: string }> }>(`/sessions/${session.id}/history`);
     assert.equal(history.items.filter((item) => item.kind === "user").length, 1);
     const originalUpdated = f.server.context.store!.getSession(session.id)!.updatedAt;

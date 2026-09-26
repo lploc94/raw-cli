@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "web/**/*.ts",
+    "web/**/*.tsx",
+    "vite.config.ts",
+    "playwright.config.ts"
+  ]
+}
