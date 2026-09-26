@@ -126,3 +126,5 @@ arguments and never substitutes resolved values into shell command text.
 `access: "use"` prevents Raw's read tool returning a value, but trusted commands
 and plugins can still print it. This is not OS isolation. MCP does not acquire
 `env_refs` or variable interpolation automatically. See [variables](vars.md).
+
+Managed dashboard edits use [revision-checked configuration and owned component services](management.md). Viewing a catalog never imports tool code or starts providers/MCP; changes take effect on the next turn.

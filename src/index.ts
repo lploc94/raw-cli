@@ -77,3 +77,13 @@ export type { OperationIntent, OperationState, SessionOperation, OperationEvent,
 export { projectHistoryItem } from "./sessions/view.js";
 export type { HistoryView } from "./sessions/view.js";
 export type { SessionMetrics } from "./sessions/metrics.js";
+
+export { readManagedConfig, mutateConfig, saveConfigText, initializeConfig } from "./management/config.js";
+export type { ManagedConfig, ConfigEditOptions } from "./management/config.js";
+export { createStarterConfig } from "./management/starter.js";
+export { editAgent, editModel } from "./management/agents.js";
+export type { ResourceEdit } from "./management/agents.js";
+export { ComponentManager } from "./management/components.js";
+export type { ComponentInfo, EditableComponentKind } from "./management/components.js";
+export { ManagementError } from "./management/files.js";
+export { parseToolManifest, compileToolSchema } from "./tools/plugins/manifest.js";

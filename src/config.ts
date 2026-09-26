@@ -10,7 +10,7 @@ import type { McpServerConfig } from "./tools/mcp-client.js";
 import type { ToolPolicyRule } from "./tools/registry.js";
 import { compileWhen } from "./tools/policy.js";
 import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageDefinitions,
-  resolvePackageSelections, type PackageAsset } from "./packages/resolve-agent.js";
+  resolvePackageSelections, validatePackageAgentBinding, type PackageAsset } from "./packages/resolve-agent.js";
 import { parseSelectionReference } from "./packages/references.js";
 import { parseUiDocument, resolveUiOptions, validateUiFlag, type UiOptions, type Density, type ReasoningDisplay, type ColorDisplay, type IconsDisplay, type ThemeName } from "./terminal/options.js";
 
@@ -171,7 +171,7 @@ export function configFilePath(options: LoadConfigOptions = {}): string {
   return join(base, "raw", "config.json");
 }
 
-function canonicalConfigPath(options: LoadConfigOptions = {}): string {
+export function canonicalConfigPath(options: LoadConfigOptions = {}): string {
   const { configPath: _path, flags, ...rest } = options;
   const { configPath: _flagPath, ...otherFlags } = flags ?? {};
   return configFilePath({ ...rest, flags: otherFlags });
@@ -195,6 +195,11 @@ function parseConfigDocument(options: LoadConfigOptions, validateAgents: boolean
     }
     throw new Error(`cannot read config file: ${path}`);
   }
+  return parseConfigSource(source, options, validateAgents);
+}
+
+export function parseConfigSource(source: string, options: LoadConfigOptions = {}, validateAgents = true): ConfigDocument {
+  const path = configFilePath(options);
   const errors: ParseError[] = [];
   const tree = parseTree(source, errors, { allowTrailingComma: false, disallowComments: true });
   if (!tree || errors.length) throw new Error(`invalid JSON config: ${path}`);
@@ -554,6 +559,15 @@ function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; agen
 
 function validateDocument(root: JsonObject): void {
   const agents = root.agents === undefined ? {} : object(root.agents, "agents");
+  if (root.default_agent !== undefined && (typeof root.default_agent !== "string" || !Object.hasOwn(agents, root.default_agent))) {
+    throw new Error(`unknown agent: ${String(root.default_agent)}`);
+  }
+  for (const [name, value] of Object.entries(agents)) {
+    if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "from")) {
+      const binding = validatePackageAgentBinding(value);
+      if (!Object.hasOwn(object(root.models ?? {}, "models"), binding.model)) throw new Error(`agent ${name} references unknown model: ${binding.model}`);
+    }
+  }
   const direct = Object.fromEntries(Object.entries(agents).filter(([, value]) =>
     !value || typeof value !== "object" || Array.isArray(value) || !Object.hasOwn(value, "from")).map(([name, value]) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [name, value];

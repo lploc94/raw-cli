@@ -1,7 +1,5 @@
 import type { VariableContext } from "../../vars/contract.js";
-import AjvDraft7 from "ajv";
-import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
+import { parseToolManifest, compileToolSchema } from "./manifest.js";
 import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -15,7 +13,6 @@ import { selectedToolSnapshot } from "./snapshot.js";
 import type { PackageAsset } from "../../packages/resolve-agent.js";
 
 const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var"]);
-const manifestKeys = ["api_version", "id", "version", "name", "description", "input_schema", "entry"];
 
 export interface LoadToolPluginsOptions {
   selectedIds: readonly string[];
@@ -44,48 +41,6 @@ function parseId(id: string): { scope: "builtin" | "local" | "agent"; folder: st
   return { scope: match[1] as "builtin" | "local" | "agent", folder: match[2]! };
 }
 
-function manifestFrom(value: unknown, expectedId: string, expectedFolder: string): ToolManifest {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`invalid tool manifest: ${expectedId}`);
-  const item = value as Record<string, unknown>;
-  if (Object.keys(item).some((key) => !manifestKeys.includes(key))
-    || manifestKeys.some((key) => !Object.hasOwn(item, key))
-    || item.api_version !== 1 || item.id !== expectedFolder
-    || typeof item.version !== "string" || !/^\d+\.\d+\.\d+$/.test(item.version)
-    || typeof item.name !== "string" || !/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(item.name)
-    || typeof item.description !== "string" || !item.description.trim()
-    || item.entry !== "./index.mjs" || !item.input_schema || typeof item.input_schema !== "object"
-    || Array.isArray(item.input_schema)) throw new Error(`invalid tool manifest: ${expectedId}`);
-  return item as unknown as ToolManifest;
-}
-
-function checkSchemaReferences(value: unknown): void {
-  if (!value || typeof value !== "object") return;
-  if (Array.isArray(value)) { for (const item of value) checkSchemaReferences(item); return; }
-  const record = value as Record<string, unknown>;
-  if (record.$async !== undefined) throw new Error("async tool schema is unsupported");
-  if (record.$ref !== undefined && (typeof record.$ref !== "string" || !record.$ref.startsWith("#/"))) {
-    throw new Error("remote tool schema reference is unsupported");
-  }
-  for (const item of Object.values(record)) checkSchemaReferences(item);
-}
-
-function compileSchema(manifest: ToolManifest): (args: unknown) => string | undefined {
-  checkSchemaReferences(manifest.input_schema);
-  if (manifest.input_schema.type !== "object") throw new Error(`unsupported tool schema: ${manifest.name}`);
-  const declared = manifest.input_schema.$schema;
-  const draft7 = typeof declared === "string" && /^https?:\/\/json-schema\.org\/draft-07\/schema#?$/.test(declared);
-  if (declared !== undefined && !draft7 && declared !== "https://json-schema.org/draft/2020-12/schema") {
-    throw new Error(`unsupported tool schema draft: ${manifest.name}`);
-  }
-  const ajv = draft7 ? new AjvDraft7.default({ strict: true, allErrors: true }) : new Ajv2020.default({ strict: true, allErrors: true });
-  addFormats.default(ajv);
-  let validate: ReturnType<typeof ajv.compile>;
-  try { validate = ajv.compile(manifest.input_schema); }
-  catch { throw new Error(`unsupported tool schema: ${manifest.name}`); }
-  if ((validate as typeof validate & { $async?: boolean }).$async) throw new Error(`async tool schema is unsupported: ${manifest.name}`);
-  return (args) => validate(args) ? undefined : `invalid arguments: ${ajv.errorsText(validate.errors)}`;
-}
-
 async function selectedManifest(id: string, root: string, direct?: PackageAsset): Promise<{
   id: string; manifest: ToolManifest; entryPath: string; sourceDigest: string;
   validateSchema: (args: unknown) => string | undefined;
@@ -107,9 +62,9 @@ async function selectedManifest(id: string, root: string, direct?: PackageAsset)
   if (!inside(realFolder, realManifest) || !inside(realFolder, realEntry)) throw new Error(`selected tool entry escapes folder: ${id}`);
   let manifest: ToolManifest;
   let manifestBytes: Buffer;
-  try { manifestBytes = await readFile(realManifest); manifest = manifestFrom(JSON.parse(manifestBytes.toString("utf8")), id, folder); }
+  try { manifestBytes = await readFile(realManifest); manifest = parseToolManifest(JSON.parse(manifestBytes.toString("utf8")), id, folder); }
   catch (error) { throw new Error(`invalid selected tool manifest ${id}: ${(error as Error).message}`); }
-  const validateSchema = compileSchema(manifest);
+  const validateSchema = compileToolSchema(manifest);
   const snapshot = await selectedToolSnapshot(direct?.canonicalIdentity ?? id, realFolder, manifest, manifestBytes,
     !direct && parseId(id).scope === "builtin");
   return { id, manifest, entryPath: snapshot.entryPath, sourceDigest: snapshot.sourceDigest, validateSchema };

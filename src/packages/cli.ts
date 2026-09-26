@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { configFilePath, readConfigDocument, validateEffectiveConfigData } from "../config.js";
 import { packPackage } from "./archive.js";
 import { exportAgentPackage } from "./export.js";
@@ -8,7 +7,7 @@ import { inspectPackage, validatePackage } from "./inspect.js";
 import { parseComponentReference } from "./references.js";
 import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageDefinitions,
   resolvePackageSelections } from "./resolve-agent.js";
-import { withPackageWriteLock } from "./lock.js";
+import { mutateConfig } from "../management/config.js";
 import { forkPackage, installPackage, linkPackage, listInstalledPackages, removePackage, updatePackage } from "./store.js";
 
 function args(argv: readonly string[]): { words: string[]; options: Record<string, string> } {
@@ -55,8 +54,8 @@ export async function addPackageAgent(options: AddPackageAgentOptions): Promise<
   const inputs = options.inputs ?? {};
   if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) throw new Error("agent inputs must be a JSON object");
   const binding = { from, model, ...(Object.keys(inputs).length ? { inputs } : {}) };
-  return withPackageWriteLock(configPath, async () => {
-    const document = readConfigDocument({ configPath });
+  await mutateConfig({ configPath }, async (data) => {
+    const document = { data };
     const agents = (document.data.agents ?? {}) as Record<string, unknown>;
     if (Object.hasOwn(agents, name)) throw new Error(`agent already exists: ${name}`);
     const models = (document.data.models ?? {}) as Record<string, unknown>;
@@ -68,15 +67,9 @@ export async function addPackageAgent(options: AddPackageAgentOptions): Promise<
       document.data, { configPath }, parsed.alias, context, inputs as Record<string, unknown>);
     validateEffectiveConfigData({ ...document.data, ...definitions,
       agents: { [name]: selected.agent }, default_agent: name });
-    const updated = { ...document.data, agents: { ...agents, [name]: binding } };
-    const stage = `${configPath}.tmp-${randomUUID()}`;
-    await mkdir(dirname(configPath), { recursive: true });
-    try {
-      await writeFile(stage, JSON.stringify(updated, null, 2) + "\n", { flag: "wx", mode: 0o600 });
-      await rename(stage, configPath);
-    } catch (error) { await rm(stage, { force: true }); throw error; }
-    return { agent: name, binding };
+    data.agents = { ...agents, [name]: binding };
   });
+  return { agent: name, binding };
 }
 
 export async function runPackageCli(argv: readonly string[]): Promise<boolean> {

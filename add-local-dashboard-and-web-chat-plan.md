@@ -416,9 +416,9 @@ Catalog/validation of a plugin whose module writes a sentinel or throws must not
 ### Implementation obligations
 Move agent-binding mutation onto the shared service, keep its SDK export, and ensure CLI and management writers share ownership rules. Reuse one starter-config factory for CLI init and requested browser initialization, with identical six-skill selection and no overwrite behavior. Expose diagnostics without requiring credentials or resolving dynamic variable values. No alternate config schema or implicit list merges.
 ### Acceptance criteria
-- [ ] AC-2.1: CRUD uses real validators and preserves unrelated fields/defaults/order — proven by management config tests.
-- [ ] AC-2.2: Passive catalogs perform no executable import/provider/MCP/model call and isolate invalid rows — proven by sentinel tests.
-- [ ] AC-2.3: Stale writes/escaping edits are rejected without changing files, and valid staged assets can be selected — proven by file and binding tests.
+- [x] AC-2.1: CRUD uses real validators and preserves unrelated fields/defaults/order — proven by management config tests.
+- [x] AC-2.2: Passive catalogs perform no executable import/provider/MCP/model call and isolate invalid rows — proven by sentinel tests.
+- [x] AC-2.3: Stale writes/escaping edits are rejected without changing files, and valid staged assets can be selected — proven by file and binding tests.
 ### Focused verification
 `node --import tsx --test tests/management-config.test.ts tests/management-components.test.ts tests/package-cli.test.ts tests/package-config.test.ts`
 ### Phase gates
@@ -689,8 +689,8 @@ Implementation review is required; verdict must be APPROVE.
 
 | Phase | Status | Evidence / commit |
 | --- | --- | --- |
-| 1 | complete | 12 focused tests, 142 session regressions, 475 full tests; self-review APPROVE |
-| 2 | pending | Depends on 1 |
+| 1 | complete | `dfed949`; 12 focused, 142 session, 475 full tests; self-review APPROVE |
+| 2 | complete | 20 focused tests, 484 full tests; self-review APPROVE |
 | 3 | pending | Depends on 1–2 |
 | 4 | pending | Depends on 1–3 |
 | 5 | pending | Depends on 3–4 |
@@ -699,3 +699,4 @@ Implementation review is required; verdict must be APPROVE.
 | 8 | pending | Depends on 1–7 |
 
 - 2026-09-26 Phase 1: Completed docs-first implementation of durable operation acceptance/atomic user consumption, host-owned startup/runtime/cleanup leases, nonthrowing observers, stable visible segment IDs, mixed history projection and manual/automatic compaction markers. Meaningful red evidence: the focused contracts failed before the new services existed. Final build/typecheck, 12 focused tests, 142 session-suite tests, `npm run check` (475/475) and `git diff --check` passed. Implementation self-review APPROVE: checked duplicate lookup before ownership, killed-process effect recovery, rollback triggers, startup heartbeat, receipt transitions, unchanged prefix regressions, cleanup and typed preview limits. No phase scope deviation.
+- 2026-09-26 Phase 2: Extracted config source validation and the shared starter factory; CLI initialization and package-agent binding now use revision-aware atomic config writers. Added agent/model CRUD, passive component catalogs/manifest-schema parsing, per-file revisions, staged creation/forks, explicit selection and deletion usage checks. A regression test exposed local/agent aliases sharing a folder; fixed physical-folder usage detection before deletion. Linked package inspection reads authored sources directly without snapshot/import side effects. Focused contracts were red before implementation; final build/typecheck, 20 focused tests, `npm run check` (484/484) and whitespace checks passed. Self-review APPROVE, including credentials/order preservation, stale/external edits, strict/canonical config validation, symlink containment, read-only artifacts and isolated invalid rows. Agent/model edit helpers share one cohesive module; no user-facing scope change.

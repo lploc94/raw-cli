@@ -54,8 +54,7 @@ function selectedInputs(definition: unknown, schemaValue: unknown, supplied: Jso
   return applyPackageInputs(definition, projected, selected, sites, dirname(configPath)) as JsonObject;
 }
 
-export async function resolvePackageAgentBinding(binding: unknown, options: PackageStoreOptions,
-  context?: PackageResolutionContext): Promise<JsonObject> {
+export function validatePackageAgentBinding(binding: unknown): JsonObject & { from: string; model: string } {
   const local = record(binding, "package agent binding");
   for (const key of Object.keys(local)) if (!["from", "model", "inputs", "overrides"].includes(key)) {
     throw new Error(`unknown package agent binding field: ${key}`);
@@ -63,8 +62,24 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
   if (typeof local.from !== "string") throw new Error("package agent binding requires from");
   const parsed = parseComponentReference(local.from);
   if (parsed.source !== "installed" || parsed.kind !== "agents") throw new Error(`invalid package agent binding: ${local.from}`);
+  if (typeof local.model !== "string" || !local.model.trim()) throw new Error("package agent binding requires model");
+  if (local.inputs !== undefined) record(local.inputs, "package agent inputs");
+  if (local.overrides !== undefined) {
+    for (const key of Object.keys(record(local.overrides, "package agent overrides"))) {
+      if (!["request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "vars", "system_prompt", "system_prompt_file"].includes(key)) {
+        throw new Error(`unsupported package agent override: ${key}`);
+      }
+    }
+  }
+  return local as JsonObject & { from: string; model: string };
+}
+
+export async function resolvePackageAgentBinding(binding: unknown, options: PackageStoreOptions,
+  context?: PackageResolutionContext): Promise<JsonObject> {
+  const local = validatePackageAgentBinding(binding);
+  const parsed = parseComponentReference(local.from);
+  if (parsed.source !== "installed") throw new Error("expected installed package reference");
   const model = local.model;
-  if (typeof model !== "string" || !model.trim()) throw new Error("package agent binding requires model");
   const selected = await installed(options, parsed.alias, context);
   for (const capability of selected.manifest.requires ?? []) if (!hostCapabilities.has(capability)) {
     throw new Error(`${local.from} requires unsupported host capability ${capability}`);
@@ -96,10 +111,6 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
     });
   }
   const overrides = local.overrides === undefined ? {} : record(local.overrides, "package agent overrides");
-  for (const key of Object.keys(overrides)) if (!["request", "max_steps", "max_output_bytes", "request_timeout_ms",
-    "cache", "compact", "tools", "skills", "vars", "system_prompt", "system_prompt_file"].includes(key)) {
-    throw new Error(`unsupported package agent override: ${key}`);
-  }
   if (Object.hasOwn(overrides, "system_prompt")) delete definition.system_prompt_file;
   if (Object.hasOwn(overrides, "system_prompt_file")) delete definition.system_prompt;
   return { ...definition, ...overrides, model };
