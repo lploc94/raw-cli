@@ -76,6 +76,7 @@ export interface RuntimeConfig {
   readonly availableMcpServers: Readonly<Record<string, McpServerConfig>>;
   readonly toolIds: readonly string[];
   readonly skillIds: readonly string[];
+  readonly hookIds: readonly string[];
   readonly packageTools: Readonly<Record<string, PackageAsset>>;
   readonly packageSkills: Readonly<Record<string, PackageAsset>>;
   readonly packageMcpIdentities: Readonly<Record<string, string>>;
@@ -262,6 +263,7 @@ interface AgentSpec {
   modelAlias: string;
   toolIds: readonly string[];
   skillIds: readonly string[];
+  hookIds: readonly string[];
   systemPrompt?: string;
   systemPromptFile?: string;
   toolRules: readonly ToolPolicyRule[];
@@ -367,6 +369,24 @@ function skillSpec(raw: unknown, where: string): readonly string[] {
     return name;
   });
   if (new Set(ids).size !== ids.length) throw new Error(where + ".use contains duplicate IDs");
+  return ids;
+}
+
+function hookSpec(raw: unknown, where: string): readonly string[] {
+  if (raw === undefined) return [];
+  const value = object(raw, where);
+  keys(value, ["use"], where);
+  if (!Array.isArray(value.use)) throw new Error(`${where}.use must be an array`);
+  const ids = value.use.map((item, index) => {
+    const id = string(item, `${where}.use[${index}]`);
+    if (!/^(?:agent|local)\/[a-z][a-z0-9_-]*$/.test(id)
+      && !/^pkg\/[a-z][a-z0-9_-]*\/hooks\/[a-z][a-z0-9_-]*$/.test(id)
+      && !/^pkgdep\/[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*\/hooks\/[a-z][a-z0-9_-]*$/.test(id)) {
+      throw new Error(`invalid hook id: ${id}`);
+    }
+    return id;
+  });
+  if (new Set(ids).size !== ids.length) throw new Error(`${where}.use contains duplicate IDs`);
   return ids;
 }
 
@@ -503,18 +523,19 @@ function compactSpec(raw: unknown, where: string): CompactSettings {
 function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): AgentSpec {
   const where = "agent " + name;
   const value = object(raw, where);
-  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "system_prompt", "system_prompt_file", "vars"], where);
+  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "hooks", "system_prompt", "system_prompt_file", "vars"], where);
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
   const tools = toolSpec(value.tools, where + ".tools");
   const skillIds = skillSpec(value.skills, where + ".skills");
+  const hookIds = hookSpec(value.hooks, where + ".hooks");
   if (skillIds.length && (!["builtin/list_skills", "builtin/load_skill"].every((id) => tools.ids.includes(id)))) {
     throw new Error(where + " with skills.use requires builtin/list_skills and builtin/load_skill in tools.use");
   }
   if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
   const result: AgentSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact"),
-    toolIds: tools.ids, skillIds, toolRules: tools.rules,
+    toolIds: tools.ids, skillIds, hookIds, toolRules: tools.rules,
     ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
     ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
   if (value.request !== undefined) result.request = requestSpec(value.request, model, where + ".request");
@@ -794,6 +815,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     availableMcpServers: Object.freeze(availableMcpServers),
     toolIds: Object.freeze([...(selectedSpec?.toolIds ?? [])]),
     skillIds: Object.freeze([...(selectedSpec?.skillIds ?? [])]),
+    hookIds: Object.freeze([...(selectedSpec?.hookIds ?? [])]),
     packageTools: Object.freeze(packageSelection?.tools ?? {}),
     packageSkills: Object.freeze(packageSelection?.skills ?? {}),
     packageMcpIdentities: Object.freeze(mcpIdentities ?? {}),
