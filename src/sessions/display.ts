@@ -22,6 +22,8 @@ export function acpUpdate(event: RunEvent): SessionUpdate | undefined {
     content: { type: "text", text: `Compacting context (${event.estimatedTokens} estimated input tokens).` } };
   if (event.type === "compact_end") return { sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compact ${event.result.status}.` } };
+  if (event.type === "hook_event") return { sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: `Hook ${event.id} ${event.event}: ${event.outcome}${event.message ? ` · ${event.message}` : event.code ? ` · ${event.code}` : ""}` } };
   return undefined;
 }
 
@@ -30,6 +32,12 @@ export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {
   if (item.kind === "compaction") return [{ sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compaction: ${String(payload.status)}.` } }];
   if (item.kind === "run_end") return [];
+  if (item.kind === "hook_event") return [acpUpdate({ type: "hook_event", id: String(payload.id),
+    event: payload.event as Extract<RunEvent, { type: "hook_event" }>["event"],
+    outcome: payload.outcome as Extract<RunEvent, { type: "hook_event" }>["outcome"],
+    durationMs: Number(payload.durationMs),
+    ...(typeof payload.message === "string" ? { message: payload.message } : {}),
+    ...(typeof payload.code === "string" ? { code: payload.code } : {}) })!];
   if (payload.update && typeof payload.update === "object") return [payload.update as SessionUpdate];
   if (item.kind === "user") {
     const input = payload.input as UserInput;

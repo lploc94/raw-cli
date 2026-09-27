@@ -8,6 +8,7 @@ import type { AttachSessionRuntime } from "./operations.js";
 export function runtimeAgentOptions(runtime: RuntimeConfig, tools: RuntimeTools, provider: ProviderAdapter, cwd: string): AgentOptions {
   return { provider, registry: tools.registry, whitelist: tools.selectedNames,
     toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills, cwd,
+    ...(tools.hooks ? { hooks: tools.hooks } : {}),
     system: runtime.systemPrompt, configPath: runtime.configPath, maxSteps: runtime.maxSteps,
     maxOutputBytes: runtime.maxOutputBytes, requestTimeoutMs: runtime.requestTimeoutMs,
     autoApprove: runtime.autoApprove, compact: runtime.compact };
@@ -27,6 +28,7 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
     const agent = createAgent({ ...runtimeAgentOptions(runtime, tools, provider, session.cwd),
       ...(options.approve ? { approve: options.approve } : {}),
       persistence: { store, sessionId: session.id, surface: "web", owner, ownership: "host", operationId: operation.id } });
+    await agent.start(agent.transcript.length ? "resume" : "create", undefined, signal);
     return { agent, modelConfig: runtime.modelConfig!, compact: runtime.compact, compactOptions,
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },
       close: () => tools.mcp.close() };

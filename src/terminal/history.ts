@@ -12,6 +12,8 @@ export function renderTerminalHistory(item: HistoryItem, ui: UiOptions = resolve
   caps: TerminalCapabilities = terminalCapabilities(false, process.env, ui), width = 80): string {
   const payload = item.payload;
   if (item.kind === "run_end") return "";
+  if (item.kind === "hook_event") return `${paint(payload.outcome === "error" ? "warning" : "muted",
+    safeTerminalText(`Hook ${String(payload.id)} · ${String(payload.event)} · ${String(payload.outcome)}${payload.message ? ` · ${String(payload.message)}` : payload.code ? ` · ${String(payload.code)}` : ""}`), ui, caps)}\n`;
   if (item.kind === "compaction") return `${safeTerminalText(`raw: compact ${String(payload.status)}`)}\n`;
   if (item.kind === "user") return `${paint("accent", icon("user", ui, caps), ui, caps)} ${safeTerminalText(renderUserInput(payload.input as Parameters<typeof renderUserInput>[0]))}\n`;
   if (item.kind === "assistant") {

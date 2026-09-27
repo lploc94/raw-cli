@@ -1,5 +1,7 @@
 # Terminal output
 
+When an agent selects hooks, terminal status and saved history show a bounded receipt for every executed hook, including successful empty-output hooks. The receipt names the hook, lifecycle event and outcome; hook input and raw stdout stay out of terminal status. See [hooks](hooks.md).
+
 Raw presents an agent header, streaming Markdown answer, tool activity, and a session footer. The `ui` object at the root of `config.json` controls this presentation. It is independent of an agent's model, prompt, tools, cache, and session identity.
 
 ```json

@@ -163,7 +163,12 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     closing = (async () => {
       for (const session of sessions.values()) session.agent.abort();
       const activeCleanup = Promise.allSettled([...sessions.values()].map(async (session) => {
-        await session.agent.close();
+        const notifications: Promise<unknown>[] = [];
+        await session.agent.close((event) => {
+          const update = acpUpdate(event);
+          if (update && peer) notifications.push(peer.notify("session/update", { sessionId: session.id, update }));
+        });
+        await Promise.allSettled(notifications);
         await session.mcp.close();
       }));
       await Promise.all([activeCleanup, Promise.allSettled([...pendingCreations])]);
@@ -248,6 +253,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         const agentSession = createAgent({ provider: providerFactory(modelConfig), registry,
           whitelist: selectedNames, baseToolSelection: tools.selectedNames, explicitToolView,
           toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
+          ...(tools.hooks ? { hooks: tools.hooks } : {}),
           cwd, system: options.runtime.systemPrompt, configPath: options.runtime.configPath,
           maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
           requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
@@ -262,6 +268,12 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
             return response.outcome.outcome === "selected" && response.outcome.optionId === "allow";
           },
         });
+        const hookNotifications: Promise<unknown>[] = [];
+        await agentSession.start(saved ? "resume" : "create", (event) => {
+          const update = acpUpdate(event);
+          if (update && peer) hookNotifications.push(peer.notify("session/update", { sessionId, update }));
+        }, startupController.signal);
+        await Promise.all(hookNotifications);
         if (startupController.signal.aborted) { await agentSession.close(); throw rawError(rawErrors.cancelled, "connection closed"); }
         sessions.set(sessionId, { id: sessionId, agent: agentSession, registry, mcp, registered: new Map(), loading });
         return { sessionId };

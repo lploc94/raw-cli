@@ -131,9 +131,9 @@ export class SessionOperations {
     }
     try {
       if (runtime) {
-        metrics = active.measure?.();
         // The host retains the fenced lease until both tool and agent cleanup complete.
         try { await runtime.close(); } finally { await runtime.agent.close(); }
+        metrics = active.measure?.();
       }
     } catch (cause) {
       state = "error"; error = { code: "cleanup_error", message: cause instanceof Error ? cause.message : String(cause) };

@@ -122,6 +122,12 @@ export class ToolRegistry {
     if (invalid) return finish(errorResult("invalid_arguments", invalid));
     const effect = this.effect(tool, args as Record<string, unknown>);
     if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
+    if (context.onHook) {
+      const hook = await context.onHook("PreToolUse", tool.canonicalName ?? name, name, args as Record<string, unknown>);
+      if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
+      if (hook.blocked) return finish(errorResult(hook.blocked === "denied" ? "hook_denied" : "hook_error",
+        hook.reason ?? `hook ${hook.blocked}`));
+    }
     if (effect === "ask" || context.autoApprove === false) {
       if (!context.approve) return finish(errorResult("approval_required", `approval required for ${name}`));
       let onAbort: (() => void) | undefined;
@@ -143,13 +149,19 @@ export class ToolRegistry {
       if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
       if (!allowed) return finish(errorResult("approval_denied", `approval denied for ${name}`));
     }
+    let invoked = false;
+    let result: ToolResult;
     try {
       if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
       context.onStart?.(name, args as Record<string, unknown>);
       if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
-      return finish(await tool.handler(args as Record<string, unknown>, context));
+      invoked = true;
+      result = await tool.handler(args as Record<string, unknown>, context);
     } catch (error) {
-      return finish(errorResult("tool_error", `${name} failed: ${(error as Error).message}`));
+      result = errorResult("tool_error", `${name} failed: ${(error as Error).message}`);
     }
+    if (invoked && context.onHook) await context.onHook(result.isError ? "PostToolUseFailure" : "PostToolUse",
+      tool.canonicalName ?? name, name, args as Record<string, unknown>, result);
+    return finish(result);
   }
 }

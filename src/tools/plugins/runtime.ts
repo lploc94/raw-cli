@@ -9,6 +9,8 @@ import type { SelectedSkill } from "../../skills/contract.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { relative, sep } from "node:path";
+import { loadSelectedHooks } from "../../hooks/loader.js";
+import { HookDispatcher } from "../../hooks/dispatcher.js";
 
 async function mcpSource(runtime: RuntimeConfig, serverName: string): Promise<unknown> {
   const server = runtime.availableMcpServers[serverName];
@@ -35,6 +37,7 @@ export interface RuntimeTools {
   selectedNames: readonly string[];
   skills: readonly SelectedSkill[];
   toolSourceDigest: string;
+  hooks?: HookDispatcher;
 }
 
 export async function createRuntimeTools(options: {
@@ -63,6 +66,8 @@ export async function createRuntimeTools(options: {
   }
   const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills, vars,
     globalConfigRoot: runtime.globalConfigRoot, packageTools: runtime.packageTools });
+  const selectedHooks = await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath: runtime.configPath,
+    cwd, globalConfigRoot: runtime.globalConfigRoot, ...(options.env ? { env: options.env } : {}) });
   if (signal?.aborted) throw new Error("tool startup aborted");
   const registry = new ToolRegistry(runtime.toolRules);
   for (const plugin of plugins) registry.register(plugin.registration);
@@ -96,6 +101,9 @@ export async function createRuntimeTools(options: {
         : { id: runtime.packageTools[id]?.canonicalIdentity ?? id,
           source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }));
     const toolSourceDigest = createHash("sha256").update(JSON.stringify(sources)).digest("hex");
-    return { vars, registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest };
+    const hooks = selectedHooks.length ? new HookDispatcher(selectedHooks, options.env) : undefined;
+    hooks?.validateTools(registry, names);
+    return { vars, registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest,
+      ...(hooks ? { hooks } : {}) };
   } catch (error) { await mcp.close(); throw error; }
 }

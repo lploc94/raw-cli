@@ -2,6 +2,7 @@ import type { CompactionDetails, RunResult } from "../agent.js";
 import { renderUserInput, type UserInput } from "../llm/types.js";
 import type { ToolResult } from "../tools/types.js";
 import type { HistoryItem } from "./store.js";
+import type { HookReceipt } from "../hooks/dispatcher.js";
 import { projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./visible.js";
 
 export interface HistoryView {
@@ -21,6 +22,7 @@ export interface HistoryView {
   previewAbbreviated?: boolean;
   compaction?: CompactionDetails;
   runResult?: RunResult;
+  hook?: HookReceipt;
 }
 function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -38,6 +40,12 @@ export function projectHistoryItem(item: HistoryItem): HistoryView {
     view.text = String(object(update.content).text ?? payload.text ?? "");
   } else if (item.kind === "compaction") view.compaction = structuredClone(payload) as unknown as CompactionDetails;
   else if (item.kind === "run_end") view.runResult = structuredClone(payload.result) as RunResult;
+  else if (item.kind === "hook_event") view.hook = {
+    id: String(payload.id), event: payload.event as HookReceipt["event"], outcome: payload.outcome as HookReceipt["outcome"],
+    durationMs: Number(payload.durationMs),
+    ...(typeof payload.message === "string" ? { message: payload.message } : {}),
+    ...(typeof payload.code === "string" ? { code: payload.code } : {}),
+  };
   else if (item.kind === "tool_call") {
     const display = payload.display as VisibleToolCall | undefined;
     view.toolCall = display ? structuredClone(display) : {

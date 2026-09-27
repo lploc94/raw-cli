@@ -34,7 +34,9 @@ export async function runHook(hook: SelectedHook, request: HookRequest,
     watchdog = setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); finish(); }, 1500);
   };
   child.on("error", () => stop("spawn"));
-  child.stdin.on("error", () => { if (!failure) stop("stdin"); });
+  child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+    if (!failure && error.code !== "EPIPE" && error.code !== "ERR_STREAM_DESTROYED") stop("stdin");
+  });
   child.on("close", (exit) => { code = exit; finish(); });
   for (const [stream, keep] of [[child.stdout, true], [child.stderr, false]] as const) {
     stream.on("error", () => stop("io"));
@@ -58,6 +60,8 @@ export async function runHook(hook: SelectedHook, request: HookRequest,
   }
   if (failure) fail(failure);
   if (code !== 0 && code !== 2) fail("exit");
+  const gate = request.event === "UserPromptSubmit" || request.event === "PreToolUse";
+  if (code === 2 && !gate) fail("exit");
   let value: Record<string, unknown> = {};
   if (chunks.length) {
     let parsed: unknown;
@@ -68,7 +72,6 @@ export async function runHook(hook: SelectedHook, request: HookRequest,
       else value = parsed as Record<string, unknown>;
     }
   }
-  const gate = request.event === "UserPromptSubmit" || request.event === "PreToolUse";
   if (Object.keys(value).some((key) => !["decision", "reason", "message"].includes(key))) fail("invalid_output");
   if (value.decision !== undefined && (!gate || (value.decision !== "continue" && value.decision !== "deny"))) fail("invalid_output");
   if (value.reason !== undefined && (typeof value.reason !== "string" || Buffer.byteLength(value.reason) > 1024)) fail("invalid_output");

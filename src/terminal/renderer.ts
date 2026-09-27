@@ -8,6 +8,7 @@ import { terminalCapabilities } from "./options.js";
 import { icon, paint } from "./theme.js";
 import { formatToolResult, formatToolStart } from "./tools.js";
 import { TerminalWriter } from "./writer.js";
+import { safeTerminalText } from "./safe.js";
 
 export function sharedInteractiveTerminal(): boolean {
   if (!process.stdout.isTTY || !process.stderr.isTTY || process.env.TERM === "dumb") return false;
@@ -177,6 +178,11 @@ export class TerminalRenderer {
         this.runtime.ui, this.caps, this.width));
       return;
     }
+    if (event.type === "hook_event") {
+      this.flushAnswer(); this.finishThinking();
+      process.stderr.write(`${paint(event.outcome === "error" ? "warning" : "muted", safeTerminalText(`Hook ${event.id} · ${event.event} · ${event.outcome}${event.message ? ` · ${event.message}` : event.code ? ` · ${event.code}` : ""}`), this.runtime.ui, this.caps)}\n`);
+      return;
+    }
     if (event.type === "compact_start") {
       this.flushAnswer();
       this.statusWriter.activity(`Compacting context (~${event.estimatedTokens} tokens)`);
@@ -187,6 +193,11 @@ export class TerminalRenderer {
   };
 
   private plainEvent(event: RunEvent): void {
+    if (event.type === "hook_event") {
+      this.finishTextLine(); this.finishThinking();
+      process.stderr.write(`${safeTerminalText(`raw: hook ${event.id} ${event.event} ${event.outcome}${event.message ? ` · ${event.message}` : event.code ? ` · ${event.code}` : ""}`)}\n`);
+      return;
+    }
     if (event.type === "text_delta") {
       this.finishThinking();
       process.stdout.write(event.text);

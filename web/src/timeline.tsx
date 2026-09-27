@@ -511,6 +511,13 @@ export function Timeline({
       continue;
     }
     flush();
+    if (item.hook) {
+      result.push(<p className="run-status" key={item.id}>
+        Hook {item.hook.id} · {item.hook.event} · {item.hook.outcome}
+        {item.hook.message ? ` · ${item.hook.message}` : item.hook.code ? ` · ${item.hook.code}` : ""}
+      </p>);
+      continue;
+    }
     if (item.compaction) {
       const id = item.compaction.id;
       if (!renderedCompact.has(id)) {

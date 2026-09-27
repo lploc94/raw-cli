@@ -14,6 +14,7 @@ import type { SessionStore, SessionSummary } from "./sessions/store.js";
 
 import { toolArguments } from "./sessions/display.js";
 import { TerminalRenderer } from "./terminal/renderer.js";
+import { safeTerminalText } from "./terminal/safe.js";
 
 async function textRun(session: AgentSession, task: string, renderer: TerminalRenderer): Promise<RunResult> {
   renderer.start();
@@ -125,11 +126,16 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   const createRuntimeAgent = (id: string) => createAgent({ ...runtimeAgentOptions(runtime, tools, provider, cwd),
     persistence: { store, sessionId: id, surface: "cli" },
     ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal, tools.registry.canonicalIdentity(name), currentRenderer) } : {}) });
+  const hookEvent = (event: import("./agent.js").RunEvent) => {
+    if (currentRenderer) currentRenderer.event(event);
+    else if (event.type === "hook_event") process.stderr.write(`${safeTerminalText(`raw: hook ${event.id} ${event.event} ${event.outcome}${event.message ? ` · ${event.message}` : ""}`)}\n`);
+  };
   let session: AgentSession;
   let record: SessionSummary;
   try {
     record = selected ?? createSavedSession(task?.trim().replace(/\s+/g, " ").slice(0, 80) || "New session");
     session = createRuntimeAgent(record.id);
+    await session.start(selected ? "resume" : "create", selected && task === undefined ? undefined : hookEvent);
   } catch (error) { rl?.close(); await tools.mcp.close(); throw error; }
   const interrupt = () => {
     currentRenderer?.beforeInput();
@@ -171,9 +177,10 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       if (!line.trim()) continue;
       if (line === "/exit") break;
       if (line === "/clear") {
-        await session.close();
+        await session.close(hookEvent);
         record = createSavedSession("New session");
         session = createRuntimeAgent(record.id);
+        await session.start("create", hookEvent);
         lastTurn = undefined;
         sessionResumable = true;
         process.stderr.write("raw: conversation cleared\n");
@@ -207,7 +214,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     rl?.close();
     process.off("SIGINT", interrupt);
     process.off("SIGTERM", onTerm);
-    await session.close();
+    await session.close(hookEvent);
     await tools.mcp.close();
   }
 }

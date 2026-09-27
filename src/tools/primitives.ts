@@ -6,6 +6,8 @@ import { runBash } from "./process.js";
 import { errorResult, indexedResult, indexedResultFits, utf8Prefix, type IndexedResult } from "./results.js";
 import type { ToolResult } from "./types.js";
 import type { SelectedSkill } from "../skills/contract.js";
+import type { HookDispatchResult } from "../hooks/dispatcher.js";
+import type { HookEventName } from "../hooks/contract.js";
 
 export interface ToolContext {
   vars?: VariableContext;
@@ -15,6 +17,8 @@ export interface ToolContext {
   approve?: (name: string, args: Record<string, unknown>, signal?: AbortSignal, toolCallId?: string) => boolean | Promise<boolean>;
   toolCallId?: string;
   onStart?: (name: string, args: Record<string, unknown>) => void;
+  onHook?: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>,
+    result?: ToolResult) => Promise<HookDispatchResult>;
   whitelist?: readonly string[];
   signal?: AbortSignal;
   bashPath?: string;

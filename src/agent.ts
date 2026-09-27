@@ -16,6 +16,8 @@ import type { SelectedSkill } from "./skills/contract.js";
 import { validateStoredAgentState } from "./sessions/restore.js";
 import { historyPresentation, type HistorySurface } from "./sessions/presentation.js";
 import type { AgentMetadata, VisibleRecord } from "./sessions/store.js";
+import type { HookDispatcher, HookReceipt } from "./hooks/dispatcher.js";
+import type { HookEventName } from "./hooks/contract.js";
 import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./sessions/visible.js";
 
 export type AgentState = "idle" | "running" | "cancelling" | "compacting" | "closing" | "closed";
@@ -55,6 +57,8 @@ export type RunEvent = (
   | { type: "compact_end"; result: CompactResult; details?: CompactionDetails }
   | { type: "compact_error"; details: CompactionDetails }
   | { type: "run_end"; result: RunResult }
+  | { type: "hook_event"; id: string; event: HookReceipt["event"]; outcome: HookReceipt["outcome"];
+      durationMs: number; message?: string; code?: string }
 ) & { turnId?: string; segmentId?: string };
 
 export interface CompactionDetails {
@@ -75,6 +79,7 @@ export interface AgentOptions {
   registry?: ToolRegistry;
   toolSourceDigest?: string;
   selectedSkills?: readonly SelectedSkill[];
+  hooks?: HookDispatcher;
   cwd?: string;
   configPath?: string;
   baseToolSelection?: readonly string[];
@@ -91,7 +96,7 @@ export interface AgentOptions {
 }
 
 export class AgentSession {
-  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact">;
+  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact" | "hooks">;
   private messages: ModelMessage[] = [];
   private currentState: AgentState = "idle";
   private controller: AbortController | undefined;
@@ -114,6 +119,7 @@ export class AgentSession {
   private persistenceError: Error | undefined;
   private currentTurnId: string | undefined;
   private segmentCounter = 0;
+  private hookStarted = false;
 
   constructor(options: AgentOptions) {
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
@@ -141,6 +147,7 @@ export class AgentSession {
       system: options.system ?? DEFAULT_SYSTEM_PROMPT,
       maxSteps, maxOutputBytes, requestTimeoutMs,
       autoApprove: options.autoApprove ?? true,
+      ...(options.hooks ? { hooks: options.hooks } : {}),
       ...(options.approve ? { approve: options.approve } : {}),
       ...(options.whitelist !== undefined ? { whitelist: [...options.whitelist] } : {}),
       ...(options.compact !== undefined ? { compact: { ...options.compact } } : {}),
@@ -238,6 +245,21 @@ export class AgentSession {
 
   private recordVisible(kind: string, payload: Record<string, unknown>, status = "complete"): void {
     this.durable((store, sessionId, owner) => store.appendOwnedHistory(sessionId, owner, kind, this.visiblePayload(payload), status));
+  }
+
+  private hookReceipt(receipt: HookReceipt, onEvent?: (event: RunEvent) => void): void {
+    this.recordVisible("hook_event", { ...receipt }, receipt.outcome === "error" ? "error" : "complete");
+    onEvent?.({ type: "hook_event", ...receipt, ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}) });
+  }
+
+  async start(source: "create" | "resume", onEvent?: (event: RunEvent) => void, signal?: AbortSignal): Promise<void> {
+    if (this.hookStarted) return;
+    this.hookStarted = true;
+    await this.options.hooks?.run("SessionStart", { cwd: this.options.cwd,
+      agent_id: this.options.provider.modelConfig.agentName,
+      ...(this.persistence ? { session_id: this.persistence.sessionId } : {}), source },
+    { ...(signal ? { signal } : {}), deadline: Date.now() + 2000,
+      onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
   }
 
   setToolView(whitelist?: readonly string[]): number {
@@ -382,13 +404,17 @@ export class AgentSession {
     }
   }
 
-  async close(): Promise<void> {
+  async close(onEvent?: (event: RunEvent) => void): Promise<void> {
     if (this.currentState === "closed") return;
     this.currentState = "closing";
     this.controller?.abort();
     try {
       if (this.activeRun) await this.activeRun;
       if (this.activeCompact) await this.activeCompact;
+      if (this.hookStarted) await this.options.hooks?.run("SessionEnd", { cwd: this.options.cwd,
+        agent_id: this.options.provider.modelConfig.agentName,
+        ...(this.persistence ? { session_id: this.persistence.sessionId } : {}) },
+      { deadline: Date.now() + 2000, onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
     }
     finally {
       if (this.heartbeat) clearInterval(this.heartbeat);
@@ -445,6 +471,7 @@ export class AgentSession {
     let steps = 0;
     let observerError: Error | undefined;
     let ended = false;
+    let terminalDeadline: number | undefined;
     const presentation = historyPresentation(this.persistence?.surface);
     const visibleSegments: Array<{ kind: "assistant" | "reasoning"; text: string; segmentId: string }> = [];
     const appendVisible = (kind: "assistant" | "reasoning", text: string) => {
@@ -483,10 +510,20 @@ export class AgentSession {
       }
       return presentation.messages(segments, status);
     };
-    const finish = (result: RunResult): RunResult => {
+    const hookRequest = () => ({ cwd: this.options.cwd, agent_id: this.options.provider.modelConfig.agentName,
+      ...(this.persistence ? { session_id: this.persistence.sessionId } : {}),
+      ...(this.currentTurnId ? { turn_id: this.currentTurnId } : {}) });
+    const finish = async (result: RunResult): Promise<RunResult> => {
       if (!ended) {
         ended = true;
         let finalResult = result;
+        try {
+          await this.options.hooks?.run("Stop", { ...hookRequest(), run: result },
+            { deadline: terminalDeadline ?? Date.now() + 2000,
+              onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
+        } catch (error) {
+          finalResult = { status: "error", steps, code: "hook_event_error", message: String(error) };
+        }
         const status = result.status === "cancelled" ? "interrupted" : result.status === "error" ? "error" : "complete";
         if (!this.persistenceError) {
           try { for (const item of visibleMessage("", status)) this.recordVisible(item.kind, item.payload, item.status); }
@@ -534,6 +571,13 @@ export class AgentSession {
     const firstTask = this.originalTask === undefined;
     let autoCompacted = false;
     try {
+      await this.start(this.messages.length ? "resume" : "create", emit, controller.signal);
+      const promptHook = await this.options.hooks?.run("UserPromptSubmit", { ...hookRequest(), input },
+        { signal: controller.signal, onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
+      if (controller.signal.aborted) return finish(interrupted());
+      if (promptHook?.blocked) return finish({ status: "error", steps,
+        code: promptHook.blocked === "denied" ? "hook_denied" : "hook_error",
+        ...(promptHook.reason ? { message: promptHook.reason } : {}) });
       this.commitMessage({ role: "user", content: structuredClone(input) }, firstTask ? { originalTask: input } : {},
         [{ kind: "user", payload: { input: structuredClone(input) } }], true);
       if (firstTask) {
@@ -658,6 +702,12 @@ export class AgentSession {
               ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
               signal: controller.signal,
               toolCallId: call.id,
+              ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
+                name: string, args: Record<string, unknown>, result?: ToolResult) => this.options.hooks!.run(event,
+                { ...hookRequest(), tool: { identity, name, arguments: args, ...(result ? { result } : {}) } },
+                { ...(event === "PreToolUse" ? { signal: controller.signal } : {
+                  deadline: controller.signal.aborted ? (terminalDeadline ??= Date.now() + 2000) : Date.now() + 2000 }),
+                  onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
               onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
             });
           const result = this.options.provider.modelConfig.vision !== true && dispatched.content.some((block) => block.type === "image")
