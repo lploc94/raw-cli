@@ -24,20 +24,21 @@ Names/paths are case-sensitive in the contract. Use lowercase portable names and
 | `agents` | JSON file with Raw agent settings, without a publisher `model` alias; use either `system_prompt` or owned `system_prompt_file` |
 | `tools` | Directory with `tool.json`, `index.mjs` and owned helpers/resources; same current tool API |
 | `skills` | Directory with `SKILL.md`, YAML `name`/`description` and optional resources; name matches its portable folder |
+| `hooks` | Directory with `hook.json` and owned command/argument assets; declare `raw.hook/1` in `requires` |
 | `vars` | JSON file containing one Raw var definition (`description`, `access`, `source`, optional type/settings) |
 | `var_providers` | JSON file containing one executable provider definition; include its script as an owned file |
 | `mcp` | JSON file containing one Raw MCP server definition; include owned stdio scripts |
 
-The installed examples demonstrate `raw.agent/1`, `raw.tool-api/1`, `raw.skill/1`, `raw.var-provider/1` and `raw.mcp/1`. A builtin selection relies on the recipient Raw installation; it does not copy builtin implementation bytes into the package.
+The installed examples demonstrate `raw.agent/1`, `raw.tool-api/1`, `raw.skill/1`, `raw.hook/1`, `raw.var-provider/1` and `raw.mcp/1`. A builtin selection relies on the recipient Raw installation; it does not copy builtin implementation bytes into the package.
 
 ## References and policy
 
-- Inside a package: `#tools/search`, `#skills/review`, `#vars/region`; use the category expected by the containing field.
+- Inside a package: `#tools/search`, `#skills/review`, `#hooks/guard`, `#vars/region`; use the category expected by the containing field.
 - Exact dependency: `dep:geo#tools/lookup`. `dependencies.geo` is `{name,version,digest,archive}`; `archive` is a declared path to a bundled `.rawpkg`, and `digest` is its SHA-256. No range solver or automatic downloads. Use the digest from packing the dependency.
 - Recipient config: `pkg/kit/tools/search`, with `kit` the installed alias. A tool/skill selection may be `{"ref":"pkg/kit/tools/search","as":"web_search","inputs":{}}`.
 - Canonical tool policy: `@owner/name#tools/search`; package MCP policy: `@owner/name#mcp/server/original_tool`. Install aliases, release versions and visible `as` names do not change policy identity.
 
-Agent `tools.use` and `skills.use` stay ordered explicit selections. Selected skills need both `builtin/list_skills` and `builtin/load_skill`. Preserve selective Bash rules, such as asking for matching `rm` commands; do not replace them with an ask rule for every Bash call. For a wildcard policy, inspect what it will match after packaging before claiming equivalent behavior.
+Agent `tools.use`, `skills.use` and `hooks.use` stay ordered explicit selections. Selected skills need both `builtin/list_skills` and `builtin/load_skill`. Hook selections are exact strings, without `as` or `inputs`; package hook manifests and contained script assets validate passively. Preserve selective Bash rules, such as asking for matching `rm` commands; do not replace them with an ask rule for every Bash call. For a wildcard policy, inspect what it will match after packaging before claiming equivalent behavior.
 
 ## Typed recipient inputs
 

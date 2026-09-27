@@ -55,7 +55,7 @@ test("invalid config repair uses a lazy strict JSON editor and never discards a 
   await expect.poll(() => readFileSync(raw.configPath, "utf8")).toBe(before);
 });
 
-test("missing config initializes the same six-skill starter without inference", async ({
+test("missing config initializes the same seven-skill starter without inference", async ({
   page,
   raw,
 }) => {
@@ -67,7 +67,7 @@ test("missing config initializes the same six-skill starter without inference", 
   expect(
     JSON.parse(readFileSync(raw.configPath, "utf8")).agents.raw.skills.use
       .length,
-  ).toBe(6);
+  ).toBe(7);
   expect(raw.provider.requests.length).toBe(0);
 });
 

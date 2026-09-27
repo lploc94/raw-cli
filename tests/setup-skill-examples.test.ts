@@ -9,6 +9,8 @@ import { loadSelectedSkills } from "../src/skills/loader.js";
 import { createRuntimeTools } from "../src/tools/plugins/runtime.js";
 import { parseSkillMarkdown } from "../src/skills/frontmatter.js";
 import { inspectPackage } from "../src/packages/inspect.js";
+import { loadSelectedHooks } from "../src/hooks/loader.js";
+import { runHook } from "../src/hooks/runner.js";
 
 function body(id: string): string {
   return readFileSync(join("src", "skills", "bundled", id, "SKILL.md"), "utf8");
@@ -32,8 +34,8 @@ function model() {
   return { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" };
 }
 
-test("six shipped setup skills link complete package guidance and examples validate", async () => {
-  for (const id of ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp", "create_package"]) {
+test("seven shipped setup skills link complete package guidance and examples validate", async () => {
+  for (const id of ["configure_raw", "create_skill", "create_tool", "create_hook", "create_agent", "add_mcp", "create_package"]) {
     const source = body(id);
     const parsed = parseSkillMarkdown(source, id);
     assert.ok(Buffer.byteLength(parsed.markdown) <= 8192, `${id} exceeds load cap`);
@@ -62,9 +64,12 @@ test("create_package example packs and activates with recipient inputs after sou
     const source = join(root, "author");
     mkdirSync(join(source, "agents"), { recursive: true });
     mkdirSync(join(source, "vars"));
+    mkdirSync(join(source, "hooks", "notice"), { recursive: true });
     writeFileSync(join(source, "raw-package.json"), fence("create_package", "json", "manifest"));
     writeFileSync(join(source, "agents", "helper.json"), fence("create_package", "json", "agent"));
     writeFileSync(join(source, "vars", "project_label.json"), fence("create_package", "json", "var"));
+    writeFileSync(join(source, "hooks", "notice", "hook.json"), fence("create_package", "json", "hook-manifest"));
+    writeFileSync(join(source, "hooks", "notice", "index.mjs"), fence("create_package", "js", "hook-script") + "\n");
     const recipient = join(root, "recipient");
     mkdirSync(recipient);
     const configPath = join(recipient, "raw.json");
@@ -86,6 +91,7 @@ test("create_package example packs and activates with recipient inputs after sou
     const report = cli(["package", "inspect", archive]);
     assert.deepEqual(report.exports.agents, ["helper"]);
     assert.deepEqual(report.exports.vars, ["project_label"]);
+    assert.deepEqual(report.exports.hooks, ["notice"]);
     cli(["package", "install", archive, "--as", "project-kit", "--config", configPath]);
     assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), original);
     const inputsPath = join(recipient, "inputs.json");
@@ -179,9 +185,15 @@ test("create_agent example is a complete portable config", async () => {
   const configPath = join(root, "raw.json");
   writeFileSync(configPath, JSON.stringify(JSON.parse(fence("create_agent", "json", "config"))));
   writeFileSync(join(root, "prompt.md"), "You are a writing assistant.\n");
+  mkdirSync(join(root, "hooks", "guard"), { recursive: true });
+  writeFileSync(join(root, "hooks", "guard", "hook.json"), readFileSync(join("examples", "hooks", "guard", "hook.json")));
+  writeFileSync(join(root, "hooks", "guard", "index.mjs"), readFileSync(join("examples", "hooks", "guard", "index.mjs")));
   const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
   assert.equal(runtime.agentName, "writer");
   assert.equal(runtime.systemPrompt, "You are a writing assistant.\n");
+  assert.deepEqual(runtime.hookIds, ["agent/guard"]);
+  assert.equal((await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath, globalConfigRoot: runtime.globalConfigRoot,
+    packageHooks: runtime.packageHooks }))[0]?.events[0]?.name, "PreToolUse");
   const tools = await createRuntimeTools({ runtime, cwd: root });
   try { assert.deepEqual(tools.skills.map((skill) => skill.name), ["configure-raw"]); }
   finally { await tools.mcp.close(); }
@@ -200,6 +212,24 @@ test("create_agent example is a complete portable config", async () => {
       assert.match(JSON.stringify(gated), /approval|ask/i);
     } finally { await loaded.mcp.close(); }
   } finally { rmSync(moved, { recursive: true, force: true }); }
+});
+
+test("create_hook and configure_raw examples select and run a matching gate", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-hook-skill-example-"));
+  try {
+    const folder = join(root, "hooks", "guard"); mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "hook.json"), fence("create_hook", "json", "manifest"));
+    writeFileSync(join(folder, "index.mjs"), fence("create_hook", "js", "script") + "\n");
+    const configPath = join(root, "raw.json");
+    writeFileSync(configPath, fence("configure_raw", "json", "config"));
+    const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
+    assert.deepEqual(runtime.hookIds, ["agent/guard"]);
+    const hooks = await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath,
+      globalConfigRoot: runtime.globalConfigRoot, packageHooks: runtime.packageHooks });
+    const decision = await runHook(hooks[0]!, { protocol_version: 1, event: "PreToolUse", cwd: root,
+      tool: { identity: "builtin/bash", name: "bash", arguments: { commands: [{ command: "rm old" }] } } });
+    assert.equal(decision.decision, "deny");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("add_mcp example discovers and calls one exact selected stdio tool", { timeout: 15000 }, async () => {

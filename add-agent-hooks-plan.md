@@ -74,9 +74,9 @@ A script that prints a valid JSON prefix plus trailing bytes must fail; `exit 2`
 ### Implementation obligations
 Define typed events/results/errors, validate config and manifest without executing, resolve paths safely, implement spawned runner with cleanup and bounded diagnostics. Do not add model-visible material.
 ### Acceptance criteria
-- [ ] AC-1: Selected hooks validate and execute in declared order; malformed/escaping selected hooks fail before provider request — proven by config/loader tests.
-- [ ] AC-2: Runner bounds, cancellation, timeout and strict request/response behavior hold, including descendant cleanup — proven by runner tests.
-- [ ] AC-3: Agent without hooks loads unchanged — proven by existing config and baseline agent tests.
+- [x] AC-1: Selected hooks validate and execute in declared order; malformed/escaping selected hooks fail before provider request — proven by config/loader tests.
+- [x] AC-2: Runner bounds, cancellation, timeout and strict request/response behavior hold, including descendant cleanup — proven by runner tests.
+- [x] AC-3: Agent without hooks loads unchanged — proven by existing config and baseline agent tests.
 ### Focused verification
 `node --import tsx --test tests/hooks-config.test.ts tests/hooks-runner.test.ts`
 ### Phase gates
@@ -110,9 +110,9 @@ A hook added only to a CLI adapter must fail dashboard/ACP parity tests; a succe
 ### Implementation obligations
 Pass selected dispatcher through each construction path, attach turn IDs/signals and host-owned terminal-cleanup budgets, make common boundaries await hooks, persist/emit all hook receipts, update host renderers and no-hook fast path. Maintain `run_end` and durable operation receipt ordering.
 ### Acceptance criteria
-- [ ] AC-4: `UserPromptSubmit`/`PreToolUse` gates block without permission/handler/model side effects and cannot bypass policy — proven by registry/agent tests.
-- [ ] AC-5: `PostToolUse`, `PostToolUseFailure`, `Stop`, `SessionStart` and `SessionEnd` fire at their documented boundary; **every executed hook** leaves one live/persisted receipt, including success; notification errors are bounded without changing completed work — proven by lifecycle/history tests.
-- [ ] AC-6: CLI, dashboard, ACP and resumed sessions use the same selected hooks, cancellation and event contract; cancel during a handler/terminal hook/close leaves no child or duplicate terminal receipt — proven by transport/integration tests.
+- [x] AC-4: `UserPromptSubmit`/`PreToolUse` gates block without permission/handler/model side effects and cannot bypass policy — proven by registry/agent tests.
+- [x] AC-5: `PostToolUse`, `PostToolUseFailure`, `Stop`, `SessionStart` and `SessionEnd` fire at their documented boundary; **every executed hook** leaves one live/persisted receipt, including success; notification errors are bounded without changing completed work — proven by lifecycle/history tests.
+- [x] AC-6: CLI, dashboard, ACP and resumed sessions use the same selected hooks, cancellation and event contract; cancel during a handler/terminal hook/close leaves no child or duplicate terminal receipt — proven by transport/integration tests.
 ### Focused verification
 `node --import tsx --test tests/registry.test.ts tests/agent-lifecycle.test.ts tests/session-operations.test.ts tests/acp.test.ts tests/dashboard-sessions.test.ts`
 ### Phase gates
@@ -146,9 +146,9 @@ An exported agent that works only while its original `~/.config/raw/hooks` folde
 ### Implementation obligations
 Extend package kind/capability/reference/schema and export paths, inspect without execution, expose managed hook files and agent selector, update package UI labels/actions, add installed consumer fixture. Keep package schema version 1 because this is additive in the unreleased format; do not migrate old test data.
 ### Acceptance criteria
-- [ ] AC-7: A hook can be created, edited, validated, selected and saved through the dashboard with revision checks — proven by management and browser tests.
-- [ ] AC-8: A local or package hook survives export/pack/install/bind/update and executes from an installed consumer with original paths absent — proven by package tests.
-- [ ] AC-9: Browsing, inspection and installation never execute hook code — proven by side-effect marker tests.
+- [x] AC-7: A hook can be created, edited, validated, selected and saved through the dashboard with revision checks — proven by management and browser tests.
+- [x] AC-8: A local or package hook survives export/pack/install/bind/update and executes from an installed consumer with original paths absent — proven by package tests.
+- [x] AC-9: Browsing, inspection and installation never execute hook code — proven by side-effect marker tests.
 ### Focused verification
 `node --import tsx --test tests/management-components.test.ts tests/package-export.test.ts tests/package-runtime.test.ts tests/dashboard-management.test.ts`
 ### Phase gates
@@ -182,9 +182,9 @@ The installed-artifact test must fail if the skill/example is omitted from `npm 
 ### Implementation obligations
 Ship and link the skill/docs/examples, update build/package allowlist when necessary, run exact artifact tests and full gates, record test outcomes and limitations. Do not globally install or publish without a fresh user request.
 ### Acceptance criteria
-- [ ] AC-10: Starter exposes `create_hook` guidance and no active hook; `configure_raw`, `create_agent`, and `create_package` document the exact new schema and their examples validate and run — proven by starter/skill/example tests.
-- [ ] AC-11: Packed consumer can create/select and execute a hook using only shipped docs/examples — proven by installed package test.
-- [ ] AC-12: Full Node, browser, installed package and whitespace gates pass — proven by Global Gates.
+- [x] AC-10: Starter exposes `create_hook` guidance and no active hook; `configure_raw`, `create_agent`, and `create_package` document the exact new schema and their examples validate and run — proven by starter/skill/example tests.
+- [x] AC-11: Packed consumer can create/select and execute a hook using only shipped docs/examples — proven by installed package test.
+- [x] AC-12: Full Node, browser, installed package and whitespace gates pass — proven by Global Gates.
 ### Focused verification
 `node --import tsx --test tests/bundled-skills.test.ts tests/setup-skill-examples.test.ts tests/dashboard-installed.test.ts`
 ### Phase gates
@@ -206,3 +206,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-27: Phase 1 APPROVE (self-review): hook config/manifest/loader/runner added; 5 focused tests pass, including denied/invalid output, timeout, abort, escaped asset and descendant cleanup; typecheck and whitespace gate pass. Phase 2 next.
 - 2026-09-27: Phase 2 APPROVE (self-review): common turn/tool/session boundaries, persisted live receipts and host projections added; 14 new focused hook tests and 38 existing ACP/dashboard/session tests pass, typecheck and whitespace pass. Phase 3 next.
 - 2026-09-27: Phase 3 APPROVE (self-review): selected hooks export, pack, install and bind without source paths; dashboard create/select path passes Chromium; passive catalog, path and revision tests pass. Phase 4 in_progress.
+- 2026-09-27: Phase 4 APPROVE (self-review): seven English starter skills, runnable hook examples and package/browser guidance shipped; selected scripts snapshot at runtime load. Final gates: 549/549 Node tests, 117/117 browser tests (2 workers), 4/4 packed-consumer tests, typecheck, whitespace and npm pack inventory pass. One initial parallel Firefox viewport test failed under load and passed both alone and in the final full run.

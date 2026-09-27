@@ -2,6 +2,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseHookManifest } from "./manifest.js";
+import { snapshotHook } from "./snapshot.js";
 import type { SelectedHook } from "./contract.js";
 import type { PackageAsset } from "../packages/resolve-agent.js";
 
@@ -53,7 +54,13 @@ export async function loadSelectedHooks(options: LoadSelectedHooksOptions): Prom
     const manifest = parseHookManifest(source, id, direct?.name ?? match![2]!);
     const command = manifest.command.startsWith("./") ? await ownedFile(folder, manifest.command, id) : manifest.command;
     const args = await Promise.all(manifest.args.map((arg) => arg.startsWith("./") ? ownedFile(folder, arg, id) : arg));
-    result.push(Object.freeze({ ...manifest, id, folder, command, args }));
+    const frozen = await snapshotHook(folder, resolve(cwd, options.configPath), id);
+    const relocate = (path: string) => {
+      if (!isAbsolute(path)) return path;
+      const suffix = relative(folder, path);
+      return inside(folder, path) ? join(frozen, suffix) : path;
+    };
+    result.push(Object.freeze({ ...manifest, id, folder: frozen, command: relocate(command), args: args.map(relocate) }));
   }
   return Object.freeze(result);
 }

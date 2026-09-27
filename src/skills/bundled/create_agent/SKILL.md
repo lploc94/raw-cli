@@ -4,9 +4,9 @@ description: "Use to create or customize a Raw agent through files or dashboard,
 ---
 # Create a Raw agent
 
-Use for a new named assistant, a specialized role or a shareable Raw setup. An agent is one agents.<name> entry selecting model, prompt, tools, skills, vars and policy. A session is a saved conversation, not an agent definition. Use `configure_raw` for changing a field of an existing agent.
+Use for a new named assistant, a specialized role or a shareable Raw setup. An agent is one agents.<name> entry selecting model, prompt, tools, skills, hooks, vars and policy. A session is a saved conversation, not an agent definition. Use `configure_raw` for changing a field of an existing agent.
 
-For how-to, explain the layout; for creation, establish role/name/location/model; for failure, diagnose referenced assets.
+For creation, establish role/name/location/model; for failure, diagnose referenced assets.
 
 ## Choose the layout
 
@@ -14,7 +14,7 @@ Personal config: $XDG_CONFIG_HOME/raw/config.json or ~/.config/raw/config.json. 
 
 Use `create-package` to distribute an existing setup. Read `references/packages.md` for package authoring and `references/dashboard.md` for browser composition with `read_file`. Copied config directories also work: `agent/<id>` assets travel with the config; `local/<id>` assets do not.
 
-Copy examples/agents/project-helper/ for a forkable layout. This complete example selects a prompt, setup tools/skill and conditional Bash rule. Choose capabilities for the role.
+Copy examples/agents/project-helper/ for a forkable layout. This example selects a prompt, tools, a skill, a hook and a conditional Bash rule.
 
 <!-- example:config -->
 ```json
@@ -30,6 +30,7 @@ Copy examples/agents/project-helper/ for a forkable layout. This complete exampl
       "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"],
         "rules": [{ "match": "builtin/bash", "effect": "ask", "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)" } }] },
       "skills": { "use": ["builtin/configure_raw"] },
+      "hooks": { "use": ["agent/guard"] },
       "max_steps": 25,
       "compact": { "keep_recent_turns": 2, "max_output_tokens": 512, "trigger_tokens": 24000 }
     }
@@ -47,15 +48,15 @@ unrelated files. For requests about Raw configuration, list selected skills and
 load the relevant guidance. Report the written artifact and checks performed.
 ```
 
-Replace the model ID and context/compact limits with verified capabilities. `YOUR_INSTALLED_MODEL` is a placeholder, not an advertised model. A recipient provides their own authentication; do not distribute an actual credential as part of the portable example.
+Replace the model ID and limits with verified capabilities. Recipients provide their own credentials.
 
 ## Compose the role and capabilities
 
-Write the prompt in English with role, expected deliverables, scope, working conventions and uncertainty handling. Choose literal `system_prompt` (empty allowed) OR a UTF-8 `system_prompt_file` path, never both. File paths resolve relative to config, not cwd. `--system-prompt` and `RAW_SYSTEM_PROMPT` override the configured prompt. Add list/load routing only when the selected skills help the role; do not paste skill bodies into the initial prompt.
+Write the prompt with role, deliverables, scope and uncertainty handling. Choose literal `system_prompt` (empty allowed) OR a UTF-8 `system_prompt_file` path, never both. File paths resolve relative to config. `--system-prompt` and `RAW_SYSTEM_PROMPT` override it. Add list/load routing only when selected skills help; do not paste skill bodies into the initial prompt.
 
 The model alias must exist under `models`. Its required nonempty strings are `provider`, `method` and exact upstream `model_id`. Methods: `openai-chat-completions`, `openai-responses`, `anthropic-messages`, `google-generate-content`. Matching services have supported defaults; custom/gateway pairs need HTTP(S) `base_url`. Credentials may be `api_key_env` or literal `api_key`, not both; an unauthenticated endpoint needs neither. Optional `vision` is boolean; `context_window_tokens` and `max_output_tokens` are positive integers with output below context. Select `builtin/view_image` only with `vision:true`.
 
-Required `tools.use` is ordered and may be empty. Select exact `builtin/<id>`, `local/<id>`, `agent/<id>` or `mcp/server/original-tool-name` IDs; no wildcard discovery. Optional `skills.use` selects unique exact `builtin/`, `local/` or `agent/` skill IDs. Any nonempty skill list requires both skill tools. Only selected folders load, but a missing selected asset blocks startup.
+Required `tools.use` is ordered and may be empty. Select exact `builtin/<id>`, `local/<id>`, `agent/<id>` or `mcp/server/original-tool-name` IDs. Optional `skills.use` selects unique exact `builtin/`, `local/` or `agent/` skill IDs; a nonempty list requires both skill tools. Optional `hooks.use` selects ordered unique `local/`, `agent/` or `pkg/ALIAS/hooks/EXPORT` IDs. This example expects `hooks/guard/` beside `raw.json`; copy installed `examples/hooks/guard/` there. It gates matching `builtin/bash` removal calls and reports Bash failures. Omit `hooks.use` when no event behavior is needed. Use `create_hook` to author or edit. Missing selected assets block startup.
 
 To make a new plugin or skill, use its creation skill only when needed. For existing assets, copying and checking exact IDs is enough. MCP definitions belong to top-level `mcp.servers`; select actual original tool names, not the model-facing aliases. `add_mcp` covers new connection setup.
 
@@ -66,7 +67,7 @@ Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_t
 ## Create, verify and share
 
 1. Select a unique name and destination; back up an existing config before adding fields. Keep its mode 0600. For a portable config omit `sessions`, which is canonical-only.
-2. Add/reuse the model, create the prompt and selected custom assets, then add the agent with exact IDs. Keep the existing default unless asked; a new standalone file may set its own `default_agent`. `raw --agent writer "query"` selects explicitly; `raw "query"` follows configured selection.
+2. Add/reuse the model, create the prompt and selected custom assets (including `hooks/guard/` for this example), then add the agent with exact IDs. Keep the existing default unless asked; a new standalone file may set its own `default_agent`. `raw --agent writer "query"` selects explicitly; `raw "query"` follows configured selection.
 3. Run `raw --config /path/to/raw.json config list`. It verifies schema and references to model aliases, not file contents or live MCP. If the installed library is importable, use `loadConfig({configPath,requireModel:false})` to check the prompt and `createRuntimeTools({runtime,cwd})` to load selected tools/skills and connect selected MCP. Close `tools.mcp` afterward. Otherwise use a harmless task with the intended agent when model access exists and report what remains unverified.
 4. For a copied-config share, relocate the directory and repeat loading. For an archive, follow `references/packages.md`: export or author, validate, pack, install, bind a recipient model/inputs and run. Check owned assets, external commands and selected policy with harmless calls. Exclude private session state and machine-specific paths.
 

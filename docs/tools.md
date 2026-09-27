@@ -2,7 +2,7 @@
 
 ## Bundled plugin contract
 
-The installed package also includes `examples/tools/<name>/` copies of all six
+The installed package also includes `examples/tools/<name>/` copies of all eight
 bundled plugins. Copy a folder to `$XDG_CONFIG_HOME/raw/tools/<new-id>/`, edit
 its `tool.json` (`id` must match the new folder), then select `local/<new-id>`
 in `tools.use`. These generated `.mjs` files run directly; rebuild Raw only
@@ -16,7 +16,7 @@ recipient's model ID, endpoint, and credentials, and run
 `raw --config /path/to/project-helper/raw.json --agent project "task"`.
 Its `agent/` IDs resolve beside that copied config file.
 
-The six shipped tools live in package-owned folders under
+The eight shipped tools live in package-owned folders under
 `dist/tools/builtin/<name>/`. Each folder contains an editable `tool.json` and a
 standalone `index.mjs`. The manifest declares `api_version: 1`, `id`, `version`,
 `name`, `description`, `input_schema`, and `entry: "./index.mjs"`. The entry

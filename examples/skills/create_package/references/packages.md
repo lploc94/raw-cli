@@ -24,11 +24,11 @@ Omit `--inputs` when the selected export needs none. `agent add` creates a new n
 }
 ```
 
-Place it at `agents.project-helper`. Overrides replace the specified field/block: `tools`, `skills`, `vars`, `request`, `compact` and rule lists do not implicitly merge with package values. Preserve unrelated agents and the existing default.
+Place it at `agents.project-helper`. Overrides replace the specified field/block: `tools`, `skills`, `hooks`, `vars`, `request`, `compact` and rule lists do not implicitly merge with package values. Preserve unrelated agents and the existing default.
 
 ## Select individual components
 
-A direct agent can add `pkg/kit/tools/EXPORT` to `tools.use` or `pkg/kit/skills/EXPORT` to `skills.use`. A skill selection also needs both skill tools. For a visible-name collision, use `{"ref":"pkg/kit/tools/EXPORT","as":"distinct_name","inputs":{}}`; choose the corresponding skill name format when selecting a skill.
+A direct agent can add `pkg/kit/tools/EXPORT` to `tools.use`, `pkg/kit/skills/EXPORT` to `skills.use`, or `pkg/kit/hooks/EXPORT` to `hooks.use`. A skill selection also needs both skill tools. Hook selections are exact strings; they do not accept visible aliases or inputs. For a tool visible-name collision, use `{"ref":"pkg/kit/tools/EXPORT","as":"distinct_name","inputs":{}}`; choose the corresponding skill name format when selecting a skill.
 
 Root entries bind one definition:
 

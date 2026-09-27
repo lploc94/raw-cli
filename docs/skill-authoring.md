@@ -44,7 +44,7 @@ For sharing, place the skill directory in a package's declared `files` and `expo
 
 Raw exposes names/descriptions only after `list_skills`; `load_skill` returns the body after frontmatter at the conversation tail. The loader validates that body against `max_output_bytes` (default **8192 bytes**, not tokens). The catalog must also fit. No arbitrary minimum word/byte count establishes quality.
 
-Keep the six shipped bodies self-contained within that cap. The copy script preserves entire skill folders, including references, scripts and assets. A `load_skill` result contains the body, not automatic resource contents; mention relative resources in instructions and use the agent's file tools to read them when needed. Do not rely on a source checkout or undeclared files for portable packages.
+Keep the seven shipped bodies self-contained within that cap. The copy script preserves entire skill folders, including references, scripts and assets. A `load_skill` result contains the body, not automatic resource contents; mention relative resources in instructions and use the agent's file tools to read them when needed. Do not rely on a source checkout or undeclared files for portable packages.
 
 ## A body outline to adapt
 
@@ -117,7 +117,7 @@ Use deterministic tests for schemas, manifests, artifact behavior and packaging.
 - Examples have exact insertion locations and pass real contract checks.
 - Required information is available from the installed package.
 - Body and catalog fit the actual byte cap.
-- Source and generated examples match; packed consumers load all six bodies and their linked references are available.
+- Source and generated examples match; packed consumers load all seven bodies and their linked references are available.
 - Evaluation report contains failures and limitations as well as successes.
 
 ## Browser authoring

@@ -1,6 +1,6 @@
 ---
 name: create-package
-description: "Use when packaging or sharing Raw agents, tools, skills, vars or MCP as a .rawpkg, or preparing an updated release. Covers CLI and dashboard exports, recipient inputs and installation checks."
+description: "Use when packaging or sharing Raw agents, tools, skills, hooks, vars or MCP as a .rawpkg, or preparing an updated release. Covers CLI and dashboard exports, recipient inputs and installation checks."
 ---
 # Create a shareable Raw package
 
@@ -25,7 +25,7 @@ Export makes literal var sources and external paths/settings into recipient inpu
 
 ## Minimal package with a recipient input
 
-This complete example exports a small agent and a reusable var. Create these three files under a new source directory. It uses no custom executable or model credential.
+This complete example exports a small agent, a reusable var and a notification hook. Create the three declared paths under a new source directory. The recipient supplies Node on PATH but no model credential is embedded.
 
 `raw-package.json`:
 
@@ -36,17 +36,19 @@ This complete example exports a small agent and a reusable var. Create these thr
   "name": "@example/project-kit",
   "version": "1.0.0",
   "description": "An assistant that reads the recipient's project label",
-  "files": ["agents/helper.json", "vars/project_label.json"],
+  "files": ["agents/helper.json", "vars/project_label.json", "hooks/notice"],
   "exports": {
     "agents": {"helper": "agents/helper.json"},
-    "vars": {"project_label": "vars/project_label.json"}
+    "vars": {"project_label": "vars/project_label.json"},
+    "hooks": {"notice": "hooks/notice"}
   },
   "inputs": {
     "type": "object",
     "properties": {"project_label": {"type": "string", "description": "Recipient project label"}},
     "required": ["project_label"]
   },
-  "requires": ["raw.agent/1"]
+  "requires": ["raw.agent/1", "raw.hook/1"],
+  "metadata": {"external_executables": ["node"]}
 }
 ```
 
@@ -57,7 +59,8 @@ This complete example exports a small agent and a reusable var. Create these thr
 {
   "system_prompt": "Help with the user's project. Read project_label when the project name is relevant. Treat previous variable readings as historical.",
   "tools": {"use": ["builtin/list_vars", "builtin/read_var"]},
-  "vars": ["#vars/project_label"]
+  "vars": ["#vars/project_label"],
+  "hooks": {"use": ["#hooks/notice"]}
 }
 ```
 
@@ -74,6 +77,21 @@ This complete example exports a small agent and a reusable var. Create these thr
 ```
 
 The recipient input file for this example is `{"project_label":"My project"}`. This is a supplied definition value; changing it does not evaluate a provider or template the prompt.
+
+`hooks/notice/hook.json` and `hooks/notice/index.mjs` (both covered by `files`):
+
+<!-- example:hook-manifest -->
+```json
+{"name":"notice","events":[{"name":"UserPromptSubmit"}],"command":"node","args":["./index.mjs"],"timeout_ms":3000}
+```
+
+<!-- example:hook-script -->
+```js
+process.stdin.resume();
+process.stdin.on("end", () => process.stdout.write(JSON.stringify({message:"Package hook ran"})));
+```
+
+The hook is selected only by the exported agent. Inspection, installation and binding validate it without running the script; a selected user prompt triggers it. To package a hook alone, export `hooks.notice` and declare its complete folder, then add `pkg/ALIAS/hooks/notice` to a direct agent's ordered `hooks.use`.
 
 ## Validate, pack and hand off
 

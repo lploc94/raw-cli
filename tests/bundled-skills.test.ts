@@ -58,8 +58,8 @@ test("unselected builtin skill is inert and oversized selection fails before inf
   await assert.rejects(createRuntimeTools({ runtime: selected, cwd: capped.root }), /max_output_bytes/);
 });
 
-test("the six setup skills have distinct catalog entries and complete linked bodies", async () => {
-  const ids = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp", "create_package"];
+test("the seven setup skills have distinct catalog entries and complete linked bodies", async () => {
+  const ids = ["configure_raw", "create_skill", "create_tool", "create_hook", "create_agent", "add_mcp", "create_package"];
   const { root, configPath } = config(ids.map((id) => `builtin/${id}`));
   const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
   const tools = await createRuntimeTools({ runtime, cwd: root });

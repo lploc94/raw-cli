@@ -233,6 +233,16 @@ function ComponentDetail({
         {info?.validation} structure · Not executed
       </p>
       <p>{info?.description}</p>
+      {kind === "hooks" && info?.manifest && (
+        <dl className="details-grid">
+          <dt>Events and filters</dt>
+          <dd><code>{JSON.stringify(info.manifest.events)}</code></dd>
+          <dt>Command and arguments</dt>
+          <dd><code>{String(info.manifest.command)} {JSON.stringify(info.manifest.args ?? [])}</code></dd>
+          <dt>Timeout</dt>
+          <dd>{String(info.manifest.timeoutMs)} ms</dd>
+        </dl>
+      )}
       <p>
         Used by:{" "}
         {info?.usageAvailable

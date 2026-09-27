@@ -69,13 +69,13 @@ test("strict candidate validation uses the actual config authority, rejects malf
   } finally { f.cleanup(); }
 });
 
-test("CLI/browser starter factory has the six skills and initialization never overwrites", async () => {
+test("CLI/browser starter factory has the seven skills and initialization never overwrites", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-starter-"));
   const options = { configPath: join(root, "raw", "config.json"), env: { XDG_CONFIG_HOME: root } };
   try {
     const initialized = await initializeConfig(options);
     assert.deepEqual(initialized.data, createStarterConfig());
-    assert.equal(((initialized.data!.agents as Record<string, { skills: { use: string[] } }>).raw!.skills.use).length, 6);
+    assert.equal(((initialized.data!.agents as Record<string, { skills: { use: string[] } }>).raw!.skills.use).length, 7);
     await assert.rejects(initializeConfig(options), /already exists/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

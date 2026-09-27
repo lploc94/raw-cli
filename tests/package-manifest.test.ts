@@ -15,7 +15,7 @@ const complete = {
   requires: ["raw.tool-api/1"], dependencies: {},
 };
 
-test("six export categories validate and release labels do not change component references", () => {
+test("base export categories validate and release labels do not change component references", () => {
   const first = parsePackageManifest(JSON.stringify(complete));
   const second = parsePackageManifest(JSON.stringify({ ...complete, version: "2.0.0" }));
   assert.deepEqual(first.exports, second.exports);

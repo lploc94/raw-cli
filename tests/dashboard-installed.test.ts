@@ -45,19 +45,25 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await command("npm", ["install", "--omit=dev", "--prefer-offline", "--legacy-peer-deps", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer, env);
     const installed = join(consumer, "node_modules/raw-cli"), bin = join(consumer, "node_modules/.bin/raw");
     assert.equal(existsSync(join(consumer, "node_modules/vite")), false);
-    for (const file of ["docs/dashboard.md", "docs/dashboard-api.md", "docs/cli.md", "docs/architecture.md", "dist/dashboard/index.html"]) {
+    for (const file of ["docs/dashboard.md", "docs/dashboard-api.md", "docs/cli.md", "docs/architecture.md", "docs/hooks.md", "examples/hooks/guard/hook.json", "dist/dashboard/index.html"]) {
       assert.ok(existsSync(join(installed, file)), `installed artifact is missing ${file}`);
     }
-    for (const skill of ["configure_raw", "create_agent", "create_skill", "create_tool", "add_mcp", "create_package"]) {
+    for (const skill of ["configure_raw", "create_agent", "create_skill", "create_tool", "create_hook", "add_mcp", "create_package"]) {
       assert.match(await readFile(join(installed, "dist/skills/builtin", skill, "SKILL.md"), "utf8"), /references\/dashboard\.md/);
       assert.ok((await readFile(join(installed, "dist/skills/builtin", skill, "references/dashboard.md"), "utf8")).length > 300);
     }
     // Author from installed examples, never from the checkout; model-facing execution is a real file effect.
     const source = join(author, "kit"); await cp(join(installed, "examples/packages/tool-only"), source, { recursive: true });
     await mkdir(join(source, "agents"));
-    await writeFile(join(source, "agents/writer.json"), JSON.stringify({ system_prompt: "Installed package writer", tools: { use: ["#tools/echo"] } }));
+    await mkdir(join(source, "hooks"), { recursive: true });
+    await cp(join(installed, "examples/hooks/guard"), join(source, "hooks", "notice"), { recursive: true });
+    await writeFile(join(source, "hooks/notice/hook.json"), JSON.stringify({ name: "notice", events: [{ name: "UserPromptSubmit" }], command: "node", args: ["./index.mjs"] }));
+    await writeFile(join(source, "hooks/notice/index.mjs"), `import {appendFileSync} from 'node:fs'; import {join} from 'node:path';
+      process.stdin.resume(); process.stdin.on('end', () => {appendFileSync(join(process.cwd(),'hook-effects.txt'),'notice\\n'); process.stdout.write(JSON.stringify({message:'Installed hook ran'}));});`);
+    await writeFile(join(source, "agents/writer.json"), JSON.stringify({ system_prompt: "Installed package writer", tools: { use: ["#tools/echo"] }, hooks: { use: ["#hooks/notice"] } }));
     const manifest = JSON.parse(await readFile(join(source, "raw-package.json"), "utf8"));
-    manifest.files.push("agents/writer.json"); manifest.exports.agents = { writer: "agents/writer.json" };
+    manifest.files.push("agents/writer.json", "hooks/notice"); manifest.exports.agents = { writer: "agents/writer.json" };
+    manifest.exports.hooks = { notice: "hooks/notice" }; manifest.requires.push("raw.hook/1");
     await writeFile(join(source, "raw-package.json"), JSON.stringify(manifest));
     await writeFile(join(source, "tools/echo/helper.mjs"), 'export const value="v1";\n');
     await writeFile(join(source, "tools/echo/index.mjs"), `import {value} from './helper.mjs'; import {appendFileSync,existsSync} from 'node:fs'; import {join} from 'node:path';
@@ -95,6 +101,7 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     const id = new URL(page.url()).pathname.split("/").at(-1)!; assert.match(id, /^[0-9a-f-]{36}$/);
     await page.getByRole("textbox", { name: "Message", exact: true }).fill("First installed turn"); await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect.poll(() => existsSync(join(workspace, "effects.txt")), { timeout: 15_000 }).toBe(true);
+    assert.equal(await readFile(join(workspace, "hook-effects.txt"), "utf8"), "notice\n");
     await page.reload(); await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
     assert.equal(await readFile(join(workspace, "effects.txt"), "utf8"), "v1\n"); await writeFile(join(workspace, "release"), "continue");
     await expect(page.getByText("First installed answer", { exact: true })).toBeVisible();
@@ -106,9 +113,11 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await rm(author, { recursive: true });
     await page.goto(`${origin}/chat/${id}`); await page.getByRole("textbox", { name: "Message", exact: true }).fill("After package update"); await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(page.getByText("Updated installed answer", { exact: true })).toBeVisible(); assert.equal(await readFile(join(workspace, "effects.txt"), "utf8"), "v1\nv2\n");
+    assert.equal(await readFile(join(workspace, "hook-effects.txt"), "utf8"), "notice\nnotice\n");
     assert.deepEqual(errors, []); assert.deepEqual(external, []); await browser.close(); browser = undefined;
     host.kill("SIGTERM"); assert.equal(await closed, 0); host = undefined;
     const resumed = await command(bin, ["--resume", id, "Continue in CLI"], workspace, env); assert.equal(resumed.stdout, "CLI continued\n"); assert.match(resumed.stderr, new RegExp(id));
+    assert.equal(await readFile(join(workspace, "hook-effects.txt"), "utf8"), "notice\nnotice\nnotice\n");
     const requests = provider.requests.map(item => item.body as { prompt_cache_key: string; messages: unknown[]; tools: unknown[] });
     assert.equal(requests.length, 5); assert.notEqual(requests[0]!.prompt_cache_key, requests[2]!.prompt_cache_key); assert.equal(requests[2]!.prompt_cache_key, requests[4]!.prompt_cache_key);
     assert.deepEqual(requests[4]!.messages.slice(0, requests[3]!.messages.length), requests[3]!.messages); assert.deepEqual(requests[4]!.tools, requests[3]!.tools);

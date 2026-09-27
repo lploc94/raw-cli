@@ -1,0 +1,17 @@
+{
+  "name": "guard",
+  "events": [
+    {
+      "name": "PreToolUse",
+      "match": "builtin/bash",
+      "when": {
+        "any": "commands[*].command",
+        "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)"
+      }
+    },
+    { "name": "PostToolUseFailure", "match": "builtin/bash" }
+  ],
+  "command": "node",
+  "args": ["./index.mjs"],
+  "timeout_ms": 5000
+}

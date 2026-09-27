@@ -9,3 +9,5 @@ Use **Library → Packages** in `raw dashboard` for the displayed config authori
 5. Inspect an updated artifact before Update. Invalid updates preserve the current alias/bindings. Existing sessions resume with the next snapshot. Fork copies into an empty/new authored directory; Remove names dependent bindings, including agent overrides, which must be detached deliberately.
 
 Temporary artifacts are available for review/download/discard for 30 minutes within this server process, with four staging slots. Download the archive before stopping the server. Downloads are ordinary `.rawpkg` files and can be installed after the author's source directory is gone. Building or downloading an artifact is distinct from publishing it to another service; follow the user's requested handoff.
+
+Hook exports appear as a component category. An installed standalone hook can be attached to a direct agent's ordered `hooks.use`; a package agent's selected hooks are included in its binding. Neither import nor catalog browsing runs a hook. Check its declared event/matcher and executable prerequisite, then verify a matching event with the installed agent.

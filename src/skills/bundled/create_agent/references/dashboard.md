@@ -9,3 +9,5 @@ Use **Agents → Create agent** in `raw dashboard` for the intended config autho
 5. Save, then New chat for a requested live check. Explain a missing prerequisite instead of claiming a save proved execution. Set as default is a separate explicit action.
 
 A saved edit affects the next turn and preserves existing conversation IDs. Running work keeps its snapshot. Skill loading still occurs through `list_skills` and `load_skill`; inspecting the catalog does not inject skill bodies. Use **Library → Packages → Export agent** when sharing the completed composition.
+
+Select ordered hook IDs in the agent's **Selected hooks** control. Create or edit hook folders under **Library → Hooks**; inspect event subscriptions, optional tool filters, command and timeout. A hook is passive until selected and its event matches. The catalog does not execute scripts. Test a harmless matching operation and inspect its live/history receipt before sharing.

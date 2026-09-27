@@ -1,0 +1,3 @@
+# Create and inspect hooks in the dashboard
+
+Open `raw dashboard`, then Library → Hooks. Create a hook folder with a `hook.json` and script; edit its files with revision checks. The library displays structural validation without running code. The hook manifest shows event subscriptions, optional canonical tool glob/RE2 argument filter, executable command, literal arguments and timeout. Choose an agent under Agents and add the exact hook ID to Selected hooks, in order. Saving an agent affects the next runtime attachment/turn. Live chat and history show bounded hook receipts. A script that never matches a subscribed event will not run. Package → Export agent includes selected owned hooks; an installed package hook is read-only until forked.

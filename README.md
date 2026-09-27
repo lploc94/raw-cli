@@ -1,6 +1,6 @@
 # raw-cli
 
-`raw` is a local coding agent for models with limited context. Each agent selects an ordered set of tools and can supply a system prompt and skills. Raw ships eight tools as editable plugins: `read_file`, `write_file`, `bash`, `view_image`, `list_skills`, `load_skill`, `list_vars`, and `read_var`. Tools and skills can also live in the user's config directory or beside a selected agent config. Selected MCP tools remain available. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
+`raw` is a local coding agent for models with limited context. Each agent selects ordered tools, skills and hooks, and can supply a system prompt. Raw ships eight tools as editable plugins: `read_file`, `write_file`, `bash`, `view_image`, `list_skills`, `load_skill`, `list_vars`, and `read_var`. Tools, skills and hooks can also live in the user's config directory or beside a selected agent config. Selected MCP tools remain available. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
 
 ## Install and run
 
@@ -61,7 +61,7 @@ Tool calls run automatically in terminal, headless, dashboard and ACP modes, usi
     }
   },
   "agents": {
-    "raw": { "model": "local", "system_prompt": "You are a coding assistant. For Raw setup tasks, list selected skills and load only relevant instructions.", "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] }, "skills": { "use": ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"] } },
+    "raw": { "model": "local", "system_prompt": "You are a coding assistant. For Raw setup tasks, list selected skills and load only relevant instructions.", "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"] }, "skills": { "use": ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_hook", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"] } },
     "deepseek": {
       "model": "flash",
       "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"] },
@@ -101,7 +101,7 @@ Agents and components can also travel as local `.rawpkg` archives. Export a conf
 
 The installed [package examples](examples/packages/) include a complete mixed agent and standalone tool/skill packages. They are editable source, not preinstalled agents; inspect and pack the one you need, then bind it to a recipient config.
 
-Raw ships six English setup skills for configuring Raw, creating skills, creating tools, composing agents, adding MCP servers, and packaging components for sharing. `builtin/create_package` guides export or manifest authoring, recipient inputs, validation, packing, installation checks and updates. The packaged [skill authoring cheatsheet](docs/skill-authoring.md) explains how to write descriptions, procedures, examples and verification criteria. Skill instructions guide the model; they do not enforce a fixed sequence or amount of work.
+Raw ships seven English setup skills for configuring Raw, creating skills, creating tools, creating hooks, composing agents, adding MCP servers, and packaging components for sharing. `builtin/create_hook` covers events, filters, scripts, selection and verification; [agent hooks](docs/hooks.md) document the protocol. `builtin/create_package` guides export or manifest authoring, recipient inputs, validation, packing, installation checks and updates. The packaged [skill authoring cheatsheet](docs/skill-authoring.md) explains how to write descriptions, procedures, examples and verification criteria. Skill instructions guide the model; they do not enforce a fixed sequence or amount of work.
 
 The three built-ins each accept an ordered batch of up to 16 entries: `read_file({"files":[...]})`, `write_file({"operations":[...]})`, and `bash({"commands":[...]})`. Reads can select full files or 1-based line ranges. A large full read returns complete leading lines with `next_line` for paging. Writes support overwrite, append, unique text replacement, and SHA-256 guarded line replacement. Bash continues after a nonzero exit and stops on timeout or abort. All batch rows share the configured model-facing `maxOutputBytes` limit; terminal previews separately show at most 2,000 characters and 10 lines. See [tool contracts](docs/tools.md).
 

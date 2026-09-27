@@ -11,7 +11,7 @@ description: Review a code change for correctness. Use when asked for a review.
 Inspect the changed behavior and report actionable findings.
 ```
 
-The frontmatter name matches the skill folder (portable folders use lowercase kebab-case). Selected names and IDs must be unique. Symlinks cannot escape the selected root or skill folder. Invalid or oversized selected content fails before an inference request; unrelated folders remain unread. Raw ships six built-in setup skills, including `builtin/configure_raw`; their stable selection IDs retain underscores, while catalog names use kebab-case. `examples/skills/<id>/` holds forkable copies. Copy one to `local/my-config-guide/`, change its frontmatter name to `my-config-guide`, then select `local/my-config-guide`.
+The frontmatter name matches the skill folder (portable folders use lowercase kebab-case). Selected names and IDs must be unique. Symlinks cannot escape the selected root or skill folder. Invalid or oversized selected content fails before an inference request; unrelated folders remain unread. Raw ships seven built-in setup skills, including `builtin/configure_raw`; their stable selection IDs retain underscores, while catalog names use kebab-case. `examples/skills/<id>/` holds forkable copies. Copy one to `local/my-config-guide/`, change its frontmatter name to `my-config-guide`, then select `local/my-config-guide`.
 
 An agent with a nonempty `skills.use` must explicitly include both `builtin/list_skills` and `builtin/load_skill` in `tools.use`. The generic tool definitions contain no agent-specific skill names or Markdown. The first model request sees no catalog. Calling `list_skills` returns only selected names and descriptions in a linked tool result. Calling `load_skill` with one selected name returns the Markdown body after frontmatter at the conversation tail. Body and catalog must fit `max_output_bytes` without truncation. Denied, cancelled, unknown, invalid, or oversized loads do not reveal partial Markdown.
 
@@ -21,7 +21,7 @@ The packaged `examples/agents/project-helper/` demonstrates a portable
 the next run loads those bytes. Changing a selected skill in a resumed session
 may cause Raw to append a reload notice as described below.
 
-The built-in setup kit contains six selectable skills: `configure_raw` for config fields and safe edits, `create_skill` for a new selected skill, `create_tool` for a standalone plugin, `create_agent` for a named agent, `add_mcp` for registering one exact MCP tool, and `create_package` for exporting or assembling a shareable package. All use the `builtin/` prefix. Their package-owned copies live under `dist/skills/builtin/`; `examples/skills/` contains forkable copies. Select only the guidance an agent should offer, then call `list_skills` and load the relevant body on demand.
+The built-in setup kit contains seven selectable skills: `configure_raw` for config fields and safe edits, `create_skill` for a new selected skill, `create_tool` for a standalone plugin, `create_hook` for an event-triggered command, `create_agent` for a named agent, `add_mcp` for registering one exact MCP tool, and `create_package` for exporting or assembling a shareable package. All use the `builtin/` prefix. Their package-owned copies live under `dist/skills/builtin/`; `examples/skills/` contains forkable copies. Select only the guidance an agent should offer, then call `list_skills` and load the relevant body on demand.
 
 `create_package` covers manifest fields, owned assets, typed recipient inputs, validation/packing, isolated installation checks and update/link/fork workflows. New `raw config init` configurations select it automatically. To enable it in an existing agent, append `builtin/create_package` to that agent's `skills.use`; its catalog/load name is `create-package`.
 
@@ -29,11 +29,11 @@ Setup skill bodies and descriptions are written in English. Their instructions d
 
 Raw snapshots selected skill metadata and Markdown for a live session. On resume, a changed selected skill updates the context revision but keeps Raw's generated cache key because the earlier provider prefix remains historical. If the model previously saw affected `list_skills` metadata or `load_skill` Markdown, one durable tail notice names stale skills and asks it to list or load again; the old linked result is not rewritten. If compaction removes a loaded skill result, a tail reminder asks for another `load_skill` call. Reload remains an agent action, not automatic prompt injection. An explicit OpenAI `agent.cache.key` overrides the generated wire hint.
 
-For structure, examples and review criteria, see the [skill authoring cheatsheet](skill-authoring.md). The guide and all six English setup skills ship with Raw. Contract tests execute their examples; model traces are diagnostic and do not enforce a fixed amount of work.
+For structure, examples and review criteria, see the [skill authoring cheatsheet](skill-authoring.md). The guide and all seven English setup skills ship with Raw. Contract tests execute their examples; model traces are diagnostic and do not enforce a fixed amount of work.
 
 Managed dashboard edits use [revision-checked configuration and owned component services](management.md). Viewing a catalog never imports tool code or starts providers/MCP; changes take effect on the next turn.
 
-The six setup skills also carry `references/dashboard.md` for the relevant browser
+The seven setup skills also carry `references/dashboard.md` for the relevant browser
 workflow. Their main bodies route to that reference only when useful; loading a
 skill does not automatically load its references. Library inspection stays passive.
 Creating/forking a skill leaves it unselected until attachment, and editing it takes

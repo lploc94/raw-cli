@@ -6,7 +6,7 @@ The dashboard manages one displayed Raw config path. Runtime configuration remai
 
 Managed saves carry the content revision from their read. Raw writers share an owned file lock, reread and validate the candidate at its actual config location, then atomically publish a private file. A stale revision returns a conflict without discarding the user's draft. External text editors do not share Raw's lock; Raw compares bytes again before publication without claiming a universal filesystem compare-and-swap. Unknown-to-form fields and ordered selections are preserved. A raw JSON repair save may replace an invalid document after revision checking.
 
-Configuration initialization uses the same starter factory as `raw config init`, including the `raw` agent and six setup skills. Initialization never overwrites an existing file. Model credentials are not required to inspect or edit setup. Session retention belongs only in the canonical global config; a dashboard managing an alternate config cannot write that setting into it.
+Configuration initialization uses the same starter factory as `raw config init`, including the `raw` agent and seven setup skills. Initialization never overwrites an existing file. Model credentials are not required to inspect or edit setup. Session retention belongs only in the canonical global config; a dashboard managing an alternate config cannot write that setting into it.
 
 Component catalogs read manifests, Markdown and owned text files without importing a tool, evaluating a variable provider, connecting MCP or calling a model. Invalid entries have individual diagnostics. Successful static validation is not a successful live connection or tool execution.
 

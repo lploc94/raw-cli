@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { loadConfig } from "../src/config.js";
 import { loadSelectedHooks } from "../src/hooks/loader.js";
+import { runHook } from "../src/hooks/runner.js";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "raw-hooks-config-"));
@@ -60,4 +61,17 @@ test("hook selection and manifest reject duplicates, malformed event filter and 
   await symlink(join(f.root, "outside.mjs"), join(folder, "escape.mjs"));
   await writeFile(join(folder, "hook.json"), JSON.stringify({ ...manifest("guard"), args: ["./escape.mjs"] }));
   await assert.rejects(loadSelectedHooks({ selectedIds: ["agent/guard"], configPath: f.configPath }), /escape|outside|contain/i);
+});
+
+test("a loaded hook retains its script bytes until the next attachment", async () => {
+  const f = await fixture();
+  const folder = await f.makeHook("agent", "guard", manifest("guard"));
+  await writeFile(join(folder, "run.mjs"), "process.stdin.resume(); process.stdin.on('end',()=>process.stdout.write(JSON.stringify({message:'first'})));\n");
+  const load = () => loadSelectedHooks({ selectedIds: ["agent/guard"], configPath: f.configPath });
+  const first = (await load())[0]!;
+  await writeFile(join(folder, "run.mjs"), "process.stdin.resume(); process.stdin.on('end',()=>process.stdout.write(JSON.stringify({message:'second'})));\n");
+  const request = { protocol_version: 1 as const, event: "PreToolUse" as const, cwd: f.root,
+    tool: { identity: "builtin/bash", name: "bash", arguments: { commands: [{ command: "rm old" }] } } };
+  assert.equal((await runHook(first, request)).message, "first");
+  assert.equal((await runHook((await load())[0]!, request)).message, "second");
 });

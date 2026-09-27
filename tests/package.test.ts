@@ -45,7 +45,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     await readFile(join(repo, "docs", "skill-authoring.md"), "utf8"));
   assert.equal(await readFile(join(consumer, "node_modules", "raw-cli", "docs", "terminal-output.md"), "utf8"),
     await readFile(join(repo, "docs", "terminal-output.md"), "utf8"));
-  const skillIds = ["configure_raw", "create_skill", "create_tool", "create_agent", "add_mcp", "create_package"];
+  const skillIds = ["configure_raw", "create_skill", "create_tool", "create_hook", "create_agent", "add_mcp", "create_package"];
   const packagedSkill = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", "configure_raw");
   for (const id of skillIds) {
     const folder = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", id);
@@ -92,8 +92,8 @@ if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new 
   assert.equal(installedLoader.code, 0, installedLoader.stderr);
   const installedSkillLoader = await run(process.execPath, ["--input-type=module", "--eval", `
 import { loadSelectedSkills } from "raw-cli";
-const selected = await loadSelectedSkills({ selectedIds: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"], configPath: "ignored.json", maxOutputBytes: 8192 });
-if (selected.length !== 6 || selected[0].name !== "configure-raw" || !selected[0].markdown.includes("default_agent") || selected[5].name !== "create-package") throw new Error("installed skill root failed");
+const selected = await loadSelectedSkills({ selectedIds: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_hook", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"], configPath: "ignored.json", maxOutputBytes: 8192 });
+if (selected.length !== 7 || selected[0].name !== "configure-raw" || !selected[0].markdown.includes("default_agent") || selected[6].name !== "create-package") throw new Error("installed skill root failed");
 `], consumer, { ...process.env, XDG_CONFIG_HOME: join(root, "other-config") });
   assert.equal(installedSkillLoader.code, 0, installedSkillLoader.stderr);
   const builtinProbe = async (ids: string[], xdg = join(root, "other-config")) => run(process.execPath,

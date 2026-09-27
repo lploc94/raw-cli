@@ -23,7 +23,13 @@ export async function runHook(hook: SelectedHook, request: HookRequest,
   let finish!: () => void;
   const completed = new Promise<void>((resolve) => { finish = resolve; });
   const signalChild = (signal: NodeJS.Signals) => {
-    if (child.pid) try { process.kill(posix ? -child.pid : child.pid, signal); } catch { /* exited */ }
+    if (!child.pid) return;
+    if (!posix) {
+      const tree = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      tree.on("error", () => { try { child.kill(); } catch { /* exited */ } });
+      return;
+    }
+    try { process.kill(-child.pid, signal); } catch { /* exited */ }
   };
   const stop = (reason: string) => {
     if (failure) return;
