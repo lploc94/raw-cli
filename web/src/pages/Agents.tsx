@@ -153,7 +153,8 @@ function AgentEditor({
   const [catalog, setCatalog] = useState<{
     tools: ComponentInfo[];
     skills: ComponentInfo[];
-  }>({ tools: [], skills: [] });
+    hooks: ComponentInfo[];
+  }>({ tools: [], skills: [], hooks: [] });
   const [action, setAction] = useState(""),
     [newName, setNewName] = useState(""),
     [error, setError] = useState("");
@@ -178,8 +179,9 @@ function AgentEditor({
     void Promise.all([
       api<ComponentInfo[]>("/components/tools"),
       api<ComponentInfo[]>("/components/skills"),
+      api<ComponentInfo[]>("/components/hooks"),
     ]).then(
-      ([tools, skills]) => setCatalog({ tools, skills }),
+      ([tools, skills, hooks]) => setCatalog({ tools, skills, hooks }),
       (cause) => setError(errorText(cause)),
     );
   }, []);
@@ -200,7 +202,7 @@ function AgentEditor({
     copy[mode === "file" ? "system_prompt_file" : "system_prompt"] = text;
     draft.setSource(pretty(copy));
   };
-  const use = (kind: "tools" | "skills", list: unknown[]) => {
+  const use = (kind: "tools" | "skills" | "hooks", list: unknown[]) => {
     const next = { ...value, [kind]: { ...object(value[kind]), use: list } };
     if (kind === "skills" && list.length) {
       const tools = object(next.tools);
@@ -322,6 +324,12 @@ function AgentEditor({
                 values={object(value.skills).use ?? []}
                 choices={catalog.skills.map((c) => c.id)}
                 setValues={(list) => use("skills", list)}
+              />
+              <Selection
+                label="hooks"
+                values={object(value.hooks).use ?? []}
+                choices={catalog.hooks.map((c) => c.id)}
+                setValues={(list) => use("hooks", list)}
               />
               <Selection
                 label="vars"

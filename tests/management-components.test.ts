@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { ComponentManager } from "../src/management/components.js";
+import { readManagedConfig } from "../src/management/config.js";
 import { installPackage, linkPackage } from "../src/packages/store.js";
 
 function fixture() {
@@ -14,6 +15,30 @@ function fixture() {
 }
 const tool = (id: string) => JSON.stringify({ api_version: 1, id, version: "1.0.0", name: id, description: "A fixture tool",
   input_schema: { type: "object", properties: { value: { type: "string" } }, additionalProperties: false }, entry: "./index.mjs" });
+
+test("hook folders stay passive in catalog and honor edit revisions and selection usage", async () => {
+  const f = fixture();
+  try {
+    writeFileSync(f.configPath, JSON.stringify({ models: { m: { provider: "ollama", method: "openai-chat-completions", model_id: "test" } },
+      agents: { raw: { model: "m", tools: { use: [] } } } }));
+    const marker = join(f.root, "EXECUTED");
+    const hook = await f.manager.create("hooks", "local/guard", {
+      "hook.json": JSON.stringify({ name: "guard", events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"], timeout_ms: 1000 }),
+      "index.mjs": `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'bad');`,
+    });
+    assert.equal(hook.validation, "valid");
+    assert.ok((await f.manager.list("hooks")).some(item => item.id === "local/guard"));
+    assert.equal(existsSync(marker), false);
+    const file = await f.manager.readFile("hooks", hook.id, "hook.json");
+    await f.manager.saveFile("hooks", hook.id, "hook.json", file.revision, file.source + "\n");
+    await assert.rejects(f.manager.saveFile("hooks", hook.id, "hook.json", file.revision, file.source), /conflict/);
+    const revision = (await readManagedConfig({ configPath: f.configPath, env: { XDG_CONFIG_HOME: join(f.root, "global") } })).revision;
+    await f.manager.attach("hooks", hook.id, "raw", revision);
+    assert.deepEqual((await f.manager.inspect("hooks", hook.id)).usedBy, ["raw"]);
+    await assert.rejects(f.manager.remove("hooks", hook.id), /detach|usage/);
+    assert.equal(existsSync(marker), false);
+  } finally { f.cleanup(); }
+});
 
 test("catalog/create/edit statically validate tools without importing their executable entry", async () => {
   const f = fixture();

@@ -16,17 +16,21 @@ export async function attachPackageComponent(options: ConfigEditOptions & { conf
     const agents = record(data.agents), agentName = edit.agent;
     const selected = agentName ? record(agents[agentName]) : undefined;
     if (agentName && !Object.hasOwn(agents, agentName)) throw new ManagementError("not_found", "agent not found");
-    if (selected?.from && ["tools", "skills", "vars"].includes(ref.kind)) throw new ManagementError("invalid_input", "Edit this package agent's complete selection override explicitly in Agent JSON");
+    if (selected?.from && ["tools", "skills", "hooks", "vars"].includes(ref.kind)) throw new ManagementError("invalid_input", "Edit this package agent's complete selection override explicitly in Agent JSON");
     const context = createPackageResolutionContext();
     let probe = structuredClone(selected ?? { tools: { use: [] } });
-    if (ref.kind === "tools" || ref.kind === "skills") {
+    if (ref.kind === "tools" || ref.kind === "skills" || ref.kind === "hooks") {
       if (!selected) throw new ManagementError("invalid_input", "Choose an agent for this selection");
+      if (ref.kind === "hooks" && (edit.as || Object.keys(edit.inputs ?? {}).length)) {
+        throw new ManagementError("invalid_input", "hook selection does not accept alias or inputs");
+      }
       const info = await new ComponentManager(options).inspect(ref.kind, edit.from);
       if (info.validation !== "valid") throw new ManagementError("invalid_input", info.diagnostic ?? "invalid component");
       if (ref.kind === "skills" && (info.bodyBytes ?? 0) > Number(selected.max_output_bytes ?? 8192)) throw new ManagementError("invalid_input", "skill body exceeds the agent's max_output_bytes");
       const block = record(selected[ref.kind]), use = Array.isArray(block.use) ? [...block.use] : [];
       if (use.some(v => (typeof v === "string" ? v : record(v).ref) === edit.from)) throw new ManagementError("conflict", "component already selected; edit its binding in Agent JSON");
-      use.push(edit.as || Object.keys(edit.inputs ?? {}).length ? { ref: edit.from, ...(edit.as ? { as: edit.as } : {}), ...(edit.inputs ? { inputs: edit.inputs } : {}) } : edit.from);
+      use.push(ref.kind !== "hooks" && (edit.as || Object.keys(edit.inputs ?? {}).length)
+        ? { ref: edit.from, ...(edit.as ? { as: edit.as } : {}), ...(edit.inputs ? { inputs: edit.inputs } : {}) } : edit.from);
       selected[ref.kind] = { ...block, use };
       if (ref.kind === "skills") { const tools = record(selected.tools); selected.tools = { ...tools, use: [...new Set([...(Array.isArray(tools.use) ? tools.use : []), "builtin/list_skills", "builtin/load_skill"])] }; }
       probe = structuredClone(selected);
@@ -48,6 +52,6 @@ export async function attachPackageComponent(options: ConfigEditOptions & { conf
     const resolved = await resolvePackageSelections(probe, options, context);
     const { mcpIdentities: _identity, mcpSources: _sources, ...definitions } = await resolvePackageDefinitions(resolved.agent, data, options, undefined, context, undefined,
       ref.kind === "mcp" ? [edit.name!] : []);
-    validateEffectiveConfigData({ ...data, ...definitions, agents: selected && (ref.kind === "tools" || ref.kind === "skills") ? { [agentName!]: resolved.agent } : {}, default_agent: undefined });
+    validateEffectiveConfigData({ ...data, ...definitions, agents: selected && (ref.kind === "tools" || ref.kind === "skills" || ref.kind === "hooks") ? { [agentName!]: resolved.agent } : {}, default_agent: undefined });
   });
 }

@@ -77,9 +77,10 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   }
   const selectedToolIds = names(record(source.tools, "agent tools").use, "agent tools.use");
   const selectedSkillIds = source.skills === undefined ? [] : names(record(source.skills, "agent skills").use, "agent skills.use");
-  for (const [kind, ids] of [["tools", selectedToolIds], ["skills", selectedSkillIds]] as const) for (const id of ids) {
+  const selectedHookIds = source.hooks === undefined ? [] : names(record(source.hooks, "agent hooks").use, "agent hooks.use");
+  for (const [kind, ids] of [["tools", selectedToolIds], ["skills", selectedSkillIds], ["hooks", selectedHookIds]] as const) for (const id of ids) {
     const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(id);
-    const asset = kind === "tools" ? resolved.tools[id] : resolved.skills[id];
+    const asset = kind === "tools" ? resolved.tools[id] : kind === "skills" ? resolved.skills[id] : resolved.hooks[id];
     if (!match && !asset) continue;
     const folder = asset?.name ?? match![2]!;
     const path = asset?.folder ?? (match![1] === "agent" ? join(configDir, kind, folder)
@@ -89,7 +90,7 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   for (const path of options.includeFiles ?? []) await checkAsset(resolve(configDir, path), `included asset ${path}`, false);
   if (unresolved.length) {
     if (!options.draft) throw new Error(`unresolved export assets:\n${unresolved.join("\n")}`);
-    const exports = { agents: [options.agentName], skills: [], tools: [], vars: [], var_providers: [], mcp: [] };
+    const exports = { agents: [options.agentName], skills: [], tools: [], hooks: [], vars: [], var_providers: [], mcp: [] };
     return { root: out, report: { agent: options.agentName, name: options.name, version: options.version,
       exports, files: [], inputs: [], requires: [], prerequisites: [], unresolved } };
   }
@@ -172,6 +173,24 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
     skillSelection[index] = `#skills/${folder}`;
   }
   if (Object.keys(emittedSkills).length) exported.skills = emittedSkills;
+  const hookSelection = agent.hooks === undefined ? [] : names(record(agent.hooks, "agent hooks").use, "agent hooks.use");
+  const emittedHooks: Record<string, string> = {};
+  for (let index = 0; index < hookSelection.length; index++) {
+    const id = hookSelection[index]!;
+    const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(id);
+    const asset = resolved.hooks[id];
+    if (!match && !asset) continue;
+    const folder = asset?.name ?? match![2]!;
+    if (emittedHooks[folder]) throw new Error(`duplicate exported hook path: ${folder}`);
+    const sourceRoot = asset?.folder ?? (match![1] === "agent" ? join(configDir, "hooks", folder)
+      : join(globalConfigRoot, "hooks", folder));
+    const path = `hooks/${folder}`;
+    await copyOwnedTree(sourceRoot, join(out, path));
+    emittedHooks[folder] = path;
+    files.push(path);
+    hookSelection[index] = `#hooks/${folder}`;
+  }
+  if (Object.keys(emittedHooks).length) exported.hooks = emittedHooks;
   const selectedVars = agent.vars === undefined ? [] : names(agent.vars, "agent.vars");
   const varDefinitions = record(definitions.vars ?? document.data.vars ?? {}, "vars");
   const providerDefinitions = record(definitions.var_providers ?? document.data.var_providers ?? {}, "var_providers");
@@ -258,7 +277,7 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const manifest: RawPackageManifest = { schema_version: 1, name: options.name, version: options.version,
     description: `Exported agent ${options.agentName}`, files, exports: exported,
     ...(inputRequired.length ? { inputs: { type: "object", properties: inputProperties, required: inputRequired } } : {}),
-    requires: ["raw.agent/1", "raw.tool-api/1", "raw.skill/1"],
+    requires: ["raw.agent/1", "raw.tool-api/1", "raw.skill/1", ...(Object.keys(emittedHooks).length ? ["raw.hook/1"] : [])],
     ...(prerequisites.size ? { metadata: { external_executables: [...prerequisites].sort() } } : {}) };
   await writeFile(join(out, "raw-package.json"), JSON.stringify(manifest, null, 2) + "\n");
   const report = await inspectPackage(out);

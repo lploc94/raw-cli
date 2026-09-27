@@ -8,6 +8,7 @@ import schema from "../../schemas/raw-package.schema.json" with { type: "json" }
 import { componentKinds, deepFreeze, packagePath, type RawPackageManifest } from "./contract.js";
 import { parseInputSchema } from "./inputs.js";
 import { parseComponentReference } from "./references.js";
+import { parseHookManifest } from "../hooks/manifest.js";
 
 const ajv = new Ajv2020.default({ strict: true, allErrors: true });
 const validate = ajv.compile(schema);
@@ -96,6 +97,21 @@ export async function loadPackageManifest(root: string): Promise<LoadedPackageMa
       }
     }
   }
+  for (const [name, path] of Object.entries(manifest.exports.hooks ?? {})) {
+    const manifestPath = `${path}/hook.json`;
+    if (!files.has(manifestPath)) throw new Error(`missing exported hook manifest: ${manifestPath}`);
+    const bytes = await readFile(join(absolute, manifestPath));
+    if (bytes.length > 65536) throw new Error(`hook manifest is too large: ${manifestPath}`);
+    let hook: ReturnType<typeof parseHookManifest>;
+    try { hook = parseHookManifest(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+      `#hooks/${name}`, posix.basename(path)); }
+    catch (error) { throw new Error(`invalid exported hook ${name}: ${String(error)}`); }
+    for (const item of [hook.command, ...hook.args]) if (item.startsWith("./")) {
+      const target = posix.normalize(posix.join(path, item));
+      packagePath(target);
+      if (!target.startsWith(`${path}/`) || !files.has(target)) throw new Error(`undeclared hook asset: ${target}`);
+    }
+  }
   const covered = (path: string) => files.has(path) || [...files.keys()].some((file) => file.startsWith(`${path}/`));
   const requireReference = (reference: string, expected: string): void => {
     const parsed = parseComponentReference(reference);
@@ -129,6 +145,11 @@ export async function loadPackageManifest(root: string): Promise<LoadedPackageMa
       if (typeof reference !== "string") throw new Error(`invalid exported skill selection: ${path}`);
       if (reference.startsWith("#") || reference.startsWith("dep:")) requireReference(reference, "skills");
       else if (!reference.startsWith("builtin/")) throw new Error(`nonportable exported skill selection: ${reference}`);
+    }
+    const hooks = (agent.hooks as { use?: unknown } | undefined)?.use;
+    if (Array.isArray(hooks)) for (const reference of hooks) {
+      if (typeof reference !== "string") throw new Error(`invalid exported hook selection: ${path}`);
+      requireReference(reference, "hooks");
     }
     if (Array.isArray(agent.vars)) for (const reference of agent.vars) {
       if (typeof reference !== "string") throw new Error(`invalid exported var selection: ${path}`);

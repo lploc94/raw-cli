@@ -1,5 +1,7 @@
 # Configuration and component editing
 
+The component manager treats hooks as editable owned folders alongside tools and skills. A hook has `hook.json` and its script assets; dashboard create, fork, edit, selection and deletion use the same revision and in-use guards. Browsing a hook only validates files. See [hooks](hooks.md) for the command protocol and event list.
+
 The dashboard manages one displayed Raw config path. Runtime configuration remains strict JSON on disk. Browser drafts and appearance preferences are not another configuration layer. Model credentials use explicit keep/set/clear edits; an advanced raw-config editor is an explicit full-document read.
 
 Managed saves carry the content revision from their read. Raw writers share an owned file lock, reread and validate the candidate at its actual config location, then atomically publish a private file. A stale revision returns a conflict without discarding the user's draft. External text editors do not share Raw's lock; Raw compares bytes again before publication without claiming a universal filesystem compare-and-swap. Unknown-to-form fields and ordered selections are preserved. A raw JSON repair save may replace an invalid document after revision checking.

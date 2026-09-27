@@ -1,5 +1,7 @@
 # Portable package contract (v1)
 
+Packages may export `hooks` folders alongside agents, tools and skills. A package agent selects a hook with `#hooks/name` (or `dep:alias#hooks/name` for a pinned dependency); an installed direct agent selects `pkg/ALIAS/hooks/EXPORT`. Export copies selected hook scripts into the archive and rewrites their IDs. Inspection and installation validate the manifest and owned paths without running hook commands. Recipients select the agent or hook explicitly; installation alone never starts a hook. A package requiring hooks declares `raw.hook/1`. See [hooks](hooks.md) for event, matcher and command behavior.
+
 A Raw package is a directory with `raw-package.json`. A distributable `.rawpkg` is a ZIP of that directory and its declared files. The manifest is data: inspecting or validating it must not import a tool, execute a variable provider, connect to MCP, open a session database, or obtain model credentials. The package format version is `schema_version: 1`; it is independent of the Raw release, session storage format, tool API, and package release version.
 
 ```json

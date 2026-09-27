@@ -79,3 +79,23 @@ test("exported agent references must resolve inside the package or a declared de
     description: "Refs", files: ["agents/a.json"], exports: { agents: { a: "agents/a.json" } } }));
   await assert.rejects(loadPackageManifest(root), /unresolved package reference.*tools\/missing/);
 });
+
+test("hook exports validate declared assets passively and reject escaping paths", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-package-hook-manifest-"));
+  mkdirSync(join(root, "hooks", "guard"), { recursive: true });
+  const manifest = { schema_version: 1, name: "@example/guard", version: "1.0.0",
+    description: "Guard", files: ["hooks/guard"], exports: { hooks: { guard: "hooks/guard" } }, requires: ["raw.hook/1"] };
+  const hook = { name: "guard", events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"] };
+  writeFileSync(join(root, "raw-package.json"), JSON.stringify(manifest));
+  writeFileSync(join(root, "hooks", "guard", "hook.json"), JSON.stringify(hook));
+  writeFileSync(join(root, "hooks", "guard", "index.mjs"), "throw new Error('must not execute during inspection');");
+  assert.equal((await loadPackageManifest(root)).manifest.exports.hooks?.guard, "hooks/guard");
+  writeFileSync(join(root, "raw-package.json"), JSON.stringify({ ...manifest, files: ["hooks/guard/hook.json"] }));
+  await assert.rejects(loadPackageManifest(root), /undeclared hook asset/);
+  writeFileSync(join(root, "raw-package.json"), JSON.stringify(manifest));
+  writeFileSync(join(root, "hooks", "guard", "hook.json"), JSON.stringify({ ...hook, args: ["./../escape.mjs"] }));
+  await assert.rejects(loadPackageManifest(root), /invalid exported hook|undeclared hook asset|escape/);
+  writeFileSync(join(root, "hooks", "guard", "hook.json"), JSON.stringify(hook));
+  symlinkSync(join(root, "hooks", "guard", "index.mjs"), join(root, "hooks", "guard", "link.mjs"));
+  await assert.rejects(loadPackageManifest(root), /symlink/);
+});

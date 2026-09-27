@@ -15,7 +15,7 @@ export function ComponentsPage({
   kind,
   changed,
 }: {
-  kind: "tools" | "skills";
+  kind: "tools" | "skills" | "hooks";
   changed: () => Promise<void>;
 }) {
   const { path, navigate } = useRouter();
@@ -28,7 +28,7 @@ export function ComponentsPage({
   const [create, setCreate] = useState(false),
     [folder, setFolder] = useState(""),
     [template, setTemplate] = useState(
-      kind === "tools" ? "builtin/read_file" : "builtin/create_skill",
+      kind === "tools" ? "builtin/read_file" : kind === "skills" ? "builtin/create_skill" : "",
     );
   const refresh = async () =>
     setItems(await api<ComponentInfo[]>(`/components/${kind}`));
@@ -39,14 +39,14 @@ export function ComponentsPage({
     <div className="management-page">
       <span className="scope">Owned component files</span>
       <div className="section-heading">
-        <h1>{id ?? (kind === "tools" ? "Tools" : "Skills")}</h1>
+        <h1>{id ?? (kind === "tools" ? "Tools" : kind === "skills" ? "Skills" : "Hooks")}</h1>
         <button
           onClick={() => {
             setCreate(true);
             setFolder("");
           }}
         >
-          Create {kind === "tools" ? "tool" : "skill"}
+          Create {kind === "tools" ? "tool" : kind === "skills" ? "skill" : "hook"}
         </button>
       </div>
       <ErrorMessage>{error}</ErrorMessage>
@@ -123,8 +123,8 @@ export function ComponentsPage({
       <Modal
         open={create}
         onOpenChange={setCreate}
-        title={`Create ${kind === "tools" ? "tool" : "skill"}`}
-        description="Start from a shipped example. The new component stays unselected until you attach it."
+        title={`Create ${kind === "tools" ? "tool" : kind === "skills" ? "skill" : "hook"}`}
+        description={kind === "hooks" ? "Create a hook manifest and script, then select it on an agent." : "Start from a shipped example. The new component stays unselected until you attach it."}
       >
         <ErrorMessage>{error}</ErrorMessage>
         <Field label="Component folder">
@@ -134,7 +134,7 @@ export function ComponentsPage({
             placeholder="my_component"
           />
         </Field>
-        <Field label="Example">
+        {kind !== "hooks" && <Field label="Example">
           <select
             value={template}
             onChange={(e) => setTemplate(e.target.value)}
@@ -145,15 +145,19 @@ export function ComponentsPage({
                 <option key={i.id}>{i.id}</option>
               ))}
           </select>
-        </Field>
+        </Field>}
         <button
           className="primary"
-          disabled={!folder || !template}
+          disabled={!folder || (kind !== "hooks" && !template)}
           onClick={() => {
-            void api(`/components/${kind}`, "POST", {
+            void api(`/components/${kind}`, "POST", kind === "hooks" ? {
               id: `local/${folder}`,
-              cloneFrom: template,
-            }).then(
+              files: {
+                "hook.json": JSON.stringify({ name: folder, events: [{ name: "PreToolUse", match: "builtin/bash" }],
+                  command: "node", args: ["./index.mjs"], timeout_ms: 5000 }, null, 2) + "\n",
+                "index.mjs": "let input = '';\nprocess.stdin.on('data', chunk => input += chunk);\nprocess.stdin.on('end', () => {\n  const event = JSON.parse(input);\n  process.stdout.write(JSON.stringify({ decision: 'continue' }));\n});\n",
+              },
+            } : { id: `local/${folder}`, cloneFrom: template }).then(
               () => {
                 setCreate(false);
                 setError("");
@@ -165,7 +169,7 @@ export function ComponentsPage({
             );
           }}
         >
-          Create from example
+          {kind === "hooks" ? "Create hook" : "Create from example"}
         </button>
       </Modal>
     </div>
@@ -177,7 +181,7 @@ function ComponentDetail({
   changed,
   refresh,
 }: {
-  kind: "tools" | "skills";
+  kind: "tools" | "skills" | "hooks";
   id: string;
   changed: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -192,7 +196,7 @@ function ComponentDetail({
     [fork, setFork] = useState(false),
     [folder, setFolder] = useState(""),
     [remove, setRemove] = useState(false);
-  const [file, setFile] = useState(kind === "tools" ? "tool.json" : "SKILL.md"),
+  const [file, setFile] = useState(kind === "tools" ? "tool.json" : kind === "skills" ? "SKILL.md" : "hook.json"),
     [dirty, setDirty] = useState(false),
     [newFile, setNewFile] = useState("");
   const [adding, setAdding] = useState(false),

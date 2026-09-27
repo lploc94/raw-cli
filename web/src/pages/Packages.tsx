@@ -583,7 +583,7 @@ export function PackagesPage({
           </>
         ) : (
           <>
-            {["tools", "skills", "vars"].includes(kind) && (
+            {["tools", "skills", "hooks", "vars"].includes(kind) && (
               <Field label="Recipient agent">
                 <select
                   value={agent}
@@ -636,7 +636,7 @@ export function PackagesPage({
                     : {
                         kind,
                         name: name || exportName,
-                        ...(agent && ["tools", "skills", "vars"].includes(kind)
+                        ...(agent && ["tools", "skills", "hooks", "vars"].includes(kind)
                           ? { agent }
                           : {}),
                         ...(as ? { as } : {}),

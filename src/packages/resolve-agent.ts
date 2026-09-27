@@ -9,7 +9,7 @@ import { hostCapabilities } from "./contract.js";
 type JsonObject = Record<string, unknown>;
 export interface PackageAsset { folder: string; name: string; canonicalIdentity: string; as?: string }
 export interface PackageSelections { agent: JsonObject; tools: Readonly<Record<string, PackageAsset>>;
-  skills: Readonly<Record<string, PackageAsset>> }
+  skills: Readonly<Record<string, PackageAsset>>; hooks: Readonly<Record<string, PackageAsset>> }
 type Installed = Awaited<ReturnType<typeof resolveInstalledPackage>>;
 export interface PackageResolutionContext { packages: Map<string, Installed> }
 export function createPackageResolutionContext(): PackageResolutionContext { return { packages: new Map() }; }
@@ -66,7 +66,7 @@ export function validatePackageAgentBinding(binding: unknown): JsonObject & { fr
   if (local.inputs !== undefined) record(local.inputs, "package agent inputs");
   if (local.overrides !== undefined) {
     for (const key of Object.keys(record(local.overrides, "package agent overrides"))) {
-      if (!["request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "vars", "system_prompt", "system_prompt_file"].includes(key)) {
+      if (!["request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "hooks", "vars", "system_prompt", "system_prompt_file"].includes(key)) {
         throw new Error(`unsupported package agent override: ${key}`);
       }
     }
@@ -95,7 +95,7 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
   if (typeof definition.system_prompt_file === "string") {
     if (!isAbsolute(definition.system_prompt_file)) definition.system_prompt_file = join(selected.root, definition.system_prompt_file);
   }
-  for (const block of ["tools", "skills"] as const) {
+  for (const block of ["tools", "skills", "hooks"] as const) {
     const selection = (definition[block] as { use?: unknown } | undefined)?.use;
     if (!Array.isArray(selection)) continue;
     (definition[block] as { use: unknown[] }).use = selection.map((item) => {
@@ -119,10 +119,10 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
 export async function resolvePackageSelections(agent: unknown, options: PackageStoreOptions,
   context?: PackageResolutionContext): Promise<PackageSelections> {
   const effective = structuredClone(record(agent, "agent"));
-  const assets: { tools: Record<string, PackageAsset>; skills: Record<string, PackageAsset> } = {
-    tools: Object.create(null), skills: Object.create(null),
+  const assets: { tools: Record<string, PackageAsset>; skills: Record<string, PackageAsset>; hooks: Record<string, PackageAsset> } = {
+    tools: Object.create(null), skills: Object.create(null), hooks: Object.create(null),
   };
-  for (const kind of ["tools", "skills"] as const) {
+  for (const kind of ["tools", "skills", "hooks"] as const) {
     const block = effective[kind] as { use?: unknown } | undefined;
     if (!block || !Array.isArray(block.use)) continue;
     const ids: string[] = [];
@@ -133,7 +133,7 @@ export async function resolvePackageSelections(agent: unknown, options: PackageS
           ? item as { ref: string; as?: string; inputs?: JsonObject } : parseSelectionReference(item);
       const ref = typeof reference === "string" ? reference : reference.ref;
       if (!ref.startsWith("pkg/") && !ref.startsWith("pkgdep/")) { ids.push(ref); continue; }
-      const dependency = /^pkgdep\/([a-z][a-z0-9_-]*)\/([a-z][a-z0-9_-]*)\/(tools|skills)\/([a-z][a-z0-9_-]*)$/.exec(ref);
+      const dependency = /^pkgdep\/([a-z][a-z0-9_-]*)\/([a-z][a-z0-9_-]*)\/(tools|skills|hooks)\/([a-z][a-z0-9_-]*)$/.exec(ref);
       const parsed = dependency ? undefined : parseComponentReference(ref);
       if (dependency ? dependency[3] !== kind : parsed?.source !== "installed" || parsed.kind !== kind) {
         throw new Error(`invalid selected ${kind} export: ${ref}`);
@@ -154,7 +154,7 @@ export async function resolvePackageSelections(agent: unknown, options: PackageS
     }
     block.use = ids;
   }
-  return { agent: effective, tools: assets.tools, skills: assets.skills };
+  return { agent: effective, tools: assets.tools, skills: assets.skills, hooks: assets.hooks };
 }
 
 export async function resolvePackageDefinition(reference: string, inputs: unknown, options: PackageStoreOptions,

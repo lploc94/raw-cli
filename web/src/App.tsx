@@ -338,7 +338,7 @@ export function App() {
       ) : page === "library" ? (
         <nav aria-label="Library categories" className="context-nav">
           <div className="group-label">Library</div>
-          {["tools", "skills", "vars", "mcp", "packages"].map((name) => (
+          {["tools", "skills", "hooks", "vars", "mcp", "packages"].map((name) => (
             <Link key={name} href={`/library/${name}`}>
               {name === "mcp" ? "MCP" : name[0]!.toUpperCase() + name.slice(1)}
             </Link>
@@ -550,10 +550,10 @@ export function App() {
                 createChat={create}
               />
             ) : page === "library" &&
-              ["tools", "skills"].includes(path.split("/")[2] ?? "tools") ? (
+              ["tools", "skills", "hooks"].includes(path.split("/")[2] ?? "tools") ? (
               <ComponentsPage
                 key={path}
-                kind={path.split("/")[2] === "skills" ? "skills" : "tools"}
+                kind={path.split("/")[2] === "skills" ? "skills" : path.split("/")[2] === "hooks" ? "hooks" : "tools"}
                 changed={refreshBootstrap}
               />
             ) : page === "library" &&

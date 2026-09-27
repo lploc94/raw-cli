@@ -205,3 +205,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-27: GPT-6 Astra review approved in round 2 after two accepted corrections. Phase 1 in_progress.
 - 2026-09-27: Phase 1 APPROVE (self-review): hook config/manifest/loader/runner added; 5 focused tests pass, including denied/invalid output, timeout, abort, escaped asset and descendant cleanup; typecheck and whitespace gate pass. Phase 2 next.
 - 2026-09-27: Phase 2 APPROVE (self-review): common turn/tool/session boundaries, persisted live receipts and host projections added; 14 new focused hook tests and 38 existing ACP/dashboard/session tests pass, typecheck and whitespace pass. Phase 3 next.
+- 2026-09-27: Phase 3 APPROVE (self-review): selected hooks export, pack, install and bind without source paths; dashboard create/select path passes Chromium; passive catalog, path and revision tests pass. Phase 4 in_progress.

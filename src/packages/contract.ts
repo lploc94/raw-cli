@@ -1,4 +1,4 @@
-export const componentKinds = ["agents", "skills", "tools", "vars", "var_providers", "mcp"] as const;
+export const componentKinds = ["agents", "skills", "tools", "hooks", "vars", "var_providers", "mcp"] as const;
 export type ComponentKind = typeof componentKinds[number];
 
 export interface PackageDependency {
@@ -24,7 +24,7 @@ export interface RawPackageManifest {
   metadata?: Readonly<Record<string, unknown>>;
 }
 
-export const hostCapabilities = new Set(["raw.tool-api/1", "raw.var-provider/1", "raw.mcp/1", "raw.agent/1", "raw.skill/1"]);
+export const hostCapabilities = new Set(["raw.tool-api/1", "raw.var-provider/1", "raw.mcp/1", "raw.agent/1", "raw.skill/1", "raw.hook/1"]);
 
 export function packagePath(value: string): string {
   if (!value || value.startsWith("/") || value.includes("\\") || value.includes(":") || value.includes("\0")

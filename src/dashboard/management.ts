@@ -138,7 +138,7 @@ export function createManagementRoutes(context: DashboardContext): DashboardRout
           return send(view(await (kind === "agents" ? editAgent : editModel)({ ...options, expectedRevision: revisionField(body) }, edit as ResourceEdit)));
         }
       }
-      const component = /^\/api\/components\/(tools|skills)(?:\/([^/]+)(?:\/(file|selection))?)?$/.exec(path);
+      const component = /^\/api\/components\/(tools|skills|hooks)(?:\/([^/]+)(?:\/(file|selection))?)?$/.exec(path);
       if (component) {
         const kind = component[1] as EditableComponentKind, id = component[2] ? decodeURIComponent(component[2]) : undefined;
         if (method === "GET" && !id) return send(await components.list(kind));

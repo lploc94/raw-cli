@@ -1,6 +1,22 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { test, expect } from "./fixtures.js";
 
+test("create, edit and select a hook through Library and Agents", async ({ page, raw }) => {
+  await page.goto(raw.server.launchUrl);
+  await page.getByRole("link", { name: "Library", exact: true }).click();
+  await page.getByRole("link", { name: "Hooks", exact: true }).click();
+  await page.getByRole("button", { name: "Create hook" }).click();
+  await page.getByLabel("Component folder").fill("guard");
+  await page.getByRole("button", { name: "Create hook", exact: true }).last().click();
+  await expect(page.getByRole("heading", { name: "local/guard" })).toBeVisible();
+  await page.getByLabel("Attach to agent").selectOption("raw");
+  await page.getByRole("button", { name: "Attach", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Attached" })).toBeVisible();
+  await page.getByRole("link", { name: "Agents", exact: true }).click();
+  await page.getByRole("link", { name: "raw", exact: true }).first().click();
+  await expect(page.getByLabel("Selected hooks")).toContainText("local/guard");
+});
+
 test("compose an agent, fork a skill, save ordered selections, and start real chat", async ({
   page,
   raw,

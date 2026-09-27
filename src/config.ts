@@ -79,6 +79,7 @@ export interface RuntimeConfig {
   readonly hookIds: readonly string[];
   readonly packageTools: Readonly<Record<string, PackageAsset>>;
   readonly packageSkills: Readonly<Record<string, PackageAsset>>;
+  readonly packageHooks: Readonly<Record<string, PackageAsset>>;
   readonly packageMcpIdentities: Readonly<Record<string, string>>;
   readonly packageMcpSources: Readonly<Record<string, { root: string; identity: string }>>;
   readonly toolRules: readonly ToolPolicyRule[];
@@ -818,6 +819,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     hookIds: Object.freeze([...(selectedSpec?.hookIds ?? [])]),
     packageTools: Object.freeze(packageSelection?.tools ?? {}),
     packageSkills: Object.freeze(packageSelection?.skills ?? {}),
+    packageHooks: Object.freeze(packageSelection?.hooks ?? {}),
     packageMcpIdentities: Object.freeze(mcpIdentities ?? {}),
     packageMcpSources: Object.freeze(mcpSources ?? {}),
     toolRules,

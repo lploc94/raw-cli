@@ -9,11 +9,12 @@ import { loadPackageManifest } from "../packages/manifest.js";
 import { listInstalledPackages, resolveInstalledPackage } from "../packages/store.js";
 import { parseSkillMarkdown } from "../skills/frontmatter.js";
 import { compileToolSchema, parseToolManifest } from "../tools/plugins/manifest.js";
+import { parseHookManifest } from "../hooks/manifest.js";
 import { mutateConfig, readManagedConfig } from "./config.js";
 import { record } from "./agents.js";
 import { contained, ManagementError, ownedPath, readText, relativeFile, saveOwnedText, validText, type TextSnapshot } from "./files.js";
 
-export type EditableComponentKind = "tools" | "skills";
+export type EditableComponentKind = "tools" | "skills" | "hooks";
 export interface ComponentInfo {
   id: string;
   kind: EditableComponentKind;
@@ -36,7 +37,7 @@ export class ComponentManager {
   readonly configPath: string;
   constructor(private readonly options: LoadConfigOptions) { this.configPath = configFilePath(options); }
   private root(kind: EditableComponentKind, scope: "builtin" | "local" | "agent"): string {
-    if (kind !== "tools" && kind !== "skills") throw new ManagementError("invalid_input", "unsupported component kind");
+    if (kind !== "tools" && kind !== "skills" && kind !== "hooks") throw new ManagementError("invalid_input", "unsupported component kind");
     if (scope === "builtin") return join(packageRoot(), "dist", kind, "builtin");
     return join(scope === "local" ? dirname(canonicalConfigPath(this.options)) : dirname(this.configPath), kind);
   }
@@ -51,7 +52,7 @@ export class ComponentManager {
     return { ...await resolveInstalledPackage({ ...options, alias }), linked: false };
   }
   private async asset(kind: EditableComponentKind, id: string): Promise<Asset> {
-    if (kind !== "tools" && kind !== "skills") throw new ManagementError("invalid_input", "unsupported component kind");
+    if (kind !== "tools" && kind !== "skills" && kind !== "hooks") throw new ManagementError("invalid_input", "unsupported component kind");
     const local = /^(builtin|local|agent)\/([a-z][a-z0-9_-]*)$/.exec(id);
     if (local) {
       const scope = local[1] as "builtin" | "local" | "agent"; const name = local[2]!;
@@ -59,7 +60,7 @@ export class ComponentManager {
       if (!contained(root, folder) || folder === root) throw new ManagementError("invalid_input", "component folder escapes root");
       return { id, folder, name, source: scope, readOnly: scope === "builtin" };
     }
-    const pkg = /^pkg\/([a-z][a-z0-9_-]*)\/(tools|skills)\/([a-z][a-z0-9_-]*)$/.exec(id);
+    const pkg = /^pkg\/([a-z][a-z0-9_-]*)\/(tools|skills|hooks)\/([a-z][a-z0-9_-]*)$/.exec(id);
     if (!pkg || pkg[2] !== kind) throw new ManagementError("invalid_input", "invalid component ID");
     const installed = await this.package(pkg[1]!); const relative = installed.manifest.exports[kind]?.[pkg[3]!];
     if (!relative) throw new ManagementError("not_found", "package component not found");
@@ -97,6 +98,12 @@ export class ComponentManager {
       const manifest = parseToolManifest(JSON.parse(await read("tool.json")), asset.id, asset.name);
       compileToolSchema(manifest); await read("index.mjs");
       return { name: manifest.name, description: manifest.description, manifest: manifest as unknown as Record<string, unknown> };
+    }
+    if (kind === "hooks") {
+      const manifest = parseHookManifest(JSON.parse(await read("hook.json")), asset.id, asset.name);
+      for (const path of [manifest.command, ...manifest.args]) if (path.startsWith("./")) await read(path.slice(2));
+      return { name: manifest.name, description: manifest.events.map((event) => event.name).join(", "),
+        manifest: manifest as unknown as Record<string, unknown> };
     }
     const skill = parseSkillMarkdown(await read("SKILL.md"), asset.name);
     return { name: skill.name, description: skill.description, bodyBytes: Buffer.byteLength(skill.markdown) };
@@ -184,7 +191,7 @@ export class ComponentManager {
       const target = await ownedPath(asset.folder, path, true);
       return saveOwnedText(target, source, revision, async () => {
         await ownedPath(asset.folder, path, true);
-        if (path === "tool.json" || path === "SKILL.md") await this.validate(kind, asset, { path, source });
+        if (path === "tool.json" || path === "SKILL.md" || path === "hook.json") await this.validate(kind, asset, { path, source });
       });
     });
   }
@@ -224,9 +231,12 @@ export class ComponentManager {
       if (kind === "tools") {
         const file = join(stage, "tool.json"); const value = JSON.parse((await readText(file)).source) as Record<string, unknown>;
         value.id = name; value.name = name; await writeFile(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
-      } else {
+      } else if (kind === "skills") {
         const file = join(stage, "SKILL.md"); const value = (await readText(file)).source;
         await writeFile(file, value.replace(/^name:.*$/m, `name: ${name.replaceAll("_", "-")}`), { mode: 0o600 });
+      } else {
+        const file = join(stage, "hook.json"); const value = JSON.parse((await readText(file)).source) as Record<string, unknown>;
+        value.name = name; await writeFile(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
       }
     });
   }

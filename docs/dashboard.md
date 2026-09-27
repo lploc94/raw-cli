@@ -60,6 +60,8 @@ screen-reader verdict. This is separate from the automated browser suite.
 
 ## Customize your agents
 
+Agents may select ordered hooks. Use the Hooks component view to create or edit `hook.json` and scripts, then add a hook ID in the agent editor. The catalog shows event filters and validation without executing the hook. Package exports can carry selected hooks to another installation; see [hooks](hooks.md) and [packages](packages.md).
+
 Agents selects a model, a literal or file prompt, and ordered tools, skills and
 vars. JSON views expose all existing request/cache/compact/policy fields and
 package overrides. Skill selections require the list/load skill tools. Policy

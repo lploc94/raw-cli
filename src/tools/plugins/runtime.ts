@@ -67,7 +67,8 @@ export async function createRuntimeTools(options: {
   const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills, vars,
     globalConfigRoot: runtime.globalConfigRoot, packageTools: runtime.packageTools });
   const selectedHooks = await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath: runtime.configPath,
-    cwd, globalConfigRoot: runtime.globalConfigRoot, ...(options.env ? { env: options.env } : {}) });
+    cwd, globalConfigRoot: runtime.globalConfigRoot, packageHooks: runtime.packageHooks,
+    ...(options.env ? { env: options.env } : {}) });
   if (signal?.aborted) throw new Error("tool startup aborted");
   const registry = new ToolRegistry(runtime.toolRules);
   for (const plugin of plugins) registry.register(plugin.registration);

@@ -19,6 +19,7 @@
         "agents": { "$ref": "#/$defs/exportMap" },
         "skills": { "$ref": "#/$defs/exportMap" },
         "tools": { "$ref": "#/$defs/exportMap" },
+        "hooks": { "$ref": "#/$defs/exportMap" },
         "vars": { "$ref": "#/$defs/exportMap" },
         "var_providers": { "$ref": "#/$defs/exportMap" },
         "mcp": { "$ref": "#/$defs/exportMap" }
