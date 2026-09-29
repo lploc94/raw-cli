@@ -15,6 +15,7 @@ import { Approvals, type Approval } from "./approvals.js";
 import { DashboardError, readBody, textField } from "./errors.js";
 import { AttachmentStaging } from "./attachments.js";
 import { searchWorkspaceFiles, workspaceFileLink } from "./files.js";
+import { browseDirectory, listWorkspaces } from "./workspaces.js";
 import { LiveOutput, type LiveSegment } from "./live-output.js";
 import { SessionStreams } from "./streams.js";
 import type { DashboardContext, DashboardRoute } from "./server.js";
@@ -53,6 +54,14 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   const operations: SessionOperations = new SessionOperations({ store, env: context.env, ...(attach ? { attach } : {}),
     approve: (operation) => approvals.forOperation(operation, () => operations.approvalTimeout(operation.id)) });
   context.operations = operations;
+  const runningByWorkspace = () => {
+    const counts = new Map<string, number>();
+    for (const id of operations.activeIds()) {
+      const operation = store.getOperation(id); const session = operation && store.getSession(operation.sessionId);
+      if (session) counts.set(session.cwd, (counts.get(session.cwd) ?? 0) + 1);
+    }
+    return counts;
+  };
   const staging = new AttachmentStaging(); context.attachments = staging;
   context.onClose(() => staging.clear());
   const composer = async (name: string) => {
@@ -106,10 +115,8 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     const reply = (value: unknown, status = 200) => { context.json(response, status, value); return true; };
     const agentRoute = /^\/api\/agents\/([^/]+)\/composer$/.exec(path);
     if (agentRoute && method === "GET") return reply(await composer(decodeURIComponent(agentRoute[1]!)));
-    if (path === "/api/workspaces" && method === "GET") {
-      const items = store.recentWorkspaces(); if (!items.some((item) => item.cwd === context.cwd)) items.unshift({ cwd: context.cwd, updatedAt: 0 });
-      return reply({ items });
-    }
+    if (path === "/api/workspaces" && method === "GET") return reply(await listWorkspaces(store, { current: context.cwd, env: context.env, search: url.searchParams, running: runningByWorkspace }));
+    if (path === "/api/workspaces/browse" && method === "GET") return reply(await browseDirectory(url.searchParams, context.env));
     if (path === "/api/workspaces/validate" && method === "POST") return reply({ cwd: workspacePath((await context.readJson(request)).cwd, context.cwd) });
     if (path === "/api/activity" && method === "GET") {
       const all = store.listOperations(undefined, 100).filter((op) => terminalOperationStates.has(op.state) && store.getSession(op.sessionId));

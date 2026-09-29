@@ -69,6 +69,11 @@ export interface SessionStorageStats {
   heavySessions: Array<{ id: string; historyItems: number; modelMessages: number; encodedBytes: number; payloadBytes: number; totalBytes: number }>;
 }
 
+export interface WorkspaceActivity { cwd: string; updatedAt: number; sessions: number }
+function workspaceActivityRow(row: Record<string, unknown>): WorkspaceActivity {
+  return { cwd: String(row.display_path), updatedAt: Number(row.updated_at), sessions: Number(row.sessions) };
+}
+
 export interface SessionOwner { token: string; generation: number }
 export interface AgentIdentity {
   cwd: string;
@@ -309,10 +314,18 @@ export class SessionStore {
     return row ? this.operationRow(row) : undefined;
   }
 
-  recentWorkspaces(): Array<{ cwd: string; updatedAt: number }> {
-    return this.database.prepare(`SELECT w.display_path, max(s.updated_at) AS updated_at FROM workspaces w
+  recentWorkspaces(): WorkspaceActivity[] {
+    return this.database.prepare(`SELECT w.display_path, max(s.updated_at) AS updated_at, count(s.id) AS sessions FROM workspaces w
       JOIN sessions s ON s.workspace_id = w.id WHERE s.updated_at > ? GROUP BY w.id ORDER BY updated_at DESC LIMIT 100`)
-      .all(this.cutoff()).map((row) => ({ cwd: String(row.display_path), updatedAt: Number(row.updated_at) }));
+      .all(this.cutoff()).map(workspaceActivityRow);
+  }
+
+  /** Activity for specific workspaces (by canonical path), with the recent-list retention cutoff but no length limit. */
+  workspaceActivity(canonicalPaths: readonly string[]): WorkspaceActivity[] {
+    const statement = this.database.prepare(`SELECT w.display_path, max(s.updated_at) AS updated_at, count(s.id) AS sessions FROM workspaces w
+      JOIN sessions s ON s.workspace_id = w.id WHERE w.canonical_path = ? AND s.updated_at > ? GROUP BY w.id`);
+    const cutoff = this.cutoff();
+    return canonicalPaths.flatMap((path) => statement.all(path, cutoff).map(workspaceActivityRow));
   }
 
   historyAfter(sessionId: string, after: number, through: number): HistoryItem[] {
