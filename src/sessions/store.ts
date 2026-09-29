@@ -1039,6 +1039,15 @@ export class SessionStore {
     return { items, ...(hasMore && oldest ? { nextCursor: makeCursor("history", scope, { sequence: oldest.sequence }) } : {}) };
   }
 
+  /** One history item by session and sequence, decoding payload blobs; no paging, so any old item is reachable. */
+  getSessionHistoryItem(sessionId: string, sequence: number): HistoryItem | undefined {
+    if (!this.getSession(sessionId)) throw new Error(this.missingSessionMessage());
+    const row = this.database.prepare(`SELECT session_id, sequence, created_at, kind, payload_json, status FROM history
+      WHERE session_id = ? AND sequence = ?`).get(sessionId, sequence);
+    return row ? { sessionId: String(row.session_id), sequence: Number(row.sequence), createdAt: Number(row.created_at), kind: String(row.kind),
+      payload: this.decodeStored(String(row.payload_json)) as Record<string, unknown>, status: String(row.status) } : undefined;
+  }
+
   async scanSessionHistory(sessionId: string, visit: (item: HistoryItem) => Promise<void>): Promise<void> {
     if (!this.getSession(sessionId)) throw new Error(this.missingSessionMessage());
     let after = 0;

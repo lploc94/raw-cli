@@ -7,7 +7,7 @@ import type { UserBlock } from "../llm/types.js";
 import { readManagedConfig } from "../management/config.js";
 import { SessionOperations, type AttachSessionRuntime, type SessionOperation } from "../sessions/operations.js";
 import { terminalOperationStates, type OperationIntent } from "../sessions/operation-types.js";
-import { projectHistoryItem, type HistoryView } from "../sessions/view.js";
+import { projectHistoryItem, userAttachmentBlocks, type HistoryView } from "../sessions/view.js";
 import type { Page, SessionSummary } from "../sessions/store.js";
 import type { SessionMetrics } from "../sessions/metrics.js";
 import { Approvals, type Approval } from "./approvals.js";
@@ -142,6 +142,20 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         return reply(staging.stage(id, { mimeType, name: name.replace(/[\\/\0]/g, "_"), bytes }), 201);
       }
       if (attachmentRoute[2] && method === "DELETE") return reply({ removed: staging.remove(id, decodeURIComponent(attachmentRoute[2])) });
+    }
+    const historyAttachment = /^\/api\/sessions\/([^/]+)\/history\/(\d+)\/attachments\/(\d+)$/.exec(path);
+    if (historyAttachment && method === "GET") {
+      const id = decodeURIComponent(historyAttachment[1]!); requireSession(id);
+      const notFound = () => new DashboardError(404, "not_found", "Attachment not found");
+      const item = store.getSessionHistoryItem(id, Number(historyAttachment[2]));
+      if (!item || item.kind !== "user") throw notFound();
+      const block = userAttachmentBlocks(item.payload.input)[Number(historyAttachment[3])];
+      const found = block && staging.kinds.content(block);
+      if (!found || !found.kind.mimeTypes.includes(found.content.mimeType)) throw notFound();
+      response.writeHead(200, { "Content-Type": found.content.mimeType, "Content-Length": found.content.bytes.length, "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=3600", "Content-Disposition": "inline" });
+      response.end(found.content.bytes);
+      return true;
     }
     const fileSearch = /^\/api\/sessions\/([^/]+)\/files$/.exec(path);
     if (fileSearch && method === "GET") {

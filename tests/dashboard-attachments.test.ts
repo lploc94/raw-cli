@@ -247,3 +247,108 @@ test("closing the dashboard drops every staged attachment", async () => {
   await f.close();
   assert.equal(staging.size(), 0);
 });
+
+// ---- history exposure ----
+
+import { createHash } from "node:crypto";
+import { openSessionStore } from "../src/sessions/store.js";
+import { projectHistoryItem, type HistoryView } from "../src/sessions/view.js";
+
+const sha = (bytes: Uint8Array | Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+test("history views expose attachment metadata, never base64, and keep text-only items unchanged", () => {
+  const item = (input: unknown) => ({ sessionId: "s", sequence: 1, kind: "user", payload: { input }, status: "complete", createdAt: 1 });
+  const view = projectHistoryItem(item([{ type: "text", text: "look " }, imageBlock(png, "image/png", "a.png"),
+    { type: "text", text: "and read" }, { type: "resource_link", uri: "file:///w/x.ts", name: "x.ts", size: 9 }]));
+  assert.equal(view.text, "look and read");
+  assert.deepEqual(view.attachments, [
+    { index: 0, kind: "image", name: "a.png", mimeType: "image/png", byteSize: png.length },
+    { index: 1, kind: "file", name: "x.ts", mimeType: null, byteSize: 9 }]);
+  assert.ok(!JSON.stringify(view).includes(png.toString("base64").slice(0, 60)));
+  const plain = projectHistoryItem(item("hello"));
+  assert.equal(plain.text, "hello");
+  assert.equal("attachments" in plain, false);
+});
+
+test("attachment bytes round-trip from any history page, including blob-staged sizes, restarts and registry-served kinds", async () => {
+  const f = await dashboardFixture({ model: { vision: true }, responses: [reply(), reply()] });
+  try {
+    writeFileSync(join(f.root, "note.txt"), "remember milk");
+    const { id } = await session(f);
+    const large = makePngOfSize(200 * 1024); // above the 64 KiB inline limit, so the store keeps it as a payload file
+    const staged = await stageOk(f, id, large, "image/png", "big.png");
+    const sent = await turn(f, id, { clientRequestId: "hist", input: "see", attachments: [staged.id], files: ["note.txt"] });
+    assert.equal((await f.wait(sent.body.id)).state, "completed");
+    const store = f.server.context.store!;
+    for (let i = 0; i < 60; i++) store.appendHistory({ sessionId: id, kind: "status", payload: { text: `filler ${i}` } });
+    const snapshot = await f.json<{ history: { items: HistoryView[] } }>(`/sessions/${id}`);
+    assert.ok(!snapshot.history.items.some((entry) => entry.kind === "user"), "the user item is older than the latest page");
+    assert.ok(!JSON.stringify(snapshot).includes(large.toString("base64").slice(0, 80)));
+    const page = await f.json<{ items: HistoryView[] }>(`/sessions/${id}/history?limit=100`);
+    const user = page.items.find((entry) => entry.kind === "user")!;
+    assert.deepEqual(user.attachments?.map((entry) => [entry.index, entry.kind, entry.name]), [[0, "file", "note.txt"], [1, "image", "big.png"]]);
+    const fetchBytes = async (sequence: number, index: number) => {
+      const response = await f.api(`/sessions/${id}/history/${sequence}/attachments/${index}`);
+      return { response, bytes: Buffer.from(await response.arrayBuffer()) };
+    };
+    const image = await fetchBytes(user.sequence, 1);
+    assert.equal(image.response.status, 200);
+    assert.equal(sha(image.bytes), sha(large));
+    assert.equal(image.response.headers.get("content-type"), "image/png");
+    assert.equal(image.response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(image.response.headers.get("cache-control"), "private, max-age=3600");
+    // The same bytes come back through a fresh store handle on the same state (restart).
+    const reopened = openSessionStore({ env: f.env });
+    try {
+      const stored = reopened.getSessionHistoryItem(id, user.sequence)!;
+      const block = (stored.payload.input as Array<{ type: string; data?: string }>).find((entry) => entry.type === "image")!;
+      assert.equal(sha(Buffer.from(block.data!, "base64")), sha(large));
+    } finally { reopened.close(); }
+    // Refusals: resource links without a registered reader, out-of-range, non-user, unknown sequence.
+    assert.equal((await fetchBytes(user.sequence, 0)).response.status, 404);
+    assert.equal((await fetchBytes(user.sequence, 2)).response.status, 404);
+    assert.equal((await fetchBytes(page.items.find((entry) => entry.kind === "status")!.sequence, 0)).response.status, 404);
+    assert.equal((await fetchBytes(999999, 0)).response.status, 404);
+    // A kind registered later serves its own stored blocks through the same route.
+    f.server.context.attachments!.kinds.register({ id: "note", mimeTypes: ["text/plain"], maxBytes: 1024, validate: () => {},
+      toBlock: () => ({ type: "text", text: "" }),
+      fromBlock: (block) => block.type === "resource_link" && block.name === "note.txt" ? { mimeType: "text/plain", bytes: Buffer.from("registry served") } : undefined });
+    const note = await fetchBytes(user.sequence, 0);
+    assert.equal(note.response.status, 200);
+    assert.equal(note.bytes.toString(), "registry served");
+  } finally { await f.close(); }
+});
+
+import { startDashboard } from "../src/dashboard/server.js";
+import { eventStream } from "./fixtures/dashboard.js";
+
+test("attachment bytes survive a dashboard restart, and SSE never carries base64", async () => {
+  const f = await dashboardFixture({ model: { vision: true }, responses: [reply()] });
+  try {
+    const { id } = await session(f);
+    const stream = await eventStream(f.server, id);
+    const seen: string[] = [JSON.stringify(await stream.next())];
+    const staged = await stageOk(f, id, png, "image/png", "p.png");
+    const sent = await turn(f, id, { clientRequestId: "sse", input: "see", attachments: [staged.id] });
+    assert.equal((await f.wait(sent.body.id)).state, "completed");
+    for (let i = 0; i < 40; i++) {
+      const event = await stream.next(); seen.push(JSON.stringify(event));
+      if (event.type === "operation" && (event.data as { state?: string }).state === "completed") break;
+    }
+    stream.close();
+    const all = seen.join("");
+    assert.ok(all.includes('"user"'), "the committed user history event was streamed");
+    assert.ok(!all.includes(png.toString("base64").slice(0, 40)), "no base64 in SSE");
+    const page = await f.json<{ items: HistoryView[] }>(`/sessions/${id}/history?limit=50`);
+    const user = page.items.find((entry) => entry.kind === "user")!;
+    await f.server.close();
+    const again = await startDashboard({ port: 0, cwd: f.root, configPath: f.configPath, env: f.env });
+    try {
+      const response = await fetch(`${again.url}/api/sessions/${id}/history/${user.sequence}/attachments/0`, { headers: { Authorization: `Bearer ${again.token}` } });
+      assert.equal(response.status, 200);
+      assert.equal(sha(Buffer.from(await response.arrayBuffer())), sha(png));
+      assert.match(response.headers.get("content-security-policy") ?? "", /img-src 'self' data:/);
+      assert.equal((await fetch(`${again.url}/api/sessions/${id}/history/${user.sequence}/attachments/0`)).status, 401);
+    } finally { await again.close(); }
+  } finally { await f.close(); }
+});

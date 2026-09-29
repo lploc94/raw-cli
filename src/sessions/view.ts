@@ -1,10 +1,22 @@
 import type { CompactionDetails, RunResult } from "../agent.js";
-import { renderUserInput, type UserInput } from "../llm/types.js";
+import { base64ByteLength, type UserBlock } from "../llm/types.js";
 import type { ToolResult } from "../tools/types.js";
 import type { HistoryItem } from "./store.js";
 import type { HookReceipt } from "../hooks/dispatcher.js";
 import { projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./visible.js";
 
+/** Metadata of one non-text block of a user message; bytes are served separately, never embedded in a view. */
+export interface HistoryAttachment { index: number; kind: string; name: string; mimeType: string | null; byteSize: number | null }
+/** The non-text blocks of a stored user input, in order. `HistoryAttachment.index` addresses this list. */
+export function userAttachmentBlocks(input: unknown): UserBlock[] {
+  return Array.isArray(input) ? (input as UserBlock[]).filter((block) => block.type !== "text") : [];
+}
+function attachmentView(block: UserBlock, index: number): HistoryAttachment {
+  if (block.type === "image") return { index, kind: "image", name: block.name ?? `image.${block.mimeType === "image/png" ? "png" : "jpg"}`,
+    mimeType: block.mimeType, byteSize: base64ByteLength(block.data) };
+  if (block.type === "resource_link") return { index, kind: "file", name: block.name, mimeType: block.mimeType ?? null, byteSize: block.size ?? null };
+  return { index, kind: "unknown", name: "attachment", mimeType: null, byteSize: null };
+}
 export interface HistoryView {
   id: string;
   sequence: number;
@@ -12,6 +24,7 @@ export interface HistoryView {
   kind: string;
   status: string;
   text?: string;
+  attachments?: HistoryAttachment[];
   turnId?: string;
   operationId?: string;
   callId?: string;
@@ -34,8 +47,13 @@ export function projectHistoryItem(item: HistoryItem): HistoryView {
     sequence: item.sequence, createdAt: item.createdAt, kind: item.kind, status: item.status,
     ...(typeof payload.turnId === "string" ? { turnId: payload.turnId } : {}),
     ...(typeof payload.operationId === "string" ? { operationId: payload.operationId } : {}) };
-  if (item.kind === "user") view.text = typeof payload.input === "string" || Array.isArray(payload.input)
-    ? renderUserInput(payload.input as UserInput) : String(payload.text ?? "");
+  if (item.kind === "user") {
+    if (Array.isArray(payload.input)) {
+      view.text = (payload.input as UserBlock[]).flatMap((block) => block.type === "text" ? [block.text] : []).join("");
+      const attachments = userAttachmentBlocks(payload.input).map(attachmentView);
+      if (attachments.length) view.attachments = attachments;
+    } else view.text = typeof payload.input === "string" ? payload.input : String(payload.text ?? "");
+  }
   else if (["assistant", "reasoning", "status", "runtime_transition", "skill_notice"].includes(item.kind)) {
     view.text = String(object(update.content).text ?? payload.text ?? "");
   } else if (item.kind === "compaction") view.compaction = structuredClone(payload) as unknown as CompactionDetails;

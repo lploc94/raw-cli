@@ -264,9 +264,9 @@ Fetch bytes equal the originally uploaded bytes (hash compare) after a server re
 Add the single-item store read (decoding blob refs) rather than paging; never serve unvalidated types; the content route contains no image-specific logic (registry dispatch only).
 
 ### Acceptance criteria
-- [ ] AC-1: History views expose attachment metadata without base64 — proven by view/stream tests.
-- [ ] AC-2: Image bytes round-trip, including blob-staged sizes and after restart — proven by hash test.
-- [ ] AC-3: Endpoint refuses non-image/invalid targets and sets nosniff — proven by test.
+- [x] AC-1: History views expose attachment metadata without base64 — proven by view/stream tests.
+- [x] AC-2: Image bytes round-trip, including blob-staged sizes and after restart — proven by hash test.
+- [x] AC-3: Endpoint refuses non-image/invalid targets and sets nosniff — proven by test.
 
 ### Focused verification
 `node --import tsx --test tests/session-view.test.ts tests/dashboard-sessions.test.ts tests/dashboard-streams.test.ts`
@@ -465,3 +465,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-29: Plan drafted, Codex-reviewed (APPROVE) and revised so non-vision models degrade to placeholders instead of failing.
 - 2026-09-29 Phase 1 (commit 3aa9c68, Codex gpt-6-astra review APPROVE in 2 rounds): implemented user `image` blocks, `nativeUserContent` (ordered parts, validation, 16 MiB aggregate), four adapter mappings, request-time vision placeholders (`projectVisionMessages`), image-aware estimator, summary/render placeholders, pre-commit validation in `agent.run`. Tests in `tests/user-images.test.ts` (7). `npm run typecheck` clean; `npm test` 553/556 — the 3 failures (REPL PTY `T-08`, `T-08b` x2 in `tests/cli.test.ts`) fail identically on baseline HEAD `c406e68` (environmental PTY), not caused by this change.
 - 2026-09-29 Phase 2: `AttachmentKinds`/`AttachmentStaging` registry and staging (`src/dashboard/attachments.ts`), workspace search and file links (`src/dashboard/files.ts`), routes for upload/delete, structured turns (`attachments`, `files`), file search and `GET /api/agents/:name/composer` (effective config + per-skill loading), `SessionOperations.submit(intent, blocks?)`. `tests/dashboard-attachments.test.ts` (10 tests). `npm run typecheck` clean; `npm test` 561/564 before the final review fixes and the same 3 baseline PTY failures. Codex gpt-6-astra review: APPROVE in 3 rounds (8 findings fixed; residual file-name-only directory swap window accepted, Node has no handle-tied readdir).
+- 2026-09-29 Phase 3: `HistoryView.attachments` (metadata only), user `text` = text blocks, `SessionStore.getSessionHistoryItem`, and `GET /api/sessions/:id/history/:sequence/attachments/:index` (registry dispatch via `fromBlock`, nosniff, Bearer-only so the web client fetches with the header and renders `data:` URLs, no CSP change). Tests added to `tests/dashboard-attachments.test.ts` (13 total: projection, hash round-trip of a blob-staged image beyond the first page, 404 matrix, fake kind, restart, SSE without base64, CSP). `npm run typecheck` clean; `npm test` 565/568 with the same 3 baseline PTY failures. Codex gpt-6-astra review: APPROVE in 3 rounds (2 fixed, 1 disputed with D8 wording clarified).

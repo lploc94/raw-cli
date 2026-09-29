@@ -74,7 +74,7 @@ All user-block validation and normalization happen in `nativeUserContent`, mirro
 `@` search and `files[]` resolve relative paths against the session cwd with `realpath` containment. `..`, absolute paths and symlink escapes are rejected. Search ignores `.git` and `node_modules`.
 
 ### D8. History exposes metadata, not bytes
-`HistoryView.attachments` carries `{index, kind /* open registry id */, name, mimeType, byteSize}`. Bytes are served by `GET /api/sessions/:id/history/:sequence/attachments/:index`, dispatched through the server kind registry (`fromBlock`) and backed by a single-item store read by sequence (so old history pages stay reachable) with the stored mime, `nosniff` and same-origin `img-src`. Snapshots and SSE events never embed base64.
+`HistoryView.attachments` carries `{index, kind, name, mimeType, byteSize}`; `kind` is the block's kind id (`image` today, `file` for a workspace `resource_link`, which has no bytes to serve), derived from the stored block in the session layer so history stays independent of the dashboard registry; the client keys its renderer registry on it. Bytes are served by `GET /api/sessions/:id/history/:sequence/attachments/:index`, dispatched through the server kind registry (`fromBlock`) and backed by a single-item store read by sequence (so old history pages stay reachable) with the stored mime, `nosniff` and same-origin `img-src`. Snapshots and SSE events never embed base64.
 
 ### D9. One generic suggestion popover
 A single combobox/listbox component (focus stays in the textarea, `aria-activedescendant`) with trigger-character providers. `/` (commands) and `@` (files) are providers, so a future trigger adds a provider only.
