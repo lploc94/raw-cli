@@ -406,11 +406,12 @@ export class SessionStore {
       .run(sessionId, owner.token, owner.generation);
   }
 
+  /** Titles a session created without one from its first message; a title the user chose is never replaced. */
   setTitleFromPrompt(sessionId: string, owner: SessionOwner, prompt: string): void {
     const title = prompt.trim().replace(/\s+/g, " ").slice(0, 80) || "New session";
     this.transaction(() => {
       this.ownerRow(sessionId, owner);
-      this.database.prepare("UPDATE sessions SET title = ? WHERE id = ? AND title = 'New session'").run(title, sessionId);
+      this.database.prepare("UPDATE sessions SET title = ? WHERE id = ? AND title IN ('New session', 'New chat')").run(title, sessionId);
     });
   }
 
