@@ -421,40 +421,40 @@ small,
   min-width: 0;
   border-radius: 8px 0 0 8px;
 }
-.agent-picker {
-  position: relative;
+.context-panel .agent-picker {
   flex: none;
-  display: flex;
   width: 96px;
-}
-.context-panel .agent-picker select {
-  appearance: none;
-  width: 100%;
   min-height: 40px;
-  padding: 0 26px 0 12px;
+  justify-content: space-between;
+  padding: 0 10px 0 12px;
   border: 1px solid #5144d8;
   border-left-color: #ffffff55;
   border-radius: 0 8px 8px 0;
   background: #5144d8;
   color: white;
   font-weight: 600;
-  text-overflow: ellipsis;
-  cursor: pointer;
 }
-.context-panel .agent-picker select:hover {
+.context-panel .agent-picker:hover,
+.context-panel .agent-picker[data-state="open"] {
   background: #4033bd;
 }
-.context-panel .agent-picker option {
-  background: var(--canvas);
-  color: var(--text);
+.agent-picker span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .agent-picker svg {
-  position: absolute;
-  right: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: white;
-  pointer-events: none;
+  flex: none;
+}
+.agent-menu {
+  min-width: 10rem;
+  max-height: min(60vh, var(--radix-dropdown-menu-content-available-height));
+  overflow-y: auto;
+}
+.agent-menu-check {
+  display: inline-flex;
+  width: 14px;
+  flex: none;
 }
 .context-panel .field {
   font-size: 12px;

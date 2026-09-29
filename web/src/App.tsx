@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowRight,
   Bot,
+  Check,
   ChevronDown,
   Command,
   Library,
@@ -13,6 +14,7 @@ import {
   Settings,
   X,
 } from "lucide-react";
+import { DropdownMenu } from "radix-ui";
 import type { DashboardBootstrap } from "../../src/dashboard/contract.js";
 import type { Page, SessionSummary } from "../../src/sessions/store.js";
 import { api, errorText } from "./api.js";
@@ -233,19 +235,35 @@ export function App() {
               <Plus size={17} aria-hidden="true" />
               New chat
             </button>
-            <span className="agent-picker">
-              <select
-                aria-label="New chat agent"
-                title="Agent for the next new chat"
-                value={agent}
-                onChange={(event) => setAgent(event.target.value)}
-              >
-                {bootstrap?.config.agents.map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </span>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  className="agent-picker"
+                  aria-label="New chat agent"
+                  title="Agent for the next new chat"
+                >
+                  <span>{agent}</span>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="workspace-menu agent-menu" align="end" sideOffset={6} collisionPadding={8}>
+                  <DropdownMenu.RadioGroup value={agent} onValueChange={setAgent}>
+                    {bootstrap?.config.agents.map((name) => (
+                      <DropdownMenu.RadioItem key={name} value={name} className="workspace-menu-item">
+                        <span className="agent-menu-check">
+                          <DropdownMenu.ItemIndicator>
+                            <Check size={14} aria-hidden="true" />
+                          </DropdownMenu.ItemIndicator>
+                        </span>
+                        {name}
+                      </DropdownMenu.RadioItem>
+                    ))}
+                  </DropdownMenu.RadioGroup>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </div>
           <label className="search-input">
             <Search size={16} aria-hidden="true" />
