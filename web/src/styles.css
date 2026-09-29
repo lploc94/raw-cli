@@ -2170,3 +2170,27 @@ summary::-webkit-details-marker {
     max-width: 9rem;
   }
 }
+
+.context-ring {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.context-ring svg {
+  flex: none;
+}
+.ring-track,
+.ring-fill {
+  fill: none;
+  stroke-width: 2.5;
+}
+.ring-track {
+  stroke: var(--border);
+}
+.ring-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+}
+.ring-fill.high {
+  stroke: #b12d42;
+}

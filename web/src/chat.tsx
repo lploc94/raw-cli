@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
-  Brain,
   Check,
   Info,
   Pencil,
@@ -13,6 +12,7 @@ import type { SessionOperation } from "../../src/sessions/operations.js";
 import type { SessionSummary } from "../../src/sessions/store.js";
 import type { Preferences } from "./preferences.js";
 import { api, ApiError, errorText } from "./api.js";
+import { ContextRing } from "./composer/ContextRing.js";
 import { RequestControls } from "./composer/RequestControls.js";
 import { useRequestChoice } from "./composer/useRequestChoice.js";
 import type { RequestControlMeta } from "./composer/request-choice.js";
@@ -549,7 +549,7 @@ export function Chat({
                   void send("compact");
                 }}
               >
-                <Brain size={14} aria-hidden="true" />
+                <ContextRing percent={context?.percentage ?? undefined} />
                 Compact context
               </button>
             </div>
