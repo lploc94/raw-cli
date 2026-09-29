@@ -699,9 +699,10 @@ main > .error-banner {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 86px;
-  padding: 18px 28px 12px;
+  min-height: 64px;
+  padding: 12px 28px;
   flex: none;
+  border-bottom: 1px solid var(--border);
 }
 .page-header > div:first-child {
   min-width: 0;
@@ -711,7 +712,39 @@ main > .error-banner {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 5px;
+  margin-bottom: 3px;
+}
+.page-header .metadata {
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+.agent-chip {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.workspace-menu-separator {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--border);
+}
+.workspace-menu-item[data-disabled] {
+  opacity: 0.5;
+}
+.workspace-menu-item.danger-item {
+  color: var(--error);
+}
+.workspace-menu-item.danger-item[data-highlighted] {
+  background: #b12d4218;
+  color: var(--error);
+}
+.menu-chevron {
+  margin-left: auto;
 }
 .connection {
   display: flex;
@@ -728,30 +761,8 @@ main > .error-banner {
 .connection.connected:before {
   background: var(--success);
 }
-.chat-selection {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 28px 12px;
-  flex: none;
-  border-bottom: 1px solid var(--border);
-}
-.chat-selection .field {
-  display: flex;
-  align-items: center;
-  flex-direction: row;
-  gap: 8px;
-  font-size: 12px;
-  margin: 0;
-  flex: none;
-}
-.chat-selection select {
-  min-height: 32px;
-  padding: 4px 26px 4px 8px;
-  max-width: 200px;
-  font-size: 12px;
-}
 .workspace-path {
+  min-width: 0;
   font-size: 11px;
   color: var(--muted);
   overflow: hidden;
@@ -1474,10 +1485,6 @@ summary::-webkit-details-marker {
     padding-left: 24px;
     padding-right: 24px;
   }
-  .chat-selection {
-    padding-left: 24px;
-    padding-right: 24px;
-  }
 }
 @media (max-width: 899px) {
   .context-panel,
@@ -1579,13 +1586,6 @@ summary::-webkit-details-marker {
   }
   .page-header .actions {
     gap: 0;
-  }
-  .chat-selection {
-    padding: 0 14px 8px;
-    gap: 8px;
-  }
-  .chat-selection select {
-    max-width: 120px;
   }
   .workspace-path {
     font-size: 10px;

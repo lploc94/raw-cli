@@ -1,12 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
+  Bot,
   Check,
+  ChevronRight,
+  Copy,
   Info,
+  MoreHorizontal,
   Pencil,
   Trash2,
 } from "lucide-react";
-import { Dialog } from "radix-ui";
+import { Dialog, DropdownMenu } from "radix-ui";
 import type { DashboardBootstrap } from "../../src/dashboard/contract.js";
 import type { SessionOperation } from "../../src/sessions/operations.js";
 import type { SessionSummary } from "../../src/sessions/store.js";
@@ -313,71 +317,95 @@ export function Chat({
             <div>
               <h1>{state?.session.title ?? "Loading session…"}</h1>
               <div className="metadata">
-                <span
-                  className={`connection ${connection === "Connected" ? "connected" : ""}`}
-                >
-                  {connection}
+                {connection !== "Connected" && (
+                  <span className="connection">{connection}</span>
+                )}
+                {milestone !== "Ready" && <span>{milestone}</span>}
+                {agent && <span className="agent-chip">{agent}</span>}
+                <span className="workspace-path" title={state?.session.cwd}>
+                  {state?.session.cwd}
                 </span>
-                <span>{milestone}</span>
               </div>
             </div>
             <div className="actions">
-              <button
-                className="icon-button"
-                aria-label="Rename session"
-                title="Rename session"
-                disabled={!state}
-                onClick={() => {
-                  setTitle(state!.session.title);
-                  setDialogError("");
-                  setRenaming(true);
-                }}
-              >
-                <Pencil size={17} aria-hidden="true" />
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Delete session"
-                title={
-                  busy
-                    ? "Stop the active operation before deleting"
-                    : "Delete session"
-                }
-                disabled={!state || !!busy}
-                onClick={() => {
-                  setDialogError("");
-                  setDeleting(true);
-                }}
-              >
-                <Trash2 size={17} aria-hidden="true" />
-              </button>
               <Dialog.Trigger asChild>
                 <button
                   className={`icon-button ${inspector ? "selected" : ""}`}
                   aria-label="Session details"
+                  title="Session details"
                 >
                   <Info size={19} aria-hidden="true" />
                 </button>
               </Dialog.Trigger>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button className="icon-button" aria-label="More actions" title="More actions" disabled={!state}>
+                    <MoreHorizontal size={19} aria-hidden="true" />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content className="workspace-menu" align="end" sideOffset={6} collisionPadding={8}>
+                    <DropdownMenu.Sub>
+                      <DropdownMenu.SubTrigger className="workspace-menu-item" disabled={!!busy} title={busy ? "Stop the active operation before changing the agent" : undefined}>
+                        <Bot size={15} aria-hidden="true" />
+                        Agent: {agent || "none"}
+                        <ChevronRight size={14} aria-hidden="true" className="menu-chevron" />
+                      </DropdownMenu.SubTrigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.SubContent className="workspace-menu" sideOffset={4} collisionPadding={8}>
+                          <DropdownMenu.RadioGroup value={agent} onValueChange={setAgent}>
+                            {bootstrap.config.agents.map((name) => (
+                              <DropdownMenu.RadioItem key={name} value={name} className="workspace-menu-item">
+                                <span className="agent-menu-check">
+                                  <DropdownMenu.ItemIndicator>
+                                    <Check size={14} aria-hidden="true" />
+                                  </DropdownMenu.ItemIndicator>
+                                </span>
+                                {name}
+                              </DropdownMenu.RadioItem>
+                            ))}
+                          </DropdownMenu.RadioGroup>
+                        </DropdownMenu.SubContent>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Sub>
+                    <DropdownMenu.Item
+                      className="workspace-menu-item"
+                      onSelect={() => {
+                        setTitle(state!.session.title);
+                        setDialogError("");
+                        setRenaming(true);
+                      }}
+                    >
+                      <Pencil size={15} aria-hidden="true" />
+                      Rename session
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      className="workspace-menu-item"
+                      onSelect={() => {
+                        void navigator.clipboard?.writeText(state!.session.cwd).catch(() => undefined);
+                      }}
+                    >
+                      <Copy size={15} aria-hidden="true" />
+                      Copy workspace path
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Separator className="workspace-menu-separator" />
+                    <DropdownMenu.Item
+                      className="workspace-menu-item danger-item"
+                      disabled={!!busy}
+                      title={busy ? "Stop the active operation before deleting" : undefined}
+                      onSelect={() => {
+                        setDialogError("");
+                        setDeleting(true);
+                      }}
+                    >
+                      <Trash2 size={15} aria-hidden="true" />
+                      Delete session
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
           </header>
-          <div className="chat-selection">
-            <Field label="Agent">
-              <select
-                value={agent}
-                disabled={!!busy}
-                onChange={(event) => setAgent(event.target.value)}
-              >
-                <option value="">Choose an agent</option>
-                {bootstrap.config.agents.map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-            </Field>
-            <span className="workspace-path" title={state?.session.cwd}>
-              {state?.session.cwd}
-            </span>
-          </div>
           <div
             className="conversation-scroll"
             ref={scroll}

@@ -162,7 +162,9 @@ test.describe("openai agent", () => {
         await gate;
         await route.fulfill({ response, json: meta });
       });
-      await page.getByLabel("Agent", { exact: true }).selectOption("second");
+      await page.getByRole("button", { name: "More actions" }).click();
+      await page.getByRole("menuitem", { name: /^Agent:/ }).press("ArrowRight");
+      await page.getByRole("menuitemradio", { name: "second" }).press("Enter");
       await expect(pill(page)).toHaveCount(0);
       expect(await stored(page)).toHaveLength(1);
       release();

@@ -6,7 +6,8 @@ test("workspace and rename validation remain inside the active dialog", async ({
   raw,
 }) => {
   await openChat(page, raw);
-  await page.getByRole("button", { name: "Rename session" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Rename session" }).click();
   await page.getByLabel("Session title", { exact: true }).fill(" ");
   await page.getByRole("button", { name: "Save title" }).click();
   await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
@@ -356,11 +357,13 @@ test("drafts survive navigation and saved session titles support rename and dele
   await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(
     "kept while navigating",
   );
-  await page.getByRole("button", { name: "Rename session" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Rename session" }).click();
   await page.getByLabel("Session title", { exact: true }).fill("My task");
   await page.getByRole("button", { name: "Save title" }).click();
   await expect(page.getByRole("heading", { name: "My task" })).toBeVisible();
-  await page.getByRole("button", { name: "Delete session" }).click();
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete session" }).click();
   await page.getByRole("button", { name: "Delete permanently" }).click();
   await expect(
     page.getByRole("heading", { name: "Start a conversation" }),
