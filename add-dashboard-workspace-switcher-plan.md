@@ -131,12 +131,12 @@ Counts and `running` are asserted with distinct values per workspace and change 
 Compute `sessions` in the same SQL as `recentWorkspaces`; compute `running` from `operations.activeIds()` mapped through `store.getOperation`/`getSession` (skip vanished sessions); stat items concurrently with a bound; canonicalize with `realpath`; never follow symlinks beyond a single `stat` to classify an entry; map `EACCES`/`EPERM` to 422 and everything else to `invalid_workspace`; keep the store-unavailable guard behavior.
 
 ### Acceptance criteria
-- [ ] AC-1: `/api/workspaces` items carry correct `sessions`, `running`, `exists`, and the response has `home` and `current` — proven by `tests/dashboard-workspaces.test.ts`.
-- [ ] AC-2: `include` appends and dedupes pinned paths and rejects invalid values with 400 `invalid_input` — proven by the same file.
-- [ ] AC-3: `browse` returns only directories with the specified filtering, ordering, `parent`, cap and `truncated` semantics — proven by the same file.
-- [ ] AC-4: `browse` errors are 400 `invalid_workspace` or 422 `unreadable_directory` as specified and leak no file names — proven by the same file.
-- [ ] AC-5: No request changes config bytes or the directory tree; routes need the token — proven by the same file.
-- [ ] AC-6: `docs/dashboard-api.md` documents both routes accurately — proven by inspection of the diff.
+- [x] AC-1: `/api/workspaces` items carry correct `sessions`, `running`, `exists`, and the response has `home` and `current` — proven by `tests/dashboard-workspaces.test.ts`.
+- [x] AC-2: `include` appends and dedupes pinned paths and rejects invalid values with 400 `invalid_input` — proven by the same file.
+- [x] AC-3: `browse` returns only directories with the specified filtering, ordering, `parent`, cap and `truncated` semantics — proven by the same file.
+- [x] AC-4: `browse` errors are 400 `invalid_workspace` or 422 `unreadable_directory` as specified and leak no file names — proven by the same file.
+- [x] AC-5: No request changes config bytes or the directory tree; routes need the token — proven by the same file.
+- [x] AC-6: `docs/dashboard-api.md` documents both routes accurately — proven by inspection of the diff.
 
 ### Focused verification
 `node --import tsx --test tests/dashboard-workspaces.test.ts tests/dashboard-sessions.test.ts`
@@ -199,15 +199,15 @@ Distinct chat counts/times per workspace and a reload in the pin/remove specs re
 Keep all provider/server knowledge out of the state module; guard every storage access with try/catch; debounce nothing that affects correctness; ensure the Popover works inside the mobile drawer Dialog (portal/focus-trap) and that only one switcher instance is mounted at a time per surface; label every control (`aria-label` on icon buttons, group headings as headings, badges not the only carrier of state); keep the existing modal code path intact for Phase 3; no new dependencies (Radix `radix-ui` already provides DropdownMenu).
 
 ### Acceptance criteria
-- [ ] AC-1: Switcher shows Current, Pinned and Recent groups in the specified order with name, shortened path, count, relative time — proven by `workspace.spec.ts`.
-- [ ] AC-2: Filtering and keyboard navigation work and focus returns to the button — proven by `workspace.spec.ts`.
-- [ ] AC-3: Selecting a row switches workspace with existing behavior; Current only closes — proven by `workspace.spec.ts`.
-- [ ] AC-4: Pin, Remove and locally opened (no-chat) folders persist across reload, removal never deletes chats, Copy path works — proven by `workspace.spec.ts`.
-- [ ] AC-5: Missing directories show `Missing`, are not selectable, and are removable; `Running` badge appears for an active turn — proven by `workspace.spec.ts`.
-- [ ] AC-6: Failed list fetch and corrupt storage degrade gracefully while Open folder… stays usable — proven by `workspace.spec.ts` and `tests/web-workspace-state.test.ts`.
-- [ ] AC-7: State module semantics (validation, caps, ordering, shortening, relative time) hold — proven by `tests/web-workspace-state.test.ts`.
-- [ ] AC-8: No axe violations and the narrow drawer works in all three browsers — proven by `workspace.spec.ts` axe/mobile specs.
-- [ ] AC-9: `docs/dashboard.md` and the new design doc describe the behavior — proven by inspection of the diff.
+- [x] AC-1: Switcher shows Current, Pinned and Recent groups in the specified order with name, shortened path, count, relative time — proven by `workspace.spec.ts`.
+- [x] AC-2: Filtering and keyboard navigation work and focus returns to the button — proven by `workspace.spec.ts`.
+- [x] AC-3: Selecting a row switches workspace with existing behavior; Current only closes — proven by `workspace.spec.ts`.
+- [x] AC-4: Pin, Remove and locally opened (no-chat) folders persist across reload, removal never deletes chats, Copy path works — proven by `workspace.spec.ts`.
+- [x] AC-5: Missing directories show `Missing`, are not selectable, and are removable; `Running` badge appears for an active turn — proven by `workspace.spec.ts`.
+- [x] AC-6: Failed list fetch and corrupt storage degrade gracefully while Open folder… stays usable — proven by `workspace.spec.ts` and `tests/web-workspace-state.test.ts`.
+- [x] AC-7: State module semantics (validation, caps, ordering, shortening, relative time) hold — proven by `tests/web-workspace-state.test.ts`.
+- [x] AC-8: No axe violations and the narrow drawer works in all three browsers — proven by `workspace.spec.ts` axe/mobile specs.
+- [x] AC-9: `docs/dashboard.md` and the new design doc describe the behavior — proven by inspection of the diff.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/workspace.spec.ts tests/dashboard-ui/shell.spec.ts && node --import tsx --test tests/web-workspace-state.test.ts`
@@ -264,13 +264,13 @@ The files-only directory and DOM text assertion reject rendering files; nested n
 Use `browse` for all directory data (no client-side path arithmetic beyond display); race-guard responses so a slower earlier request cannot overwrite a newer listing (abort or sequence token); keep validation authoritative on the server; preserve the Phase 2 switcher contract; regenerate screenshots after `npm run build`.
 
 ### Acceptance criteria
-- [ ] AC-1: Open folder starts at the current workspace and navigates folders, Up, typed path and hidden toggle as specified — proven by `workspace.spec.ts`.
-- [ ] AC-2: Only directories are displayed; empty, truncated and error states are shown inline without dead-ending — proven by `workspace.spec.ts`.
-- [ ] AC-3: Open this folder validates server-side and switches workspace with standard behavior; failures stay in the dialog — proven by `workspace.spec.ts`.
-- [ ] AC-4: Keyboard, focus return, axe and narrow drawer pass in all three browsers — proven by `workspace.spec.ts`.
-- [ ] AC-5: A stale slow listing never overwrites a newer one — proven by a Playwright spec that delays the first `browse` response.
-- [ ] AC-6: Docs, design record, evidence rows and both screenshots exist and match behavior — proven by inspection and `tests/dashboard-assets.test.ts`.
-- [ ] AC-7: Global gates pass on final `HEAD` — proven by the gate commands.
+- [x] AC-1: Open folder starts at the current workspace and navigates folders, Up, typed path and hidden toggle as specified — proven by `workspace.spec.ts`.
+- [x] AC-2: Only directories are displayed; empty, truncated and error states are shown inline without dead-ending — proven by `workspace.spec.ts`.
+- [x] AC-3: Open this folder validates server-side and switches workspace with standard behavior; failures stay in the dialog — proven by `workspace.spec.ts`.
+- [x] AC-4: Keyboard, focus return, axe and narrow drawer pass in all three browsers — proven by `workspace.spec.ts`.
+- [x] AC-5: A stale slow listing never overwrites a newer one — proven by a Playwright spec that delays the first `browse` response.
+- [x] AC-6: Docs, design record, evidence rows and both screenshots exist and match behavior — proven by inspection and `tests/dashboard-assets.test.ts`.
+- [x] AC-7: Global gates pass on final `HEAD` — proven by the gate commands.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/workspace.spec.ts tests/dashboard-ui/shell.spec.ts && node --import tsx --test tests/dashboard-assets.test.ts`
@@ -286,11 +286,11 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Completion Criteria
 
-- [ ] All three phases committed, each with implementation review APPROVE.
-- [ ] Every Global Gate passes on final `HEAD` (only the 3 baseline PTY failures in `tests/cli.test.ts` remain).
-- [ ] Switcher, browse, pins/removal, Missing and Running behavior verified in chromium, firefox and webkit including axe and narrow viewport.
-- [ ] `browse` proven read-only and directories-only; config bytes and directory trees unchanged by every request.
-- [ ] `docs/dashboard.md`, `docs/dashboard-api.md`, `docs/dashboard-workspace-design.md`, `docs/evidence/local-dashboard.md` and screenshots updated; worktree clean.
+- [x] All three phases committed, each with implementation review APPROVE.
+- [x] Every Global Gate passes on final `HEAD` (only the 3 baseline PTY failures in `tests/cli.test.ts` remain).
+- [x] Switcher, browse, pins/removal, Missing and Running behavior verified in chromium, firefox and webkit including axe and narrow viewport.
+- [x] `browse` proven read-only and directories-only; config bytes and directory trees unchanged by every request.
+- [x] `docs/dashboard.md`, `docs/dashboard-api.md`, `docs/dashboard-workspace-design.md`, `docs/evidence/local-dashboard.md` and screenshots updated; worktree clean.
 
 ## Progress Log
 
