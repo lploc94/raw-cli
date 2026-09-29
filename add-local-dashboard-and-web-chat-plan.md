@@ -1,5 +1,7 @@
 # Add a local dashboard and web chat to Raw
 
+> **Status: completed historical record (2026-09-26). Reference only — not current.** Some statements below are superseded, notably the exclusion of browser image/file uploads and the "no attach button" rule; see `add-chat-composer-attachments-and-commands-plan.md`. Do not implement from this file.
+
 ## Plan schema
 loop-plan/v1
 

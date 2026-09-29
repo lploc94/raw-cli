@@ -1,0 +1,125 @@
+# Dashboard composer design
+
+Design reference for the dashboard chat composer: attachments, images, `@` file references and `/` commands. It records decisions and their reasons so later changes can be checked against them. User-facing behavior lives in `dashboard.md`, routes in `dashboard-api.md`. The implementation plan is `add-chat-composer-attachments-and-commands-plan.md`.
+
+Status: design accepted 2026-09-29; update this file when a decision changes.
+
+## Goals
+
+- A composer that matches current coding-assistant conventions: auto-growing textarea, bottom toolbar (`+` left, Send/Stop right), attachment chips, `@` and `/` popovers.
+- Images reach vision models, persist in the session, replay on resume and render in the timeline.
+- New attachment kinds (other image formats, PDF, audio) are added by registering a kind, not by changing the pipeline.
+
+## Non-goals (this iteration)
+
+- Uploading non-image files. "Attach file" is a workspace file reference (`resource_link`).
+- Image formats other than PNG/JPEG.
+- Image blocks over ACP `session/prompt` (ACP replay of stored images must still work).
+- Server-side skill invocation. `/skill` only inserts an instruction; the agent uses `list_skills`/`load_skill`.
+
+## Data flow
+
+```
+browser                         dashboard server                       agent / model
+-------                         ----------------                       -------------
+pick / drop / paste image
+  POST /sessions/:id/attachments  -> AttachmentKind.validate
+                                  -> staging (id, TTL, caps)
+  <- {id, mimeType, byteSize}
+type text, `@` file chips
+  POST /sessions/:id/operations
+  {input, attachments[], files[]} -> resolve ids + paths
+                                  -> UserBlock[] (text, resource_link, image)
+                                  -> SessionOperations.submit(intent, blocks)
+                                                                       -> agent.run(blocks)
+                                                                       -> nativeUserContent
+                                                                       -> adapter wire shape
+history view / timeline
+  GET .../history/:seq/attachments/:i <- bytes via kind registry
+```
+
+## Decisions
+
+### D1. Image block shape
+`UserBlock` gains `{type:"image", data /* base64 */, mimeType}`, the same shape ACP and MCP already use, so `src/sessions/display.ts` can forward it as an ACP block without conversion.
+
+### D2. Upload is separate from the turn request
+`MAX_JSON_BYTES` is 1 MiB, and a base64 image in the turn body would exceed it and bloat operation receipts. Images are uploaded first and referenced by id. Staged items are consumed only when a new operation is accepted, so a duplicate `clientRequestId` never consumes or duplicates them.
+
+### D3. No storage format change
+Image bytes live inside the persisted user message. Strings over 64 KiB are already moved to payload blobs by `SessionStore.stageStored`. `session_operations` keeps `input` as text only and never stores image bytes. A crash produces an `interrupted` operation, and nothing is replayed automatically (existing behavior).
+
+### D4. Graceful degradation instead of a vision gate
+A missing capability may reduce functionality but must never dead-end the user. When the model is non-vision (`models.<alias>.vision !== true`), a projection step applied at request-build time (before token estimation and adapter mapping) replaces every user image block in the effective context, new input and replayed history alike, with a text placeholder:
+
+> [Image omitted: image/png, 48213 bytes, "screen.png". The current model cannot read images, so this image was replaced by this text placeholder. Its content may be described in earlier assistant messages of this conversation; ask the user to describe it or to switch to a vision-capable agent if you need to see it.]
+
+The stored context is never rewritten, so switching back to a vision agent sends the original image natively again. The dashboard keeps attach enabled, warns on chips and shows a quiet composer note when history contains images the current agent cannot see. Size and type limits stay real rejections, but only of the offending attachment (chip-level error), never of the whole turn. Note: tool-result images keep their existing `vision_disabled` behavior.
+
+### D5. Extensible attachment kinds
+Three registries, each seeded with `image`:
+
+| Layer | Location | Entry shape |
+| --- | --- | --- |
+| Model | `nativeUserContent` in `src/llm/content.ts` | validator + ordered content parts; adapters map parts, in order, to wire shape |
+| Server | `AttachmentKind` in `src/dashboard/attachments.ts` | `{id, mimeTypes, maxBytes, validate, toBlock, fromBlock}` |
+| Web | `web/src/composer/attachment-kinds.ts` | `{id, accept, icon, preview, timelineRenderer}` |
+
+`accept`, limits and enabled/disabled reasons reach the UI through `GET /api/agents/:name/composer` (`attachmentKinds`). Adding a kind therefore means one server entry, one model mapping (per adapter that supports it; others raise `unsupported_content`) and one client renderer. Tests register a fake kind to keep this true.
+
+### D6. Adapters never inspect raw user blocks, and budgets are image-aware
+All user-block validation and normalization happen in `nativeUserContent`, mirroring `nativeToolContent`. Normalization returns ordered parts so interleaved text/image order is preserved. The context estimator counts an image as a fixed conservative token constant, never as base64 text, so automatic compaction and `context_budget_exceeded` behave sensibly. Text-only turns keep the exact previous request bodies (OpenAI `content` stays a string).
+
+### D7. Workspace file references are confined to the session cwd
+`@` search and `files[]` resolve relative paths against the session cwd with `realpath` containment. `..`, absolute paths and symlink escapes are rejected. Search ignores `.git` and `node_modules`.
+
+### D8. History exposes metadata, not bytes
+`HistoryView.attachments` carries `{index, kind /* open registry id */, name, mimeType, byteSize}`. Bytes are served by `GET /api/sessions/:id/history/:sequence/attachments/:index`, dispatched through the server kind registry (`fromBlock`) and backed by a single-item store read by sequence (so old history pages stay reachable) with the stored mime, `nosniff` and same-origin `img-src`. Snapshots and SSE events never embed base64.
+
+### D9. One generic suggestion popover
+A single combobox/listbox component (focus stays in the textarea, `aria-activedescendant`) with trigger-character providers. `/` (commands) and `@` (files) are providers, so a future trigger adds a provider only.
+
+### D10. Slash commands wrap existing behavior
+Built-ins map to actions that already exist in the UI: `/compact` (compact operation), `/rename` (rename modal), `/new` (New chat flow), `/details` (inspector toggle). Skill entries come from the selected agent's config and component catalog (available before the first send, unlike `metrics.capabilities`, which needs an attached runtime) and insert `Use the skill "<name>" for this task. `. Unknown `/x` is sent as plain text.
+
+### D11. Preserved behavior
+IME composition never selects or sends, `preferences.sendMode` is honored, per-session drafts persist, and the durable pending-receipt / duplicate-submit flow is unchanged. An open popover consumes Enter for selection instead of sending.
+
+## Limits
+
+| Item | Value |
+| --- | --- |
+| Image types | PNG, JPEG (structure validated) |
+| Image size | 8 MiB each (upload); 16 MiB aggregate decoded per turn, enforced at staging (chip-level rejection) and re-validated in `agent.run` before commit |
+| Images per message | 8 |
+| File references per message | 20 |
+| Staging TTL | 30 minutes, dropped on server close |
+| File search limit | default 20, maximum 50 |
+
+## Alternatives rejected
+
+- Base64 images inside the turn JSON: exceeds the body cap and bloats receipts.
+- Persisting image bytes in `session_operations` or a new table: unnecessary storage change.
+- Client-side "attach" that inlines file contents into text: loses images, wastes context, and cannot degrade gracefully for non-vision models.
+- Hardcoding accepted types and limits in the UI: forces a UI change for every new kind.
+
+## Extending
+
+To add an attachment kind, for example PDF:
+
+1. Add a `UserBlock` variant and a validator entry behind `nativeUserContent`.
+2. Add the wire mapping in each adapter that supports it.
+3. Register an `AttachmentKind` on the server.
+4. Register the client kind (accept, icon, preview, timeline renderer).
+5. Extend the docs tables above and in `dashboard-api.md`.
+
+If a step beyond these is needed, the design has regressed; fix the registry rather than special-casing the kind.
+
+## Verification map
+
+| Decision | Proven by |
+| --- | --- |
+| D1, D4, D6 | `tests/provider-content.test.ts`, `tests/vision.test.ts` |
+| D2, D3, D5 (server), D7 | `tests/dashboard-attachments.test.ts`, `tests/dashboard-sessions.test.ts` |
+| D8 | `tests/session-view.test.ts`, `tests/dashboard-streams.test.ts` |
+| D5 (web), D9, D10, D11 | `tests/dashboard-ui/composer.spec.ts`, `attachments.spec.ts`, `accessibility.spec.ts` |
