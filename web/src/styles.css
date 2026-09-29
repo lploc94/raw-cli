@@ -398,9 +398,21 @@ small,
 .workspace-button strong {
   font-size: 13px;
 }
+.new-chat-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
 .new-chat {
-  width: 100%;
-  margin-bottom: 18px;
+  flex: 1;
+  min-width: 0;
+}
+.context-panel .agent-picker {
+  flex: none;
+  width: 30%;
+  min-width: 68px;
+  max-width: 110px;
+  min-height: 40px;
 }
 .context-panel .field {
   font-size: 12px;
@@ -492,6 +504,7 @@ small,
 }
 .context-footer {
   padding-top: 16px;
+  align-items: center;
   display: flex;
   justify-content: space-between;
   gap: 8px;

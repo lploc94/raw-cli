@@ -28,7 +28,16 @@ import { DefinitionsPage } from "./pages/Definitions.js";
 import { SettingsPage, SettingsSearch } from "./pages/Settings.js";
 import { FolderBrowser } from "./workspace/FolderBrowser.js";
 import { WorkspaceSwitcher } from "./workspace/WorkspaceSwitcher.js";
-import { loadState, recordOpened, saveState, type WorkspaceState } from "./workspace/workspace-state.js";
+import { loadState, recordOpened, relativeTime, saveState, type WorkspaceState } from "./workspace/workspace-state.js";
+
+/** Sidebar date buckets, newest first. */
+function sessionGroup(at: number): string {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const days = Math.floor((start.getTime() - at) / 86_400_000) + 1;
+  if (at >= start.getTime()) return "Today";
+  if (days <= 1) return "Yesterday";
+  return days <= 7 ? "Previous 7 days" : "Older";
+}
 
 interface ActivityView {
   operations: Array<{
@@ -210,8 +219,23 @@ export function App() {
       />
       {page === "chat" ? (
         <>
-          <Field label="New chat agent">
+          <div className="new-chat-row">
+            <button
+              className="primary new-chat"
+              onClick={() => {
+                void create();
+              }}
+              disabled={
+                !bootstrap?.config.valid || !agent || !bootstrap.store.available
+              }
+            >
+              <Plus size={17} aria-hidden="true" />
+              New chat
+            </button>
             <select
+              className="agent-picker"
+              aria-label="New chat agent"
+              title="Agent for the next new chat"
               value={agent}
               onChange={(event) => setAgent(event.target.value)}
             >
@@ -219,19 +243,7 @@ export function App() {
                 <option key={name}>{name}</option>
               ))}
             </select>
-          </Field>
-          <button
-            className="primary new-chat"
-            onClick={() => {
-              void create();
-            }}
-            disabled={
-              !bootstrap?.config.valid || !agent || !bootstrap.store.available
-            }
-          >
-            <Plus size={17} aria-hidden="true" />
-            New chat
-          </button>
+          </div>
           <label className="search-input">
             <Search size={16} aria-hidden="true" />
             <input
@@ -244,14 +256,9 @@ export function App() {
           <div className="session-list">
             {sessions.items.length ? (
               sessions.items.map((session, index) => {
-                const today =
-                  new Date(session.updatedAt).toDateString() ===
-                  new Date().toDateString();
-                const previousToday =
-                  index > 0 &&
-                  new Date(
-                    sessions.items[index - 1]!.updatedAt,
-                  ).toDateString() === new Date().toDateString();
+                const group = sessionGroup(session.updatedAt);
+                const previousGroup =
+                  index > 0 ? sessionGroup(sessions.items[index - 1]!.updatedAt) : "";
                 const active = running.some(
                   (op) => op.sessionId === session.id,
                 );
@@ -260,10 +267,8 @@ export function App() {
                 );
                 return (
                   <div key={session.id}>
-                    {(index === 0 || today !== previousToday) && (
-                      <div className="group-label">
-                        {today ? "Today" : "Earlier"}
-                      </div>
+                    {group !== previousGroup && (
+                      <div className="group-label">{group}</div>
                     )}
                     <Link
                       className={`session-row ${session.id === sessionId ? "selected" : ""}`}
@@ -283,7 +288,12 @@ export function App() {
                             ? "Needs approval"
                             : active
                               ? "Running"
-                              : (session.agentName ?? "Saved session")}
+                              : [
+                                  relativeTime(session.updatedAt, Date.now()),
+                                  session.agentName && session.agentName !== agent ? session.agentName : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ") || "Saved session"}
                         </small>
                       </span>
                     </Link>
