@@ -4,7 +4,7 @@ Design and contract for **tool panels**: live, structured state that a tool publ
 
 This file is the source of truth for the protocol. User-facing behavior will be summarized in `tools.md`, `dashboard.md`, `dashboard-api.md`, `acp.md` and `cli.md` when it is implemented. The machine-readable schema will be `schemas/raw-panel.schema.json`, and it must agree with this file.
 
-Status: design proposed 2026-09-29, not implemented. Update this file whenever a decision changes. A change to a wire shape is a protocol change (see §13).
+Status: design proposed 2026-09-29; Codex (gpt-6-astra) design review APPROVE after 4 rounds on 2026-09-29; not implemented. Update this file whenever a decision changes. A change to a wire shape is a protocol change (see §13).
 
 ## Contents
 
@@ -161,7 +161,7 @@ Validation happens when the loader reads the manifest, **before** any handler is
 
 **Tools without a manifest** (MCP and ACP-registered tools) declare panels implicitly:
 
-- **MCP.** The first update for an unknown panel ID creates a declaration with defaults. `title` comes from the document, and `actions`, `context` and `acp_plan` are off. An MCP server entry in config may add `"panels": [...]` with the same shape to opt into more.
+- **MCP.** The first update for an unknown panel ID creates a declaration with defaults. `title` is the document's `title`, or the panel ID when the document has none. Also, `actions`, `context` and `acp_plan` are off. An MCP server entry in config may add `"panels": [...]` with the same shape to opt into more.
 - **ACP client tools.** `_raw/tool/register` accepts an optional `panels` array with the same shape.
 
 ## 6. Panel document
@@ -221,7 +221,7 @@ For todos, plans and spec acceptance criteria.
     { "id": "t1", "label": "Write the failing test", "status": "done" },
     { "id": "t2", "label": "Fix the API", "status": "in_progress", "priority": "high",
       "note": "Waiting on schema change", "ref": { "path": "src/api.ts", "line": 42 },
-      "children": [ { "id": "t2.1", "label": "Validate input", "status": "pending" } ] }
+      "children": [ { "id": "t5", "label": "Validate input", "status": "pending" } ] }
   ] }
 ```
 
@@ -333,9 +333,24 @@ return {
 };
 ```
 
-- `ToolContent` gains a `ToolContentPanel` variant: `{ type: "panel", panel: string, op: "replace" | "patch" | "close", document?, patches?, base_revision? }`.
-- The host removes every panel block from the result **before** hooks, capping, provider mapping and history projection. Panel bytes never count against `maxOutputBytes` and never reach the model.
+- `ToolContent` gains a `ToolContentPanel` variant: `{ type: "panel", panel: string, op: "replace" | "patch" | "close", document?, patches?, base_revision? }`. It is valid only in a handler's return value; it never appears in a stored model message.
 - Blocks are applied in order, after the handler settles and before the result commits.
+
+### 8.0 Extraction points (normative)
+
+Panel data is removed from a result at exactly one place per dispatch path. That place is always before the existing post-hook and `capResult` steps, so hooks, caps, provider mapping and history projection never see panel bytes.
+
+| Path | Extraction point | Result |
+| --- | --- | --- |
+| Local plugin | `tool.handler` returns `type: "panel"` blocks directly. | Extracted by `ToolRegistry.dispatch` (below). |
+| MCP (`mcp-client.ts` result conversion) | The conversion turns `_meta["raw/panel"]` into `type: "panel"` blocks appended to the converted content. | Extracted by `ToolRegistry.dispatch`. |
+| ACP client tool (`acp/methods.ts` `_raw/tool/call` conversion) | `type: "panel"` items are kept as panel blocks in the converted content. | Extracted by `ToolRegistry.dispatch`. |
+
+- **Single extraction point.** `ToolRegistry.dispatch` removes every `panel` block from the handler's result immediately after `tool.handler` returns. This happens **before** the `PostToolUse`/`PostToolUseFailure` hook and before `finish` → `capResult`. The removed updates go to the host-only callback `ToolContext.onPanelUpdates(updates: PanelUpdate[])`, which the agent sets per call. The result object that continues to hooks, `capResult`, the model and history contains no panel data and no panel field.
+- **Conversion caps.** The MCP and ACP conversions call `capResult` before `dispatch` extracts. `capResult` therefore passes `panel` blocks through untouched and uncounted: they are excluded from `retainedBytes`, `observedBytes` and the image budget. Validation and the 64 KiB document limit (§14) bound them instead.
+- **Commit.** `Agent.appendResult` hands the updates collected for that call ID to `PanelHost`. The panel apply, the `session_panels` upsert and the `panel_receipt` rows are written in the **same store transaction** as `commitMessage` for that tool result. If the transaction fails, none of them is kept.
+- Results produced by the registry itself (`tool_denied`, `invalid_arguments`, `hook_denied`, `approval_denied`, `aborted`, …) produce no panel updates.
+- **Context propagation.** The agent builds the per-call `ToolContext` with `panels` bound to the session's `PanelHost` and the call's owner identity, plus `onPanelUpdates`. `ToolRegistry.dispatch` passes the context on. The plugin loader (`plugins/loader.ts`, `registration.handler`) builds a separate `pluginContext` for the handler. It must forward `panels` when present, and must **not** forward `onPanelUpdates`, which stays host-only. MCP and ACP tools have no `context.panels`: their only path is the result.
 
 ### 8.2 Streaming API (local plugin tools)
 
@@ -352,7 +367,7 @@ interface PanelContext {
 
 - **Live delivery.** `update` is applied and published to live observers immediately. Observers receive at most one frame per panel every 250 ms, and the latest state wins.
 - **Commit.** The state at the moment the handler settles is committed with the tool result, whether the result is success, error or cancelled. A failed spec run therefore still shows which items passed.
-- **Crash.** If Raw crashes before the commit, live-only revisions are lost and recovery shows the last committed revision. The revision counter never goes backwards on disk: the committed revision is the one from the last applied update.
+- **Crash.** If Raw crashes before the commit, live-only revisions are lost and recovery shows the last committed revision. Revision numbers shown live but never committed are **provisional** and may be issued again after recovery with different content. Only a committed `(full id, revision)` is unique. Clients handle this through the snapshot rule in §13.1.
 - **After the handler settles,** `update` rejects with `panel_closed_context`, and `get` still works.
 - **Reading state.** `get` lets a tool build a merge on top of the current state without the model resending everything (see §18).
 
@@ -389,7 +404,7 @@ Only the owning tool writes a panel. The host itself changes only lifecycle flag
 | `{ "op": "set_block", "block": Block, "before"?: blockId }` | Replaces the block with the same `id`, or inserts it before `before` (default: at the end). |
 | `{ "op": "remove_block", "id": blockId }` | Removes a block. An unknown ID is an error. |
 | `{ "op": "upsert_items", "block": blockId, "items": [Item], "parent"?: itemId }` | Merges items by `id` into `checklist`, `steps`, `table` (rows), `key_value` (keyed by `key`) or `files` (keyed by `path`). Given fields replace, omitted fields keep their value. New items are appended, under `parent` for a checklist. |
-| `{ "op": "remove_items", "block": blockId, "ids": [itemId] }` | Removes items. Removing a checklist item removes its children. |
+| `{ "op": "remove_items", "block": blockId, "ids"?: [itemId], "keys"?: [string], "paths"?: [string] }` | Removes items. Exactly one selector is allowed, and it must match the block kind: `ids` for `checklist`, `steps`, `table` and `timeline`, `keys` for `key_value`, `paths` for `files`. A selector that does not fit the kind, or an entry that does not exist, rejects the update. Removing a checklist item removes its children. |
 | `{ "op": "append_events", "block": blockId, "events": [Event] }` | Appends events to a `timeline` and trims to `max`. |
 
 After all patches apply, the resulting document is validated in full against §6, §7 and §14. Any failure rejects the **whole** update and the previous revision stays. This is the same all-or-nothing rule used for batch validation.
@@ -397,7 +412,7 @@ After all patches apply, the resulting document is validated in full against §6
 ### Revisions
 
 - The host assigns `revision = previous + 1` to each accepted update, starting at 1. A rejected update does not consume a revision.
-- The dashboard and ACP use `revision` to discard out-of-order frames. `(full id, revision)` identifies a state uniquely within a session.
+- The dashboard uses `revision` to discard out-of-order `panel` frames **within one stream epoch** (§13.1). A committed `(full id, revision)` identifies a state uniquely within a session. Live, uncommitted revisions are provisional (§8.2).
 
 ## 10. Model visibility and compaction
 
@@ -439,12 +454,21 @@ Actions let the user change panel state or steer the agent, without free-form ed
 ### Execution
 
 - **`prompt`.** Runs entirely in the browser. It fills or sends a user message, and no tool runs directly.
-- **`tool`.** Creates a host operation of kind `panel_action` on the session, like compaction. It requires an idle session, and while busy the action is disabled with a tooltip. The operation then runs these steps in order:
-  1. Resolve the template, then run `validateArgs` and the JSON Schema for the owning tool.
-  2. Apply the agent's `tools.rules`. A `deny` rule hides the action. An `ask` rule shows the standard approval UI. `-y` or auto-approval never applies to a user action. The user's click is not treated as approval of an `ask` rule.
-  3. Fire the `PreToolUse` and `PostToolUse` hooks with `source: "user_action"` in the payload.
-  4. Call the handler with a context whose `toolCallId` is the operation ID.
-  5. Apply the panel updates and commit a `panel_action` history record (§12) and the model note (§10).
+- **`tool`.** Creates a host operation of kind `panel_action` on the session, like compaction. It requires an idle session, and while busy the action is disabled with a tooltip. The operation resolves the template, then calls the **unchanged** `ToolRegistry.dispatch` path with:
+  - `autoApprove: true`: the click is the user's consent for an `allow` rule;
+  - `approve` bound to the standard pending-approval flow (dashboard approval card, ACP `session/request_permission`);
+  - `toolCallId` set to the operation ID;
+  - hook payloads that carry `source: "user_action"`.
+
+  Because dispatch is reused, the step order is exactly the existing one: exposure and `deny` check → `validateArgs` or schema → `PreToolUse` hook → approval **only when the effective rule is `ask`** → handler → panel extraction (§8.0) → `PostToolUse`/`PostToolUseFailure` → cap. The effect of each rule:
+
+  | Rule | Result |
+  | --- | --- |
+  | `allow` | Runs right after the click. |
+  | `ask` | Always asks separately, even though the user clicked. |
+  | `deny` | The action is hidden; a stale request returns `403 action_denied` and nothing runs. |
+
+  The operation then commits the panel updates, one `panel_receipt` with `source: "user_action"` (§12), and the model note (§10) in one transaction.
 - **Tool unavailable.** If the owner is no longer selected by the session's current agent, the panel is `stale` and every `tool` action is unavailable.
 - **CLI and ACP.** CLI surfaces show no actions. ACP clients may call `_raw/panel/action` (§13.3).
 
@@ -503,7 +527,7 @@ Actions let the user change panel state or steer the agent, without free-form ed
 **Live and reload**
 
 - The session stream gains event type `panel`: `{ panel, revision, closed, receipt?, document }`. It carries the full document (≤ 64 KiB) and is coalesced to 250 ms per panel.
-- `snapshot` and `reset` frames include all panels, so reconnects are consistent. A frame with an older revision than the one shown is ignored.
+- `snapshot` and `reset` frames include all panels and are **authoritative**. On receiving one, the dashboard replaces its whole panel state with the frame's content, even when a panel's revision is lower than one it showed before. This is how provisional live revisions lost in a crash (§8.2) are corrected. Between snapshots, a `panel` frame whose revision is not greater than the one shown is ignored. A new stream epoch always starts with a snapshot.
 
 **Accessibility**
 
@@ -540,7 +564,7 @@ These routes use the existing `DashboardError` shapes and the same origin and to
 - **Extension notification.** When the client advertised `_meta.raw.panels: true`, every committed update is also sent as the `_raw/panel/update` notification, with `{ sessionId, panel, owner, revision, closed, declaration, document }`.
 - **Capability.** Raw advertises `panels: true` in its own `_meta.raw`.
 - **`_raw/panel/action`.** The client sends `{ sessionId, panel, action, block?, item? }` and gets `{ operationId }`, with the same rules as §11. The extension error codes apply: `-32002` busy, `-32004` denied.
-- **Replay.** `session/load` replays each receipt position with the plan update, or the extension notification, for the latest document at that time. The document is always the latest state, because history keeps only receipts. `session/resume` sends the current state once.
+- **Replay.** `session/load` replays each `panel_receipt` as an `agent_thought_chunk` text line in its history position, the same way hook receipts are replayed. After the whole history, it sends each open panel's **current** state once: the `plan` update and, when negotiated, `_raw/panel/update`. Historical panel states are not reconstructed, because only the latest document is stored (D1). `session/resume` sends the current state once, with no replay.
 
 ### 13.4 Library
 
@@ -629,7 +653,7 @@ The reference tool proves the contract end to end.
       "items": {
         "type": "object", "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$",
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,31}$",
             "description": "Stable item id. Omit when adding a new item in replace mode; required in merge mode." },
           "content": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Imperative task text." },
           "status": { "enum": ["pending", "in_progress", "done", "blocked", "skipped"] },
@@ -638,39 +662,47 @@ The reference tool proves the contract end to end.
           "remove": { "const": true, "description": "Merge mode only: delete this item and its subtasks." }
         }
       }
-    }
+    },
+    "clear": { "const": "done", "description": "Merge mode only: remove every done or skipped item. Their subtasks are always done or skipped too (see state validation)." }
   }
 }
 ```
 
-**Semantic validation** (`validateArgs`, applied to the whole call before anything runs):
+**ID grammar.** Item IDs match `^[a-z0-9][a-z0-9_.-]{0,31}$`, both when the model supplies them and when the tool generates them. Generated IDs are `t<n>` for every item, top-level or subtask, using the smallest unused `n` from 1. Hierarchy comes from `parent`, never from the ID. At most 100 items exist, so a generated ID has at most 4 characters. They always fit this grammar, which is also a subset of the block item grammar in §7.
 
-- **Replace mode.** `content` and `status` are required for every item. `remove` is not allowed.
-- **Merge mode.** `id` is required for every item. An unknown `id` requires `content` (it adds an item).
-- **Structure.** After applying, at most one item may be `in_progress`. `parent` must refer to a top-level item, so depth is at most 2. IDs must be unique. The list may hold at most 100 items.
-- **Invalid calls** return an error result, and the panel is unchanged.
+**Argument-only validation** (`validateArgs`, before approval or hooks; it sees the arguments only, never panel state):
+
+- **Replace mode.** `content` and `status` are required for every item. `remove` and `clear` are not allowed.
+- **Merge mode.** `id` is required for every item.
+- **Within the call.** No duplicate `id`. At most one item has `status: "in_progress"`. A `parent` must not name an item that itself has a `parent` in the same call.
+
+**State validation** (in the handler, against `context.panels.get("todo")`, before anything is published):
+
+- In merge mode, an `id` that is not in the current list must come with `content` (it adds an item). `remove` on an unknown ID is an error.
+- The **resulting** list must satisfy all of these: at most one `in_progress` item, every `parent` names a top-level item (so depth is at most 2), unique IDs, at most 100 items, and **no `done` or `skipped` item has a subtask that is not `done` or `skipped`**. Completing a parent therefore requires finishing or skipping its subtasks first, in the same call or earlier.
+- On any failure, the handler returns an error result with code `invalid_todo` and a message that names the offending item. It publishes nothing, so the panel keeps its previous revision.
 
 ### Behavior
 
-- **Replace.** A new ID (`t1`, `t2`, …) is assigned to each item without one. The IDs never reuse a number within the session, so the model can refer to them later.
+- **Replace.** Each item without an ID gets the next free generated ID: the smallest unused `t<n>`, counting from `t1`. At most 100 items exist, so `n` never exceeds 101, whatever IDs the model supplied. IDs are unique within the current list. An ID freed by removal may be issued again later; the model always receives the current IDs in the result, so it never needs an old one.
 - **Merge.** Reads the current state through `context.panels.get("todo")`, applies the items in order, and publishes the result.
 - **Publishing.** The handler publishes the panel `todo` with `op: "replace"`:
   - one `checklist` block with id `items`;
   - `title` taken from the input or kept from before;
   - `status: "done"` when every item is `done` or `skipped`;
   - `context_summary` as the compact text list.
-  If the host has no `context.panels` (an older host), the tool still works and simply returns text.
+  Every host that loads a manifest with `panels` provides `context.panels`. That includes runs without a session store, where `PanelHost` keeps state in memory for the life of the runtime. An older Raw cannot load the tool at all (§17), so the tool has no separate text-only mode.
 - **Model-visible result.** A text rendering of the whole list with its IDs, so the model always has current IDs:
 
   ```
   Todo (3/7 done):
   [x] t1 Write the failing test
   [~] t2 Fix the API
-    [ ] t2.a Validate input
+    [ ] t5 Validate input
   [ ] t3 Update docs
   ```
 
-  Children get IDs of the form `<parent>.<letter>` when the model omits them.
+  Subtasks are indented under their parent and use ordinary `t<n>` IDs.
 - **Scope.** The state is per session. There is no file I/O and no side effects outside the panel. The policy default is `allow`, and the tool is harmless to auto-approve.
 
 ### Panel declaration
@@ -681,7 +713,7 @@ The reference tool proves the contract end to end.
   - `reopen`: `item`, `tool`, sets `pending`, offered `when: {status: ["done","skipped"]}`.
   - `skip`: `item`, `tool`, sets `skipped`.
   - `continue`: `panel`, `prompt`, `send: false`, text "Continue with the next pending todo item."
-  - `clear_done`: `panel`, `tool`. It needs a host-side list of IDs, which templates cannot express, so the tool accepts the special input `{"mode":"merge","todos":[],"clear":"done"}`. The schema therefore adds an optional `"clear": {"const":"done"}`, valid only in merge mode.
+  - `clear_done`: `panel`, `tool`. It needs a host-side list of IDs, which templates cannot express, so the tool accepts the special input `{"mode":"merge","todos":[],"clear":"done"}`. The schema therefore adds an optional `"clear": {"const":"done"}`, valid only in merge mode. Because of the subtask rule in state validation, clearing never removes unfinished work. If the `complete` action targets a parent with unfinished subtasks, the tool returns `invalid_todo`, and the dashboard shows it as the action's error notice.
 
 ### What each surface shows
 
@@ -740,7 +772,7 @@ A `tool` action is a real tool call with `source: "user_action"`, under the same
 The tool can hint `first_update`, the user preference decides, focus never moves, and narrow viewports never open automatically. Later updates only set a dot. This avoids a panel stealing attention on every step.
 
 ### D10. Degrade, never block
-Invalid updates are dropped with a visible notice, and the tool call still succeeds. Unknown blocks fall back to text. Older hosts, clients and dashboards keep working. A tool without `context.panels` still returns text.
+Invalid updates are dropped with a visible notice, and the tool call still succeeds. Unknown blocks fall back to text. Older clients and dashboards keep working. An older Raw rejects a panel tool at install or load time with an explicit error, never partway through a turn.
 
 ### D11. `builtin/todo` is opt-in
 Like every tool, it loads only when `tools.use` selects it. Adding it to the starter agent would change the starter's tool schemas and cache key. That is a separate product decision.
@@ -775,12 +807,12 @@ The outline is for a later `loop-plan`. Each phase is one commit, and every phas
 | --- | --- |
 | D1, D3 | Store tests: the document survives compaction and restart, history has receipts only, and delete cascades. |
 | D2 | Validator tests per block kind, with the limits of §14 and the text rendering of each kind. Playwright renders each widget in 3 browsers with axe. |
-| D4 | The same update via a result block, `context.panels`, MCP `_meta` and an ACP tool yields identical stored documents and revisions. |
+| D4 | The same update via a result block, `context.panels`, MCP `_meta` and an ACP tool yields identical stored documents and revisions. `PostToolUse` hooks and `capResult` never see panel blocks. A failed commit transaction keeps no panel state. |
 | D5 | Provider request snapshots contain no panel bytes, and the cache key is unchanged by panel-only updates. |
 | D6 | Patch engine tests: atomic rejection, `base_revision` conflict, `upsert_items` merge semantics, and timeline trimming. |
-| D7 | Action tests: `deny` hides the action, `ask` prompts even with `-y`, hooks see `source: "user_action"`, and the model note appears before the next request. |
+| D7 | Action tests: `allow` runs on click with no approval, `ask` prompts even with `-y`, `deny` hides the action and returns 403, hooks see `source: "user_action"` in the existing order, and the model note appears before the next request. |
 | D8 | `panel_not_owned` for cross-owner writes, including through an `as` alias. |
 | D9 | Playwright: `first_update` opens once without moving focus, "Never" is respected, and narrow viewports stay closed. |
-| D10 | An invalid update leaves the tool result successful with a rejection line, an unknown kind renders its fallback, and `todo` works without `context.panels`. |
+| D10 | An invalid update leaves the tool result successful with a rejection line, and an unknown kind renders its fallback. A snapshot with a lower revision replaces the shown state. |
 | D11 | The starter config is unchanged. `builtin/todo` loads only when selected. |
 | D12 | An ACP test client receives `plan` with mapped statuses, and receives `_raw/panel/update` only after negotiation. |
