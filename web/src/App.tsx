@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Bot,
   Command,
-  Folder,
   Library,
   Menu,
   MessageSquare,
@@ -27,6 +26,8 @@ import { PackagesPage } from "./pages/Packages.js";
 import { ComponentsPage } from "./pages/Components.js";
 import { DefinitionsPage } from "./pages/Definitions.js";
 import { SettingsPage, SettingsSearch } from "./pages/Settings.js";
+import { WorkspaceSwitcher } from "./workspace/WorkspaceSwitcher.js";
+import { loadState, recordOpened, saveState, type WorkspaceState } from "./workspace/workspace-state.js";
 
 interface ActivityView {
   operations: Array<{
@@ -55,6 +56,15 @@ export function App() {
   const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceState, setWorkspaceState] = useState<WorkspaceState>(() => loadState());
+  const [activityRevision, setActivityRevision] = useState(0);
+  const updateWorkspaceState = useCallback((update: (old: WorkspaceState) => WorkspaceState) => {
+    setWorkspaceState((old) => {
+      const next = update(old);
+      saveState(next);
+      return next;
+    });
+  }, []);
   const [agent, setAgent] = useState("");
   const [sessions, setSessions] = useState<Page<SessionSummary>>({ items: [] });
   const [filter, setFilter] = useState("");
@@ -126,6 +136,7 @@ export function App() {
         );
         if (revision !== previousActivity.current) {
           previousActivity.current = revision;
+          setActivityRevision((old) => old + 1);
           void refreshSessions();
         }
       } catch {
@@ -182,27 +193,26 @@ export function App() {
       setError(errorText(cause));
     }
   };
+  const chooseWorkspace = (cwd: string) => {
+    setWorkspace(cwd);
+    navigate("/chat");
+    setError("");
+  };
   const running = activity.operations.filter((op) => !isTerminal(op.state));
   const sidebar = (
     <div className="context-panel-inner">
-      <button
-        className="workspace-button"
-        onClick={() => {
+      <WorkspaceSwitcher
+        current={workspace}
+        state={workspaceState}
+        onState={updateWorkspaceState}
+        activityRevision={activityRevision}
+        onChoose={chooseWorkspace}
+        onOpenFolder={() => {
           setWorkspaceDraft(workspace);
           setWorkspaceError("");
           setWorkspaceDialog(true);
         }}
-        title={workspace}
-      >
-        <Folder size={17} aria-hidden="true" />
-        <span>
-          <strong>Workspace</strong>
-          <small>
-            {workspace.split("/").filter(Boolean).at(-1) ?? workspace}
-          </small>
-        </span>
-        <Chevron />
-      </button>
+      />
       {page === "chat" ? (
         <>
           <Field label="New chat agent">
@@ -598,10 +608,9 @@ export function App() {
               cwd: workspaceDraft,
             }).then(
               (value) => {
-                setWorkspace(value.cwd);
+                updateWorkspaceState((old) => recordOpened(old, value.cwd, Date.now()));
                 setWorkspaceDialog(false);
-                navigate("/chat");
-                setError("");
+                chooseWorkspace(value.cwd);
               },
               (cause) => setWorkspaceError(errorText(cause)),
             );
@@ -734,12 +743,5 @@ export function App() {
         </div>
       </Modal>
     </>
-  );
-}
-function Chevron() {
-  return (
-    <span className="muted" aria-hidden="true">
-      ⌄
-    </span>
   );
 }

@@ -18,6 +18,7 @@ test("workspace and rename validation remain inside the active dialog", async ({
     page.getByRole("heading", { name: "Valid title" }),
   ).toBeVisible();
   await page.getByRole("button", { name: /^Workspace raw-dashboard/ }).click();
+  await page.getByRole("button", { name: "Open folder…" }).click();
   await page.getByLabel("Workspace directory").fill(`${raw.root}/missing`);
   await page.getByRole("button", { name: "Use workspace" }).click();
   await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
