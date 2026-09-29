@@ -7,13 +7,13 @@ import {
   baseName,
   batchPaths,
   chatsLabel,
+  displayPath,
   filterRows,
   hide,
   includePaths,
   mergeItems,
   recordOpened,
   relativeTime,
-  shortenPath,
   togglePin,
   type WorkspaceItem,
   type WorkspaceRow,
@@ -293,7 +293,7 @@ function WorkspaceRowView({
         {row.isCurrent ? <Check size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}
         <span className="workspace-row-text">
           <strong>{name}</strong>
-          <small className="workspace-row-path">{shortenPath(row.cwd, home)}</small>
+          <small className="workspace-row-path">{displayPath(row.cwd, home)}</small>
           <small className="workspace-row-meta">{meta}</small>
         </span>
         {row.running > 0 && <span className="workspace-badge running">Running</span>}

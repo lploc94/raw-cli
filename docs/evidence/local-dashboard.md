@@ -235,3 +235,16 @@ Scope: per-turn reasoning/effort and service-tier controls per `add-dashboard-re
 
 Screenshots were regenerated with `node --import tsx tests/dashboard-ui/capture.ts` (the pill is visible in every chat screenshot; `chat-dark-controls.png` shows the open popover). Known limits: options are not filtered per model, so a model that rejects a value fails that turn with the provider's message; qualification covers local mock providers only.
 
+## Workspace switcher and folder browser (2026-09-29)
+
+Scope: workspace list metadata, the read-only folder browser, and the switcher UI per `add-dashboard-workspace-switcher-plan.md` and `docs/dashboard-workspace-design.md`. Each phase was committed separately after a Codex (`gpt-6-astra`) implementation review reached APPROVE.
+
+| Contract | Proof |
+| --- | --- |
+| List metadata (chats, running, exists, `include`, home, current); browse is directories only, capped, bounded, no file names, config and tree unchanged, token required | `tests/dashboard-workspaces.test.ts` |
+| Pins, removals, opened folders, ordering, filtering, path shortening, batching, hostile storage | `tests/web-workspace-state.test.ts` |
+| Switcher: groups, filter, keyboard, pin/remove/copy, Missing, Running, stale selection, failed list, narrow drawer, axe | `tests/dashboard-ui/workspace.spec.ts` on chromium, firefox and webkit |
+| Folder browser: navigation, Up, filter, hidden toggle, links, errors, Open this folder, browse failing, stale listing, axe, narrow | `tests/dashboard-ui/workspace.spec.ts` |
+| Installed tarball carries the UI | `npm run test:package` |
+
+Screenshots were regenerated with `node --import tsx tests/dashboard-ui/capture.ts` (`workspace-dark-switcher.png`, `workspace-dark-browser.png`). Known limits: the folder browser lists what the dashboard's user account can read and is capped at 500 entries per folder; pins and removals belong to one browser profile; the selected workspace still resets to the launch directory on reload; qualification covers this host, local mock providers and the recorded browser versions only.

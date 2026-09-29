@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  MAX_HIDDEN, MAX_OPENED, MAX_PINNED, arrange, baseName, batchPaths, batches, chatsLabel, emptyState, filterRows, hide, includePaths, loadState, mergeItems,
+  MAX_HIDDEN, MAX_OPENED, MAX_PINNED, arrange, baseName, displayPath, batchPaths, batches, chatsLabel, emptyState, filterRows, hide, includePaths, loadState, mergeItems,
   recordOpened, relativeTime, saveState, shortenPath, storageKey, togglePin, unhide, type WorkspaceItem, type WorkspaceState,
 } from "../web/src/workspace/workspace-state.js";
 
@@ -146,6 +146,15 @@ test("paths are shortened against home and distinguish same-named folders", () =
   assert.equal(shortenPath("/", "/Users/me"), "/");
   assert.notEqual(shortenPath("/Users/me/a/app", "/Users/me"), shortenPath("/Users/me/b/app", "/Users/me"));
   assert.equal(baseName("/Users/me/a/app"), "app"); assert.equal(baseName("/Users/me/a/app/"), "app"); assert.equal(baseName("/"), "/");
+});
+
+test("long paths are elided in the middle so both the root and the folder name stay visible", () => {
+  assert.equal(displayPath("/Users/me/app", "/Users/me"), "~/app");
+  const long = "/private/var/folders/_x/8bhwgz2d0m12ddzdfw27jjtc0000gn/T/raw-dashboard-flow-V0kPkY";
+  const shown = displayPath(long, "/Users/me");
+  assert.ok(shown.length <= 40); assert.ok(shown.startsWith("/private/")); assert.ok(shown.endsWith("dashboard-flow-V0kPkY")); assert.ok(shown.includes("…"));
+  assert.equal(displayPath("/a/b", "/Users/me", 40), "/a/b");
+  assert.notEqual(displayPath("/very/long/path/that/goes/on/and/on/and/on/and/on/first/app", "", 30), displayPath("/very/long/path/that/goes/on/and/on/and/on/and/on/second/app", "", 30));
 });
 
 test("relative time uses stable buckets and a date after a month", () => {

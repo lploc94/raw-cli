@@ -187,6 +187,14 @@ export function shortenPath(path: string, home: string): string {
   return clean.startsWith(`${root}/`) ? `~${clean.slice(root.length)}` : clean;
 }
 
+/** The shortened path, with the middle elided when it is long, so the ends (root and folder name) stay visible. The full path belongs in a tooltip. */
+export function displayPath(path: string, home: string, max = 40): string {
+  const short = shortenPath(path, home);
+  if (short.length <= max) return short;
+  const tail = Math.ceil((max - 1) * 0.6);
+  return `${short.slice(0, max - 1 - tail)}…${short.slice(short.length - tail)}`;
+}
+
 export function relativeTime(at: number, now: number): string {
   if (!at) return "";
   const seconds = Math.max(0, Math.floor((now - at) / 1000));

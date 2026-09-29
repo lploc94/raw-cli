@@ -26,6 +26,7 @@ import { PackagesPage } from "./pages/Packages.js";
 import { ComponentsPage } from "./pages/Components.js";
 import { DefinitionsPage } from "./pages/Definitions.js";
 import { SettingsPage, SettingsSearch } from "./pages/Settings.js";
+import { FolderBrowser } from "./workspace/FolderBrowser.js";
 import { WorkspaceSwitcher } from "./workspace/WorkspaceSwitcher.js";
 import { loadState, recordOpened, saveState, type WorkspaceState } from "./workspace/workspace-state.js";
 
@@ -53,9 +54,7 @@ export function App() {
   const [bootstrap, setBootstrap] = useState<DashboardBootstrap>();
   const [error, setError] = useState("");
   const [workspace, setWorkspace] = useState("");
-  const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
-  const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceState, setWorkspaceState] = useState<WorkspaceState>(() => loadState());
   const [activityRevision, setActivityRevision] = useState(0);
   const updateWorkspaceState = useCallback((update: (old: WorkspaceState) => WorkspaceState) => {
@@ -207,11 +206,7 @@ export function App() {
         onState={updateWorkspaceState}
         activityRevision={activityRevision}
         onChoose={chooseWorkspace}
-        onOpenFolder={() => {
-          setWorkspaceDraft(workspace);
-          setWorkspaceError("");
-          setWorkspaceDialog(true);
-        }}
+        onOpenFolder={() => setWorkspaceDialog(true)}
       />
       {page === "chat" ? (
         <>
@@ -594,37 +589,16 @@ export function App() {
       >
         {sidebar}
       </Modal>
-      <Modal
+      <FolderBrowser
         open={workspaceDialog}
         onOpenChange={setWorkspaceDialog}
-        title="Choose workspace"
-        description="The directory must already exist. Existing sessions keep their saved workspace."
-      >
-        <ErrorMessage>{workspaceError}</ErrorMessage>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void api<{ cwd: string }>("/workspaces/validate", "POST", {
-              cwd: workspaceDraft,
-            }).then(
-              (value) => {
-                updateWorkspaceState((old) => recordOpened(old, value.cwd, Date.now()));
-                setWorkspaceDialog(false);
-                chooseWorkspace(value.cwd);
-              },
-              (cause) => setWorkspaceError(errorText(cause)),
-            );
-          }}
-        >
-          <Field label="Workspace directory">
-            <input
-              value={workspaceDraft}
-              onChange={(event) => setWorkspaceDraft(event.target.value)}
-            />
-          </Field>
-          <button className="primary">Use workspace</button>
-        </form>
-      </Modal>
+        initialPath={workspace}
+        onOpen={(cwd) => {
+          updateWorkspaceState((old) => recordOpened(old, cwd, Date.now()));
+          setWorkspaceDialog(false);
+          chooseWorkspace(cwd);
+        }}
+      />
       <Modal
         open={palette}
         onOpenChange={setPalette}

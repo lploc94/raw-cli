@@ -1,11 +1,14 @@
 import { chromium } from "@playwright/test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { dashboardFixture } from "../fixtures/dashboard.js";
 import { openAiFrame, openAiDone } from "../fixtures/mock-provider.js";
 import { makePngOfSize } from "../fixtures/images.js";
 
 // Run after npm run build. These are real HTTP/tool flows in disposable local state.
 mkdirSync("docs/dashboard", { recursive: true });
+const cleanup: string[] = [];
 const raw = await dashboardFixture({
   model: { vision: true },
   agent: { tools: { use: ["builtin/bash"] } },
@@ -130,6 +133,34 @@ try {
     animations: "disabled",
   });
   await page.keyboard.press("Escape");
+  // Workspace switcher and folder browser, with a few disposable folders.
+  const demo = realpathSync(mkdtempSync(join(tmpdir(), "raw-demo-")));
+  cleanup.push(demo);
+  for (const name of ["api-server", "docs", "web-app", ".cache"]) mkdirSync(join(demo, name));
+  mkdirSync(join(demo, "web-app", "src"));
+  for (const name of ["api-server", "web-app"]) await raw.json("/sessions", "POST", { cwd: join(demo, name) });
+  await raw.json("/sessions", "POST", { cwd: join(demo, "web-app") });
+  await page.evaluate((path) => localStorage.setItem("raw.dashboard.workspaces.v1", JSON.stringify({ version: 1, pinned: [], hidden: [], opened: [{ path, at: Date.now() - 3_600_000 }] })), join(demo, "docs"));
+  await page.reload();
+  await page.locator(".workspace-button:visible").click();
+  await page.locator(".workspace-popover").waitFor();
+  await page.getByRole("button", { name: /^Pin api-server/ }).click();
+  await page.locator(".workspace-row", { hasText: "web-app" }).waitFor();
+  await page.screenshot({
+    path: "docs/dashboard/workspace-dark-switcher.png",
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Open folder…" }).click();
+  await page.getByRole("dialog", { name: "Open folder" }).waitFor();
+  await page.getByLabel("Workspace directory").fill(demo);
+  await page.getByLabel("Workspace directory").press("Enter");
+  await page.locator(".folder-entry", { hasText: "web-app" }).waitFor();
+  await page.screenshot({
+    path: "docs/dashboard/workspace-dark-browser.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  await page.goto(raw.server.url + sessionPath);
   await page.getByRole("button", { name: "Session details" }).click();
   await page.getByRole("heading", { name: "Context", exact: true }).waitFor();
   await page.screenshot({
@@ -148,4 +179,5 @@ try {
 } finally {
   await browser.close();
   await raw.close();
+  for (const dir of cleanup) rmSync(dir, { recursive: true, force: true });
 }

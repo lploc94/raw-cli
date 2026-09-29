@@ -36,6 +36,12 @@ The filter and the rows are ordinary controls, not an `aria-activedescendant` wi
 ### D5. Recent includes folders opened here
 Recent is the server's recently used workspaces plus the folders opened from this browser, ranked by the latest of the two times, so a folder opened moments ago appears first even before it has a chat. Metadata for paths the server did not list (pinned or opened) is requested with `include`, in batches of at most 50 paths.
 
+### D6. A server-side, read-only folder listing
+A browser cannot list the filesystem, so "Open folder…" is backed by `GET /api/workspaces/browse`. It returns directory names only, never files, sizes, times or contents, never writes, is capped at 500 entries, and uses the same Bearer token as every other route; it therefore reveals nothing the dashboard's own user account could not already read. Hidden folders are opt-in, and symbolic links that resolve to folders are listed and marked (a link to a file or a broken link is omitted). Choosing is always re-validated by `POST /api/workspaces/validate`, so the listing is a convenience and never an authority.
+
+### D7. The typed path is the fallback
+**Open this folder** validates the text in the path field, not the last listing, so a failing `browse` (network, permission, oversized directory) never blocks choosing a folder. Errors stay inline; a slower earlier listing never overwrites a newer one, and a listing that arrives after the user typed never replaces what was typed.
+
 ## Alternatives rejected
 
 - **A native OS folder dialog.** A browser page cannot obtain a real filesystem path from it.
@@ -51,3 +57,5 @@ Recent is the server's recently used workspaces plus the folders opened from thi
 | D3 | `tests/dashboard-ui/workspace.spec.ts` (deleted on disk, deleted after the list loaded) |
 | D4 | `tests/dashboard-ui/workspace.spec.ts` (keyboard, focus return, axe) |
 | D5 | `tests/web-workspace-state.test.ts`, `tests/dashboard-ui/workspace.spec.ts` |
+| D6 | `tests/dashboard-workspaces.test.ts` (directories only, no file names, caps, errors), `tests/dashboard-ui/workspace.spec.ts` (folder browser) |
+| D7 | `tests/dashboard-ui/workspace.spec.ts` (browse failing, removed before Open, stale listing) |
