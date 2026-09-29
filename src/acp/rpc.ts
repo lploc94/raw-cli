@@ -11,10 +11,10 @@ export const rawErrors = {
   duplicate: -32008,
 } as const;
 
-export type RawCapability = "runtimeInfo" | "sessionConfigure" | "toolRegister" | "toolCall" | "sessionCompact" | "toolCancel";
+export type RawCapability = "runtimeInfo" | "sessionConfigure" | "toolRegister" | "toolCall" | "sessionCompact" | "toolCancel" | "panels";
 export type RawCapabilities = Partial<Record<RawCapability, boolean>>;
 
-const knownFlags: readonly RawCapability[] = ["runtimeInfo", "sessionConfigure", "toolRegister", "toolCall", "sessionCompact", "toolCancel"];
+const knownFlags: readonly RawCapability[] = ["runtimeInfo", "sessionConfigure", "toolRegister", "toolCall", "sessionCompact", "toolCancel", "panels"];
 
 export function rawCapabilities(meta: unknown): RawCapabilities {
   if (meta === undefined || meta === null) return {};

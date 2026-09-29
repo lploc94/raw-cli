@@ -314,3 +314,29 @@ test("T-06d: CR-only SSE event boundaries permit two individually bounded discov
     finally { await connection.close(); }
   } finally { globalThis.fetch = original; }
 });
+
+test("panels: MCP _meta[raw/panel] reaches the registry as a panel block and config panels become declarations", async () => {
+  const registry = createTestToolRegistry();
+  const spec = { ...stdio("fixture"), panels: [{ tool: "selected", id: "plan", title: "Plan", icon: "list-checks" as const, open: "never" as const,
+    context: "none" as const, acp_plan: false, actions: [] }] };
+  const connection = await connectMcpServers({ servers: { fixture: spec }, registry, cwd: process.cwd(), timeoutMs: 3000 });
+  try {
+    const alias = connection.catalog.find((item) => item.originalName === "selected")!.alias;
+    const owner = registry.panelDeclarations(alias)!;
+    assert.equal(owner.owner, "mcp/fixture/selected");
+    assert.deepEqual(owner.declarations.map((panel) => panel.id), ["plan"]);
+    assert.equal(owner.implicit, false);
+    const collected: unknown[] = [];
+    const result = await registry.dispatch(alias, { value: "panel" }, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true,
+      onPanelUpdates: (updates) => collected.push(...updates) });
+    assert.deepEqual(result.content, [{ type: "text", text: "panelled" }]);
+    assert.equal(collected.length, 1);
+    assert.equal((collected[0] as { panel: string }).panel, "plan");
+  } finally { await connection.close(); }
+  const plain = createTestToolRegistry();
+  const second = await connectMcpServers({ servers: { fixture: stdio("fixture") }, registry: plain, cwd: process.cwd(), timeoutMs: 3000 });
+  try {
+    const alias = second.catalog.find((item) => item.originalName === "selected")!.alias;
+    assert.equal(plain.panelDeclarations(alias)?.implicit, true, "no config panels means an implicit declaration");
+  } finally { await second.close(); }
+});

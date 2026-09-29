@@ -378,8 +378,16 @@ function action(value: unknown, path: Path): PanelAction {
   return item as unknown as PanelAction;
 }
 
-/** Validates one `panels[]` declaration. An unknown icon falls back to `panel` and calls `warn`. */
-export function validateDeclaration(value: unknown, where: string, warn?: (message: string) => void): PanelDeclaration {
+const warned = new Set<string>();
+/** The default load-warning channel: Node's process warnings (stderr), once per distinct message. */
+export function panelWarning(message: string): void {
+  if (warned.has(message)) return;
+  warned.add(message);
+  process.emitWarning(message, { code: "RAW_PANEL_DECLARATION" });
+}
+
+/** Validates one `panels[]` declaration. An unknown icon falls back to `panel` and calls `warn` (default: a process warning). */
+export function validateDeclaration(value: unknown, where: string, warn: (message: string) => void = panelWarning): PanelDeclaration {
   const at: Path = [where];
   const item = object(value, at);
   keys(item, ["id", "title", "icon", "open", "context", "acp_plan", "actions"], at);
@@ -388,7 +396,7 @@ export function validateDeclaration(value: unknown, where: string, warn?: (messa
   let icon: PanelDeclaration["icon"] = "panel";
   if (item.icon !== undefined) {
     if (typeof item.icon === "string" && (PANEL_ICONS as readonly string[]).includes(item.icon)) icon = item.icon as PanelDeclaration["icon"];
-    else if (typeof item.icon === "string") warn?.(`${where}: unknown icon "${item.icon}" falls back to "panel"`);
+    else if (typeof item.icon === "string") warn(`${where}: unknown icon "${item.icon}" falls back to "panel"`);
     else invalid([...at, "icon"], "must be a string");
   }
   const open = item.open === undefined ? "never" : oneOf(item.open, ["never", "first_update"], [...at, "open"]);

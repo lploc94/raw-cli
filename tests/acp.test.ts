@@ -511,3 +511,51 @@ test("T-07f: compact extension delegates to atomic session compact and returns s
       (error: { code: number }) => error.code === -32001);
   } finally { connection.close(); await server.close(); }
 });
+
+test("panels: reverse tool panel content needs the peer's panels capability and yields the same confirmation line", async () => {
+  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama", "fixture"), autoApprove: true }, env: {}, requireModel: true });
+  const panelReply = { isError: false, content: [{ type: "panel", panel: "todo", op: "replace",
+    document: { blocks: [{ id: "c", kind: "checklist", items: [{ id: "a", label: "Write tests", status: "done" }] }] } }] };
+  const run = async (negotiate: boolean, declared: boolean) => {
+    let alias = "";
+    const toolMessages: unknown[] = [];
+    const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
+      const last = request.messages.at(-1);
+      if (last?.role === "tool") { toolMessages.push(last.result); return { text: "done", toolCalls: [], finishReason: "stop" }; }
+      return { text: "", toolCalls: [{ id: "c1", name: alias, arguments: {} }], finishReason: "tool_calls" };
+    } }) });
+    const peer = client({ name: "panel-client" });
+    peer.onRequest("_raw/tool/call", (params: unknown) => params, () => panelReply);
+    peer.onRequest("session/request_permission", () => ({ outcome: { outcome: "selected", optionId: "allow" } }));
+    const connection = peer.connect(server.app);
+    try {
+      const init = await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
+        _meta: { raw: { toolRegister: true, toolCall: true, ...(negotiate ? { panels: true } : {}) } } });
+      assert.equal((init._meta?.raw as { panels: boolean }).panels, true, "the agent advertises panels");
+      const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
+      const registration = await connection.agent.request<{ alias: string }>("_raw/tool/register", { sessionId, name: "todo_tool", description: "Todo",
+        inputSchema: { type: "object" }, ...(declared ? { panels: [{ id: "todo", title: "Todo", icon: "list-checks" }] } : {}) });
+      alias = registration.alias;
+      await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "go" }] });
+      return toolMessages[0] as { isError: boolean; code?: string; content: Array<{ type: string; text?: string }> };
+    } finally { connection.close(); await server.close(); }
+  };
+  for (const declared of [true, false]) {
+    const accepted = await run(true, declared);
+    assert.equal(accepted.isError, false);
+    assert.match(accepted.content.map((block) => block.text ?? "").join(""), /^panel todo updated \(revision 1\): /);
+    assert.ok(!accepted.content.some((block) => block.type === "panel"));
+    const rejected = await run(false, declared);
+    assert.equal(rejected.isError, true);
+    assert.equal(rejected.code, "unsupported_content");
+  }
+  const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async () => ({ text: "x", toolCalls: [], finishReason: "stop" }) }) });
+  const peer = client({ name: "bad-panels" });
+  const connection = peer.connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, _meta: { raw: { toolRegister: true, toolCall: true, panels: true } } });
+    const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
+    await assert.rejects(connection.agent.request("_raw/tool/register", { sessionId, name: "bad", description: "d", inputSchema: { type: "object" }, panels: [{ id: "BAD", title: "x" }] }),
+      (error: { code: number }) => error.code === -32602);
+  } finally { connection.close(); await server.close(); }
+});

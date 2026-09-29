@@ -30,6 +30,8 @@ export function fixtureMcpServer(label: string, count = 2, reverse = false, mode
     if (value === "image") return { content: [{ type: "image", mimeType: "image/png", data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64") }] };
     if (value === "jpeg") return { content: [{ type: "image", mimeType: "image/jpeg", data: Buffer.from([255, 216, 255, 217]).toString("base64") }] };
     if (value === "structured") return { structuredContent: { label }, content: [{ type: "text", text: JSON.stringify({ label }) }] };
+    if (value === "panel") return { content: [{ type: "text", text: "panelled" }], _meta: { "raw/panel": { panel: "plan", op: "replace",
+      document: { blocks: [{ id: "c", kind: "checklist", items: [{ id: "a", label: "From MCP" }] }] } } } };
     if (value === "error") return { isError: true, content: [{ type: "text", text: `${label}:failure` }] };
     if (value === "resource") return { content: [{ type: "resource_link", uri: "https://example.test/private", name: "secret" }] };
     if (name === "selected" || name.startsWith("hidden_")) {

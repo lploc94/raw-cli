@@ -31,7 +31,7 @@ export interface AcpParentClient {
   deleteSession(sessionId: string): Promise<void>;
   prompt(sessionId: string, prompt: string | ContentBlock[]): Promise<{ stopReason: string }>;
   cancel(sessionId: string): Promise<void>;
-  registerTool(sessionId: string, name: string, description: string, inputSchema: Record<string, unknown>, handler: ParentToolHandler): Promise<{ toolId: string; alias: string; contextRevision: number }>;
+  registerTool(sessionId: string, name: string, description: string, inputSchema: Record<string, unknown>, handler: ParentToolHandler, panels?: readonly unknown[]): Promise<{ toolId: string; alias: string; contextRevision: number }>;
   close(): Promise<void>;
 }
 
@@ -73,7 +73,7 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
   try {
     const initialize = connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {}, _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true,
-        toolCall: true, toolCancel: true, sessionCompact: true } } });
+        toolCall: true, toolCancel: true, sessionCompact: true, panels: true } } });
     initializeResult = await (spawnFailure ? Promise.race([initialize, spawnFailure]) : initialize);
   } catch (error) {
     connection.close();
@@ -115,9 +115,9 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
     prompt: (sessionId, prompt) => connection.agent.request("session/prompt", { sessionId,
       prompt: typeof prompt === "string" ? [{ type: "text", text: prompt }] : prompt }),
     cancel: (sessionId) => connection.agent.notify("session/cancel", { sessionId }),
-    registerTool: async (sessionId, name, description, inputSchema, handler) => {
+    registerTool: async (sessionId, name, description, inputSchema, handler, panels) => {
       const response = await connection.agent.request<{ toolId: string; alias: string; contextRevision: number }>("_raw/tool/register",
-        { sessionId, name, description, inputSchema });
+        { sessionId, name, description, inputSchema, ...(panels ? { panels } : {}) });
       handlers.set(response.toolId, handler);
       return response;
     },

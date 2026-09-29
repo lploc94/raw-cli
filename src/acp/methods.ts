@@ -17,7 +17,9 @@ import type { McpConnection, McpServerConfig } from "../tools/mcp-client.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { createRuntimeTools } from "../tools/plugins/runtime.js";
 import { capResult, errorResult } from "../tools/results.js";
-import type { ToolContent, ToolResult } from "../tools/types.js";
+import { PANEL_LIMITS, type PanelDeclaration } from "../panels/contract.js";
+import { validateDeclaration } from "../panels/validate.js";
+import type { ToolHandlerContent, ToolHandlerResult } from "../tools/types.js";
 import { fields, object, rawCapabilities, rawError, rawErrors, string, stringArray, withAbort,
   type RawCapabilities, type RawCapability } from "./rpc.js";
 
@@ -77,11 +79,12 @@ function promptBlocks(blocks: readonly ContentBlock[]): UserBlock[] {
   });
 }
 
-function reverseResult(raw: unknown, maxOutputBytes: number): ToolResult {
+/** `allowPanels` is true only when the peer advertised `_meta.raw.panels`; otherwise a panel block is rejected like any unknown block. */
+function reverseResult(raw: unknown, maxOutputBytes: number, allowPanels: boolean): ToolHandlerResult {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return errorResult("unsupported_content", "invalid reverse tool result");
   const result = raw as Record<string, unknown>;
   if (!Array.isArray(result.content)) return errorResult("unsupported_content", "invalid reverse tool content");
-  const content: ToolContent[] = [];
+  const content: ToolHandlerContent[] = [];
   let bytes = 0;
   for (const item of result.content) {
     if (!item || typeof item !== "object" || Array.isArray(item)) return errorResult("unsupported_content", "invalid reverse tool block");
@@ -111,6 +114,9 @@ function reverseResult(raw: unknown, maxOutputBytes: number): ToolResult {
       if (decoded.toString("base64") !== image) return errorResult("unsupported_content", "invalid reverse tool image");
       bytes += decoded.length;
       content.push({ type: "image", mimeType: block.mimeType, data: image });
+    } else if (allowPanels && block.type === "panel") {
+      try { bytes += Buffer.byteLength(JSON.stringify(block)); } catch { return errorResult("unsupported_content", "invalid panel reverse tool block"); }
+      content.push(structuredClone(block) as unknown as ToolHandlerContent);
     } else return errorResult("unsupported_content", "unsupported reverse tool block");
     if (bytes > 16 * 1024 * 1024) return errorResult("result_too_large", "reverse tool result exceeds 16 MiB");
   }
@@ -302,7 +308,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         sessionCapabilities: { list: {}, resume: {}, delete: {} } },
       authMethods: [],
       _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true,
-        toolCall: true, sessionCompact: true, toolCancel: true } } };
+        toolCall: true, sessionCompact: true, toolCancel: true, panels: true } } };
   });
   app.onRequest("session/new", ({ params }) => startSession(params.cwd, params.mcpServers));
   app.onRequest("session/list", ({ params }) => {
@@ -391,18 +397,26 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   });
   app.onRequest("_raw/tool/register", (params: unknown) => object(params, "tool registration"), ({ params }) => {
     requireCapability("toolRegister"); requireCapability("toolCall");
-    fields(params, ["sessionId", "name", "description", "inputSchema"], "tool registration");
+    fields(params, ["sessionId", "name", "description", "inputSchema", "panels"], "tool registration");
     const session = getSession(string(params.sessionId, "sessionId"));
     if (session.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");
     const name = string(params.name, "tool name");
     const description = string(params.description, "tool description");
     if (session.registered.has(name)) throw rawError(rawErrors.duplicate, "duplicate tool registration");
     const { schema, validate } = compiledSchema(params.inputSchema, name);
+    let declared: PanelDeclaration[] = [];
+    if (params.panels !== undefined) {
+      if (!Array.isArray(params.panels) || params.panels.length > PANEL_LIMITS.panelsPerTool) throw RequestError.invalidParams(undefined, "panels must be an array of at most 4 declarations");
+      try { declared = params.panels.map((panel, index) => validateDeclaration(panel, `panels[${index}]`)); }
+      catch (error) { throw RequestError.invalidParams(undefined, (error as Error).message); }
+      if (new Set(declared.map((panel) => panel.id)).size !== declared.length) throw RequestError.invalidParams(undefined, "duplicate panel id");
+    }
     const toolId = randomUUID();
     const alias = reverseAlias(name, toolId);
     if (session.registry.definitions().some((item) => item.name === alias)) throw rawError(rawErrors.duplicate, "duplicate tool alias");
     const visible = session.agent.toolDefinitions.map((item) => item.name);
     session.registry.register({ name: alias, canonicalName: `acp:${name}`, description, inputSchema: schema, validateArgs: validate,
+      ...(declared.length ? { panels: declared } : { implicitPanels: true }),
       handler: async (args, context) => {
         if (!peer) return errorResult("peer_disconnected", "ACP client disconnected");
         const invocationId = randomUUID();
@@ -420,7 +434,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
           const result = await withAbort(Promise.race([peer.request("_raw/tool/call", { sessionId: session.id, toolId, invocationId,
             arguments: args }, { cancellationSignal: requestController.signal }), expired]), context.signal);
           if (context.signal?.aborted) return errorResult("cancelled", "reverse tool call cancelled");
-          return reverseResult(result, context.maxOutputBytes);
+          return reverseResult(result, context.maxOutputBytes, peerRaw.panels === true);
         } catch (error) {
           if (context.signal?.aborted) return errorResult("cancelled", "reverse tool call cancelled");
           if (requestController.signal.aborted || (error instanceof RequestError && error.code === rawErrors.timeout)) return errorResult("callback_timeout", "reverse tool call timed out");

@@ -24,6 +24,8 @@ export interface LoadToolPluginsOptions {
   skills?: readonly SelectedSkill[];
   vars?: VariableContext;
   packageTools?: Readonly<Record<string, PackageAsset>>;
+  /** Receives non-fatal manifest notes such as an unknown panel icon. */
+  onWarning?: (message: string) => void;
 }
 
 export function bundledToolsRoot(): string {
@@ -41,7 +43,7 @@ function parseId(id: string): { scope: "builtin" | "local" | "agent"; folder: st
   return { scope: match[1] as "builtin" | "local" | "agent", folder: match[2]! };
 }
 
-async function selectedManifest(id: string, root: string, direct?: PackageAsset): Promise<{
+async function selectedManifest(id: string, root: string, direct?: PackageAsset, warn?: (message: string) => void): Promise<{
   id: string; manifest: ToolManifest; entryPath: string; sourceDigest: string;
   validateSchema: (args: unknown) => string | undefined;
 }> {
@@ -62,7 +64,7 @@ async function selectedManifest(id: string, root: string, direct?: PackageAsset)
   if (!inside(realFolder, realManifest) || !inside(realFolder, realEntry)) throw new Error(`selected tool entry escapes folder: ${id}`);
   let manifest: ToolManifest;
   let manifestBytes: Buffer;
-  try { manifestBytes = await readFile(realManifest); manifest = parseToolManifest(JSON.parse(manifestBytes.toString("utf8")), id, folder); }
+  try { manifestBytes = await readFile(realManifest); manifest = parseToolManifest(JSON.parse(manifestBytes.toString("utf8")), id, folder, warn); }
   catch (error) { throw new Error(`invalid selected tool manifest ${id}: ${(error as Error).message}`); }
   const validateSchema = compileToolSchema(manifest);
   const snapshot = await selectedToolSnapshot(direct?.canonicalIdentity ?? id, realFolder, manifest, manifestBytes,
@@ -70,12 +72,36 @@ async function selectedManifest(id: string, root: string, direct?: PackageAsset)
   return { id, manifest, entryPath: snapshot.entryPath, sourceDigest: snapshot.sourceDigest, validateSchema };
 }
 
-export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<ToolPlugin[]> {
+function toolRoots(options: LoadToolPluginsOptions): Record<"builtin" | "local" | "agent", string> {
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const globalBase = env.XDG_CONFIG_HOME ? resolve(cwd, env.XDG_CONFIG_HOME) : join(options.home ?? homedir(), ".config");
-  const roots = { builtin: bundledToolsRoot(), local: join(options.globalConfigRoot ?? join(globalBase, "raw"), "tools"),
+  return { builtin: bundledToolsRoot(), local: join(options.globalConfigRoot ?? join(globalBase, "raw"), "tools"),
     agent: join(dirname(resolve(cwd, options.configPath)), "tools") };
+}
+
+/**
+ * Reads only the `tool.json` manifests of the selected tools: no entry module is imported or snapshotted, so a tool
+ * that throws on import, or whose entry is missing, still yields its declarations. A tool that cannot be read is skipped.
+ */
+export async function readToolManifests(options: LoadToolPluginsOptions): Promise<Array<{ id: string; manifest: ToolManifest }>> {
+  const roots = toolRoots(options);
+  const found: Array<{ id: string; manifest: ToolManifest }> = [];
+  for (const id of options.selectedIds) {
+    try {
+      const direct = options.packageTools?.[id];
+      const parsed = direct ? undefined : parseId(id);
+      const folder = direct?.name ?? parsed!.folder;
+      const folderPath = direct?.folder ?? join(roots[parsed!.scope], folder);
+      const manifest = parseToolManifest(JSON.parse(await readFile(await realpath(join(folderPath, "tool.json")), "utf8")), id, folder, options.onWarning);
+      found.push({ id, manifest });
+    } catch { /* selection errors are reported by loadToolPlugins when the runtime starts */ }
+  }
+  return found;
+}
+
+export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<ToolPlugin[]> {
+  const roots = toolRoots(options);
   const seenIds = new Set<string>();
   const seenNames = new Set<string>();
   const prepared: Array<Awaited<ReturnType<typeof selectedManifest>>> = [];
@@ -85,7 +111,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
     const direct = options.packageTools?.[id];
     const parsed = direct ? undefined : parseId(id);
     if (parsed?.scope === "builtin" && !bundledNames.has(parsed.folder)) throw new Error(`unknown bundled tool: ${id}`);
-    const item = await selectedManifest(id, direct ? dirname(direct.folder) : roots[parsed!.scope], direct);
+    const item = await selectedManifest(id, direct ? dirname(direct.folder) : roots[parsed!.scope], direct, options.onWarning);
     const visibleName = direct?.as ?? item.manifest.name;
     if (seenNames.has(visibleName)) throw new Error(`duplicate tool name: ${visibleName}`);
     seenNames.add(visibleName);
@@ -104,6 +130,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
       name: options.packageTools?.[item.id]?.as ?? item.manifest.name,
       canonicalName: options.packageTools?.[item.id]?.canonicalIdentity ?? item.id,
       description: item.manifest.description, inputSchema: item.manifest.input_schema,
+      ...(item.manifest.panels?.length ? { panels: item.manifest.panels } : {}),
       validateArgs(args) {
         let error: unknown;
         try { error = semantic?.(args); } catch { return "semantic validator failed"; }

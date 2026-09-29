@@ -1,14 +1,17 @@
 import AjvDraft7 from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { PANEL_LIMITS } from "../../panels/contract.js";
+import { validateDeclaration } from "../../panels/validate.js";
 import type { ToolManifest } from "./contract.js";
 
 const manifestKeys = ["api_version", "id", "version", "name", "description", "input_schema", "entry"];
+const optionalKeys = ["panels"];
 
-export function parseToolManifest(value: unknown, expectedId: string, expectedFolder: string): ToolManifest {
+export function parseToolManifest(value: unknown, expectedId: string, expectedFolder: string, warn?: (message: string) => void): ToolManifest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`invalid tool manifest: ${expectedId}`);
   const item = value as Record<string, unknown>;
-  if (Object.keys(item).some((key) => !manifestKeys.includes(key))
+  if (Object.keys(item).some((key) => !manifestKeys.includes(key) && !optionalKeys.includes(key))
     || manifestKeys.some((key) => !Object.hasOwn(item, key))
     || item.api_version !== 1 || item.id !== expectedFolder
     || typeof item.version !== "string" || !/^\d+\.\d+\.\d+$/.test(item.version)
@@ -16,6 +19,14 @@ export function parseToolManifest(value: unknown, expectedId: string, expectedFo
     || typeof item.description !== "string" || !item.description.trim()
     || item.entry !== "./index.mjs" || !item.input_schema || typeof item.input_schema !== "object"
     || Array.isArray(item.input_schema)) throw new Error(`invalid tool manifest: ${expectedId}`);
+  if (item.panels !== undefined) {
+    try {
+      if (!Array.isArray(item.panels) || item.panels.length > PANEL_LIMITS.panelsPerTool) throw new Error("panels");
+      const declared = item.panels.map((panel, index) => validateDeclaration(panel, `panels[${index}]`, warn));
+      if (new Set(declared.map((panel) => panel.id)).size !== declared.length) throw new Error("duplicate panel id");
+      item.panels = declared;
+    } catch { throw new Error(`invalid tool manifest: ${expectedId}`); }
+  }
   return item as unknown as ToolManifest;
 }
 

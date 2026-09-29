@@ -263,10 +263,10 @@ The equivalence test compares full stored rows, so a path that bypasses `PanelHo
 Warnings go to the existing load-warning channel; no behavior change for servers/tools without `panels`.
 
 ### Acceptance criteria
-- [ ] AC-3.1: Four emission paths yield identical stored state — proven by `tests/panels-declarations.test.ts`.
-- [ ] AC-3.2: Known declarations are computed without importing handlers or starting MCP servers, in §13.1 default order — proven by tests.
-- [ ] AC-3.3: ACP panel content is rejected without negotiation and accepted with it — proven by `tests/acp.test.ts`.
-- [ ] AC-3.4: `raw.panel/1` is a host capability and export requires it for panel tools — proven by package tests.
+- [x] AC-3.1: Four emission paths yield identical stored state — proven by `tests/panels-declarations.test.ts`.
+- [x] AC-3.2: Known declarations are computed without importing handlers or starting MCP servers, in §13.1 default order — proven by tests.
+- [x] AC-3.3: ACP panel content is rejected without negotiation and accepted with it — proven by `tests/acp.test.ts`.
+- [x] AC-3.4: `raw.panel/1` is a host capability and export requires it for panel tools — proven by package tests.
 
 ### Focused verification
 `node --import tsx --test tests/panels-declarations.test.ts tests/tool-plugins.test.ts tests/mcp.test.ts tests/acp.test.ts tests/package-manifest.test.ts`
@@ -618,7 +618,7 @@ Implementation review is required; verdict must be APPROVE.
 | --- | --- | --- | --- | --- |
 | 1 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (14 findings fixed) | 30 protocol tests; `npm test` only the 3 known PTY failures |
 | 2 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (7 findings fixed) | 24 host tests, mutation-checked (extraction removed, panel write moved out of the transaction); `npm test` only the 3 known PTY failures |
-| 3 | pending | | | |
+| 3 | complete | see git log | Codex gpt-6-astra APPROVE after 2 rounds (5 findings fixed) | 7 declaration tests + ACP/MCP additions; `npm test` only the 3 known PTY failures; `npm run test:package` pass |
 | 4 | pending | | | |
 | 5 | pending | | | |
 | 6 | pending | | | |

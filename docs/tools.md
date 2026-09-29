@@ -109,6 +109,8 @@ Errors are `PanelError` codes (`panel_invalid`, `panel_too_large`, `panel_undecl
 `panel <id> update rejected: <code> <message>` and history records an error receipt. Panels are owned by the tool's canonical
 identity, so an `as` alias cannot write another tool's panel. `context.panels` is absent for tools without declared panels.
 
+A `tool.json` may declare up to four panels with the optional `panels` array (`id`, `title`, and optionally `icon`, `open`, `context`, `acp_plan`, `actions`; see the design document). Unknown keys, duplicate ids or an invalid declaration make the manifest invalid; an unknown `icon` falls back to `panel` with a load warning. The declarations are read from `tool.json` alone: they are known without importing `index.mjs`, so the dashboard can list a tool's panels before the tool has ever run.
+
 ## Agent rules
 
 An optional agent `tools.rules` array applies to built-ins, MCP tools and ACP-injected tools. Each rule is `{ "match": "<glob>", "effect": "allow" | "ask" | "deny" }`. `*` matches any number of characters and `?` matches one character; the pattern covers the whole canonical tool identity. Built-in identities are `builtin/read_file`, `builtin/write_file`, `builtin/bash`, and `builtin/view_image`; local plugin identities are `local/<id>` or `agent/<id>`; MCP identities are `mcp/<server>/<original-tool-name>`; ACP-injected identities are `acp:<registered-name>`. Rules run in array order and the last match wins. No match means `allow`.

@@ -1,4 +1,4 @@
-import { mkdir, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { readConfigDocument } from "../config.js";
@@ -133,6 +133,7 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const tools = record(agent.tools, "agent tools");
   const selection = names(tools.use, "agent tools.use");
   const emittedTools: Record<string, string> = {};
+  let usesPanels = false;
   for (let index = 0; index < selection.length; index++) {
     const id = selection[index]!;
     const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(id);
@@ -144,6 +145,10 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
       : join(globalConfigRoot, "tools", folder));
     const path = `tools/${folder}`;
     await copyOwnedTree(sourceRoot, join(out, path));
+    try {
+      const declared = (JSON.parse(await readFile(join(sourceRoot, "tool.json"), "utf8")) as { panels?: unknown }).panels;
+      if (Array.isArray(declared) && declared.length) usesPanels = true;
+    } catch { /* an unreadable manifest is reported by inspectPackage */ }
     emittedTools[folder] = path;
     files.push(path);
     selection[index] = `#tools/${folder}`;
@@ -263,6 +268,7 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
       server[key] = Object.fromEntries(Object.keys(entries).map((name) => [name,
         addInput(`mcp_${serverName}_${key}_${name.toLowerCase()}`, "string", `Recipient ${key} ${name} for ${serverName}`)]));
     }
+    if (Array.isArray(server.panels) && server.panels.length) usesPanels = true;
     const path = `mcp/${serverName}.json`;
     await mkdir(dirname(join(out, path)), { recursive: true });
     await writeFile(join(out, path), JSON.stringify(server, null, 2) + "\n");
@@ -277,7 +283,8 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const manifest: RawPackageManifest = { schema_version: 1, name: options.name, version: options.version,
     description: `Exported agent ${options.agentName}`, files, exports: exported,
     ...(inputRequired.length ? { inputs: { type: "object", properties: inputProperties, required: inputRequired } } : {}),
-    requires: ["raw.agent/1", "raw.tool-api/1", "raw.skill/1", ...(Object.keys(emittedHooks).length ? ["raw.hook/1"] : [])],
+    requires: ["raw.agent/1", "raw.tool-api/1", "raw.skill/1", ...(Object.keys(emittedHooks).length ? ["raw.hook/1"] : []),
+      ...(usesPanels ? ["raw.panel/1"] : [])],
     ...(prerequisites.size ? { metadata: { external_executables: [...prerequisites].sort() } } : {}) };
   await writeFile(join(out, "raw-package.json"), JSON.stringify(manifest, null, 2) + "\n");
   const report = await inspectPackage(out);

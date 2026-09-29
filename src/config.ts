@@ -7,7 +7,7 @@ import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from 
 import { resolveSystemPrompt } from "./llm/prompt.js";
 import { ANTHROPIC_EFFORTS, ANTHROPIC_TIERS, DEEPSEEK_EFFORTS, GOOGLE_LEVELS, OPENAI_EFFORTS, OPENAI_TIERS, requestKind } from "./request-controls.js";
 import type { ApiMethod, CacheOptions, ModelRequestOptions, ProviderName, ResolvedModelConfig } from "./llm/types.js";
-import type { McpServerConfig } from "./tools/mcp-client.js";
+import { parseMcpPanels, type McpServerConfig } from "./tools/mcp-client.js";
 import type { ToolPolicyRule } from "./tools/registry.js";
 import { compileWhen } from "./tools/policy.js";
 import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageDefinitions,
@@ -305,13 +305,15 @@ function mcpServersSpec(raw: unknown): Map<string, McpServerConfig> {
     const spec = object(entry, where);
     const transport = enumValue(spec.transport, new Set<"stdio" | "streamable-http">(["stdio", "streamable-http"]), where + ".transport");
     if (transport === "stdio") {
-      keys(spec, ["transport", "command", "args", "env"], where);
+      keys(spec, ["transport", "command", "args", "env", "panels"], where);
       result.set(name, { command: string(spec.command, where + ".command"),
+        ...(spec.panels !== undefined ? { panels: parseMcpPanels(spec.panels, where + ".panels") } : {}),
         ...(spec.args !== undefined ? { args: argumentStrings(spec.args, where + ".args") } : {}),
         ...(spec.env !== undefined ? { env: stringMap(spec.env, where + ".env") } : {}) });
     } else {
-      keys(spec, ["transport", "url", "headers"], where);
+      keys(spec, ["transport", "url", "headers", "panels"], where);
       result.set(name, { transport: "streamable-http", url: endpoint(spec.url, where + ".url"),
+        ...(spec.panels !== undefined ? { panels: parseMcpPanels(spec.panels, where + ".panels") } : {}),
         ...(spec.headers !== undefined ? { headers: stringMap(spec.headers, where + ".headers") } : {}) });
     }
   }

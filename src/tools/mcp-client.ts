@@ -9,7 +9,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ToolRegistry, type ToolRegistration } from "./registry.js";
 import { capResult, errorResult } from "./results.js";
-import type { ToolContent, ToolResult } from "./types.js";
+import { PANEL_LIMITS, type PanelDeclaration } from "../panels/contract.js";
+import { validateDeclaration } from "../panels/validate.js";
+import type { ToolHandlerContent, ToolHandlerResult } from "./types.js";
 
 const MAX_MCP_BYTES = 16 * 1024 * 1024;
 
@@ -30,9 +32,31 @@ function ownTransportClose(transport: Transport, stdio: StdioClientTransport | u
 }
 type Selection = "*" | readonly string[];
 
+/** A panel declaration for one tool of an MCP server; `tool` is the server's original tool name. */
+export type McpPanelDeclaration = PanelDeclaration & { tool: string };
+
 export type McpServerConfig =
-  | { command: string; args?: readonly string[]; env?: Readonly<Record<string, string>>; tools?: Selection }
-  | { url: string; transport?: "sse" | "streamable-http"; headers?: Readonly<Record<string, string>>; tools?: Selection };
+  | { command: string; args?: readonly string[]; env?: Readonly<Record<string, string>>; tools?: Selection; panels?: readonly McpPanelDeclaration[] }
+  | { url: string; transport?: "sse" | "streamable-http"; headers?: Readonly<Record<string, string>>; tools?: Selection; panels?: readonly McpPanelDeclaration[] };
+
+/** Validates a server's `panels` list: at most 4 declarations per tool, unique ids per tool. */
+export function parseMcpPanels(value: unknown, where: string, warn?: (message: string) => void): McpPanelDeclaration[] {
+  if (!Array.isArray(value)) throw new Error(`${where} must be an array`);
+  const perTool = new Map<string, Set<string>>();
+  return value.map((raw, index) => {
+    const at = `${where}[${index}]`;
+    const data = record(raw, at);
+    const tool = string(data.tool, `${at}.tool`);
+    const { tool: _tool, ...rest } = data;
+    const declaration = validateDeclaration(rest, at, warn);
+    const ids = perTool.get(tool) ?? new Set<string>();
+    if (ids.has(declaration.id)) throw new Error(`${at}.id duplicates a panel of tool ${tool}`);
+    if (ids.size >= PANEL_LIMITS.panelsPerTool) throw new Error(`${where} declares more than ${PANEL_LIMITS.panelsPerTool} panels for tool ${tool}`);
+    ids.add(declaration.id);
+    perTool.set(tool, ids);
+    return { ...declaration, tool };
+  });
+}
 
 export interface ConnectMcpOptions {
   cwd?: string;
@@ -97,14 +121,15 @@ function validateServer(name: string, raw: unknown): McpServerConfig {
       throw new Error(`MCP server ${name}.tools contains an empty or duplicate name`);
     }
   }
+  const panels = data.panels !== undefined ? { panels: parseMcpPanels(data.panels, `MCP server ${name}.panels`) } : {};
   if (hasCommand) {
-    checkKeys(data, ["command", "args", "env", "tools"], `MCP server ${name}`);
+    checkKeys(data, ["command", "args", "env", "tools", "panels"], `MCP server ${name}`);
     return { command: string(data.command, `MCP server ${name}.command`),
       ...(data.args !== undefined ? { args: strings(data.args, `MCP server ${name}.args`) } : {}),
       ...(data.env !== undefined ? { env: stringMap(data.env, `MCP server ${name}.env`) } : {}),
-      ...(tools !== undefined ? { tools } : {}) };
+      ...(tools !== undefined ? { tools } : {}), ...panels };
   }
-  checkKeys(data, ["url", "transport", "headers", "tools"], `MCP server ${name}`);
+  checkKeys(data, ["url", "transport", "headers", "tools", "panels"], `MCP server ${name}`);
   const url = string(data.url, `MCP server ${name}.url`);
   try { if (!["http:", "https:"].includes(new URL(url).protocol)) throw new Error("protocol"); }
   catch { throw new Error(`MCP server ${name}.url must be HTTP(S)`); }
@@ -112,7 +137,7 @@ function validateServer(name: string, raw: unknown): McpServerConfig {
   if (transport !== "sse" && transport !== "streamable-http") throw new Error(`MCP server ${name}.transport is unsupported`);
   return { url, transport,
     ...(data.headers !== undefined ? { headers: stringMap(data.headers, `MCP server ${name}.headers`) } : {}),
-    ...(tools !== undefined ? { tools } : {}) };
+    ...(tools !== undefined ? { tools } : {}), ...panels };
 }
 
 function canonical(value: unknown): unknown {
@@ -191,11 +216,11 @@ function decodedImage(data: string): number {
   return decoded.length;
 }
 
-export function mcpResultToToolResult(raw: unknown, maxOutputBytes: number): ToolResult {
+export function mcpResultToToolResult(raw: unknown, maxOutputBytes: number): ToolHandlerResult {
   try {
     const result = record(raw, "MCP result");
     const blocks = Array.isArray(result.content) ? result.content : [];
-    const content: ToolContent[] = [];
+    const content: ToolHandlerContent[] = [];
     let decodedBytes = Buffer.byteLength(JSON.stringify({ ...result, content: [], structuredContent: undefined }));
     if (decodedBytes > MAX_MCP_BYTES) return errorResult("result_too_large", "MCP result exceeds 16 MiB");
     let structured: unknown;
@@ -221,6 +246,15 @@ export function mcpResultToToolResult(raw: unknown, maxOutputBytes: number): Too
       if (decodedBytes > MAX_MCP_BYTES) return errorResult("result_too_large", "MCP result exceeds 16 MiB");
     }
     if (decodedBytes > MAX_MCP_BYTES) return errorResult("result_too_large", "MCP result exceeds 16 MiB");
+    // `_meta["raw/panel"]` carries one panel update or an array of them (docs/panels-design.md §8.3). They travel as panel
+    // blocks and are validated by the PanelHost like every other emission path; a non-object entry becomes a rejection.
+    const meta = result._meta && typeof result._meta === "object" && !Array.isArray(result._meta) ? (result._meta as Record<string, unknown>)["raw/panel"] : undefined;
+    if (meta !== undefined) {
+      for (const entry of Array.isArray(meta) ? meta : [meta]) {
+        // `type` is assigned last: a hostile entry cannot turn itself into text or an unsupported block.
+        content.push({ ...(entry && typeof entry === "object" && !Array.isArray(entry) ? entry as object : {}), type: "panel" } as ToolHandlerContent);
+      }
+    }
     return capResult({ isError: result.isError === true, content, ...(result.isError === true ? { code: "mcp_error" } : {}) }, maxOutputBytes);
   } catch (error) { return errorResult("unsupported_content", `invalid MCP result: ${(error as Error).message}`); }
 }
@@ -322,6 +356,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
           for (const format of ["int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float", "double"]) {
             if (!ajv.formats[format]) ajv.addFormat(format, true);
           }
+          const declared = (spec.panels ?? []).filter((panel) => panel.tool === originalName).map(({ tool: _tool, ...panel }) => panel);
           let validate: ReturnType<typeof ajv.compile>;
           try { validate = ajv.compile(schema); }
           catch { throw new Error(`unsupported MCP tool schema for ${name}/${originalName}`); }
@@ -329,6 +364,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
           return { name: alias, canonicalName: options.canonicalIdentities?.[name]
             ? `${options.canonicalIdentities[name]}/${originalName}` : `mcp/${name}/${originalName}`,
             description: tool.description, inputSchema: schema,
+          ...(declared.length ? { panels: declared } : { implicitPanels: true }),
           validateArgs: (args) => validate(args) ? undefined : ajv.errorsText(validate.errors),
           handler: async (args, context) => {
             if (closed) return errorResult("mcp_closed", `MCP server ${name} is closed`);
