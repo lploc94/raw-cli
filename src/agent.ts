@@ -124,7 +124,7 @@ export class AgentSession {
 
   constructor(options: AgentOptions) {
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
-    const maxSteps = options.maxSteps ?? 25;
+    const maxSteps = options.maxSteps ?? 10000;
     const maxOutputBytes = options.maxOutputBytes ?? 8192;
     const requestTimeoutMs = options.requestTimeoutMs ?? 120000;
     for (const [name, value] of [["maxSteps", maxSteps], ["maxOutputBytes", maxOutputBytes], ["requestTimeoutMs", requestTimeoutMs]] as const) {

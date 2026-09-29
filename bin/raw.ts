@@ -39,7 +39,7 @@ Options:
   --agent NAME               Select a configured agent
   --config PATH              Use one alternate config file
   --system-prompt TEXT       Replace the system prompt literally
-  --max-steps N              Maximum inference requests (default 25)
+  --max-steps N              Maximum inference requests (default 10000)
   --max-output-bytes N       Model-facing tool result cap (default 8192)
   --request-timeout-ms N     Inference/MCP deadline (default 120000)
   --display MODE             compact | normal | verbose

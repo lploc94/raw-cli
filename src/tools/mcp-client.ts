@@ -318,6 +318,10 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
             ? new AjvDraft7.default({ strict: true, allErrors: true })
             : new Ajv2020.default({ strict: true, allErrors: true });
           addFormats.default(ajv);
+          // Rust/schemars emit numeric formats (int64, uint32, ...) that ajv-formats does not know; strict mode would reject them.
+          for (const format of ["int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float", "double"]) {
+            if (!ajv.formats[format]) ajv.addFormat(format, true);
+          }
           let validate: ReturnType<typeof ajv.compile>;
           try { validate = ajv.compile(schema); }
           catch { throw new Error(`unsupported MCP tool schema for ${name}/${originalName}`); }
