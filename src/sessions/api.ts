@@ -1,4 +1,5 @@
 import { createAgent, type AgentOptions, type AgentSession } from "../agent.js";
+import type { StoredPanel } from "../panels/contract.js";
 import { openSessionStore, type HistoryItem, type Page, type SessionStoreOptions, type SessionSummary } from "./store.js";
 
 export interface SessionPageOptions {
@@ -44,6 +45,15 @@ export function getSessionHistory(options: SessionHistoryOptions): Page<HistoryI
     ...(options.before === undefined ? {} : { before: options.before }),
     ...(options.limit === undefined ? {} : { limit: options.limit }) }); }
   finally { store.close(); }
+}
+
+/** The latest committed tool panels of a saved session (docs/panels-design.md §13.4), oldest first. */
+export function getSessionPanels(options: SessionIdOptions): StoredPanel[] {
+  const store = openSessionStore(options.storeOptions);
+  try {
+    if (!store.getSession(options.sessionId)) throw new Error(store.missingSessionMessage());
+    return store.listSessionPanels(options.sessionId);
+  } finally { store.close(); }
 }
 
 export function deleteSession(options: SessionIdOptions): void {

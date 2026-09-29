@@ -113,6 +113,19 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       UNIQUE(session_id, client_request_id)
     );
     CREATE INDEX IF NOT EXISTS session_operations_recent ON session_operations(session_id, updated_at DESC, id DESC);`);
+    // Latest tool panel documents (docs/panels-design.md §12). Created like session_runtime_metadata: no version bump.
+    database.exec(`CREATE TABLE IF NOT EXISTS session_panels (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      panel_id TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      closed INTEGER NOT NULL DEFAULT 0,
+      declaration_json TEXT NOT NULL,
+      document_json TEXT NOT NULL,
+      PRIMARY KEY (session_id, panel_id)
+    )`);
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");

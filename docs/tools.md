@@ -90,6 +90,25 @@ All Bash rows share the one serialized `maxOutputBytes` cap. Raw reserves enough
 
 Dispatch validates the tool name, schema, visibility and session whitelist before execution. CLI and ACP sessions execute exposed tools automatically, including headless runs. `-y` / `--auto-approve` is retained as a compatibility alias. Library callers can explicitly set `autoApprove: false` and supply an approval callback; denial has no side effect.
 
+## Panels
+
+A tool may publish a live side panel (`raw.panel/1`, see [panels-design.md](panels-design.md)). Panel state never reaches the
+model except for one short confirmation line, never counts against `maxOutputBytes`, and is stored with the tool result.
+
+Declare the panels a tool owns in its registration (`panels`; plugin manifests gain the same field in a later release), then either:
+
+- return a `{ "type": "panel", "panel": "<id>", "op": "replace" | "patch" | "close", ... }` block next to the ordinary text
+  content; the runtime removes it before hooks, caps, providers and history see the result; or
+- call `context.panels.update(panel, body)` while the handler runs; it resolves with the assigned `revision`, is shown live
+  (coalesced to one frame per 250 ms) and commits together with the tool result, also when the result is an error.
+  `context.panels.get(panel)` returns the last revision and document.
+
+Limits: 16 panels per session (a closed panel is evicted to make room), 200 updates per panel per call, 64 KiB per document.
+Errors are `PanelError` codes (`panel_invalid`, `panel_too_large`, `panel_undeclared`, `panel_not_owned`, `panel_unknown`,
+`panel_revision_conflict`, `panel_rate_limited`, `panel_limit`, `panel_closed_context`). A rejected result-block update never fails the tool: the model sees
+`panel <id> update rejected: <code> <message>` and history records an error receipt. Panels are owned by the tool's canonical
+identity, so an `as` alias cannot write another tool's panel. `context.panels` is absent for tools without declared panels.
+
 ## Agent rules
 
 An optional agent `tools.rules` array applies to built-ins, MCP tools and ACP-injected tools. Each rule is `{ "match": "<glob>", "effect": "allow" | "ask" | "deny" }`. `*` matches any number of characters and `?` matches one character; the pattern covers the whole canonical tool identity. Built-in identities are `builtin/read_file`, `builtin/write_file`, `builtin/bash`, and `builtin/view_image`; local plugin identities are `local/<id>` or `agent/<id>`; MCP identities are `mcp/<server>/<original-tool-name>`; ACP-injected identities are `acp:<registered-name>`. Rules run in array order and the last match wins. No match means `allow`.

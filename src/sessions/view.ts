@@ -6,6 +6,7 @@ import type { HookReceipt } from "../hooks/dispatcher.js";
 import { projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./visible.js";
 
 /** Metadata of one non-text block of a user message; bytes are served separately, never embedded in a view. */
+import type { PanelReceipt } from "../panels/contract.js";
 export interface HistoryAttachment { index: number; kind: string; name: string; mimeType: string | null; byteSize: number | null }
 /** The non-text blocks of a stored user input, in order. `HistoryAttachment.index` addresses this list. */
 export function userAttachmentBlocks(input: unknown): UserBlock[] {
@@ -36,6 +37,7 @@ export interface HistoryView {
   compaction?: CompactionDetails;
   runResult?: RunResult;
   hook?: HookReceipt;
+  panelReceipt?: PanelReceipt;
 }
 function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -58,7 +60,10 @@ export function projectHistoryItem(item: HistoryItem): HistoryView {
     view.text = String(object(update.content).text ?? payload.text ?? "");
   } else if (item.kind === "compaction") view.compaction = structuredClone(payload) as unknown as CompactionDetails;
   else if (item.kind === "run_end") view.runResult = structuredClone(payload.result) as RunResult;
-  else if (item.kind === "hook_event") view.hook = {
+  else if (item.kind === "panel_receipt") {
+    const { turnId: _turn, operationId: _operation, ...receipt } = payload;
+    view.panelReceipt = receipt as unknown as PanelReceipt;
+  } else if (item.kind === "hook_event") view.hook = {
     id: String(payload.id), event: payload.event as HookReceipt["event"], outcome: payload.outcome as HookReceipt["outcome"],
     durationMs: Number(payload.durationMs),
     ...(typeof payload.message === "string" ? { message: payload.message } : {}),

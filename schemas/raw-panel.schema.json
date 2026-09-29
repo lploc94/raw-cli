@@ -941,6 +941,10 @@
         },
         "document": {
           "$ref": "#/$defs/document"
+        },
+        "base_revision": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -985,6 +989,10 @@
         },
         "op": {
           "const": "close"
+        },
+        "base_revision": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

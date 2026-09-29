@@ -1,0 +1,80 @@
+[
+  {
+    "messages": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ],
+    "tools": [
+      {
+        "name": "echo",
+        "description": "Echo",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "system": "s",
+    "cacheKeyIsString": true
+  },
+  {
+    "messages": [
+      {
+        "role": "user",
+        "content": "go"
+      },
+      {
+        "role": "assistant",
+        "text": "",
+        "toolCalls": [
+          {
+            "id": "e1",
+            "name": "echo",
+            "arguments": {
+              "v": "x"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "callId": "e1",
+        "name": "echo",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": "e"
+            }
+          ],
+          "truncated": false,
+          "retainedBytes": 1,
+          "observedBytes": 1
+        }
+      }
+    ],
+    "tools": [
+      {
+        "name": "echo",
+        "description": "Echo",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ],
+    "system": "s",
+    "cacheKeyIsString": true
+  }
+]

@@ -1,4 +1,4 @@
-import type { ToolContent, ToolResult } from "./types.js";
+import type { ToolContent, ToolHandlerContent, ToolHandlerResult, ToolResult } from "./types.js";
 import { MAX_IMAGE_BYTES } from "./types.js";
 
 export function utf8Prefix(value: string, limit: number): { text: string; bytes: number; truncated: boolean } {
@@ -40,10 +40,13 @@ export function indexedResult(results: readonly IndexedResult[], maxOutputBytes:
   return { isError, content: [{ type: "json", value: { results } }] };
 }
 
-export function capResult(result: ToolResult, maxOutputBytes: number): ToolResult {
+/** Panel blocks pass through untouched and uncounted: their own limits (panels-design §14) bound them, not the output budget. */
+export function capResult(result: ToolResult, maxOutputBytes: number): ToolResult;
+export function capResult(result: ToolHandlerResult, maxOutputBytes: number): ToolHandlerResult;
+export function capResult(result: ToolHandlerResult, maxOutputBytes: number): ToolHandlerResult {
   let remaining = maxOutputBytes;
   let truncated = false;
-  const content: ToolContent[] = [];
+  const content: ToolHandlerContent[] = [];
   let observed = 0;
   let imageBytes = 0;
   for (const block of result.content) {
@@ -65,6 +68,8 @@ export function capResult(result: ToolResult, maxOutputBytes: number): ToolResul
         truncated = true;
         content.push({ type: "text", text: preview.text });
       }
+    } else if (block.type === "panel") {
+      content.push(block);
     } else {
       const size = Buffer.from(block.data, "base64").length;
       imageBytes += size;

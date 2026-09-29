@@ -196,12 +196,12 @@ The transaction test forces a failure inside the transaction (not before it), so
 No `user_version` bump; no change to `capResult` behavior for existing types; live frames bounded by coalescing; `onPanelUpdates` never reaches plugin code.
 
 ### Acceptance criteria
-- [ ] AC-2.1: Panel blocks never reach `PostToolUse`, `capResult` counters, provider requests or `model_context` — proven by registry and agent tests.
-- [ ] AC-2.2: Panel upsert and receipt commit in the same transaction as the tool result — proven by the injected-failure store test.
-- [ ] AC-2.3: All host-side §15 codes are produced in their scenario — proven by `tests/panels-host.test.ts`.
-- [ ] AC-2.4: Documents survive compaction and restart; delete cascades — proven by store/agent tests (D1, D3).
-- [ ] AC-2.6: `ToolResult.content` (stored and provider type) excludes panel blocks at compile time, and a resumed CLI/dashboard history shows a receipt, never raw receipt JSON — proven by `npm run typecheck` and `tests/session-view.test.ts`/`tests/terminal-history.test.ts` additions.
-- [ ] AC-2.5: Request bytes for a panel-free agent equal the pre-change snapshot — proven by the snapshot test.
+- [x] AC-2.1: Panel blocks never reach `PostToolUse`, `capResult` counters, provider requests or `model_context` — proven by registry and agent tests.
+- [x] AC-2.2: Panel upsert and receipt commit in the same transaction as the tool result — proven by the injected-failure store test.
+- [x] AC-2.3: All host-side §15 codes are produced in their scenario — proven by `tests/panels-host.test.ts`.
+- [x] AC-2.4: Documents survive compaction and restart; delete cascades — proven by store/agent tests (D1, D3).
+- [x] AC-2.6: `ToolResult.content` (stored and provider type) excludes panel blocks at compile time, and a resumed CLI/dashboard history shows a receipt, never raw receipt JSON — proven by `npm run typecheck` and `tests/session-view.test.ts`/`tests/terminal-history.test.ts` additions.
+- [x] AC-2.5: Request bytes for a panel-free agent equal the pre-change snapshot — proven by the snapshot test.
 
 ### Focused verification
 `node --import tsx --test tests/panels-host.test.ts tests/registry.test.ts tests/session-store.test.ts tests/agent-tools.test.ts`
@@ -617,7 +617,7 @@ Implementation review is required; verdict must be APPROVE.
 | Phase | Status | Commit | Review | Notes |
 | --- | --- | --- | --- | --- |
 | 1 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (14 findings fixed) | 30 protocol tests; `npm test` only the 3 known PTY failures |
-| 2 | pending | | | |
+| 2 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (7 findings fixed) | 24 host tests, mutation-checked (extraction removed, panel write moved out of the transaction); `npm test` only the 3 known PTY failures |
 | 3 | pending | | | |
 | 4 | pending | | | |
 | 5 | pending | | | |

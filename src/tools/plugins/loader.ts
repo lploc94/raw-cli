@@ -117,6 +117,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),
+          ...(context.panels ? { panels: context.panels } : {}), // onPanelUpdates stays host-only
           ...((item.id === "builtin/list_skills" || item.id === "builtin/load_skill") && options.skills
             ? { skills: options.skills } : {}),
         };

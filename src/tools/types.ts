@@ -21,6 +21,21 @@ export interface ToolContentImage {
 
 export type ToolContent = ToolContentText | ToolContentJson | ToolContentImage;
 
+/**
+ * A raw.panel/1 update returned by a tool handler (docs/panels-design.md §8.1). It is host-only data:
+ * `ToolRegistry.dispatch` removes it before hooks, caps, providers and history, so it is not part of `ToolContent`.
+ */
+export interface ToolContentPanel {
+  type: "panel";
+  panel: string;
+  op: "replace" | "patch" | "close";
+  document?: unknown;
+  patches?: unknown;
+  base_revision?: unknown;
+}
+
+export type ToolHandlerContent = ToolContent | ToolContentPanel;
+
 export interface ToolResult {
   isError: boolean;
   content: ToolContent[];
@@ -32,3 +47,6 @@ export interface ToolResult {
   signal?: NodeJS.Signals | null;
   timedOut?: boolean;
 }
+
+/** What a handler (or an MCP/ACP conversion) may return: a ToolResult that can also carry panel blocks. */
+export type ToolHandlerResult = Omit<ToolResult, "content"> & { content: ToolHandlerContent[] };

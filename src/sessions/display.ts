@@ -31,7 +31,7 @@ export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {
   const payload = item.payload;
   if (item.kind === "compaction") return [{ sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compaction: ${String(payload.status)}.` } }];
-  if (item.kind === "run_end") return [];
+  if (item.kind === "run_end" || item.kind === "panel_receipt") return []; // panel receipts reach ACP in a later phase
   if (item.kind === "hook_event") return [acpUpdate({ type: "hook_event", id: String(payload.id),
     event: payload.event as Extract<RunEvent, { type: "hook_event" }>["event"],
     outcome: payload.outcome as Extract<RunEvent, { type: "hook_event" }>["outcome"],

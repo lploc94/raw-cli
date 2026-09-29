@@ -313,7 +313,8 @@ export function validateUpdate(value: unknown): PanelUpdate {
   id(update.panel, PANEL_ID, ["panel"]);
   switch (update.op) {
     case "replace":
-      keys(update, ["panel", "op", "document"], []);
+      keys(update, ["panel", "op", "document", "base_revision"], []);
+      if (update.base_revision !== undefined) count(update.base_revision, ["base_revision"]);
       if (update.document === undefined) invalid(["document"], "is required");
       validateDocument(update.document);
       break;
@@ -323,7 +324,8 @@ export function validateUpdate(value: unknown): PanelUpdate {
       for (const [index, raw] of array(update.patches, ["patches"], Infinity, 1).entries()) patch(raw, ["patches", index]);
       break;
     case "close":
-      keys(update, ["panel", "op"], []);
+      keys(update, ["panel", "op", "base_revision"], []);
+      if (update.base_revision !== undefined) count(update.base_revision, ["base_revision"]);
       break;
     default:
       invalid(["op"], "must be replace, patch or close");

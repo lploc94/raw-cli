@@ -10,6 +10,8 @@ import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAd
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
+import { PanelHost, type PanelCall } from "./panels/host.js";
+import type { PanelDocument, PanelWrites } from "./panels/contract.js";
 import type { ToolResult } from "./tools/types.js";
 import type { SessionOwner, SessionStore } from "./sessions/store.js";
 import type { SkillVisibility } from "./sessions/store.js";
@@ -58,6 +60,7 @@ export type RunEvent = (
   | { type: "compact_end"; result: CompactResult; details?: CompactionDetails }
   | { type: "compact_error"; details: CompactionDetails }
   | { type: "run_end"; result: RunResult }
+  | { type: "panel_update"; panel: string; owner: string; revision: number; document: PanelDocument; closed: boolean; live: boolean }
   | { type: "hook_event"; id: string; event: HookReceipt["event"]; outcome: HookReceipt["outcome"];
       durationMs: number; message?: string; code?: string }
 ) & { turnId?: string; segmentId?: string };
@@ -121,6 +124,7 @@ export class AgentSession {
   private currentTurnId: string | undefined;
   private segmentCounter = 0;
   private hookStarted = false;
+  private readonly panels: PanelHost;
 
   constructor(options: AgentOptions) {
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
@@ -203,6 +207,7 @@ export class AgentSession {
         throw error;
       }
     }
+    this.panels = new PanelHost({ initial: this.persistence ? this.persistence.store.listSessionPanels(this.persistence.sessionId) : [] });
   }
 
   get state(): AgentState { return this.currentState; }
@@ -241,10 +246,11 @@ export class AgentSession {
       ...(this.persistence?.operationId ? { operationId: this.persistence.operationId } : {}) };
   }
 
-  private commitMessage(message: ModelMessage, metadata: AgentMetadata = {}, display: readonly VisibleRecord[] = [], consumeOperation = false): void {
+  private commitMessage(message: ModelMessage, metadata: AgentMetadata = {}, display: readonly VisibleRecord[] = [], consumeOperation = false,
+    panels?: PanelWrites): void {
     this.durable((store, sessionId, owner) => store.appendAgentMessage(sessionId, owner, message, metadata,
       display.map((item) => ({ ...item, payload: this.visiblePayload(item.payload) })),
-      consumeOperation ? this.persistence?.operationId : undefined));
+      consumeOperation ? this.persistence?.operationId : undefined, panels));
     this.messages.push(structuredClone(message));
   }
 
@@ -422,6 +428,7 @@ export class AgentSession {
       { deadline: Date.now() + 2000, onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
     }
     finally {
+      this.panels.close();
       if (this.heartbeat) clearInterval(this.heartbeat);
       if (this.persistence?.ownership === "agent") this.persistence.store.releaseSession(this.persistence.sessionId, this.persistence.owner);
       this.currentState = "closed";
@@ -515,12 +522,14 @@ export class AgentSession {
       }
       return presentation.messages(segments, status);
     };
+    this.panels.setListener((event) => emit({ type: "panel_update", ...event }));
     const hookRequest = () => ({ cwd: this.options.cwd, agent_id: this.options.provider.modelConfig.agentName,
       ...(this.persistence ? { session_id: this.persistence.sessionId } : {}),
       ...(this.currentTurnId ? { turn_id: this.currentTurnId } : {}) });
     const finish = async (result: RunResult): Promise<RunResult> => {
       if (!ended) {
         ended = true;
+        this.panels.setListener(undefined);
         let finalResult = result;
         try {
           await this.options.hooks?.run("Stop", { ...hookRequest(), run: result },
@@ -552,7 +561,17 @@ export class AgentSession {
       : observerError ? { status: "error", steps, code: "event_handler_error", message: observerError.message }
       : { status: "cancelled", steps };
     const cancelled = (call: ModelToolCall): ToolResult => capResult(errorResult("cancelled", `tool ${call.name} cancelled`), this.options.maxOutputBytes);
-    const appendResult = (call: ModelToolCall, result: ToolResult) => {
+    const appendResult = (call: ModelToolCall, dispatchedResult: ToolResult, panelCall?: PanelCall) => {
+      let result = dispatchedResult;
+      let panelWrites: PanelWrites | undefined;
+      let panelRecords: VisibleRecord[] = [];
+      if (panelCall) {
+        // Ends the handler's panel window, applies result-block updates and prepares the atomic commit (panels-design §8.0, §10).
+        const settled = panelCall.settle(result.content.length === 0);
+        if (settled.lines.length) result = { ...result, content: [...result.content, { type: "text", text: settled.lines.join("\n") }] };
+        panelWrites = settled.writes;
+        panelRecords = settled.receipts.map((receipt) => ({ kind: "panel_receipt", payload: { ...receipt } }));
+      }
       let visibility: SkillVisibility | undefined;
       if (!result.isError && call.name === "list_skills" && this.selectedSkills.length) {
         visibility = { ...this.skillVisibility, listed: true };
@@ -568,8 +587,11 @@ export class AgentSession {
         startedAt.has(call.id) ? performance.now() - startedAt.get(call.id)! : undefined), id: call.id };
       const display = presentation.result({ type: "tool_result", id: call.id, name: call.name, result: publicResult },
         identity, call.arguments, startedCalls.has(call.id), projected);
-      this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) },
-        visibility ? { skillVisibility: visibility } : {}, display);
+      try {
+        this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result) },
+          visibility ? { skillVisibility: visibility } : {}, [...display, ...panelRecords], false, panelWrites);
+        panelCall?.commit();
+      } catch (error) { panelCall?.rollback(); throw error; }
       if (visibility) this.skillVisibility = visibility;
       emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected });
     };
@@ -698,6 +720,8 @@ export class AgentSession {
             for (const remaining of turn.toolCalls.slice(index)) appendResult(remaining, cancelled(remaining));
             return finish(interrupted());
           }
+          const panelInfo = call.argumentError ? undefined : this.options.registry.panelDeclarations(call.name);
+          const panelCall = panelInfo ? this.panels.begin(call.id, panelInfo) : undefined;
           const dispatched = call.argumentError
             ? capResult(errorResult("invalid_arguments", call.argumentError), this.options.maxOutputBytes)
             : await this.options.registry.dispatch(call.name, call.arguments, {
@@ -708,6 +732,7 @@ export class AgentSession {
               ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
               signal: controller.signal,
               toolCallId: call.id,
+              ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => panelCall.endWindow() } : {}),
               ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
                 name: string, args: Record<string, unknown>, result?: ToolResult) => this.options.hooks!.run(event,
                 { ...hookRequest(), tool: { identity, name, arguments: args, ...(result ? { result } : {}) } },
@@ -719,7 +744,7 @@ export class AgentSession {
           const result = this.options.provider.modelConfig.vision !== true && dispatched.content.some((block) => block.type === "image")
             ? capResult(errorResult("vision_disabled", "this model cannot receive image content; use a text-description tool"), this.options.maxOutputBytes)
             : dispatched;
-          appendResult(call, result);
+          appendResult(call, result, panelCall);
           if (result.code === "approval_required") {
             for (const remaining of turn.toolCalls.slice(index + 1)) appendResult(remaining, cancelled(remaining));
             return finish({ status: "error", steps, code: "approval_required", message: "tool approval required" });

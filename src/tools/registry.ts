@@ -3,7 +3,8 @@ import readManifest from "./bundled/read_file/tool.json" with { type: "json" };
 import writeManifest from "./bundled/write_file/tool.json" with { type: "json" };
 import bashManifest from "./bundled/bash/tool.json" with { type: "json" };
 import { capResult, errorResult } from "./results.js";
-import type { ToolResult } from "./types.js";
+import type { ToolContentPanel, ToolHandlerResult, ToolResult } from "./types.js";
+import type { PanelDeclaration } from "../panels/contract.js";
 import { bindWhenToSchema, compileWhen, matchesWhen, type CompiledWhen, type ToolPolicyWhen } from "./policy.js";
 import { RE2JS } from "re2js";
 
@@ -21,8 +22,12 @@ export interface ToolDefinition {
 
 export interface ToolRegistration extends ToolDefinition {
   canonicalName?: string;
-  handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;
+  handler: (args: Record<string, unknown>, context: ToolContext) => Promise<ToolHandlerResult>;
   validateArgs?: (args: unknown) => string | undefined;
+  /** raw.panel/1 panels this tool declares (tool.json, MCP config or ACP registration). */
+  panels?: readonly PanelDeclaration[];
+  /** MCP and ACP tools may also write panels they never declared (docs/panels-design.md §5). */
+  implicitPanels?: boolean;
 }
 
 export interface ToolPolicyRule { readonly match: string; readonly effect: "allow" | "ask" | "deny"; readonly when?: ToolPolicyWhen }
@@ -109,7 +114,13 @@ export class ToolRegistry {
       : [...new Set(whitelist)].map((name) => this.tools.get(name)).filter((item): item is ToolRegistration => item !== undefined);
     return ordered
       .filter((tool) => this.effect(tool) !== "deny" && (whitelist === undefined || whitelist.includes(tool.name)))
-      .map(({ handler: _handler, validateArgs: _validateArgs, canonicalName: _canonicalName, ...definition }) => structuredClone(definition));
+      .map(({ handler: _handler, validateArgs: _validateArgs, canonicalName: _canonicalName, panels: _panels, implicitPanels: _implicit, ...definition }) => structuredClone(definition));
+  }
+
+  /** Panel declarations of a registered tool, without importing or invoking anything. */
+  panelDeclarations(name: string): { owner: string; declarations: readonly PanelDeclaration[]; implicit: boolean } | undefined {
+    const tool = this.tools.get(name);
+    return tool ? { owner: tool.canonicalName ?? tool.name, declarations: tool.panels ?? [], implicit: tool.implicitPanels === true } : undefined;
   }
 
   async dispatch(name: string, args: unknown, context: ToolContext): Promise<ToolResult> {
@@ -150,7 +161,7 @@ export class ToolRegistry {
       if (!allowed) return finish(errorResult("approval_denied", `approval denied for ${name}`));
     }
     let invoked = false;
-    let result: ToolResult;
+    let result: ToolHandlerResult;
     try {
       if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
       context.onStart?.(name, args as Record<string, unknown>);
@@ -160,8 +171,15 @@ export class ToolRegistry {
     } catch (error) {
       result = errorResult("tool_error", `${name} failed: ${(error as Error).message}`);
     }
+    try { context.onHandlerSettled?.(); } catch { /* host observers never change the tool outcome */ }
+    // The single panel extraction point (docs/panels-design.md §8.0): before hooks, caps, providers and history.
+    const panels = result.content.filter((block): block is ToolContentPanel => block.type === "panel");
+    if (panels.length) {
+      try { context.onPanelUpdates?.(panels); } catch { /* an observer never changes the tool outcome */ }
+      result = { ...result, content: result.content.filter((block) => block.type !== "panel") };
+    }
     if (invoked && context.onHook) await context.onHook(result.isError ? "PostToolUseFailure" : "PostToolUse",
-      tool.canonicalName ?? name, name, args as Record<string, unknown>, result);
-    return finish(result);
+      tool.canonicalName ?? name, name, args as Record<string, unknown>, result as ToolResult);
+    return finish(result as ToolResult);
   }
 }

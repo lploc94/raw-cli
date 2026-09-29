@@ -5,6 +5,8 @@ import { dirname, resolve } from "node:path";
 import { runBash } from "./process.js";
 import { errorResult, indexedResult, indexedResultFits, utf8Prefix, type IndexedResult } from "./results.js";
 import type { ToolResult } from "./types.js";
+import type { PanelContext } from "../panels/contract.js";
+import type { ToolContentPanel } from "./types.js";
 import type { SelectedSkill } from "../skills/contract.js";
 import type { HookDispatchResult } from "../hooks/dispatcher.js";
 import type { HookEventName } from "../hooks/contract.js";
@@ -23,6 +25,12 @@ export interface ToolContext {
   signal?: AbortSignal;
   bashPath?: string;
   skills?: readonly SelectedSkill[];
+  /** raw.panel/1 streaming API for the calling tool (docs/panels-design.md §8.2). Forwarded to plugin handlers. */
+  panels?: PanelContext;
+  /** Host-only: receives the panel blocks `ToolRegistry.dispatch` removes from a handler result. Never forwarded to plugins. */
+  /** Host-only: the handler has returned (or thrown); no further streaming updates are accepted. */
+  onHandlerSettled?: () => void;
+  onPanelUpdates?: (updates: ToolContentPanel[]) => void;
 }
 
 export interface ReadFileSpec {

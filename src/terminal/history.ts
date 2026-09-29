@@ -7,11 +7,14 @@ import { resolveUiOptions, terminalCapabilities, type TerminalCapabilities, type
 import { safeTerminalText } from "./safe.js";
 import { icon, paint } from "./theme.js";
 import { formatToolResult, formatToolStart } from "./tools.js";
+import { receiptLine } from "../panels/render.js";
+import type { PanelReceipt } from "../panels/contract.js";
 
 export function renderTerminalHistory(item: HistoryItem, ui: UiOptions = resolveUiOptions(),
   caps: TerminalCapabilities = terminalCapabilities(false, process.env, ui), width = 80): string {
   const payload = item.payload;
   if (item.kind === "run_end") return "";
+  if (item.kind === "panel_receipt") return `${paint("muted", safeTerminalText(receiptLine(payload as unknown as PanelReceipt)), ui, caps)}\n`;
   if (item.kind === "hook_event") return `${paint(payload.outcome === "error" ? "warning" : "muted",
     safeTerminalText(`Hook ${String(payload.id)} · ${String(payload.event)} · ${String(payload.outcome)}${payload.message ? ` · ${String(payload.message)}` : payload.code ? ` · ${String(payload.code)}` : ""}`), ui, caps)}\n`;
   if (item.kind === "compaction") return `${safeTerminalText(`raw: compact ${String(payload.status)}`)}\n`;

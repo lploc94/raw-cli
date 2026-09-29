@@ -77,9 +77,9 @@ export type PanelPatch =
   | { op: "append_events"; block: string; events: TimelineEvent[] };
 
 export type PanelUpdate =
-  | { panel: string; op: "replace"; document: PanelDocument }
+  | { panel: string; op: "replace"; base_revision?: number; document: PanelDocument }
   | { panel: string; op: "patch"; base_revision?: number; patches: PanelPatch[] }
-  | { panel: string; op: "close" };
+  | { panel: string; op: "close"; base_revision?: number };
 
 export type PanelActionScope = "panel" | "block" | "item";
 export interface PanelAction {
@@ -99,9 +99,9 @@ export interface PanelContext {
   get(panel: string): { revision: number; document: PanelDocument } | undefined;
 }
 export type PanelUpdateBody =
-  | { op: "replace"; document: PanelDocument }
+  | { op: "replace"; base_revision?: number; document: PanelDocument }
   | { op: "patch"; base_revision?: number; patches: PanelPatch[] }
-  | { op: "close" };
+  | { op: "close"; base_revision?: number };
 
 /** The small persisted record of one committed (or rejected) update. */
 export interface PanelReceipt {
@@ -110,3 +110,12 @@ export interface PanelReceipt {
   toolCallId: string; source: "tool" | "user_action";
   error?: { code: PanelErrorCode; message: string };
 }
+
+/** One `session_panels` row: the latest committed state of a panel (docs/panels-design.md §12). */
+export interface StoredPanel {
+  /** Full id: `<owner>#<panel>`. */
+  panelId: string; owner: string; revision: number; createdAt: number; updatedAt: number; closed: boolean;
+  declaration: PanelDeclaration; document: PanelDocument;
+}
+/** Panel changes committed in the same transaction as one tool result. Receipts travel as `panel_receipt` history records. */
+export interface PanelWrites { upserts: StoredPanel[]; deletes: string[] }

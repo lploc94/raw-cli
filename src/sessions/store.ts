@@ -9,6 +9,7 @@ import type { ToolDefinition } from "../tools/registry.js";
 import type { SelectedSkill } from "../skills/contract.js";
 import { errorResult } from "../tools/results.js";
 import { projectToolResult } from "./visible.js";
+import type { PanelDeclaration, PanelDocument, PanelWrites, StoredPanel } from "../panels/contract.js";
 import { initializeSessionSchema } from "./schema.js";
 import { validateStoredAgentState } from "./restore.js";
 import { locateSessionStore } from "./location.js";
@@ -847,7 +848,7 @@ export class SessionStore {
   }
 
   appendAgentMessage(sessionId: string, owner: SessionOwner, message: ModelMessage, metadata: AgentMetadata = {},
-    display: readonly VisibleRecord[] = [], operationId?: string): void {
+    display: readonly VisibleRecord[] = [], operationId?: string, panels?: PanelWrites): void {
     this.ownerRow(sessionId, owner);
     const staged = this.stageStored(message, owner);
     const visible = display.map((item) => ({ item, stored: this.stageStored(item.payload, owner) }));
@@ -869,11 +870,34 @@ export class SessionStore {
         this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
           .run(sessionId, sequence, this.now(), item.kind, stored.encoded, item.status ?? "complete");
       }
+      if (panels) this.writePanels(sessionId, panels);
       this.writeMetadata(sessionId, metadata);
       this.database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(this.now(), sessionId);
       this.renewSession(sessionId, owner);
     });
     this.discardDuplicateStages([staged, ...visible.map((item) => item.stored)]);
+  }
+
+  /** Runs inside the caller's transaction. */
+  private writePanels(sessionId: string, panels: PanelWrites): void {
+    for (const id of panels.deletes) this.database.prepare("DELETE FROM session_panels WHERE session_id = ? AND panel_id = ?").run(sessionId, id);
+    for (const panel of panels.upserts) {
+      this.database.prepare(`INSERT INTO session_panels(session_id, panel_id, owner, revision, created_at, updated_at, closed, declaration_json, document_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, panel_id) DO UPDATE SET owner = excluded.owner, revision = excluded.revision, updated_at = excluded.updated_at,
+          closed = excluded.closed, declaration_json = excluded.declaration_json, document_json = excluded.document_json`)
+        .run(sessionId, panel.panelId, panel.owner, panel.revision, panel.createdAt, panel.updatedAt, panel.closed ? 1 : 0,
+          JSON.stringify(panel.declaration), JSON.stringify(panel.document));
+    }
+  }
+
+  /** The latest committed panels of a session, oldest first. */
+  listSessionPanels(sessionId: string): StoredPanel[] {
+    return this.database.prepare("SELECT * FROM session_panels WHERE session_id = ? ORDER BY created_at ASC, panel_id ASC").all(sessionId).map((row) => ({
+      panelId: String(row.panel_id), owner: String(row.owner), revision: Number(row.revision), createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at), closed: Number(row.closed) === 1,
+      declaration: JSON.parse(String(row.declaration_json)) as PanelDeclaration, document: JSON.parse(String(row.document_json)) as PanelDocument,
+    }));
   }
 
   replaceAgentContext(sessionId: string, owner: SessionOwner, messages: readonly ModelMessage[], metadata: AgentMetadata = {},

@@ -491,7 +491,7 @@ Actions let the user change panel state or steer the agent, without free-form ed
   );
   ```
 
-- **History** gets a new visible kind, `panel_receipt`, with the payload `{ panel, owner, title, revision, summary, progress?, status, op, toolCallId, source: "tool" | "user_action" }`. It is about 1 KiB and is written in the same transaction as the tool result. Its position in history is right after that result. History never stores full documents: the chat is history, the panel is state (D1).
+- **History** gets a new visible kind, `panel_receipt`, with the payload `{ panel, owner, title, revision, summary, progress?, status, op, toolCallId, source: "tool" | "user_action", error?: { code, message } }`. It is about 1 KiB and is written in the same transaction as the tool result. Its position in history is right after that result. One tool call writes at most one receipt per panel for its final committed state (`op` is the last accepted operation), and at most one more per panel with `error` for the first rejected update, whose `revision` is the unchanged current one. A rejected result-block, MCP or ACP update is therefore visible on every surface (§15); a rejected `context.panels.update()` call is reported to the tool through its promise only. History never stores full documents: the chat is history, the panel is state (D1).
 - **Compaction** never touches `session_panels` or receipts.
 - **Retention and deletion** follow the session. Deleting a session cascades.
 - **States.** `open`, then `closed` (by `close`), then `open` again (by `replace`). `stale` is derived, not stored: the owner is not in the current agent's selection, or its declaration no longer contains the panel ID. A stale panel stays readable and loses its actions.
