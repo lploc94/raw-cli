@@ -2527,3 +2527,113 @@ summary::-webkit-details-marker {
     flex-wrap: wrap;
   }
 }
+
+/* ---- Loading states: skeletons, delayed reveal, error state ---- */
+.skeleton {
+  display: block;
+  height: 13px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--panel-hover) 25%,
+    var(--border) 50%,
+    var(--panel-hover) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-small {
+  height: 10px;
+}
+.skeleton-title {
+  height: 20px;
+  border-radius: 7px;
+}
+.skeleton-circle {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+}
+.skeleton-block {
+  height: 72px;
+  border-radius: 10px;
+}
+.skeleton.w-30 { width: 30%; }
+.skeleton.w-40 { width: 40%; }
+.skeleton.w-50 { width: 50%; }
+.skeleton.w-60 { width: 60%; }
+.skeleton.w-70 { width: 70%; }
+.skeleton.w-80 { width: 80%; }
+.skeleton.w-90 { width: 90%; }
+@keyframes skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+/* Fast responses never flash: the skeleton only fades in after 150ms. */
+.skeleton-region {
+  opacity: 0;
+  animation: skeleton-reveal 160ms ease-out 150ms forwards;
+}
+@keyframes skeleton-reveal {
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The global rule disables animations, so show the static placeholder straight away. */
+  .skeleton-region { opacity: 1; }
+}
+.session-row.skeleton-row {
+  pointer-events: none;
+}
+.session-row.skeleton-row > span:last-child {
+  flex: 1;
+}
+.skeleton-message {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 28px;
+}
+.skeleton-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 32px;
+}
+.skeleton-page .skeleton-title {
+  margin-bottom: 4px;
+}
+.skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.skeleton-shell {
+  width: 100%;
+}
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px;
+  margin: 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--error);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.error-state p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.error-state button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

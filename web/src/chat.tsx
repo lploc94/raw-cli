@@ -16,10 +16,11 @@ import type { SessionOperation } from "../../src/sessions/operations.js";
 import type { SessionSummary } from "../../src/sessions/store.js";
 import type { Preferences } from "./preferences.js";
 import { api, ApiError, errorText } from "./api.js";
+import { useComposerMeta } from "./data/queries.js";
+import { Skeleton, TimelineSkeleton } from "./states.js";
 import { ContextRing } from "./composer/ContextRing.js";
 import { RequestControls } from "./composer/RequestControls.js";
 import { useRequestChoice } from "./composer/useRequestChoice.js";
-import type { RequestControlMeta } from "./composer/request-choice.js";
 import { isTerminal, useSession } from "./session.js";
 import { Timeline } from "./timeline.js";
 import { Inspector } from "./inspector.js";
@@ -29,11 +30,11 @@ import { Composer } from "./composer/Composer.js";
 import { AttachmentChips } from "./composer/AttachmentChips.js";
 import { useAttachments } from "./composer/useAttachments.js";
 import { fileProvider } from "./composer/files.js";
-import type { KindMeta } from "./composer/attachment-kinds.js";
-import { slashProvider, type ComposerSkill } from "./composer/commands.js";
+import { slashProvider } from "./composer/commands.js";
 
 export function Chat({
   id,
+  summary,
   bootstrap,
   preferences,
   drafts,
@@ -42,6 +43,8 @@ export function Chat({
   resizeInspector,
 }: {
   id: string;
+  /** Known before the stream connects (from the session list), so the header never blanks. */
+  summary: SessionSummary | undefined;
   bootstrap: DashboardBootstrap;
   preferences: Preferences;
   drafts: Map<string, string>;
@@ -59,14 +62,17 @@ export function Chat({
   } = useSession(id);
   const { navigate } = useRouter();
   const [draft, setDraft] = useState(drafts.get(id) ?? "");
-  const [agent, setAgent] = useState("");
-  const [meta, setMeta] = useState<{
-    vision: boolean;
-    skills: ComposerSkill[];
-    controls: RequestControlMeta[];
-    attachmentKinds: KindMeta[];
-  }>({ vision: false, skills: [], controls: [], attachmentKinds: [] });
-  const [metaFor, setMetaFor] = useState("");
+  const [agent, setAgent] = useState(() =>
+    summary?.agentName && bootstrap.config.agents.includes(summary.agentName)
+      ? summary.agentName
+      : "",
+  );
+  const pickedAgent = useRef(false);
+  const pickAgent = (name: string) => {
+    pickedAgent.current = true;
+    setAgent(name);
+  };
+  const { meta, metaFor } = useComposerMeta(agent);
   const request = useRequestChoice(id, agent, meta.controls, metaFor);
   const skills = meta.skills;
   const att = useAttachments(id, meta.attachmentKinds);
@@ -98,15 +104,16 @@ export function Chat({
   const busy = pending || !!current || state?.ownership === "elsewhere";
   useEffect(() => {
     setDraft(drafts.get(id) ?? "");
-    setAgent("");
     setError("");
     following.current = preferences.follow;
     setUnconfirmed(undefined);
   }, [id, drafts]);
+  // The agent from the session list is only provisional (it may predate a later turn). Once the
+  // stream reports the saved agent, follow it unless the user picked one in this chat.
   useEffect(() => {
-    if (!state || agent) return;
+    if (!state || pickedAgent.current) return;
     const saved = state.session.agentName;
-    if (saved && bootstrap.config.agents.includes(saved)) setAgent(saved);
+    if (saved && saved !== agent && bootstrap.config.agents.includes(saved)) setAgent(saved);
   }, [state?.session.agentName, agent, bootstrap.config.agents]);
   useEffect(() => {
     following.current = preferences.follow;
@@ -115,22 +122,6 @@ export function Chat({
     if (scroll.current && following.current && !prepending.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [state]);
-  useEffect(() => {
-    setMeta({ vision: false, skills: [], controls: [], attachmentKinds: [] });
-    setMetaFor("");
-    if (!agent) return;
-    let live = true;
-    void api<typeof meta>(`/agents/${encodeURIComponent(agent)}/composer`)
-      .then((next) => {
-        if (!live) return;
-        setMeta({ ...next, controls: next.controls ?? [] });
-        setMetaFor(agent);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [agent]);
   const checkReceipt = async (key: string) => {
     try {
       const op = await api<SessionOperation>(
@@ -260,6 +251,8 @@ export function Chat({
     setDraft(value);
     drafts.set(id, value);
   };
+  const title_ = state?.session.title ?? summary?.title;
+  const cwd_ = state?.session.cwd ?? summary?.cwd;
   const metrics = state?.metrics;
   const context = metrics?.context;
   const milestone = state?.approvals.length
@@ -315,15 +308,15 @@ export function Chat({
         <section className="chat-main" aria-label="Conversation">
           <header className="page-header">
             <div>
-              <h1>{state?.session.title ?? "Loading session…"}</h1>
+              {title_ ? <h1>{title_}</h1> : <h1 aria-label="Loading session"><Skeleton width={30} className="skeleton-title" /></h1>}
               <div className="metadata">
                 {connection !== "Connected" && (
                   <span className="connection">{connection}</span>
                 )}
                 {milestone !== "Ready" && <span>{milestone}</span>}
                 {agent && <span className="agent-chip">{agent}</span>}
-                <span className="workspace-path" title={state?.session.cwd}>
-                  {state?.session.cwd}
+                <span className="workspace-path" title={cwd_}>
+                  {cwd_ ?? <Skeleton width={50} className="skeleton-small" />}
                 </span>
               </div>
             </div>
@@ -353,7 +346,7 @@ export function Chat({
                       </DropdownMenu.SubTrigger>
                       <DropdownMenu.Portal>
                         <DropdownMenu.SubContent className="workspace-menu" sideOffset={4} collisionPadding={8}>
-                          <DropdownMenu.RadioGroup value={agent} onValueChange={setAgent}>
+                          <DropdownMenu.RadioGroup value={agent} onValueChange={pickAgent}>
                             {bootstrap.config.agents.map((name) => (
                               <DropdownMenu.RadioItem key={name} value={name} className="workspace-menu-item">
                                 <span className="agent-menu-check">
@@ -430,6 +423,7 @@ export function Chat({
                   Load earlier
                 </button>
               )}
+              {!state && !streamError && <TimelineSkeleton />}
               {state && <Timeline state={state} preferences={preferences} />}
               {state && !state.history.items.length && !current && (
                 <div className="chat-intro">

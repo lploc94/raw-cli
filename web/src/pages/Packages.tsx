@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type {
-  PackageStageView,
-  PackageView,
-} from "../../../src/dashboard/packages.js";
-import type { ConfigView } from "../../../src/dashboard/management.js";
+import type { PackageStageView } from "../../../src/dashboard/packages.js";
 import type { PackageReport } from "../../../src/packages/inspect.js";
 import { api, downloadPackage, errorText, uploadPackage } from "../api.js";
+import { useConfig, usePackages, usePackageStages } from "../data/queries.js";
+import { usePageGate } from "../states.js";
 import { object, pretty } from "../editors/shared.js";
 import { Link, useRouter } from "../router.js";
 import { ErrorMessage, Field, Modal } from "../ui.js";
@@ -20,9 +18,14 @@ export function PackagesPage({
   const alias = path.split("/")[3]
     ? decodeURIComponent(path.split("/")[3]!)
     : undefined;
-  const [packages, setPackages] = useState<PackageView[]>([]),
-    [stages, setStages] = useState<PackageStageView[]>([]),
-    [config, setConfig] = useState<ConfigView>();
+  const {
+    data: loadedPackages,
+    error: packagesError,
+    mutate: mutatePackages,
+  } = usePackages();
+  const { data: stages = [], error: stagesError, mutate: mutateStages } = usePackageStages();
+  const packages = loadedPackages ?? [];
+  const { data: config } = useConfig();
   const [error, setError] = useState(""),
     [status, setStatus] = useState(""),
     [busy, setBusy] = useState(false),
@@ -50,25 +53,16 @@ export function PackagesPage({
     [out, setOut] = useState("");
   const upload = useRef<AbortController | undefined>(undefined);
   const selected = packages.find((item) => item.alias === alias);
+  // `changed` revalidates bootstrap and the shared `/config`; packages are local to this page.
   const refresh = async () => {
-    const [items, temporary, current] = await Promise.all([
-      api<PackageView[]>("/packages"),
-      api<PackageStageView[]>("/packages/stages"),
-      api<ConfigView>("/config"),
-    ]);
-    setPackages(items);
-    setStages(temporary);
-    setConfig(current);
-    setExportAgent(
-      (old) => old || current.defaultAgent || current.agents[0] || "",
-    );
-    setModel((old) => old || current.models[0] || "");
-    setAgent((old) => old || current.defaultAgent || current.agents[0] || "");
-    await changed();
+    await Promise.all([mutatePackages(), mutateStages(), changed()]);
   };
   useEffect(() => {
-    void refresh().catch((cause) => setError(errorText(cause)));
-  }, [path]);
+    if (!config) return;
+    setExportAgent((old) => old || config.defaultAgent || config.agents[0] || "");
+    setModel((old) => old || config.models[0] || "");
+    setAgent((old) => old || config.defaultAgent || config.agents[0] || "");
+  }, [config]);
   useEffect(() => () => upload.current?.abort(), []);
   const work = async (fn: () => Promise<void>) => {
     setError("");
@@ -109,6 +103,8 @@ export function PackagesPage({
       );
     }
   };
+  const gate = usePageGate({ ready: !!loadedPackages, error: packagesError, onRetry: () => void refresh(), label: "Loading packages" });
+  if (gate) return gate;
   return (
     <div className="management-page">
       <span className="scope">
@@ -130,7 +126,15 @@ export function PackagesPage({
         Inspect → install → activate. Your current default agent is{" "}
         {config?.defaultAgent ?? "not configured"}.
       </p>
-      <ErrorMessage>{error}</ErrorMessage>
+      <ErrorMessage>{error || (packagesError ? errorText(packagesError) : "")}</ErrorMessage>
+      {!error && !!stagesError && (
+        <ErrorMessage>
+          Could not load staged packages. {errorText(stagesError)}{" "}
+          <button className="text-button" onClick={() => void mutateStages()}>
+            Try again
+          </button>
+        </ErrorMessage>
+      )}
       <p role="status">{busy ? "Working with package files…" : status}</p>
       {createdAgent && (
         <button

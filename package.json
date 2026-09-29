@@ -92,6 +92,7 @@
     "react-dom": "19.3.0",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
+    "swr": "2.5.1",
     "tsup": "8.5.1",
     "tsx": "4.23.15",
     "typescript": "5.9.3",

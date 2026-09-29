@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import useSWR from "swr";
 import { DropdownMenu, Popover } from "radix-ui";
 import { Check, ChevronsUpDown, Copy, EyeOff, Folder, FolderOpen, MoreHorizontal, Pin, PinOff } from "lucide-react";
 import { api, ApiError, errorText } from "../api.js";
+import { SessionRowsSkeleton } from "../states.js";
 import {
   arrange,
   baseName,
@@ -49,10 +51,6 @@ export function WorkspaceSwitcher({
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
-  const [items, setItems] = useState<WorkspaceItem[]>([]);
-  const [home, setHome] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [missing, setMissing] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -61,34 +59,35 @@ export function WorkspaceSwitcher({
   const list = useRef<HTMLDivElement>(null);
   const latest = useRef(state);
   latest.current = state;
-  const sequence = useRef(0);
   const selection = useRef(0);
   const content = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
-    const mine = ++sequence.current;
-    setLoading(true);
-    try {
-      const groups = batchPaths(includePaths(latest.current));
-      const responses = await Promise.all((groups.length ? groups : [[]]).map((paths) => api<Listing>(`/workspaces${query(paths)}`)));
-      if (mine !== sequence.current) return;
-      setItems(mergeItems(responses.map((response) => response.items)));
-      setHome(responses[0]?.home ?? "");
-      setMissing(new Set());
-      setError("");
-    } catch (cause) {
-      if (mine === sequence.current) {
-        setItems([]);
-        setError(`Could not load workspaces. ${errorText(cause)}`);
-      }
-    } finally {
-      if (mine === sequence.current) setLoading(false);
-    }
-  }, []);
+  // Cached per set of paths: reopening the menu shows the last list instantly and refreshes behind it.
+  const paths = batchPaths(includePaths(state));
+  const workspaces = useSWR<Listing[]>(
+    open ? ["workspaces", paths] : null,
+    ([, groups]: readonly [string, string[][]]) =>
+      Promise.all((groups.length ? groups : [[]]).map((group) => api<Listing>(`/workspaces${query(group)}`))),
+    // Every open must ask the server again; cached rows are only shown while it answers.
+    { dedupingInterval: 0 },
+  );
+  const { mutate: reloadWorkspaces } = workspaces;
+  const items = useMemo<WorkspaceItem[]>(
+    // After a failed refresh the old rows must not pass as current.
+    () => (workspaces.data && !workspaces.error ? mergeItems(workspaces.data.map((response) => response.items)) : []),
+    [workspaces.data, workspaces.error],
+  );
+  const home = workspaces.data?.[0]?.home ?? "";
+  const loading = workspaces.isValidating;
+  const loadingFirst = workspaces.isLoading && !workspaces.data;
+  const error = workspaces.error ? `Could not load workspaces. ${errorText(workspaces.error)}` : "";
+  const seenRevision = useRef(activityRevision);
   useEffect(() => {
-    if (open) void load();
-    else sequence.current++;
-  }, [open, activityRevision, load]);
+    if (seenRevision.current === activityRevision) return;
+    seenRevision.current = activityRevision;
+    if (open) void reloadWorkspaces();
+  }, [activityRevision, open, reloadWorkspaces]);
+  useEffect(() => setMissing(new Set()), [workspaces.data]);
   useEffect(() => {
     if (!open) {
       selection.current++;
@@ -235,7 +234,8 @@ export function WorkspaceSwitcher({
                 </ul>
               </section>
             ))}
-            {!hasRows && <p className="workspace-message muted">No matching workspaces</p>}
+            {loadingFirst && <SessionRowsSkeleton rows={3} />}
+            {!hasRows && !loadingFirst && <p className="workspace-message muted">No matching workspaces</p>}
           </div>
           <button
             type="button"

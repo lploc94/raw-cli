@@ -4,6 +4,8 @@ import type {
   ConfigView,
 } from "../../../src/dashboard/management.js";
 import { api, errorText } from "../api.js";
+import { useConfig } from "../data/queries.js";
+import { usePageGate } from "../states.js";
 import { ErrorMessage, Field } from "../ui.js";
 import {
   configDocument,
@@ -21,23 +23,19 @@ export function DefinitionsPage({
   kind: "vars" | "mcp";
   changed: () => Promise<void>;
 }) {
-  const [config, setConfig] = useState<ConfigView>(),
-    [editing, setEditing] = useState(false),
+  const { data: config, error: configError } = useConfig();
+  const [editing, setEditing] = useState(false),
     [agent, setAgent] = useState(""),
     [name, setName] = useState("");
   const [error, setError] = useState(""),
     [check, setCheck] = useState<CheckView>(),
     [selected, setSelected] = useState<string[]>([]),
     [status, setStatus] = useState("");
-  const refresh = async () => {
-    const next = await api<ConfigView>("/config");
-    setConfig(next);
-    setAgent((old) => old || next.defaultAgent || next.agents[0] || "");
-    await changed();
-  };
+  const refresh = changed;
   useEffect(() => {
-    void refresh().catch((cause) => setError(errorText(cause)));
-  }, [kind]);
+    if (config)
+      setAgent((old) => old || config.defaultAgent || config.agents[0] || "");
+  }, [config]);
   useEffect(() => {
     if (check?.state !== "running") return;
     const timer = setTimeout(() => {
@@ -53,6 +51,8 @@ export function DefinitionsPage({
     identity: string;
     alias: string;
   }>;
+  const gate = usePageGate({ ready: !!config, error: configError, onRetry: () => void changed(), label: "Loading definitions" });
+  if (gate) return gate;
   return (
     <div className="management-page">
       <span className="scope">Raw config</span>
@@ -62,7 +62,7 @@ export function DefinitionsPage({
           ? "Define literal, environment, file or provider variables; choose access and cache TTL. Agent selections decide availability."
           : "Define stdio or HTTP connections and package bindings. Save validates structure; discovery connects only after your explicit action."}
       </p>
-      <ErrorMessage>{error}</ErrorMessage>
+      <ErrorMessage>{error || (configError ? errorText(configError) : "")}</ErrorMessage>
       <div className="resource-list">
         {names?.map((item) => (
           <div className="resource-row" key={item}>

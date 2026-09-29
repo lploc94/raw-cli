@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ConfigView } from "../../../src/dashboard/management.js";
 import { api, errorText } from "../api.js";
+import { useConfig } from "../data/queries.js";
+import { usePageGate } from "../states.js";
 import { Link, useRouter } from "../router.js";
 import { CopyButton, ErrorMessage, Field, Modal } from "../ui.js";
 import {
@@ -97,21 +99,19 @@ export function SettingsPage({
 }) {
   const { path } = useRouter(),
     category = path.split("/")[2] || "general";
-  const [config, setConfig] = useState<ConfigView>(),
-    [error, setError] = useState(""),
+  const { data: config, error: configError } = useConfig();
+  const [error, setError] = useState(""),
     [status, setStatus] = useState("");
   const [generalDirty, setGeneralDirty] = useState(false);
   const [editing, setEditing] = useState(false),
     [diagnostics, setDiagnostics] = useState<unknown>();
-  const refresh = async () => {
-    setConfig(await api<ConfigView>("/config"));
-    await changed();
-  };
-  useEffect(() => {
-    void refresh().catch((cause) => setError(errorText(cause)));
-  }, [category]);
+  // `changed` revalidates the shared `/config` (and bootstrap), so it is the refresh.
+  const refresh = changed;
+  // Hooks run before the early return below so their order never depends on the category.
+  const gate = usePageGate({ ready: !!config, error: configError, onRetry: () => void changed(), label: "Loading settings" });
   if (category === "models")
     return <ModelsPage changed={changed} createChat={createChat} />;
+  if (gate) return gate;
   return (
     <div className="management-page">
       <span className="scope">Raw config</span>
@@ -119,7 +119,7 @@ export function SettingsPage({
         {settingGroups.find((g) => g.id === category)?.label ?? "Settings"}
       </h1>
       <p className="muted config-path">{config?.path}</p>
-      <ErrorMessage>{error}</ErrorMessage>
+      <ErrorMessage>{error || (configError ? errorText(configError) : "")}</ErrorMessage>
       <p role="status">{status}</p>
       {config && !config.exists && (
         <section>
@@ -377,18 +377,14 @@ function ModelsPage({
   const name = path.split("/")[3]
     ? decodeURIComponent(path.split("/")[3]!)
     : undefined;
-  const [config, setConfig] = useState<ConfigView>(),
-    [creating, setCreating] = useState(false),
+  const { data: config, error: configError } = useConfig();
+  const [creating, setCreating] = useState(false),
     [alias, setAlias] = useState(""),
     [modelId, setModelId] = useState(""),
     [error, setError] = useState("");
-  const refresh = async () => {
-    setConfig(await api<ConfigView>("/config"));
-    await changed();
-  };
-  useEffect(() => {
-    void refresh().catch((cause) => setError(errorText(cause)));
-  }, [path]);
+  const refresh = changed;
+  const gate = usePageGate({ ready: !!config, error: configError, onRetry: () => void changed(), label: "Loading models" });
+  if (gate) return gate;
   return (
     <div className="management-page">
       <span className="scope">Raw config</span>
@@ -400,7 +396,7 @@ function ModelsPage({
         Saving validates configuration. Credentials are tested only when you
         send a message.
       </p>
-      <ErrorMessage>{error}</ErrorMessage>
+      <ErrorMessage>{error || (configError ? errorText(configError) : "")}</ErrorMessage>
       {name ? (
         <ModelEditor
           key={name}

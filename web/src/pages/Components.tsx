@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ComponentInfo } from "../../../src/management/components.js";
-import type { ConfigView } from "../../../src/dashboard/management.js";
+import useSWR from "swr";
 import { api, errorText } from "../api.js";
+import { useComponents, useConfig } from "../data/queries.js";
+import { usePageGate } from "../states.js";
 import { Link, useRouter } from "../router.js";
 import { ErrorMessage, Field, Modal } from "../ui.js";
 import {
@@ -22,19 +24,24 @@ export function ComponentsPage({
   const id = path.split("/")[3]
     ? decodeURIComponent(path.split("/")[3]!)
     : undefined;
-  const [items, setItems] = useState<ComponentInfo[]>([]),
-    [filter, setFilter] = useState(""),
+  const {
+    data: loaded,
+    error: listError,
+    mutate: mutateItems,
+  } = useComponents(kind);
+  const [filter, setFilter] = useState(""),
     [error, setError] = useState("");
   const [create, setCreate] = useState(false),
     [folder, setFolder] = useState(""),
     [template, setTemplate] = useState(
       kind === "tools" ? "builtin/read_file" : kind === "skills" ? "builtin/create_skill" : "",
     );
-  const refresh = async () =>
-    setItems(await api<ComponentInfo[]>(`/components/${kind}`));
-  useEffect(() => {
-    void refresh().catch((cause) => setError(errorText(cause)));
-  }, [kind, id]);
+  const items = loaded ?? [];
+  const refresh = async () => {
+    await mutateItems();
+  };
+  const gate = usePageGate({ ready: !!loaded, error: listError, onRetry: () => void refresh(), label: "Loading components" });
+  if (gate) return gate;
   return (
     <div className="management-page">
       <span className="scope">Owned component files</span>
@@ -49,7 +56,7 @@ export function ComponentsPage({
           Create {kind === "tools" ? "tool" : kind === "skills" ? "skill" : "hook"}
         </button>
       </div>
-      <ErrorMessage>{error}</ErrorMessage>
+      <ErrorMessage>{error || (listError ? errorText(listError) : "")}</ErrorMessage>
       {id ? (
         <ComponentDetail
           key={id}
@@ -188,9 +195,13 @@ function ComponentDetail({
 }) {
   const { navigate } = useRouter(),
     endpoint = `/components/${kind}/${encodeURIComponent(id)}`;
-  const [info, setInfo] = useState<ComponentInfo>(),
-    [config, setConfig] = useState<ConfigView>(),
-    [agent, setAgent] = useState("");
+  const {
+    data: info,
+    error: infoError,
+    mutate: mutateInfo,
+  } = useSWR<ComponentInfo>(endpoint);
+  const { data: config } = useConfig();
+  const [agent, setAgent] = useState("");
   const [error, setError] = useState(""),
     [status, setStatus] = useState(""),
     [fork, setFork] = useState(false),
@@ -202,14 +213,19 @@ function ComponentDetail({
   const [adding, setAdding] = useState(false),
     [fileIsNew, setFileIsNew] = useState(false);
   const reload = async () => {
-    setInfo(await api<ComponentInfo>(endpoint));
-    const next = await api<ConfigView>("/config");
-    setConfig(next);
-    setAgent((old) => old || next.defaultAgent || next.agents[0] || "");
+    await mutateInfo();
   };
   useEffect(() => {
-    void reload().catch((cause) => setError(errorText(cause)));
-  }, [endpoint]);
+    if (config)
+      setAgent((old) => old || config.defaultAgent || config.agents[0] || "");
+  }, [config]);
+  const gate = usePageGate({
+    ready: !!info,
+    error: infoError,
+    onRetry: () => void mutateInfo(),
+    label: "Loading details",
+    bare: true,
+  });
   const attach = async (selected: boolean) => {
     try {
       await api(`${endpoint}/selection`, "POST", {
@@ -225,9 +241,10 @@ function ComponentDetail({
       setError(errorText(cause));
     }
   };
+  if (gate) return gate;
   return (
     <>
-      <ErrorMessage>{error || info?.diagnostic}</ErrorMessage>
+      <ErrorMessage>{error || (infoError ? errorText(infoError) : "") || info?.diagnostic}</ErrorMessage>
       <p className="muted">
         {info?.source} · {info?.readOnly ? "Read-only" : "Editable source"} ·{" "}
         {info?.validation} structure · Not executed

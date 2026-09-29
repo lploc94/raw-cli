@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -15,13 +15,27 @@ import {
   X,
 } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
-import type { DashboardBootstrap } from "../../src/dashboard/contract.js";
-import type { Page, SessionSummary } from "../../src/sessions/store.js";
+import type { SessionSummary } from "../../src/sessions/store.js";
 import { api, errorText } from "./api.js";
 import { Chat } from "./chat.js";
+import { mutate as globalMutate } from "swr";
+import { keys } from "./data/keys.js";
+import {
+  prefetchComposerMeta,
+  prefetchConfig,
+  useActivity,
+  useBootstrap,
+  useSessions,
+} from "./data/queries.js";
 import { isTerminal } from "./session.js";
 import { usePreferences } from "./preferences.js";
 import { Link, useRouter } from "./router.js";
+import {
+  PageErrorBoundary,
+  SessionRowsSkeleton,
+  ShellSkeleton,
+  Skeleton,
+} from "./states.js";
 import { Empty, ErrorMessage, Field, Modal } from "./ui.js";
 import { PreferencesPage } from "./pages/Preferences.js";
 import { AgentsPage } from "./pages/Agents.js";
@@ -42,16 +56,6 @@ function sessionGroup(at: number): string {
   return days <= 7 ? "Previous 7 days" : "Older";
 }
 
-interface ActivityView {
-  operations: Array<{
-    id: string;
-    sessionId: string;
-    state: string;
-    kind: string;
-    controllable: boolean;
-  }>;
-  approvals: Array<{ id: string; sessionId: string; name: string }>;
-}
 const categories = [
   "general",
   "models",
@@ -63,7 +67,11 @@ const categories = [
 export function App() {
   const { path, navigate } = useRouter();
   const [preferences, setPreferences] = usePreferences();
-  const [bootstrap, setBootstrap] = useState<DashboardBootstrap>();
+  const {
+    data: bootstrap,
+    error: bootstrapError,
+    mutate: mutateBootstrap,
+  } = useBootstrap();
   const [error, setError] = useState("");
   const [workspace, setWorkspace] = useState("");
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
@@ -77,100 +85,67 @@ export function App() {
     });
   }, []);
   const [agent, setAgent] = useState("");
-  const [sessions, setSessions] = useState<Page<SessionSummary>>({ items: [] });
   const [filter, setFilter] = useState("");
+  /** The session just created: lets its chat open with a full header even if a filter hides it from the list. */
+  const [created, setCreated] = useState<SessionSummary>();
   const [drawer, setDrawer] = useState(false);
   const [palette, setPalette] = useState(false);
   const [command, setCommand] = useState("");
   const [activityOpen, setActivityOpen] = useState(false);
-  const [activity, setActivity] = useState<ActivityView>({
-    operations: [],
-    approvals: [],
-  });
   const drafts = useRef(new Map<string, string>());
-  const previousActivity = useRef("");
   const page = path.split("/")[1] || "chat";
+  const main = useRef<HTMLElement>(null);
+  const shownPage = useRef<string | undefined>(undefined);
+  // Route transition: the DOM swaps synchronously (so clicks never hit stale UI) and the new
+  // area eases in. Only whole-area changes animate (Chat/Agents/Library/Settings): opening or
+  // switching a chat must appear instantly. Skipped on first paint and for reduced motion.
+  useLayoutEffect(() => {
+    const previous = shownPage.current;
+    shownPage.current = page;
+    if (previous === undefined || previous === page) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    main.current?.animate(
+      [
+        { opacity: 0, transform: "translateY(6px)" },
+        { opacity: 1, transform: "none" },
+      ],
+      { duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+    );
+  }, [page]);
+  const previousActivity = useRef("[]");
   const sessionId = page === "chat" ? path.split("/")[2] : undefined;
+  /** Management pages call this after a write: refresh bootstrap plus the shared `/config`. */
   const refreshBootstrap = useCallback(async () => {
-    try {
-      const next = await api<DashboardBootstrap>("/bootstrap");
-      setBootstrap(next);
-      setWorkspace((old) => old || next.cwd);
-      setAgent((old) =>
-        next.config.agents.includes(old)
-          ? old
-          : (next.preferredAgent ??
-            next.config.defaultAgent ??
-            next.config.agents[0] ??
-            ""),
-      );
-      setError("");
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }, []);
+    await Promise.all([mutateBootstrap(), globalMutate(keys.config())]);
+  }, [mutateBootstrap]);
   useEffect(() => {
-    void refreshBootstrap();
-  }, [refreshBootstrap]);
+    if (!bootstrap) return;
+    setWorkspace((old) => old || bootstrap.cwd);
+    setAgent((old) =>
+      bootstrap.config.agents.includes(old)
+        ? old
+        : (bootstrap.preferredAgent ??
+          bootstrap.config.defaultAgent ??
+          bootstrap.config.agents[0] ??
+          ""),
+    );
+  }, [bootstrap]);
+  const sessions = useSessions(workspace, filter, !!bootstrap?.store.available);
+  const { mutate: mutateSessions } = sessions;
   const refreshSessions = useCallback(async () => {
-    if (!workspace || !bootstrap?.store.available) return;
-    try {
-      setSessions(
-        await api<Page<SessionSummary>>(
-          `/sessions?cwd=${encodeURIComponent(workspace)}&title=${encodeURIComponent(filter)}&limit=50`,
-        ),
-      );
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }, [workspace, filter, bootstrap?.store.available]);
+    await mutateSessions();
+  }, [mutateSessions]);
+  const activity = useActivity(!!bootstrap?.store.available);
   useEffect(() => {
-    void refreshSessions();
-  }, [refreshSessions]);
-  useEffect(() => {
-    if (!bootstrap?.store.available) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      if (timer) clearTimeout(timer);
-      if (document.hidden || controller.signal.aborted) return;
-      try {
-        const value = await api<ActivityView>(
-          "/activity",
-          "GET",
-          undefined,
-          controller.signal,
-        );
-        setActivity(value);
-        const revision = JSON.stringify(
-          value.operations.map((item) => [item.id, item.state]),
-        );
-        if (revision !== previousActivity.current) {
-          previousActivity.current = revision;
-          setActivityRevision((old) => old + 1);
-          void refreshSessions();
-        }
-      } catch {
-        /* Session/management requests provide their contextual connection errors. */
-      }
-      if (!controller.signal.aborted)
-        timer = setTimeout(() => {
-          void poll();
-        }, 2000);
-    };
-    const wake = () => {
-      void poll();
-    };
-    wake();
-    document.addEventListener("visibilitychange", wake);
-    window.addEventListener("focus", wake);
-    return () => {
-      controller.abort();
-      if (timer) clearTimeout(timer);
-      document.removeEventListener("visibilitychange", wake);
-      window.removeEventListener("focus", wake);
-    };
-  }, [bootstrap?.store.available, refreshSessions]);
+    // Refresh the list only when the set of running operations actually changes.
+    const revision = JSON.stringify(
+      activity.operations.map((item) => [item.id, item.state]),
+    );
+    if (revision === previousActivity.current) return;
+    previousActivity.current = revision;
+    setActivityRevision((old) => old + 1);
+    void mutateSessions();
+  }, [activity, mutateSessions]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
@@ -198,7 +173,26 @@ export function App() {
         agent: selectedAgent,
       });
       setError("");
-      await refreshSessions();
+      setCreated(session);
+      // Show the new row and open it right away; background revalidation reconciles the list.
+      void mutateSessions(
+        (pages) =>
+          filter
+            ? pages
+            : pages?.length
+              ? [
+                  {
+                    ...pages[0]!,
+                    items: [
+                      session,
+                      ...pages[0]!.items.filter((item) => item.id !== session.id),
+                    ],
+                  },
+                  ...pages.slice(1),
+                ]
+              : [{ items: [session] }],
+        { revalidate: true },
+      );
       navigate(`/chat/${session.id}`);
     } catch (cause) {
       setError(errorText(cause));
@@ -228,6 +222,8 @@ export function App() {
               onClick={() => {
                 void create();
               }}
+              onPointerEnter={() => prefetchComposerMeta(agent)}
+              onFocus={() => prefetchComposerMeta(agent)}
               disabled={
                 !bootstrap?.config.valid || !agent || !bootstrap.store.available
               }
@@ -243,13 +239,13 @@ export function App() {
                   aria-label="New chat agent"
                   title="Agent for the next new chat"
                 >
-                  <span>{agent}</span>
+                  {agent ? <span>{agent}</span> : <Skeleton width={60} />}
                   <ChevronDown size={14} aria-hidden="true" />
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="workspace-menu agent-menu" align="end" sideOffset={6} collisionPadding={8}>
-                  <DropdownMenu.RadioGroup value={agent} onValueChange={setAgent}>
+                  <DropdownMenu.RadioGroup value={agent} onValueChange={(name) => { setAgent(name); prefetchComposerMeta(name); }}>
                     {bootstrap?.config.agents.map((name) => (
                       <DropdownMenu.RadioItem key={name} value={name} className="workspace-menu-item">
                         <span className="agent-menu-check">
@@ -275,7 +271,9 @@ export function App() {
             />
           </label>
           <div className="session-list">
-            {sessions.items.length ? (
+            {!bootstrap || (sessions.isLoading && !sessions.items.length) ? (
+              <SessionRowsSkeleton />
+            ) : sessions.items.length ? (
               sessions.items.map((session, index) => {
                 const group = sessionGroup(session.updatedAt);
                 const previousGroup =
@@ -321,6 +319,13 @@ export function App() {
                   </div>
                 );
               })
+            ) : sessions.error ? (
+              <p className="muted small" role="alert">
+                Could not load sessions.{" "}
+                <button className="text-button" onClick={() => void refreshSessions()}>
+                  Try again
+                </button>
+              </p>
             ) : (
               <p className="muted small">
                 {filter
@@ -333,20 +338,18 @@ export function App() {
                 Clear filters
               </button>
             )}
+            {!!sessions.error && sessions.items.length > 0 && (
+              <p className="muted small" role="alert">
+                Could not refresh sessions.{" "}
+                <button className="text-button" onClick={() => void refreshSessions()}>
+                  Try again
+                </button>
+              </p>
+            )}
             {sessions.nextCursor && (
               <button
-                onClick={() => {
-                  void api<Page<SessionSummary>>(
-                    `/sessions?cwd=${encodeURIComponent(workspace)}&title=${encodeURIComponent(filter)}&limit=50&before=${encodeURIComponent(sessions.nextCursor!)}`,
-                  ).then(
-                    (next) =>
-                      setSessions((old) => ({
-                        ...next,
-                        items: [...old.items, ...next.items],
-                      })),
-                    (cause) => setError(errorText(cause)),
-                  );
-                }}
+                disabled={sessions.isLoadingMore}
+                onClick={sessions.loadMore}
               >
                 More sessions
               </button>
@@ -418,6 +421,8 @@ export function App() {
               href={`/${id}`}
               className={page === id ? "active" : ""}
               aria-current={page === id ? "page" : undefined}
+              onPointerEnter={id === "chat" ? undefined : prefetchConfig}
+              onFocus={id === "chat" ? undefined : prefetchConfig}
             >
               <Icon size={21} aria-hidden="true" />
               <span>{label}</span>
@@ -427,6 +432,8 @@ export function App() {
             href="/settings/general"
             className={`settings-link ${page === "settings" ? "active" : ""}`}
             aria-current={page === "settings" ? "page" : undefined}
+            onPointerEnter={prefetchConfig}
+            onFocus={prefetchConfig}
           >
             <Settings size={21} aria-hidden="true" />
             <span>Settings</span>
@@ -516,23 +523,27 @@ export function App() {
               </button>
             </div>
           </div>
-          <main id="main" tabIndex={-1}>
+          <main id="main" tabIndex={-1} ref={main}>
             <ErrorMessage>{error}</ErrorMessage>
+            <PageErrorBoundary resetKey={path}>
             {!bootstrap ? (
-              <Empty
-                title={
-                  error ? "Connection unavailable" : "Opening your workspace…"
-                }
-              >
-                {error
-                  ? "Reopen the launch link from your terminal to connect."
-                  : "Reading local configuration."}
-              </Empty>
+              bootstrapError ? (
+                <Empty title="Connection unavailable">
+                  {errorText(bootstrapError)}{" "}
+                  Reopen the launch link from your terminal to connect.
+                </Empty>
+              ) : (
+                <ShellSkeleton />
+              )
             ) : page === "chat" ? (
               sessionId ? (
                 <Chat
                   key={sessionId}
                   id={sessionId}
+                  summary={
+                    sessions.items.find((item) => item.id === sessionId) ??
+                    (created?.id === sessionId ? created : undefined)
+                  }
                   bootstrap={bootstrap}
                   preferences={preferences}
                   drafts={drafts.current}
@@ -609,6 +620,7 @@ export function App() {
                 createChat={create}
               />
             )}
+            </PageErrorBoundary>
           </main>
         </div>
       </div>

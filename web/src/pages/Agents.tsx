@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ConfigView } from "../../../src/dashboard/management.js";
-import type { ComponentInfo } from "../../../src/management/components.js";
 import { api, errorText } from "../api.js";
+import { useComponents, useConfig } from "../data/queries.js";
+import { usePageGate } from "../states.js";
 import { Link, useRouter } from "../router.js";
 import { ErrorMessage, Field, Modal } from "../ui.js";
 import {
@@ -24,20 +25,18 @@ export function AgentsPage({
   const name = path.split("/")[2]
     ? decodeURIComponent(path.split("/")[2]!)
     : undefined;
-  const [config, setConfig] = useState<ConfigView>(),
-    [error, setError] = useState("");
+  const { data: config, error: configError } = useConfig();
+  const [error, setError] = useState("");
   const [creating, setCreating] = useState(false),
     [newName, setNewName] = useState(""),
     [model, setModel] = useState("");
-  const refresh = async () => {
-    const next = await api<ConfigView>("/config");
-    setConfig(next);
-    setModel((old) => old || next.models[0] || "");
-    await changed();
-  };
+  // `changed` revalidates the shared `/config`, so it doubles as the editors' refresh.
+  const refresh = changed;
   useEffect(() => {
-    void refresh().catch((cause) => setError(errorText(cause)));
-  }, [path]);
+    if (config) setModel((old) => old || config.models[0] || "");
+  }, [config]);
+  const gate = usePageGate({ ready: !!config, error: configError, onRetry: () => void changed(), label: "Loading agents" });
+  if (gate) return gate;
   return (
     <div className="management-page">
       <span className="scope">{name ? "This agent" : "Raw config"}</span>
@@ -52,7 +51,7 @@ export function AgentsPage({
           Create agent
         </button>
       </div>
-      <ErrorMessage>{error}</ErrorMessage>
+      <ErrorMessage>{error || (configError ? errorText(configError) : "")}</ErrorMessage>
       {name ? (
         <AgentEditor
           key={name}
@@ -150,11 +149,15 @@ function AgentEditor({
   createChat: (name?: string) => Promise<void>;
 }) {
   const { navigate } = useRouter();
-  const [catalog, setCatalog] = useState<{
-    tools: ComponentInfo[];
-    skills: ComponentInfo[];
-    hooks: ComponentInfo[];
-  }>({ tools: [], skills: [], hooks: [] });
+  const toolList = useComponents("tools"),
+    skillList = useComponents("skills"),
+    hookList = useComponents("hooks");
+  const catalog = {
+    tools: toolList.data ?? [],
+    skills: skillList.data ?? [],
+    hooks: hookList.data ?? [],
+  };
+  const catalogError = toolList.error ?? skillList.error ?? hookList.error;
   const [action, setAction] = useState(""),
     [newName, setNewName] = useState(""),
     [error, setError] = useState("");
@@ -175,16 +178,6 @@ function AgentEditor({
       }),
     changed,
   );
-  useEffect(() => {
-    void Promise.all([
-      api<ComponentInfo[]>("/components/tools"),
-      api<ComponentInfo[]>("/components/skills"),
-      api<ComponentInfo[]>("/components/hooks"),
-    ]).then(
-      ([tools, skills, hooks]) => setCatalog({ tools, skills, hooks }),
-      (cause) => setError(errorText(cause)),
-    );
-  }, []);
   let value: Record<string, any> = {},
     parseError = "";
   try {
@@ -241,6 +234,17 @@ function AgentEditor({
     <>
       <DraftActions draft={draft} />
       <ErrorMessage>{error}</ErrorMessage>
+      {!error && !!catalogError && (
+        <ErrorMessage>
+          Could not load the tool, skill and hook lists. {errorText(catalogError)}{" "}
+          <button
+            className="text-button"
+            onClick={() => void Promise.all([toolList.mutate(), skillList.mutate(), hookList.mutate()])}
+          >
+            Try again
+          </button>
+        </ErrorMessage>
+      )}
       <div className="actions">
         <button
           disabled={draft.dirty || !draft.base}
