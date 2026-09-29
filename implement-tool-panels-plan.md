@@ -589,8 +589,8 @@ Cap test uses multibyte text so a character-based cut fails the byte limit.
 Reuse the existing notice mechanism; no change when no panel qualifies.
 
 ### Acceptance criteria
-- [ ] AC-9.1: Reminder content, order and caps match §10 — proven by `tests/compact.test.ts`.
-- [ ] AC-9.2: D5 row passes (no panel bytes in normal requests, cache key unchanged) — proven by request snapshot.
+- [x] AC-9.1: Reminder content, order and caps match §10 — proven by `tests/compact.test.ts`.
+- [x] AC-9.2: D5 row passes (no panel bytes in normal requests, cache key unchanged) — proven by request snapshot.
 - [ ] AC-9.3: Every §22 verification row maps to a passing test — proven by the final audit table in the Progress Log.
 
 ### Focused verification
@@ -624,4 +624,4 @@ Implementation review is required; verdict must be APPROVE.
 | 6 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (10 findings fixed) | 13 panel-state tests + 45 panels.spec runs (3 browsers), mutation-checked (offscreen/unknown visibility marked seen); `npm run test:web` 399 pass; `npm test` only the 3 known PTY failures |
 | 7 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (10 findings fixed) | 15 panels-actions tests; panels.spec 63 passed, `npm run test:web` 417 passed; `npm test` only the 3 known PTY failures |
 | 8 | complete | see git log | Codex gpt-6-astra APPROVE after 2 rounds (4 findings fixed) | 10 tests in tests/panels-surfaces.test.ts (used instead of the four listed files); `npm test` only the 3 known PTY failures |
-| 9 | pending | | | |
+| 9 | complete (AC-9.3 closes in the finalization audit) | see git log | Codex gpt-6-astra APPROVE after 3 rounds (4 findings fixed) | 6 tests in tests/panels-compaction.test.ts (used instead of tests/compact.test.ts); `npm test` only the 3 known PTY failures; `npm run test:web` 416/417 then the flaky webkit spec passes alone; `npm run test:package` pass |

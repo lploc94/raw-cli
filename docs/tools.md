@@ -93,9 +93,9 @@ Dispatch validates the tool name, schema, visibility and session whitelist befor
 ## Panels
 
 A tool may publish a live side panel (`raw.panel/1`, see [panels-design.md](panels-design.md)). Panel state never reaches the
-model except for one short confirmation line, never counts against `maxOutputBytes`, and is stored with the tool result.
+model except for one short confirmation line (and, for `context: "summary"` panels, a bounded reminder after a successful compaction), never counts against `maxOutputBytes`, and is stored with the tool result.
 
-Declare the panels a tool owns in its registration (`panels`; plugin manifests gain the same field in a later release), then either:
+Declare the panels a tool owns in its registration (`panels` in `tool.json`, the MCP server config or `_raw/tool/register`), then either:
 
 - return a `{ "type": "panel", "panel": "<id>", "op": "replace" | "patch" | "close", ... }` block next to the ordinary text
   content; the runtime removes it before hooks, caps, providers and history see the result; or
@@ -110,6 +110,8 @@ Errors are `PanelError` codes (`panel_invalid`, `panel_too_large`, `panel_undecl
 identity, so an `as` alias cannot write another tool's panel. `context.panels` is absent for tools without declared panels.
 
 A `tool.json` may declare up to four panels with the optional `panels` array (`id`, `title`, and optionally `icon`, `open`, `context`, `acp_plan`, `actions`; see the design document). Unknown keys, duplicate ids or an invalid declaration make the manifest invalid; an unknown `icon` falls back to `panel` with a load warning. The declarations are read from `tool.json` alone: they are known without importing `index.mjs`, so the dashboard can list a tool's panels before the tool has ever run.
+
+A panel may declare `actions` (menu items on the panel, a block or an item). `prompt` actions draft a message; `tool` actions run the declaring tool again through the normal tool path, so `allow`, `ask`, `deny` and hooks apply exactly as for a model call (a click is never approval for an `ask` rule), and the tool sees `context.panels` as usual. The model learns about a user-run action from a note in front of the next message; the hook payload carries `tool.source: "user_action"`.
 
 ### `builtin/todo`
 

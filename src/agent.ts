@@ -12,7 +12,7 @@ import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import { resolveAction } from "./panels/actions.js";
 import { PanelHost, type PanelCall } from "./panels/host.js";
-import { truncateBytes } from "./panels/render.js";
+import { isPanelReminder, panelReminders, truncateBytes } from "./panels/render.js";
 import type { PanelDocument, PanelReceipt, PanelWrites, StoredPanel } from "./panels/contract.js";
 import type { ToolResult } from "./tools/types.js";
 import type { SessionOwner, SessionStore } from "./sessions/store.js";
@@ -371,8 +371,12 @@ export class AgentSession {
         const notice = uncovered.length
           ? `[Raw skill reload notice] Loaded skill content was removed by compaction: ${uncovered.join(", ")}. Call load_skill again before relying on earlier instructions.`
           : undefined;
-        const replacement: ModelMessage[] = [...work.replacement,
-          ...(notice ? [{ role: "user" as const, content: notice }] : [])];
+        // A compaction that succeeds reminds the model of the open summary panels (§10). Reminders of an earlier compaction are replaced.
+        const reminders = panelReminders(this.panels.snapshot());
+        const replacement: ModelMessage[] = [
+          ...work.replacement.filter((message) => !(message.role === "user" && typeof message.content === "string" && isPanelReminder(message.content))),
+          ...(notice ? [{ role: "user" as const, content: notice }] : []),
+          ...reminders.map((content) => ({ role: "user" as const, content }))];
         const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
         if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
         const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: work.summary, beforeBytes, afterBytes: finalBytes,

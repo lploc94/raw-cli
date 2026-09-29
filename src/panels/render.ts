@@ -1,3 +1,4 @@
+import { PANEL_LIMITS } from "./contract.js";
 import type { ChecklistItem, PanelBlock, PanelDocument, PanelItemStatus, PanelReceipt, PanelRef, StoredPanel } from "./contract.js";
 
 const GLYPH: Record<PanelItemStatus, string> = {
@@ -161,6 +162,32 @@ export function selectPanels(panels: readonly StoredPanel[], options: { all?: bo
   return found.length === 1 && (options.all || !found[0]!.closed) ? found : undefined;
 }
 export const panelTitle = (panel: StoredPanel): string => panel.document.title ?? panel.declaration.title;
+
+/** Marks a reminder as written by the host, like `[Raw skill reload notice]`, so a later compaction can replace it. */
+export const PANEL_REMINDER_MARKER = "[Raw panel state]\n";
+export const isPanelReminder = (text: string): boolean => text.startsWith(PANEL_REMINDER_MARKER);
+
+/**
+ * §10: one reminder per open `context: "summary"` panel, the most recently updated first. Each body (the document's
+ * `context_summary`, else the text rendering) is cut to 2 KiB and all reminders together to 8 KiB, with `…`. The header
+ * (marker, title, owner, revision) is never cut: a reminder whose header does not fit in what is left is left out.
+ */
+export function panelReminders(panels: readonly StoredPanel[]): string[] {
+  const reminders: string[] = [];
+  let remaining = PANEL_LIMITS.reminderTotalBytes;
+  const wanted = panels.filter((panel) => !panel.closed && panel.declaration.context === "summary")
+    .sort((a, b) => b.updatedAt - a.updatedAt || (a.panelId < b.panelId ? -1 : 1));
+  for (const panel of wanted) {
+    const title = panel.document.title ?? panel.declaration.title;
+    const head = `${PANEL_REMINDER_MARKER}Current state of ${title} (${panel.owner}) at revision ${panel.revision}:\n`;
+    const room = Math.min(PANEL_LIMITS.reminderBytes, remaining - Buffer.byteLength(head));
+    if (room < 16) continue;
+    const text = head + truncateBytes(panel.document.context_summary ?? renderPanelText(title, panel.document), room);
+    reminders.push(text);
+    remaining -= Buffer.byteLength(text);
+  }
+  return reminders;
+}
 
 /** One CLI receipt line. It never relies on color. */
 export function receiptLine(receipt: Pick<PanelReceipt, "title" | "revision" | "summary" | "error">): string {

@@ -420,9 +420,12 @@ After all patches apply, the resulting document is validated in full against §6
 - **After compaction.** For every open panel whose declaration has `context: "summary"`, the host appends one durable tail reminder once the compaction succeeds. It uses the same mechanism as the skill-reload notice in `context.md`. The reminder text is:
 
   ```
+  [Raw panel state]
   Current state of <title> (<owner>) at revision N:
   <context_summary, or the text rendering from §7 cut to 2048 bytes>
   ```
+
+  The first line marks the message as written by the host, like `[Raw skill reload notice]`, so the next compaction replaces the earlier reminders instead of stacking them. The header is never cut; a reminder whose header no longer fits in the 8 KiB budget is left out.
 
   The reminders together are capped at 8 KiB, and panels updated most recently come first. They are never added outside a successful compaction, so a normal turn's prefix and cache key do not change.
 - **Actions.** When the user runs a `tool` action (§11), the model learns about it before its next request. The host appends a durable note: `The user ran "<label>" on <title>; <owner> returned: <text result, ≤ 1 KiB>`. It is appended with the next user message, so the provider message order stays valid.
