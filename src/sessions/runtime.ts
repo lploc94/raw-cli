@@ -2,6 +2,7 @@ import { createAgent, type AgentOptions } from "../agent.js";
 import { loadConfig, type RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter } from "../llm/types.js";
+import { applyRequestOverride } from "../request-controls.js";
 import { createRuntimeTools, type RuntimeTools } from "../tools/plugins/runtime.js";
 import type { AttachSessionRuntime } from "./operations.js";
 
@@ -19,7 +20,8 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
   const runtime = await loadConfig({ configPath: operation.configPath, flags: { agent: operation.agentName },
     cwd: session.cwd, requireModel: true, ...(options.env ? { env: options.env } : {}) });
   if (signal.aborted) throw new Error("startup aborted");
-  const provider = createProvider(runtime.modelConfig!);
+  const modelConfig = applyRequestOverride(runtime.modelConfig!, options.request ?? {});
+  const provider = createProvider(modelConfig);
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
   try {
     if (signal.aborted) throw new Error("startup aborted");
@@ -29,7 +31,7 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
       ...(options.approve ? { approve: options.approve } : {}),
       persistence: { store, sessionId: session.id, surface: "web", owner, ownership: "host", operationId: operation.id } });
     await agent.start(agent.transcript.length ? "resume" : "create", undefined, signal);
-    return { agent, modelConfig: runtime.modelConfig!, compact: runtime.compact, compactOptions,
+    return { agent, modelConfig, compact: runtime.compact, compactOptions,
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },
       close: () => tools.mcp.close() };
   } catch (error) { await tools.mcp.close(); throw error; }

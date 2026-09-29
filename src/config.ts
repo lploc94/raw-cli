@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
+import { ANTHROPIC_EFFORTS, ANTHROPIC_TIERS, DEEPSEEK_EFFORTS, GOOGLE_LEVELS, OPENAI_EFFORTS, OPENAI_TIERS, requestKind } from "./request-controls.js";
 import type { ApiMethod, CacheOptions, ModelRequestOptions, ProviderName, ResolvedModelConfig } from "./llm/types.js";
 import type { McpServerConfig } from "./tools/mcp-client.js";
 import type { ToolPolicyRule } from "./tools/registry.js";
@@ -418,10 +419,11 @@ function usesOfficialEndpoint(provider: ProviderName, method: ApiMethod): boolea
 function requestSpec(raw: unknown, model: ModelSpec, where: string): ModelRequestOptions {
   const value = object(raw, where);
   const common = ["max_output_tokens"];
-  const isOpenAi = model.provider === "openai" && (model.method === "openai-chat-completions" || model.method === "openai-responses");
-  const isDeepSeek = model.provider === "deepseek" && model.method === "openai-chat-completions";
-  const isAnthropic = model.provider === "anthropic" && model.method === "anthropic-messages";
-  const isGoogle = model.provider === "google" && model.method === "google-generate-content";
+  const kind = requestKind(model.provider, model.method);
+  const isOpenAi = kind === "openai";
+  const isDeepSeek = kind === "deepseek";
+  const isAnthropic = kind === "anthropic";
+  const isGoogle = kind === "google";
   const allowed = isOpenAi ? [...common, "service_tier", "reasoning_effort", ...(model.method === "openai-responses" ? ["reasoning_mode"] : [])]
     : isDeepSeek ? [...common, "thinking", "reasoning_effort"]
     : isAnthropic ? [...common, "thinking", "effort", "service_tier"]
@@ -438,8 +440,8 @@ function requestSpec(raw: unknown, model: ModelSpec, where: string): ModelReques
     base.maxOutputTokens = limit;
   }
   if (isOpenAi) return { kind: "openai", ...base,
-    ...(value.service_tier !== undefined ? { serviceTier: enumValue(value.service_tier, new Set(["auto", "default", "flex", "fast", "priority"]), where + ".service_tier") } : {}),
-    ...(value.reasoning_effort !== undefined ? { reasoningEffort: enumValue(value.reasoning_effort, new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]), where + ".reasoning_effort") } : {}),
+    ...(value.service_tier !== undefined ? { serviceTier: enumValue(value.service_tier, new Set(OPENAI_TIERS), where + ".service_tier") } : {}),
+    ...(value.reasoning_effort !== undefined ? { reasoningEffort: enumValue(value.reasoning_effort, new Set(OPENAI_EFFORTS), where + ".reasoning_effort") } : {}),
     ...(value.reasoning_mode !== undefined ? { reasoningMode: enumValue(value.reasoning_mode, new Set(["standard", "pro"]), where + ".reasoning_mode") } : {}),
   };
   if (isDeepSeek) {
@@ -447,7 +449,7 @@ function requestSpec(raw: unknown, model: ModelSpec, where: string): ModelReques
     if (thinking === "disabled" && value.reasoning_effort !== undefined) throw new Error(where + ".reasoning_effort requires thinking enabled");
     return { kind: "deepseek", ...base,
       ...(thinking !== undefined ? { thinking } : {}),
-      ...(value.reasoning_effort !== undefined ? { reasoningEffort: enumValue(value.reasoning_effort, new Set(["low", "high", "max"]), where + ".reasoning_effort") } : {}),
+      ...(value.reasoning_effort !== undefined ? { reasoningEffort: enumValue(value.reasoning_effort, new Set(DEEPSEEK_EFFORTS), where + ".reasoning_effort") } : {}),
     };
   }
   if (isAnthropic) {
@@ -463,14 +465,14 @@ function requestSpec(raw: unknown, model: ModelSpec, where: string): ModelReques
       }
     }
     return { kind: "anthropic", ...base, ...(thinking ? { thinking } : {}),
-      ...(value.effort !== undefined ? { effort: enumValue(value.effort, new Set(["low", "medium", "high", "xhigh", "max"]), where + ".effort") } : {}),
-      ...(value.service_tier !== undefined ? { serviceTier: enumValue(value.service_tier, new Set(["auto", "standard_only"]), where + ".service_tier") } : {}),
+      ...(value.effort !== undefined ? { effort: enumValue(value.effort, new Set(ANTHROPIC_EFFORTS), where + ".effort") } : {}),
+      ...(value.service_tier !== undefined ? { serviceTier: enumValue(value.service_tier, new Set(ANTHROPIC_TIERS), where + ".service_tier") } : {}),
     };
   }
   if (isGoogle) {
     if (value.thinking_level !== undefined && value.thinking_budget !== undefined) throw new Error(where + " must choose thinking_level or thinking_budget");
     return { kind: "google", ...base,
-      ...(value.thinking_level !== undefined ? { thinkingLevel: enumValue(value.thinking_level, new Set(["minimal", "low", "medium", "high"]), where + ".thinking_level") } : {}),
+      ...(value.thinking_level !== undefined ? { thinkingLevel: enumValue(value.thinking_level, new Set(GOOGLE_LEVELS), where + ".thinking_level") } : {}),
       ...(value.thinking_budget !== undefined ? { thinkingBudget: nonnegative(value.thinking_budget, where + ".thinking_budget") } : {}),
     };
   }

@@ -2,6 +2,7 @@ import type { AgentSession, RunEvent, RunResult } from "../agent.js";
 import type { CompactOptions, CompactResult } from "../compact.js";
 import type { CompactSettings } from "../config.js";
 import type { ResolvedModelConfig } from "../llm/types.js";
+import type { RequestOverride } from "../request-controls.js";
 import type { ToolContext } from "../tools/primitives.js";
 import type { UserInput } from "../llm/types.js";
 import { measureSession, type SessionMetrics } from "./metrics.js";
@@ -23,6 +24,8 @@ export interface SessionRuntime {
 export type AttachSessionRuntime = (options: {
   store: SessionStore; session: SessionSummary; operation: SessionOperation; owner: SessionOwner;
   signal: AbortSignal; approve?: ToolContext["approve"]; env?: NodeJS.ProcessEnv;
+  /** Per-turn request override, applied to this operation's provider request only. */
+  request?: RequestOverride;
 }) => Promise<SessionRuntime>;
 
 export type OperationEvent = { sessionId: string; operationId: string } & (
@@ -33,6 +36,8 @@ export type OperationEvent = { sessionId: string; operationId: string } & (
 interface ActiveOperation {
   /** Structured turn input for this process only; the persisted operation keeps the text. */
   blocks?: UserInput;
+  /** Per-turn request override for this process only; never persisted. */
+  request?: RequestOverride;
   controller: AbortController;
   done: Promise<SessionOperation>;
   agent?: AgentSession;
@@ -62,7 +67,7 @@ export class SessionOperations {
   approvalTimeout(operationId: string): number { return this.active.get(operationId)?.agent?.requestTimeoutMs ?? 120000; }
   toolIdentity(operationId: string, name: string): string | undefined { return this.active.get(operationId)?.agent?.toolIdentity(name); }
 
-  submit(intent: OperationIntent, blocks?: UserInput): SessionOperation {
+  submit(intent: OperationIntent, blocks?: UserInput, request?: RequestOverride): SessionOperation {
     if (this.closed) throw new SessionOperationError("closed", "session operations are closed");
     this.options.store.recoverOperations();
     const { operation, owner } = this.options.store.acceptOperation(intent);
@@ -70,7 +75,7 @@ export class SessionOperations {
     const controller = new AbortController();
     let resolveDone!: (operation: SessionOperation) => void;
     let rejectDone!: (error: unknown) => void;
-    const active: ActiveOperation = { ...(blocks ? { blocks } : {}), controller, done: new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; }) };
+    const active: ActiveOperation = { ...(blocks ? { blocks } : {}), ...(request ? { request } : {}), controller, done: new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; }) };
     // A detached HTTP client is not responsible for consuming a terminal persistence error.
     void active.done.catch(() => {});
     this.active.set(operation.id, active);
@@ -112,7 +117,8 @@ export class SessionOperations {
       if (!session) throw new SessionOperationError("not_found", store.missingSessionMessage());
       const approve = this.options.approve?.(operation);
       runtime = await (this.options.attach ?? attachSessionRuntime)({ store, session, operation, owner,
-        signal: active.controller.signal, ...(approve ? { approve } : {}), ...(this.options.env ? { env: this.options.env } : {}) });
+        signal: active.controller.signal, ...(approve ? { approve } : {}), ...(this.options.env ? { env: this.options.env } : {}),
+        ...(active.request && operation.kind === "turn" ? { request: active.request } : {}) });
       active.agent = runtime.agent;
       firstRequest = runtime.agent.stats().requests;
       const attached = runtime;

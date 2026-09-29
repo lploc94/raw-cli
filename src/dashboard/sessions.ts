@@ -2,6 +2,7 @@ import { realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { record } from "../management/agents.js";
 import { loadConfig } from "../config.js";
+import { parseRequestOverride, requestControls, RequestOverrideError, type RequestControl, type RequestOverride } from "../request-controls.js";
 import { loadSelectedSkills } from "../skills/loader.js";
 import type { UserBlock } from "../llm/types.js";
 import { readManagedConfig } from "../management/config.js";
@@ -59,10 +60,11 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     const config = await readManagedConfig(options);
     if (!Object.hasOwn(record(config.data?.agents), name)) throw new DashboardError(404, "not_found", `Agent ${name} is not configured`);
     // The effective selection (direct agents and installed package agents) needs no model credentials; a broken skill only empties the list.
-    let vision = false; let skills: Array<{ name: string; description: string }> = [];
+    let vision = false; let skills: Array<{ name: string; description: string }> = []; let controls: RequestControl[] = [];
     try {
       const runtime = await loadConfig({ ...options, configPath: context.configPath, flags: { agent: name }, requireModel: false });
       vision = runtime.modelConfig?.vision === true;
+      if (runtime.modelConfig) controls = requestControls(runtime.modelConfig.provider, runtime.modelConfig.method, runtime.modelConfig.request);
       for (const skillId of runtime.skillIds) {
         try { // one broken skill must not hide the others
           const [skill] = await loadSelectedSkills({ selectedIds: [skillId], configPath: runtime.configPath, maxOutputBytes: runtime.maxOutputBytes,
@@ -71,8 +73,14 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         } catch { /* skipped */ }
       }
     } catch { /* metadata stays best-effort so the composer never blocks */ }
-    return { vision, skills, attachmentKinds: staging.kinds.list().map((kind) => ({ id: kind.id, accept: kind.mimeTypes, maxBytes: kind.maxBytes, enabled: true,
+    return { vision, skills, controls, attachmentKinds: staging.kinds.list().map((kind) => ({ id: kind.id, accept: kind.mimeTypes, maxBytes: kind.maxBytes, enabled: true,
       ...(kind.needsVision && !vision ? { warning: "This agent cannot see images; it will receive a text placeholder instead." } : {}) })) };
+  };
+  const agentControls = async (name: string): Promise<RequestControl[]> => {
+    try {
+      const runtime = await loadConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env, flags: { agent: name }, requireModel: false });
+      return runtime.modelConfig ? requestControls(runtime.modelConfig.provider, runtime.modelConfig.method, runtime.modelConfig.request) : [];
+    } catch { return []; }
   };
   const requireSession = (id: string): SessionSummary => { const value = store.getSession(id); if (!value) throw new DashboardError(404, "not_found", store.missingSessionMessage()); return value; };
   const requireOperation = (id: string): SessionOperation => { const value = store.getOperation(id); if (!value) throw new DashboardError(404, "not_found", "Operation not found"); requireSession(value.sessionId); return value; };
@@ -202,15 +210,24 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
             ...(body.kind === "turn" ? { input: textField(body.input, "input", 1024 * 1024) } : {}) };
           const ids = stringList(body.attachments, "attachments", 8); const files = stringList(body.files, "files", 20);
           if (body.kind === "compact" && (ids.length || files.length)) throw new DashboardError(400, "invalid_input", "compact does not accept attachments");
-          // A replayed request id returns the existing receipt and never re-reads or consumes staged items.
-          if (body.kind !== "turn" || (!ids.length && !files.length) || store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
+          if (body.kind === "compact" && body.request !== undefined) throw new DashboardError(400, "invalid_input", "compact does not accept request overrides");
+          // A replayed request id returns the existing receipt and never re-reads staged items or validates a new override.
+          if (body.kind !== "turn" || store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
+          let override: RequestOverride | undefined;
+          if (body.request !== undefined) {
+            try { override = parseRequestOverride(body.request, await agentControls(intent.agentName)); }
+            catch (error) { if (error instanceof RequestOverrideError) throw new DashboardError(422, "invalid_request_option", error.message); throw error; }
+            if (override.effort === undefined && override.serviceTier === undefined) override = undefined;
+            if (store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
+          }
+          if (!ids.length && !files.length) return reply(operations.submit(intent, undefined, override), 202);
           const staged = staging.resolve(id, ids); const session = requireSession(id);
           const links: UserBlock[] = [];
           for (const file of files) links.push(await workspaceFileLink(session.cwd, file));
           const blocks: UserBlock[] = [{ type: "text", text: intent.input! }, ...links, ...staged.map((item) => staging.kinds.list().find((kind) => kind.id === item.kind)!.toBlock(item))];
           // No await separates this check from submit, so a concurrent duplicate cannot consume staged items.
           if (store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
-          const accepted = operations.submit(intent, blocks); staging.release(ids);
+          const accepted = operations.submit(intent, blocks, override); staging.release(ids);
           return reply(accepted, 202);
         }
       }

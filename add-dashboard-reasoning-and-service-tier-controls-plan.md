@@ -115,11 +115,11 @@ Vary the values across effort levels and tiers (not one hardcoded pair); compare
 Move value lists and the kind predicate out of `config.ts` without changing config validation behavior or messages; keep `attach` signature backward compatible (`request` optional); merge only for `operation.kind === "turn"`; never persist the override; no provider capability guessing; keep metadata best-effort with try/catch like the existing `composer`.
 
 ### Acceptance criteria
-- [ ] AC-1: `controls` describes level and tier per provider from the shared enums and is empty for generic providers — proven by `tests/request-controls.test.ts` and the dashboard metadata test.
-- [ ] AC-2: A validated per-turn override changes only that operation's provider request and leaves config bytes and the next turn untouched — proven by the dashboard wire test.
-- [ ] AC-3: Invalid overrides are refused before acceptance with `invalid_request_option`; compact refuses them — proven by the 422 matrix.
-- [ ] AC-4: A provider rejection fails only that turn and the session continues — proven by the provider-400 test.
-- [ ] AC-5: Enum drift between validation and UI options is impossible — proven by the drift test.
+- [x] AC-1: `controls` describes level and tier per provider from the shared enums and is empty for generic providers — proven by `tests/request-controls.test.ts` and the dashboard metadata test.
+- [x] AC-2: A validated per-turn override changes only that operation's provider request and leaves config bytes and the next turn untouched — proven by the dashboard wire test.
+- [x] AC-3: Invalid overrides are refused before acceptance with `invalid_request_option`; compact refuses them — proven by the 422 matrix.
+- [x] AC-4: A provider rejection fails only that turn and the session continues — proven by the provider-400 test.
+- [x] AC-5: Enum drift between validation and UI options is impossible — proven by the drift test.
 
 ### Focused verification
 `node --import tsx --test tests/request-controls.test.ts tests/dashboard-request-controls.test.ts tests/config.test.ts tests/session-operations.test.ts`
@@ -255,3 +255,4 @@ Implementation review is required; verdict must be APPROVE.
 ## Progress Log
 
 - 2026-09-29: Plan drafted and Codex-reviewed (APPROVE) after user-approved design (per-turn override, server-described controls, pill before Send with popover slider + tier radio group, no `/` commands, config untouched).
+- 2026-09-29 Phase 1 (Codex gpt-6-astra review APPROVE in 2 rounds; 2 test findings fixed): `src/request-controls.ts` (value lists shared with `requestSpec`, descriptors, `parseRequestOverride`, `applyRequestOverride`), `SessionOperations.submit(intent, blocks?, request?)` and `attachSessionRuntime` merge, composer `controls`, turn route with replay-first ordering. Tests `tests/request-controls.test.ts` (4) and `tests/dashboard-request-controls.test.ts` (5). `npm run typecheck` clean; `npm test` 577/580 (3 baseline PTY). Note: `request` on `compact` is refused with 400 `invalid_input` like `attachments` (the plan text said 422; the existing pattern wins).
