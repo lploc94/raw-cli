@@ -125,10 +125,10 @@ Randomized-order patch sequences compared with an independent reference result; 
 Pure functions, no I/O; `structuredClone` input before mutation; byte length measured with `Buffer.byteLength(JSON.stringify(doc))`.
 
 ### Acceptance criteria
-- [ ] AC-1.1: All 8 block kinds validate and render text as in §7 — proven by `tests/panels-protocol.test.ts`.
-- [ ] AC-1.2: Every limit in §14 that applies to documents is enforced at boundary+1 with the §15 code — proven by the same file.
-- [ ] AC-1.3: A failing patch leaves the input document deep-equal to before — proven by the atomicity test.
-- [ ] AC-1.4: Unknown kind renders fallback; unknown field in known kind rejects — proven by tests.
+- [x] AC-1.1: All 8 block kinds validate and render text as in §7 — proven by `tests/panels-protocol.test.ts`.
+- [x] AC-1.2: Every limit in §14 that applies to documents is enforced at boundary+1 with the §15 code — proven by the same file.
+- [x] AC-1.3: A failing patch leaves the input document deep-equal to before — proven by the atomicity test.
+- [x] AC-1.4: Unknown kind renders fallback; unknown field in known kind rejects — proven by tests.
 
 ### Focused verification
 `node --import tsx --test tests/panels-protocol.test.ts`
@@ -616,7 +616,7 @@ Implementation review is required; verdict must be APPROVE.
 
 | Phase | Status | Commit | Review | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | pending | | | |
+| 1 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (14 findings fixed) | 30 protocol tests; `npm test` only the 3 known PTY failures |
 | 2 | pending | | | |
 | 3 | pending | | | |
 | 4 | pending | | | |

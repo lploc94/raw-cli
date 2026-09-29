@@ -1,0 +1,992 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-cli.dev/schemas/raw-panel.schema.json",
+  "title": "raw.panel/1 update",
+  "description": "Shapes accepted by Raw for tool panel updates. Raw itself also enforces ID uniqueness, patch results, size and control-character rules (docs/panels-design.md is normative); unknown block kinds are accepted with only their common fields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/replace"
+    },
+    {
+      "$ref": "#/$defs/patch"
+    },
+    {
+      "$ref": "#/$defs/close"
+    }
+  ],
+  "$defs": {
+    "panelId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+    },
+    "blockId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$"
+    },
+    "itemId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "in_progress",
+        "done",
+        "skipped",
+        "blocked",
+        "failed"
+      ]
+    },
+    "ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "checklistItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/itemId"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "priority": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "children": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/checklistItem"
+          }
+        }
+      }
+    },
+    "blockChecklist": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "items"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "checklist"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/checklistItem"
+          }
+        }
+      }
+    },
+    "blockSteps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "items"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "steps"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/itemId"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "status": {
+                "$ref": "#/$defs/status"
+              },
+              "detail": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "started_at": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "ended_at": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "blockProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "progress"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "indeterminate": {
+          "const": true
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "value",
+            "max"
+          ],
+          "not": {
+            "required": [
+              "indeterminate"
+            ]
+          }
+        },
+        {
+          "required": [
+            "indeterminate"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "value"
+                ]
+              },
+              {
+                "required": [
+                  "max"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "blockKeyValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "entries"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "key_value"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "maxLength": 60,
+                "minLength": 1
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "ref": {
+                "$ref": "#/$defs/ref"
+              }
+            }
+          }
+        }
+      }
+    },
+    "blockTable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "table"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "label"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/itemId"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 60
+              },
+              "align": {
+                "enum": [
+                  "start",
+                  "end",
+                  "center"
+                ]
+              }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "cells"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/itemId"
+              },
+              "status": {
+                "$ref": "#/$defs/status"
+              },
+              "ref": {
+                "$ref": "#/$defs/ref"
+              },
+              "cells": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 300
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "blockMarkdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "markdown"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "timelineEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "at",
+        "level",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/itemId"
+        },
+        "at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "level": {
+          "enum": [
+            "info",
+            "success",
+            "warning",
+            "error"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "blockTimeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "events"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "timeline"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/timelineEvent"
+          }
+        }
+      }
+    },
+    "blockFiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "entries"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "files"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "added",
+                  "modified",
+                  "deleted",
+                  "referenced"
+                ]
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 200
+              }
+            }
+          }
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "checklist"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockChecklist"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "steps"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockSteps"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "progress"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockProgress"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "key_value"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockKeyValue"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "table"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockTable"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "markdown"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockMarkdown"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "timeline"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockTimeline"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "files"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockFiles"
+          }
+        }
+      ]
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blocks"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "status": {
+          "enum": [
+            "idle",
+            "active",
+            "done",
+            "failed"
+          ]
+        },
+        "progress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "done",
+            "total"
+          ],
+          "properties": {
+            "done": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "context_summary": {
+          "type": "string"
+        },
+        "blocks": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/block"
+          }
+        }
+      }
+    },
+    "patchOp": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "field",
+            "value"
+          ],
+          "properties": {
+            "op": {
+              "const": "set"
+            },
+            "field": {
+              "enum": [
+                "title",
+                "subtitle",
+                "status",
+                "summary",
+                "context_summary",
+                "progress"
+              ]
+            },
+            "value": {}
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "field": {
+                    "const": "status"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "value": {
+                    "enum": [
+                      "idle",
+                      "active",
+                      "done",
+                      "failed",
+                      null
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "block"
+          ],
+          "properties": {
+            "op": {
+              "const": "set_block"
+            },
+            "block": {
+              "$ref": "#/$defs/block"
+            },
+            "before": {
+              "$ref": "#/$defs/blockId"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "id"
+          ],
+          "properties": {
+            "op": {
+              "const": "remove_block"
+            },
+            "id": {
+              "$ref": "#/$defs/blockId"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "block",
+            "items"
+          ],
+          "properties": {
+            "op": {
+              "const": "upsert_items"
+            },
+            "block": {
+              "$ref": "#/$defs/blockId"
+            },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200,
+              "items": {
+                "type": "object"
+              }
+            },
+            "parent": {
+              "$ref": "#/$defs/itemId"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "block"
+          ],
+          "properties": {
+            "op": {
+              "const": "remove_items"
+            },
+            "block": {
+              "$ref": "#/$defs/blockId"
+            },
+            "ids": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            },
+            "keys": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            },
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "oneOf": [
+            {
+              "required": [
+                "ids"
+              ]
+            },
+            {
+              "required": [
+                "keys"
+              ]
+            },
+            {
+              "required": [
+                "paths"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "block",
+            "events"
+          ],
+          "properties": {
+            "op": {
+              "const": "append_events"
+            },
+            "block": {
+              "$ref": "#/$defs/blockId"
+            },
+            "events": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 200,
+              "items": {
+                "$ref": "#/$defs/timelineEvent"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "replace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "panel",
+        "op",
+        "document"
+      ],
+      "properties": {
+        "panel": {
+          "$ref": "#/$defs/panelId"
+        },
+        "op": {
+          "const": "replace"
+        },
+        "document": {
+          "$ref": "#/$defs/document"
+        }
+      }
+    },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "panel",
+        "op",
+        "patches"
+      ],
+      "properties": {
+        "panel": {
+          "$ref": "#/$defs/panelId"
+        },
+        "op": {
+          "const": "patch"
+        },
+        "base_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "patches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/patchOp"
+          }
+        }
+      }
+    },
+    "close": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "panel",
+        "op"
+      ],
+      "properties": {
+        "panel": {
+          "$ref": "#/$defs/panelId"
+        },
+        "op": {
+          "const": "close"
+        }
+      }
+    }
+  }
+}
