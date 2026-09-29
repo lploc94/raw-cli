@@ -12,6 +12,8 @@ Compaction summarizes eligible older model context and retains recent turns. Suc
 
 History projections accept existing CLI and ACP envelopes. They preserve record order, tool linkage and available statuses, and label abbreviated previews. Historical output, image bytes, detailed timing or full write diffs may be unavailable; reading current files is not a reconstruction of historical results. No history read executes a tool.
 
+Tool panels ([panels design](panels-design.md)) are stored per session: the latest document of each panel, plus a small `panel_receipt` history row for every committed update. Reading them (`raw sessions panels`, `getSessionPanels`, `GET /api/sessions/:id/panels`) also needs no runtime, claim or model credential; ACP `session/load` and `session/resume` attach a runtime as before. Replay shows receipts in their history position and the current state once at the end; earlier documents are not reconstructed. Compaction never touches panels or receipts.
+
 Operation receipts and metrics are optional host records in the same format-5 database, cascade-deleted with their session. They are never injected into the model prompt. An unrelated unsupported legacy database remains isolated by the existing store-location policy.
 
 ## User message blocks

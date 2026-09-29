@@ -13,7 +13,7 @@ import type { ToolContext } from "./tools/primitives.js";
 import { resolveAction } from "./panels/actions.js";
 import { PanelHost, type PanelCall } from "./panels/host.js";
 import { truncateBytes } from "./panels/render.js";
-import type { PanelDocument, PanelWrites } from "./panels/contract.js";
+import type { PanelDocument, PanelReceipt, PanelWrites, StoredPanel } from "./panels/contract.js";
 import type { ToolResult } from "./tools/types.js";
 import type { SessionOwner, SessionStore } from "./sessions/store.js";
 import type { SkillVisibility } from "./sessions/store.js";
@@ -56,7 +56,9 @@ export type RunEvent = (
   | { type: "reasoning_delta"; text: string }
   | { type: "tool_call"; id: string; name: string; arguments: Record<string, unknown> }
   | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown>; display?: VisibleToolCall }
-  | { type: "tool_result"; id: string; name: string; result: ToolResult; display?: VisibleToolResult }
+  | { type: "tool_result"; id: string; name: string; result: ToolResult; display?: VisibleToolResult;
+      /** The panel receipts committed with this result, for surfaces that print them (docs/panels-design.md §13.2). */
+      panelReceipts?: PanelReceipt[] }
   | { type: "usage"; raw: unknown }
   | { type: "compact_start"; estimatedTokens: number; details?: CompactionDetails }
   | { type: "compact_end"; result: CompactResult; details?: CompactionDetails }
@@ -213,6 +215,10 @@ export class AgentSession {
   }
 
   get state(): AgentState { return this.currentState; }
+  /** The operation/turn ID of the run in progress (the tool call ID of a panel action), if any. */
+  get activeTurnId(): string | undefined { return this.currentTurnId; }
+  /** The latest committed state of one panel of this session, by full ID. */
+  panel(panelId: string): StoredPanel | undefined { return this.panels.snapshot().find((item) => item.panelId === panelId); }
   get transcript(): readonly ModelMessage[] { return structuredClone(this.messages); }
   get usageRecords(): readonly unknown[] { return structuredClone(this.rawUsage); }
   get cwd(): string { return this.options.cwd; }
@@ -689,7 +695,8 @@ export class AgentSession {
         panelCall?.commit();
       } catch (error) { panelCall?.rollback(); throw error; }
       if (visibility) this.skillVisibility = visibility;
-      emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected });
+      emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected,
+        ...(panelRecords.length ? { panelReceipts: panelRecords.map((record) => structuredClone(record.payload) as unknown as PanelReceipt) } : {}) });
     };
     const firstTask = this.originalTask === undefined;
     let autoCompacted = false;

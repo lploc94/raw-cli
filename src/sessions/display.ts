@@ -1,4 +1,6 @@
 import type { RunEvent } from "../agent.js";
+import { receiptLine } from "../panels/render.js";
+import type { PanelReceipt } from "../panels/contract.js";
 import type { ContentBlock, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { UserInput } from "../llm/types.js";
 import type { HistoryItem } from "./store.js";
@@ -31,7 +33,8 @@ export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {
   const payload = item.payload;
   if (item.kind === "compaction") return [{ sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compaction: ${String(payload.status)}.` } }];
-  if (item.kind === "run_end" || item.kind === "panel_receipt") return []; // panel receipts reach ACP in a later phase
+  if (item.kind === "run_end") return [];
+  if (item.kind === "panel_receipt") return [{ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: receiptLine(payload as unknown as PanelReceipt).trim() } }];
   if (item.kind === "hook_event") return [acpUpdate({ type: "hook_event", id: String(payload.id),
     event: payload.event as Extract<RunEvent, { type: "hook_event" }>["event"],
     outcome: payload.outcome as Extract<RunEvent, { type: "hook_event" }>["outcome"],

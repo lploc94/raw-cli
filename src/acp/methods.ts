@@ -7,6 +7,7 @@ import { agent, PROTOCOL_VERSION, RequestError, type AgentApp, type AgentConnect
   type AgentContext, type ContentBlock, type McpServer } from "@agentclientprotocol/sdk";
 import { createAgent, type AgentSession, type RunEvent } from "../agent.js";
 import { acpUpdate, storedAcpUpdates } from "../sessions/display.js";
+import { currentPanelNotifications, panelNotifications, type PanelNotification } from "./panels.js";
 import { openSessionStore, type SessionOwner, type SessionStoreOptions } from "../sessions/store.js";
 import { isEphemeralPeerAlias } from "../sessions/restore.js";
 import { runSessionMaintenance } from "../sessions/maintenance.js";
@@ -192,6 +193,20 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     if (session.loading) throw rawError(rawErrors.busy, "session is busy loading history");
     return session;
   };
+  /** Everything an event sends to the client: the mapped `session/update`, and for a committed panel state its plan and extension messages. */
+  const eventMessages = (session: SessionRecord, event: RunEvent): PanelNotification[] => {
+    const update = acpUpdate(event);
+    const messages: PanelNotification[] = update ? [{ method: "session/update", params: { sessionId: session.id, update } }] : [];
+    if (event.type === "panel_update" && !event.live) {
+      const panel = `${event.owner}#${event.panel}`;
+      const declaration = session.agent.panel(panel)?.declaration;
+      if (declaration) messages.push(...panelNotifications(session.id, { panel, owner: event.owner, revision: event.revision, closed: event.closed, declaration, document: event.document }, peerRaw.panels === true));
+    }
+    return messages;
+  };
+  const sendCurrentPanels = async (sessionId: string, client: { notify: (method: any, params: any) => Promise<unknown> }) => {
+    for (const message of currentPanelNotifications(sessionId, store.listSessionPanels(sessionId), peerRaw.panels === true)) await client.notify(message.method, message.params);
+  };
   const requireCapability = (flag: RawCapability) => {
     if (!peerRaw[flag]) throw rawError(rawErrors.capability, `raw ${flag} capability was not negotiated`);
   };
@@ -322,13 +337,21 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       updatedAt: new Date(item.updatedAt).toISOString() })),
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   });
-  app.onRequest("session/resume", ({ params }) => startSession(params.cwd, params.mcpServers ?? [], params.sessionId).then(() => ({})));
+  app.onRequest("session/resume", async ({ params, client }) => {
+    // The session stays "loading" (busy for prompts and actions) until its current panel state has been delivered.
+    await startSession(params.cwd, params.mcpServers ?? [], params.sessionId, true);
+    const session = sessions.get(params.sessionId);
+    try { await sendCurrentPanels(params.sessionId, client); }
+    finally { if (session) session.loading = false; }
+    return {};
+  });
   app.onRequest("session/load", async ({ params, client }) => {
     await startSession(params.cwd, params.mcpServers, params.sessionId, true);
     try {
       await store.scanSessionHistory(params.sessionId, async (item) => {
         for (const update of storedAcpUpdates(item)) await client.notify("session/update", { sessionId: params.sessionId, update });
       });
+      await sendCurrentPanels(params.sessionId, client);
       const session = sessions.get(params.sessionId);
       if (session) session.loading = false;
       return {};
@@ -352,9 +375,9 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     let updateError: unknown;
     let updateChain = Promise.resolve();
     const result = await session.agent.run(input, (event) => {
-      const update = acpUpdate(event);
-      if (!update) return;
-      updateChain = updateChain.then(() => client.notify("session/update", { sessionId: session.id, update }))
+      const messages = eventMessages(session, event);
+      if (!messages.length) return;
+      updateChain = updateChain.then(async () => { for (const message of messages) await client.notify(message.method, message.params); })
         .catch((error: unknown) => { updateError = error; session.agent.abort(); });
     });
     await updateChain;
@@ -445,6 +468,35 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     const permitted = session.registry.definitions().some((tool) => tool.name === alias);
     const contextRevision = permitted ? session.agent.setToolView([...visible, alias]) : session.agent.contextRevision;
     return { toolId, alias, contextRevision };
+  });
+  app.onRequest("_raw/panel/action", (params: unknown) => object(params, "panel action"), async ({ params, client }) => {
+    requireCapability("panels");
+    fields(params, ["sessionId", "panel", "action", "block", "item"], "panel action");
+    const session = getSession(string(params.sessionId, "sessionId"));
+    if (session.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");
+    const request = { panel: string(params.panel, "panel"), action: string(params.action, "action"),
+      ...(params.block === undefined ? {} : { block: string(params.block, "block") }), ...(params.item === undefined ? {} : { item: string(params.item, "item") }) };
+    let updateError: unknown;
+    let updateChain = Promise.resolve();
+    const running = session.agent.runPanelAction(request, (event) => {
+      const messages = eventMessages(session, event);
+      if (!messages.length) return;
+      updateChain = updateChain.then(async () => { for (const message of messages) await client.notify(message.method, message.params); })
+        .catch((error: unknown) => { updateError = error; session.agent.abort(); });
+    });
+    const operationId = session.agent.activeTurnId ?? randomUUID();
+    const result = await running;
+    await updateChain;
+    if (updateError) throw rawError(rawErrors.upstream, "panel update delivery failed");
+    if (result.status === "cancelled") throw rawError(rawErrors.cancelled, "panel action cancelled");
+    if (result.status === "error") {
+      const code = result.code ?? "action_error";
+      if (["tool_denied", "approval_denied", "approval_required", "hook_denied", "hook_error"].includes(code)) throw rawError(rawErrors.tool, result.message ?? "the action was denied");
+      if (code === "callback_timeout") throw rawError(rawErrors.timeout, result.message ?? "the action timed out");
+      if (code === "stale_panel" || code === "invalid_action") throw RequestError.invalidParams(undefined, result.message ?? "invalid panel action");
+      throw rawError(rawErrors.upstream, result.message ?? "the action failed");
+    }
+    return { operationId };
   });
   app.onRequest("_raw/session/compact", (params: unknown) => object(params, "session compact"), async ({ params }) => {
     requireCapability("sessionCompact");

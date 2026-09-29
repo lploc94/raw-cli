@@ -37,12 +37,13 @@ export interface RawFlags {
   continue?: boolean;
   resumeId?: string;
   allSessions?: boolean;
+  json?: boolean;
   before?: string;
 }
 
 export type CliCommand = "help" | "version" | "config-init" | "config-list" | "task" | "interactive" | "acp"
   | "vars-list" | "vars-get"
-  | "sessions-list" | "sessions-show" | "sessions-delete" | "sessions-stats";
+  | "sessions-list" | "sessions-show" | "sessions-delete" | "sessions-stats" | "sessions-panels";
 
 export interface CliArgs {
   variableName?: string;
@@ -51,6 +52,7 @@ export interface CliArgs {
   flags: RawFlags;
   acpTransport?: "stdio" | "ws";
   sessionId?: string;
+  panelId?: string;
 }
 
 export interface CompactSettings {
@@ -883,6 +885,11 @@ export function parseCliArgs(argv: string[]): CliArgs {
       else flags.allSessions = true;
       continue;
     }
+    if (arg === "--json") {
+      if (seen.has(arg)) throw new Error(`duplicate option ${arg}`);
+      seen.add(arg); flags.json = true;
+      continue;
+    }
     if (arg === "--acp") { acp = true; continue; }
     if (arg === "--stdio" || arg === "--ws") {
       if (acpTransport) throw new Error("--stdio and --ws are mutually exclusive");
@@ -933,9 +940,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
     if (interactive || acp || acpTransport || flags.host || flags.port || flags.continue || flags.resumeId
       || flags.agent || flags.configPath || flags.systemPrompt || flags.maxSteps || flags.maxOutputBytes
       || flags.requestTimeoutMs || flags.autoApprove) throw new Error("sessions cannot be combined with run options");
+    if (flags.json && positional[1] !== "panels") throw new Error("--json is only available with sessions panels");
     if (positional.length === 1) return { command: "sessions-list", flags };
     if (positional[1] === "show" && positional.length === 3 && !flags.allSessions) {
       return { command: "sessions-show", flags, sessionId: positional[2]! };
+    }
+    // `--all` here includes closed panels; `--json` prints machine-readable output.
+    if (positional[1] === "panels" && (positional.length === 3 || positional.length === 4) && !flags.before) {
+      return { command: "sessions-panels", flags, sessionId: positional[2]!, ...(positional[3] ? { panelId: positional[3] } : {}) };
     }
     if (positional[1] === "delete" && positional.length === 3 && !flags.allSessions && !flags.before) {
       return { command: "sessions-delete", flags, sessionId: positional[2]! };
@@ -943,9 +955,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
     if (positional[1] === "stats" && positional.length === 2 && !flags.allSessions && !flags.before) {
       return { command: "sessions-stats", flags };
     }
-    throw new Error("sessions requires list, show ID, delete ID, or stats");
+    throw new Error("sessions requires list, show ID, panels ID [PANEL], delete ID, or stats");
   }
   if (flags.allSessions || flags.before) throw new Error("--all and --before require sessions");
+  if (flags.json) throw new Error("--json requires sessions panels");
   if (positional[0] === "config") {
     if (positional.length !== 2 || (positional[1] !== "init" && positional[1] !== "list") || interactive || acp
       || flags.continue || flags.resumeId) throw new Error("config requires init or list");

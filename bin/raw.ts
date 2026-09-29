@@ -31,6 +31,7 @@ Usage: raw [options] [task]
        raw agent add NAME --from pkg/ALIAS/agents/EXPORT --model MODEL_ALIAS
        raw sessions [--all] [--before CURSOR]
        raw sessions show ID [--before CURSOR]
+       raw sessions panels ID [PANEL] [--all] [--json]
        raw sessions delete ID|stats
        raw --acp --stdio
        raw --acp --ws --host 127.0.0.1 --port 8765
@@ -181,6 +182,18 @@ async function run(): Promise<void> {
           ...(parsed.flags.before ? { before: parsed.flags.before } : {}) }));
         for (const item of page.items) process.stdout.write(renderTerminalHistory(item, ui, caps, process.stdout.columns || 80));
         if (page.nextCursor) process.stdout.write(`next: ${page.nextCursor}\n`);
+      } else if (parsed.command === "sessions-panels") {
+        if (!store.getSession(parsed.sessionId!)) throw new InputError(store.missingSessionMessage());
+        const { selectPanels, renderPanelsText, panelTitle } = await import("../src/panels/render.js");
+        const found = selectPanels(store.listSessionPanels(parsed.sessionId!), { ...(parsed.flags.allSessions ? { all: true } : {}), ...(parsed.panelId ? { id: parsed.panelId } : {}) });
+        if (!found) throw new InputError(`unknown panel ${parsed.panelId}`);
+        if (parsed.flags.json) {
+          process.stdout.write(`${JSON.stringify(found.map((panel) => ({ panel: panel.panelId, owner: panel.owner, title: panelTitle(panel), revision: panel.revision,
+            updatedAt: panel.updatedAt, closed: panel.closed, document: panel.document })))}\n`);
+        } else {
+          const { safeTerminalText } = await import("../src/terminal/safe.js");
+          process.stdout.write(found.length ? `${safeTerminalText(renderPanelsText(found.map((panel) => ({ title: panelTitle(panel), document: panel.document, closed: panel.closed }))))}\n` : "No open panels.\n");
+        }
       } else if (parsed.command === "sessions-delete") {
         if (!store.getSession(parsed.sessionId!)) throw new InputError(store.missingSessionMessage());
         input(() => store.deleteSession(parsed.sessionId!));

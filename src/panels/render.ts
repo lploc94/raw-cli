@@ -1,4 +1,4 @@
-import type { ChecklistItem, PanelBlock, PanelDocument, PanelItemStatus, PanelReceipt, PanelRef } from "./contract.js";
+import type { ChecklistItem, PanelBlock, PanelDocument, PanelItemStatus, PanelReceipt, PanelRef, StoredPanel } from "./contract.js";
 
 const GLYPH: Record<PanelItemStatus, string> = {
   pending: "[ ]", in_progress: "[~]", done: "[x]", skipped: "[-]", blocked: "[!]", failed: "[✗]",
@@ -133,6 +133,34 @@ export function renderPanelText(title: string, doc: PanelDocument): string {
   const head = `${doc.title ?? title}${progress ? ` (${progress.done}/${progress.total})` : ""}${doc.subtitle ? ` — ${doc.subtitle}` : ""}`;
   return [head, ...doc.blocks.flatMap(renderBlock)].join("\n");
 }
+
+export interface PlanEntry { content: string; priority: "high" | "medium" | "low"; status: "pending" | "in_progress" | "completed" }
+const PLAN_STATUS: Record<PanelItemStatus, PlanEntry["status"]> = { pending: "pending", in_progress: "in_progress", done: "completed", skipped: "completed", blocked: "pending", failed: "pending" };
+/** §13.3: the first checklist block flattened depth-first (a parent, then its subtasks) as ACP plan entries. */
+export function planEntries(doc: PanelDocument): PlanEntry[] {
+  const block = doc.blocks.find((candidate) => candidate.kind === "checklist") as unknown as { items: ChecklistItem[] } | undefined;
+  const walk = (items: readonly ChecklistItem[]): PlanEntry[] => items.flatMap((item) =>
+    [{ content: item.label, priority: item.priority ?? "medium", status: PLAN_STATUS[item.status ?? "pending"] }, ...walk(item.children ?? [])]);
+  return block ? walk(block.items) : [];
+}
+
+/** §13.2: the text of the given panels, one after another, as `/panels` and `raw sessions panels` print them. */
+export function renderPanelsText(panels: ReadonlyArray<{ title: string; document: PanelDocument; closed?: boolean }>): string {
+  return panels.map((panel) => `${renderPanelText(panel.title, panel.document)}${panel.closed ? "\n(closed)" : ""}`).join("\n\n");
+}
+
+/**
+ * The panels `/panels` and `raw sessions panels` show: open ones (all with `all`), or one panel by full ID or by its local ID
+ * when that is unambiguous. `undefined` means the requested panel does not exist.
+ */
+export function selectPanels(panels: readonly StoredPanel[], options: { all?: boolean; id?: string } = {}): StoredPanel[] | undefined {
+  if (options.id === undefined) return panels.filter((panel) => options.all || !panel.closed);
+  const local = (panel: StoredPanel) => panel.panelId.slice(panel.owner.length + 1);
+  const exact = panels.filter((panel) => panel.panelId === options.id);
+  const found = exact.length ? exact : panels.filter((panel) => local(panel) === options.id);
+  return found.length === 1 && (options.all || !found[0]!.closed) ? found : undefined;
+}
+export const panelTitle = (panel: StoredPanel): string => panel.document.title ?? panel.declaration.title;
 
 /** One CLI receipt line. It never relies on color. */
 export function receiptLine(receipt: Pick<PanelReceipt, "title" | "revision" | "summary" | "error">): string {

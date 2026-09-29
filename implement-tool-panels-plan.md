@@ -538,8 +538,8 @@ Replay test has two panel updates interleaved with messages and checks both rece
 No color-only meaning; no receipts on stdout in one-shot mode.
 
 ### Acceptance criteria
-- [ ] AC-8.1: CLI receipts, `/panels` and `raw sessions panels` match §13.2 — proven by CLI tests.
-- [ ] AC-8.2: D12 row passes — proven by ACP tests.
+- [x] AC-8.1: CLI receipts, `/panels` and `raw sessions panels` match §13.2 — proven by CLI tests.
+- [x] AC-8.2: D12 row passes — proven by ACP tests.
 
 ### Focused verification
 `node --import tsx --test tests/session-cli.test.ts tests/repl.test.ts tests/session-acp.test.ts tests/acp.test.ts`
@@ -623,5 +623,5 @@ Implementation review is required; verdict must be APPROVE.
 | 5 | complete | see git log | Codex gpt-6-astra APPROVE after 2 rounds (2 findings fixed) | 7 dashboard-panels tests; `npm test` only the 3 known PTY failures |
 | 6 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (10 findings fixed) | 13 panel-state tests + 45 panels.spec runs (3 browsers), mutation-checked (offscreen/unknown visibility marked seen); `npm run test:web` 399 pass; `npm test` only the 3 known PTY failures |
 | 7 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (10 findings fixed) | 15 panels-actions tests; panels.spec 63 passed, `npm run test:web` 417 passed; `npm test` only the 3 known PTY failures |
-| 8 | pending | | | |
+| 8 | complete | see git log | Codex gpt-6-astra APPROVE after 2 rounds (4 findings fixed) | 10 tests in tests/panels-surfaces.test.ts (used instead of the four listed files); `npm test` only the 3 known PTY failures |
 | 9 | pending | | | |

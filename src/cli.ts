@@ -15,6 +15,7 @@ import type { SessionStore, SessionSummary } from "./sessions/store.js";
 import { toolArguments } from "./sessions/display.js";
 import { TerminalRenderer } from "./terminal/renderer.js";
 import { safeTerminalText } from "./terminal/safe.js";
+import { panelTitle, renderPanelsText, selectPanels } from "./panels/render.js";
 
 async function textRun(session: AgentSession, task: string, renderer: TerminalRenderer): Promise<RunResult> {
   renderer.start();
@@ -185,6 +186,15 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
         sessionResumable = true;
         process.stderr.write("raw: conversation cleared\n");
         new TerminalRenderer(session, runtime, cwd, true).start();
+        continue;
+      }
+      if (line === "/panels" || line.startsWith("/panels ")) {
+        const words = line.split(/\s+/).slice(1);
+        const all = words.includes("--all");
+        const id = words.find((word) => word !== "--all");
+        const found = selectPanels(store.listSessionPanels(record.id), { ...(all ? { all: true } : {}), ...(id ? { id } : {}) });
+        process.stderr.write(!found ? `raw: unknown panel ${safeTerminalText(id ?? "")}\n`
+          : found.length ? `${safeTerminalText(renderPanelsText(found.map((panel) => ({ title: panelTitle(panel), document: panel.document, closed: panel.closed }))))}\n` : "raw: no open panels\n");
         continue;
       }
       if (line === "/stats") { process.stderr.write(formatStats(session.stats(), runtime.ui, caps, lastTurn)); continue; }

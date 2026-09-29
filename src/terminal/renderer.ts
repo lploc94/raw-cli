@@ -9,6 +9,7 @@ import { icon, paint } from "./theme.js";
 import { formatToolResult, formatToolStart } from "./tools.js";
 import { TerminalWriter } from "./writer.js";
 import { safeTerminalText } from "./safe.js";
+import { receiptLine } from "../panels/render.js";
 
 export function sharedInteractiveTerminal(): boolean {
   if (!process.stdout.isTTY || !process.stderr.isTTY || process.env.TERM === "dumb") return false;
@@ -176,6 +177,7 @@ export class TerminalRenderer {
       }
       process.stderr.write(formatToolResult(event.display ?? projectToolResult(event.name, this.session.toolIdentity(event.name), event.result),
         this.runtime.ui, this.caps, this.width));
+      this.panelReceipts(event);
       return;
     }
     if (event.type === "hook_event") {
@@ -191,6 +193,13 @@ export class TerminalRenderer {
       process.stderr.write(`${icon(event.result.status === "compacted" ? "success" : "attention", this.runtime.ui, this.caps)} Compact ${event.result.status}\n`);
     }
   };
+
+  /** §13.2: one receipt line per committed panel update, on stderr so a one-shot run's stdout stays the answer. */
+  private panelReceipts(event: Extract<RunEvent, { type: "tool_result" }>): void {
+    for (const receipt of event.panelReceipts ?? []) {
+      process.stderr.write(`${paint(receipt.error ? "warning" : "muted", safeTerminalText(receiptLine(receipt)), this.runtime.ui, this.caps)}\n`);
+    }
+  }
 
   private plainEvent(event: RunEvent): void {
     if (event.type === "hook_event") {
@@ -233,6 +242,7 @@ export class TerminalRenderer {
         }
         process.stderr.write(formatToolResult(event.display ?? projectToolResult(event.name, this.session.toolIdentity(event.name), event.result),
           this.runtime.ui, this.caps, this.width));
+        this.panelReceipts(event);
         return;
       }
       if (pending) {
@@ -250,6 +260,7 @@ export class TerminalRenderer {
       const preview = renderPlainToolResult(display);
       process.stderr.write(`raw: ${display.failed ? "✗" : "↳"} ${event.name} result${meta.length ? ` (${meta.join(", ")})` : ""}${preview ? "" : " (empty)"}\n`);
       if (preview) process.stderr.write(`${preview}\n`);
+      this.panelReceipts(event);
     } else if (event.type === "compact_start") {
       this.finishTextLine();
       process.stderr.write(this.decoratedPlain ? `${icon("thinking", this.runtime.ui, this.caps)} Compacting context (~${event.estimatedTokens} tokens)\n`
