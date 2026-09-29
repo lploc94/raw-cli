@@ -13,6 +13,9 @@ import type { SessionOperation } from "../../src/sessions/operations.js";
 import type { SessionSummary } from "../../src/sessions/store.js";
 import type { Preferences } from "./preferences.js";
 import { api, ApiError, errorText } from "./api.js";
+import { RequestControls } from "./composer/RequestControls.js";
+import { useRequestChoice } from "./composer/useRequestChoice.js";
+import type { RequestControlMeta } from "./composer/request-choice.js";
 import { isTerminal, useSession } from "./session.js";
 import { Timeline } from "./timeline.js";
 import { Inspector } from "./inspector.js";
@@ -56,8 +59,11 @@ export function Chat({
   const [meta, setMeta] = useState<{
     vision: boolean;
     skills: ComposerSkill[];
+    controls: RequestControlMeta[];
     attachmentKinds: KindMeta[];
-  }>({ vision: false, skills: [], attachmentKinds: [] });
+  }>({ vision: false, skills: [], controls: [], attachmentKinds: [] });
+  const [metaFor, setMetaFor] = useState("");
+  const request = useRequestChoice(id, agent, meta.controls, metaFor);
   const skills = meta.skills;
   const att = useAttachments(id, meta.attachmentKinds);
   const sentKeys = useRef<string[]>([]);
@@ -106,11 +112,16 @@ export function Chat({
       scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [state]);
   useEffect(() => {
-    setMeta({ vision: false, skills: [], attachmentKinds: [] });
+    setMeta({ vision: false, skills: [], controls: [], attachmentKinds: [] });
+    setMetaFor("");
     if (!agent) return;
     let live = true;
     void api<typeof meta>(`/agents/${encodeURIComponent(agent)}/composer`)
-      .then((next) => live && setMeta(next))
+      .then((next) => {
+        if (!live) return;
+        setMeta({ ...next, controls: next.controls ?? [] });
+        setMetaFor(agent);
+      })
       .catch(() => {});
     return () => {
       live = false;
@@ -193,6 +204,7 @@ export function Chat({
                 ...(references.length
                   ? { files: references.map((chip) => chip.path) }
                   : {}),
+                ...(request.body ? { request: request.body } : {}),
               }
             : {}),
         },
@@ -488,6 +500,13 @@ export function Chat({
                     metas={meta.attachmentKinds}
                     onRemove={att.remove}
                     onRetry={att.retry}
+                  />
+                }
+                controls={
+                  <RequestControls
+                    controls={meta.controls}
+                    choice={request.choice}
+                    onChange={request.update}
                   />
                 }
                 onFiles={att.addFiles}

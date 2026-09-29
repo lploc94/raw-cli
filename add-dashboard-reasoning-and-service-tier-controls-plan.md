@@ -174,11 +174,11 @@ Assert on the provider's received JSON for several levels/tiers; the reload/sess
 No provider tables in `web/`; all text from descriptors except fixed UI strings ("Agent default", "Reset"); abort/ignore stale metadata responses after agent change and track a `loaded-for-agent` marker so pruning never runs on empty initial metadata; Escape closes the popover and returns focus to the pill (documented, unlike the `/` popover which keeps focus in the textarea); respect `prefers-reduced-motion`; no `dangerouslySetInnerHTML`; do not touch draft/receipt logic.
 
 ### Acceptance criteria
-- [ ] AC-1: Pill and popover render only when the server describes controls, with provider-supplied labels — proven by Playwright specs.
-- [ ] AC-2: Keyboard and pointer operation of slider and radio group with correct ARIA, passing axe — proven by spec.
-- [ ] AC-3: The choice reaches the provider request for that turn only and persists per session/reload — proven by spec.
-- [ ] AC-4: Provider rejection never disables Send or traps the user — proven by spec.
-- [ ] AC-5: No overflow at 320/800/1440 px in both themes — proven by spec.
+- [x] AC-1: Pill and popover render only when the server describes controls, with provider-supplied labels — proven by Playwright specs.
+- [x] AC-2: Keyboard and pointer operation of slider and radio group with correct ARIA, passing axe — proven by spec.
+- [x] AC-3: The choice reaches the provider request for that turn only and persists per session/reload — proven by spec.
+- [x] AC-4: Provider rejection never disables Send or traps the user — proven by spec.
+- [x] AC-5: No overflow at 320/800/1440 px in both themes — proven by spec.
 
 ### Focused verification
 `npx playwright test tests/dashboard-ui/request-controls.spec.ts tests/dashboard-ui/composer.spec.ts tests/dashboard-ui/attachments.spec.ts --project=chromium`
@@ -256,3 +256,4 @@ Implementation review is required; verdict must be APPROVE.
 
 - 2026-09-29: Plan drafted and Codex-reviewed (APPROVE) after user-approved design (per-turn override, server-described controls, pill before Send with popover slider + tier radio group, no `/` commands, config untouched).
 - 2026-09-29 Phase 1 (Codex gpt-6-astra review APPROVE in 2 rounds; 2 test findings fixed): `src/request-controls.ts` (value lists shared with `requestSpec`, descriptors, `parseRequestOverride`, `applyRequestOverride`), `SessionOperations.submit(intent, blocks?, request?)` and `attachSessionRuntime` merge, composer `controls`, turn route with replay-first ordering. Tests `tests/request-controls.test.ts` (4) and `tests/dashboard-request-controls.test.ts` (5). `npm run typecheck` clean; `npm test` 577/580 (3 baseline PTY). Note: `request` on `compact` is refused with 400 `invalid_input` like `attachments` (the plan text said 422; the existing pattern wins).
+- 2026-09-29 Phase 2 (Codex gpt-6-astra review APPROVE in 2 rounds; 4 findings fixed: tier-only pill text, generic tooltip, dashboard.md paragraph, real agent-switch test): `RequestControls.tsx`, `request-choice.ts`, `useRequestChoice.ts`, Composer `controls` slot, chat.tsx wiring, styles, fixture `extraAgents`. `tests/dashboard-ui/request-controls.spec.ts` 13 specs x 3 browsers, `tests/web-request-choice.test.ts` 5. typecheck clean; `npm test` 582/585 (3 baseline PTY); `npm run test:web` 231 passed. Deviation: the pill is absent (not default) while metadata loads or fails; the choice is retained and not sent.

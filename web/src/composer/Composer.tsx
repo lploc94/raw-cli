@@ -29,6 +29,7 @@ export function Composer({
   providers,
   chips,
   onFiles,
+  controls,
   accept,
   note,
 }: {
@@ -44,6 +45,8 @@ export function Composer({
   /** Attachment chips, rendered above the message box. */
   chips: ReactNode;
   onFiles: (files: File[]) => void;
+  /** Request-controls pill, rendered in the toolbar before Send/Stop. */
+  controls?: ReactNode;
   /** `accept` attribute for the file picker, from composer metadata. */
   accept: string;
   note?: string;
@@ -293,6 +296,7 @@ export function Composer({
           }}
         />
         <span className="composer-spacer" />
+        {controls}
         {stop ? (
           <button type="button" className="stop" onClick={stop}>
             <Square size={14} aria-hidden="true" />
