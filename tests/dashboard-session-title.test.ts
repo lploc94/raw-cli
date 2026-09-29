@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { SessionSummary } from "../src/sessions/store.js";
 import { dashboardFixture } from "./fixtures/dashboard.js";
@@ -22,5 +24,22 @@ test("a dashboard chat is titled from its first message, and a later message or 
     await f.json(`/sessions/${id}`, "PATCH", { title: "Mine" });
     await send("three", "third message");
     assert.equal((await f.json<{ session: SessionSummary }>(`/sessions/${id}`)).session.title, "Mine");
+  } finally { await f.close(); }
+});
+
+test("a chat left untitled by an earlier release is named from its first message, not the latest one", async () => {
+  const f = await dashboardFixture({ responses: [reply, reply] });
+  try {
+    const { id } = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root });
+    const send = async (clientRequestId: string, input: string) => {
+      const op = await f.json<{ id: string }>(`/sessions/${id}/operations`, "POST", { clientRequestId, kind: "turn", agent: "raw", input });
+      await f.wait(op.id);
+    };
+    await send("one", "the very first message");
+    const db = new DatabaseSync(join(f.root, "state", "raw", "sessions.sqlite"));
+    db.prepare("UPDATE sessions SET title = 'New chat' WHERE id = ?").run(id);
+    db.close();
+    await send("two", "a later message");
+    assert.equal((await f.json<{ session: SessionSummary }>(`/sessions/${id}`)).session.title, "the very first message");
   } finally { await f.close(); }
 });

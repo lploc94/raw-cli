@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { readSessionRetentionDays } from "../config.js";
 import type { UsageRecord } from "../llm/cache.js";
-import type { ModelMessage, ResolvedModelConfig, UserInput } from "../llm/types.js";
+import { renderUserInput, type ModelMessage, type ResolvedModelConfig, type UserInput } from "../llm/types.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import type { SelectedSkill } from "../skills/contract.js";
 import { errorResult } from "../tools/results.js";
@@ -406,13 +406,24 @@ export class SessionStore {
       .run(sessionId, owner.token, owner.generation);
   }
 
-  /** Titles a session created without one from its first message; a title the user chose is never replaced. */
+  /** Titles a session that still has a placeholder title from its first user message (falling back to `prompt`); a title the user chose is never replaced. */
   setTitleFromPrompt(sessionId: string, owner: SessionOwner, prompt: string): void {
-    const title = prompt.trim().replace(/\s+/g, " ").slice(0, 80) || "New session";
     this.transaction(() => {
       this.ownerRow(sessionId, owner);
+      const current = this.database.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionId)?.title;
+      if (current !== "New session" && current !== "New chat") return;
+      const title = (this.firstUserText(sessionId) ?? prompt).trim().replace(/\s+/g, " ").slice(0, 80) || "New session";
       this.database.prepare("UPDATE sessions SET title = ? WHERE id = ? AND title IN ('New session', 'New chat')").run(title, sessionId);
     });
+  }
+
+  private firstUserText(sessionId: string): string | undefined {
+    const row = this.database.prepare("SELECT payload_json FROM history WHERE session_id = ? AND kind = 'user' ORDER BY sequence LIMIT 1").get(sessionId);
+    if (!row) return undefined;
+    try {
+      const input = (JSON.parse(String(row.payload_json)) as { input?: UserInput }).input;
+      return input === undefined ? undefined : renderUserInput(input);
+    } catch { return undefined; }
   }
 
   storageStats(): SessionStorageStats {

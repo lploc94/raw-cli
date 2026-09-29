@@ -587,10 +587,9 @@ export class AgentSession {
         ...(promptHook.reason ? { message: promptHook.reason } : {}) });
       this.commitMessage({ role: "user", content: structuredClone(input) }, firstTask ? { originalTask: input } : {},
         [{ kind: "user", payload: { input: structuredClone(input) } }], true);
-      if (firstTask) {
-        this.originalTask = structuredClone(input);
-        this.durable((store, sessionId, owner) => store.setTitleFromPrompt(sessionId, owner, renderUserInput(input)));
-      }
+      if (firstTask) this.originalTask = structuredClone(input);
+      // A chat still carrying a placeholder title is named from its first message, even when that turn predates this fix.
+      this.durable((store, sessionId, owner) => store.setTitleFromPrompt(sessionId, owner, renderUserInput(input)));
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
         let requestEstimate = 0;
