@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { DropdownMenu, Popover } from "radix-ui";
-import { Check, Copy, EyeOff, Folder, FolderOpen, MoreHorizontal, Pin, PinOff } from "lucide-react";
+import { Check, ChevronsUpDown, Copy, EyeOff, Folder, FolderOpen, MoreHorizontal, Pin, PinOff } from "lucide-react";
 import { api, ApiError, errorText } from "../api.js";
 import {
   arrange,
@@ -175,12 +175,10 @@ export function WorkspaceSwitcher({
         <button ref={trigger} className="workspace-button" title={current}>
           <Folder size={17} aria-hidden="true" />
           <span>
-            <strong>Workspace</strong>
-            <small>{baseName(current)}</small>
+            <small>Workspace</small>
+            <strong>{baseName(current)}</strong>
           </span>
-          <span className="muted" aria-hidden="true">
-            ⌄
-          </span>
+          <ChevronsUpDown className="workspace-chevron" size={15} aria-hidden="true" />
         </button>
       </Popover.Trigger>
       <Popover.Portal container={trigger.current?.closest<HTMLElement>('[role="dialog"]') ?? undefined}>

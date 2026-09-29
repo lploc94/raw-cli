@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowRight,
   Bot,
+  ChevronDown,
   Command,
   Library,
   Menu,
@@ -232,17 +233,19 @@ export function App() {
               <Plus size={17} aria-hidden="true" />
               New chat
             </button>
-            <select
-              className="agent-picker"
-              aria-label="New chat agent"
-              title="Agent for the next new chat"
-              value={agent}
-              onChange={(event) => setAgent(event.target.value)}
-            >
-              {bootstrap?.config.agents.map((name) => (
-                <option key={name}>{name}</option>
-              ))}
-            </select>
+            <span className="agent-picker">
+              <select
+                aria-label="New chat agent"
+                title="Agent for the next new chat"
+                value={agent}
+                onChange={(event) => setAgent(event.target.value)}
+              >
+                {bootstrap?.config.agents.map((name) => (
+                  <option key={name}>{name}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} aria-hidden="true" />
+            </span>
           </div>
           <label className="search-input">
             <Search size={16} aria-hidden="true" />

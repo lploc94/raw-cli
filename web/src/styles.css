@@ -395,30 +395,66 @@ small,
   flex: 1;
   overflow: hidden;
 }
+.workspace-chevron {
+  flex: none;
+  color: var(--muted);
+}
 .workspace-button small {
   white-space: nowrap;
+  font-size: 11px;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .workspace-button strong {
-  font-size: 13px;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .new-chat-row {
   display: flex;
-  gap: 6px;
   margin-bottom: 14px;
 }
 .new-chat {
   flex: 1;
   min-width: 0;
+  border-radius: 8px 0 0 8px;
 }
-.context-panel .agent-picker {
+.agent-picker {
+  position: relative;
   flex: none;
-  width: 30%;
-  min-width: 68px;
-  max-width: 110px;
+  display: flex;
+  width: 96px;
+}
+.context-panel .agent-picker select {
+  appearance: none;
+  width: 100%;
   min-height: 40px;
+  padding: 0 26px 0 12px;
+  border: 1px solid #5144d8;
+  border-left-color: #ffffff55;
+  border-radius: 0 8px 8px 0;
+  background: #5144d8;
+  color: white;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.context-panel .agent-picker select:hover {
+  background: #4033bd;
+}
+.context-panel .agent-picker option {
+  background: var(--canvas);
+  color: var(--text);
+}
+.agent-picker svg {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: white;
+  pointer-events: none;
 }
 .context-panel .field {
   font-size: 12px;
@@ -2216,7 +2252,7 @@ summary::-webkit-details-marker {
 
 /* Workspace switcher */
 .workspace-popover {
-  width: min(24rem, calc(100vw - 16px));
+  width: min(26rem, calc(100vw - 16px));
   max-height: min(75vh, var(--radix-popover-content-available-height));
   display: flex;
   flex-direction: column;
@@ -2243,7 +2279,7 @@ summary::-webkit-details-marker {
   padding: 0;
 }
 .workspace-group-title {
-  margin: 8px 6px 4px;
+  margin: 12px 10px 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -2254,7 +2290,29 @@ summary::-webkit-details-marker {
   display: flex;
   align-items: center;
   gap: 2px;
+  padding-right: 4px;
+  margin-bottom: 2px;
   border-radius: 8px;
+}
+.workspace-row:has([aria-current="true"]) {
+  background: var(--accent-soft);
+}
+.workspace-row .icon-button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 6px;
+  color: var(--muted);
+}
+@media (hover: hover) {
+  .workspace-row .icon-button {
+    opacity: 0;
+  }
+  .workspace-row:hover .icon-button,
+  .workspace-row:focus-within .icon-button,
+  .workspace-row .icon-button[aria-pressed="true"],
+  .workspace-row .icon-button[aria-expanded="true"] {
+    opacity: 1;
+  }
 }
 .workspace-row:hover,
 .workspace-row:focus-within {
@@ -2265,11 +2323,12 @@ summary::-webkit-details-marker {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
+  gap: 12px;
+  padding: 9px 10px;
   border: 0;
   background: transparent;
   text-align: left;
+  justify-content: flex-start;
   color: var(--text);
 }
 .workspace-row-main[aria-current="true"] {
@@ -2284,7 +2343,11 @@ summary::-webkit-details-marker {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
+}
+.workspace-row-text strong {
+  font-size: 13px;
+  font-weight: 600;
 }
 .workspace-row-text strong,
 .workspace-row-text small {
@@ -2295,6 +2358,10 @@ summary::-webkit-details-marker {
 .workspace-row-text small {
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.35;
+}
+.workspace-row-text .workspace-row-meta {
+  font-size: 11px;
 }
 .workspace-badge {
   flex: none;
