@@ -375,13 +375,18 @@ small,
   min-height: 0;
 }
 .workspace-button {
-  border: 0;
-  background: transparent;
   text-align: left;
-  padding: 2px 0 20px;
+  padding: 9px 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--canvas);
   justify-content: flex-start;
   width: 100%;
   gap: 12px;
+}
+.workspace-button:hover {
+  background: var(--panel-hover);
 }
 .workspace-button > span:nth-child(2) {
   display: flex;
@@ -391,6 +396,7 @@ small,
   overflow: hidden;
 }
 .workspace-button small {
+  white-space: nowrap;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2306,10 +2312,11 @@ summary::-webkit-details-marker {
 .workspace-open-folder {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 10px;
   width: 100%;
-  margin-top: 4px;
-  padding: 8px;
+  margin-top: 6px;
+  padding: 10px 12px;
   border: 0;
   border-top: 1px solid var(--border);
   border-radius: 0 0 8px 8px;
