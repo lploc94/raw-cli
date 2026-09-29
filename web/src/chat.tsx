@@ -1,12 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
-  ArrowUp,
   Brain,
   Check,
   Info,
   Pencil,
-  Square,
   Trash2,
 } from "lucide-react";
 import { Dialog } from "radix-ui";
@@ -20,12 +18,15 @@ import { Timeline } from "./timeline.js";
 import { Inspector } from "./inspector.js";
 import { ErrorMessage, Field, Modal } from "./ui.js";
 import { useRouter } from "./router.js";
+import { Composer } from "./composer/Composer.js";
+import { slashProvider, type ComposerSkill } from "./composer/commands.js";
 
 export function Chat({
   id,
   bootstrap,
   preferences,
   drafts,
+  onNewChat,
   onChanged,
   resizeInspector,
 }: {
@@ -33,6 +34,7 @@ export function Chat({
   bootstrap: DashboardBootstrap;
   preferences: Preferences;
   drafts: Map<string, string>;
+  onNewChat: () => void;
   onChanged: () => void;
   resizeInspector: (width: number) => void;
 }) {
@@ -47,6 +49,7 @@ export function Chat({
   const { navigate } = useRouter();
   const [draft, setDraft] = useState(drafts.get(id) ?? "");
   const [agent, setAgent] = useState("");
+  const [skills, setSkills] = useState<ComposerSkill[]>([]);
   const [error, setError] = useState("");
   const [dialogError, setDialogError] = useState("");
   const [pending, setPending] = useState(false);
@@ -67,7 +70,6 @@ export function Chat({
   }, []);
   const scroll = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
-  const composing = useRef(false);
   const following = useRef(preferences.follow);
   const [atBottom, setAtBottom] = useState(true);
   const prepending = useRef(false);
@@ -92,6 +94,19 @@ export function Chat({
     if (scroll.current && following.current && !prepending.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [state]);
+  useEffect(() => {
+    setSkills([]);
+    if (!agent) return;
+    let live = true;
+    void api<{ skills: ComposerSkill[] }>(
+      `/agents/${encodeURIComponent(agent)}/composer`,
+    )
+      .then((meta) => live && setSkills(meta.skills))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [agent]);
   const checkReceipt = async (key: string) => {
     try {
       const op = await api<SessionOperation>(
@@ -208,6 +223,37 @@ export function Chat({
           : state?.ownership === "elsewhere"
             ? "Active elsewhere"
             : "Ready";
+  const compactDisabled = !state
+    ? "Session is loading"
+    : !agent
+      ? "Choose an agent first"
+      : busy
+        ? "Wait for the current work to finish"
+        : undefined;
+  const providers = useMemo(
+    () => [
+      slashProvider(
+        {
+          compact: {
+            run: () => void send("compact"),
+            ...(compactDisabled ? { disabled: compactDisabled } : {}),
+          },
+          rename: () => {
+            if (!state) return;
+            setTitle(state.session.title);
+            setDialogError("");
+            setRenaming(true);
+          },
+          newChat: onNewChat,
+          details: () => setInspector((value) => !value),
+        },
+        skills,
+      ),
+    ],
+    // `send` closes over live state; the rebuilt provider only needs to track what changes the list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [skills, compactDisabled, state, agent, busy],
+  );
   return (
     <Dialog.Root open={inspector} onOpenChange={setInspector} modal={narrow}>
       <div className={`chat-workspace ${inspector ? "has-inspector" : ""}`}>
@@ -384,74 +430,26 @@ export function Chat({
                 void send("turn");
               }}
             >
-              <textarea
-                ref={input}
-                aria-label="Message"
-                placeholder="Message your agent…"
-                rows={3}
-                value={draft}
-                onChange={(event) => update(event.target.value)}
-                onCompositionStart={() => {
-                  composing.current = true;
-                }}
-                onCompositionEnd={() => {
-                  composing.current = false;
-                }}
-                onKeyDown={(event) => {
-                  if (
-                    event.key !== "Enter" ||
-                    composing.current ||
-                    event.nativeEvent.isComposing ||
-                    event.shiftKey
-                  )
-                    return;
-                  if (
-                    preferences.sendMode === "modifier" &&
-                    !event.ctrlKey &&
-                    !event.metaKey
-                  )
-                    return;
-                  event.preventDefault();
-                  void send("turn");
-                }}
-              />
-              <div className="composer-actions">
-                <span className="muted small">
-                  {preferences.sendMode === "enter"
-                    ? "Enter to send · Shift-Enter for newline"
-                    : "Ctrl/⌘-Enter to send"}
-                </span>
-                {current && state?.ownership === "here" ? (
-                  <button
-                    type="button"
-                    className="stop"
-                    onClick={() => {
-                      void api(
-                        `/operations/${current.id}/cancel`,
-                        "POST",
-                      ).catch((cause) => setError(errorText(cause)));
-                    }}
-                  >
-                    <Square size={14} aria-hidden="true" />
-                    Stop
-                  </button>
-                ) : (
-                  <button
-                    type="submit"
-                    className="primary"
-                    disabled={
-                      !state ||
-                      !!busy ||
-                      !draft.trim() ||
-                      !agent ||
-                      !!unconfirmed
+              <Composer
+                inputRef={input}
+                draft={draft}
+                onDraft={update}
+                onSend={() => void send("turn")}
+                sendDisabled={
+                  !state || !!busy || !draft.trim() || !agent || !!unconfirmed
+                }
+                sendMode={preferences.sendMode}
+                providers={providers}
+                {...(current && state?.ownership === "here"
+                  ? {
+                      stop: () => {
+                        void api(`/operations/${current.id}/cancel`, "POST").catch(
+                          (cause) => setError(errorText(cause)),
+                        );
+                      },
                     }
-                  >
-                    <ArrowUp size={17} aria-hidden="true" />
-                    Send
-                  </button>
-                )}
-              </div>
+                  : {})}
+              />
             </form>
             <div className="composer-footer">
               <span>

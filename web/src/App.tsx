@@ -500,6 +500,9 @@ export function App() {
                   bootstrap={bootstrap}
                   preferences={preferences}
                   drafts={drafts.current}
+                  onNewChat={() => {
+                    void create();
+                  }}
                   onChanged={() => {
                     void refreshSessions();
                   }}

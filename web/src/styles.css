@@ -811,32 +811,84 @@ main > .error-banner {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-soft);
 }
+.composer-box {
+  position: relative;
+}
 .composer textarea {
   display: block;
   width: 100%;
   border: 0;
   padding: 0;
   outline: none;
-  resize: vertical;
-  max-height: 240px;
-  min-height: 54px;
+  resize: none;
+  min-height: 24px;
+  line-height: 1.5;
   background: transparent;
   font-size: var(--chat-size);
 }
-.composer-actions {
+.composer-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   margin-top: 10px;
 }
-.composer-actions > .small {
-  font-size: 10px;
+.composer-spacer {
+  flex: 1;
 }
-.composer-actions .primary {
+.composer-toolbar .primary {
   min-height: 34px;
   padding: 6px 10px;
   font-size: 12px;
+}
+.suggestions {
+  position: absolute;
+  left: -14px;
+  right: -14px;
+  bottom: calc(100% + 12px);
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--canvas);
+  box-shadow: 0 6px 24px #00000018;
+  z-index: 20;
+}
+.suggestions ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+.suggestion {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.suggestion.active {
+  background: var(--accent-soft);
+}
+.suggestion[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: default;
+}
+.suggestion-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.suggestion-detail,
+.suggestion-empty {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.suggestion-empty {
+  margin: 0;
+  padding: 10px 14px;
 }
 .stop {
   color: var(--error);
@@ -1499,13 +1551,10 @@ summary::-webkit-details-marker {
   .composer {
     padding: 10px;
   }
-  .composer textarea {
-    min-height: 48px;
-    max-height: 160px;
-  }
-  .composer-actions > .small {
-    max-width: 140px;
-    line-height: 1.4;
+  .suggestions {
+    left: -10px;
+    right: -10px;
+    max-height: 45vh;
   }
   .composer-footer {
     align-items: flex-start;
