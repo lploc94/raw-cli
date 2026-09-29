@@ -222,3 +222,16 @@ Evidence by contract:
 
 Screenshots in `docs/dashboard/` were regenerated with `node --import tsx tests/dashboard-ui/capture.ts` (desktop, tablet, narrow in light and dark, no horizontal overflow, plus `chat-dark-commands.png`). Known limits: PNG/JPEG only, uploads are workspace-independent staging (30 minutes, in memory), ACP `session/prompt` does not accept images, and qualification covers this host, local mock providers and the recorded browser versions only. The three PTY REPL tests in `tests/cli.test.ts` fail identically on the pre-change baseline (environmental) and are unrelated.
 
+## Composer reasoning and service tier controls (2026-09-29)
+
+Scope: per-turn reasoning/effort and service-tier controls per `add-dashboard-reasoning-and-service-tier-controls-plan.md` and D13 of `docs/dashboard-composer-design.md`. Each phase was committed separately after a Codex (`gpt-6-astra`) implementation review reached APPROVE.
+
+| Contract | Proof |
+| --- | --- |
+| Descriptors per provider; value lists shared with config validation; override mapping | `tests/request-controls.test.ts` |
+| Wire override for one turn only, config bytes unchanged, receipts free of the override, 422 matrix, replay-first, provider 400 then a normal turn | `tests/dashboard-request-controls.test.ts` |
+| Pill, slider, radio group, keyboard, axe, persistence, pruning after agent switch, rejected choice, narrow viewports | `tests/dashboard-ui/request-controls.spec.ts` on chromium, firefox and webkit; `tests/web-request-choice.test.ts` |
+| Installed tarball carries the UI | `npm run test:package` |
+
+Screenshots were regenerated with `node --import tsx tests/dashboard-ui/capture.ts` (the pill is visible in every chat screenshot; `chat-dark-controls.png` shows the open popover). Known limits: options are not filtered per model, so a model that rejects a value fails that turn with the provider's message; qualification covers local mock providers only.
+

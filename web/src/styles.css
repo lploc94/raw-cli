@@ -2037,7 +2037,7 @@ summary::-webkit-details-marker {
   color: var(--text);
 }
 .request-popover {
-  width: min(22rem, calc(100vw - 16px));
+  width: min(25rem, calc(100vw - 16px));
   max-height: min(70vh, var(--radix-popover-content-available-height));
   overflow-y: auto;
   padding: 12px 14px;
@@ -2105,8 +2105,13 @@ summary::-webkit-details-marker {
   flex: 1;
   min-width: 0;
   text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 599px) {
+  .slider-stops span:not(.on) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 .slider-stops .on {
   color: var(--accent);

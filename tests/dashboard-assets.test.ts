@@ -16,7 +16,7 @@ test("built browser entry and local module assets are served without a developme
     assert.equal(f.provider.requests.length, 0);
     // The composer ships in the static bundle, and its image loading stays within the CSP's same-origin/data: sources.
     const bundle = (await Promise.all(scripts.map(async (path) => (await fetch(f.server.url + path)).text()))).join("\n");
-    for (const text of ["Add attachment", "Drop to attach", "No matching commands", "Reference workspace file"]) assert.ok(bundle.includes(text), `bundle lacks ${text}`);
+    for (const text of ["Add attachment", "Drop to attach", "No matching commands", "Reference workspace file", "Request settings", "Agent default", "Reset"]) assert.ok(bundle.includes(text), `bundle lacks ${text}`);
     assert.match(response.headers.get("content-security-policy")!, /img-src 'self' data:(?:;|$)/);
     assert.doesNotMatch(response.headers.get("content-security-policy")!, /blob:/);
   } finally { await f.close(); }

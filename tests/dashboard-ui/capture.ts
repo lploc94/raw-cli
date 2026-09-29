@@ -95,6 +95,7 @@ try {
       await page
         .getByRole("heading", { name: "Keep working in the same session" })
         .waitFor();
+      await page.locator(".request-pill").waitFor();
       await page.locator(".conversation-scroll").evaluate((element) => {
         element.scrollTop = 0;
       });
@@ -117,6 +118,18 @@ try {
     animations: "disabled",
   });
   await page.getByLabel("Message", { exact: true }).fill("");
+  await page.locator(".request-pill").click();
+  await page.getByRole("slider", { name: "Reasoning" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.getByRole("radio", { name: /^priority/ }).click();
+  await page.locator(".request-popover").waitFor();
+  await page.screenshot({
+    path: "docs/dashboard/chat-dark-controls.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Session details" }).click();
   await page.getByRole("heading", { name: "Context", exact: true }).waitFor();
   await page.screenshot({

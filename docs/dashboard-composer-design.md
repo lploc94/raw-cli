@@ -88,6 +88,19 @@ IME composition never selects or sends, `preferences.sendMode` is honored, per-s
 ### D12. Web client details
 Image bytes need the Bearer header, so the client fetches history images with `fetch` and renders `data:` URLs (`img-src 'self' data:` stays; no `blob:`). Chip thumbnails are read from the local file as `data:` too. A chip error (unsupported type, too large, server limit, expired) is local to that chip and never disables Send; only an in-flight upload does, and failed chips are simply not sent. Ready chips survive a session switch while the page lives.
 
+### D13. Per-turn reasoning and service tier
+The server describes the settings a turn may override in `GET /api/agents/:name/composer` as `controls`, built from the same value lists `requestSpec` validates (`src/request-controls.ts`), so the UI hardcodes no provider table and a provider without such settings shows no pill. A turn carries `request:{effort?, serviceTier?}`; it is validated with those lists (422 `invalid_request_option`), held in memory on the operation like turn blocks, merged into the model config by `attachSessionRuntime` for that operation only, and never written to config, `session_operations` or receipts. A duplicate `clientRequestId` returns the original receipt before the override is validated (same rule as attachments). `compact` refuses `request` (400 `invalid_input`).
+
+| Provider | Control (label) | Maps to |
+| --- | --- | --- |
+| OpenAI | Reasoning, Service tier | `reasoning_effort` (`none`…`max`), `service_tier` (`auto`, `default`, `flex`, `fast`, `priority`) |
+| Anthropic | Effort, Service tier | `effort` (`low`…`max`), `service_tier` (`auto`, `standard_only`) |
+| DeepSeek | Reasoning | `reasoning_effort` (`low`, `high`, `max`) and forces `thinking` enabled |
+| Google | Thinking | `thinkingLevel` (`minimal`…`high`) and drops any configured `thinkingBudget` |
+| Other | none | none |
+
+Excluded: `reasoning_mode`, token budgets, `/reasoning` and `/tier` commands, per-model filtering. The client remembers the choice per session in `sessionStorage` and defaults to "Agent default". Support is never guessed: the chosen value is sent, a provider rejection fails only that turn (the timeline shows `error · <provider message>`), and Agent default is always selectable. While metadata loads or fails the saved choice is kept but neither shown nor sent; it is pruned only after the selected agent's controls have loaded and no longer offer it.
+
 ## Limits
 
 | Item | Value |
@@ -128,3 +141,5 @@ If a step beyond these is needed, the design has regressed; fix the registry rat
 | D5 (web) | `tests/web-attachment-kinds.test.ts` (fake kind through the registry), `tests/dashboard-ui/attachments.spec.ts` |
 | D9, D10, D11 | `tests/dashboard-ui/composer.spec.ts`, `chat.spec.ts`, `accessibility.spec.ts` |
 | D12, image flow end to end | `tests/dashboard-ui/attachments.spec.ts`, `tests/dashboard-installed.test.ts` (installed artifact), `tests/dashboard-assets.test.ts` (bundle and CSP) |
+| D13 (server) | `tests/request-controls.test.ts`, `tests/dashboard-request-controls.test.ts` |
+| D13 (web) | `tests/web-request-choice.test.ts`, `tests/dashboard-ui/request-controls.spec.ts` |
