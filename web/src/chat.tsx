@@ -19,6 +19,10 @@ import { Inspector } from "./inspector.js";
 import { ErrorMessage, Field, Modal } from "./ui.js";
 import { useRouter } from "./router.js";
 import { Composer } from "./composer/Composer.js";
+import { AttachmentChips } from "./composer/AttachmentChips.js";
+import { useAttachments } from "./composer/useAttachments.js";
+import { fileProvider } from "./composer/files.js";
+import type { KindMeta } from "./composer/attachment-kinds.js";
 import { slashProvider, type ComposerSkill } from "./composer/commands.js";
 
 export function Chat({
@@ -49,7 +53,14 @@ export function Chat({
   const { navigate } = useRouter();
   const [draft, setDraft] = useState(drafts.get(id) ?? "");
   const [agent, setAgent] = useState("");
-  const [skills, setSkills] = useState<ComposerSkill[]>([]);
+  const [meta, setMeta] = useState<{
+    vision: boolean;
+    skills: ComposerSkill[];
+    attachmentKinds: KindMeta[];
+  }>({ vision: false, skills: [], attachmentKinds: [] });
+  const skills = meta.skills;
+  const att = useAttachments(id, meta.attachmentKinds);
+  const sentKeys = useRef<string[]>([]);
   const [error, setError] = useState("");
   const [dialogError, setDialogError] = useState("");
   const [pending, setPending] = useState(false);
@@ -95,13 +106,11 @@ export function Chat({
       scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [state]);
   useEffect(() => {
-    setSkills([]);
+    setMeta({ vision: false, skills: [], attachmentKinds: [] });
     if (!agent) return;
     let live = true;
-    void api<{ skills: ComposerSkill[] }>(
-      `/agents/${encodeURIComponent(agent)}/composer`,
-    )
-      .then((meta) => live && setSkills(meta.skills))
+    void api<typeof meta>(`/agents/${encodeURIComponent(agent)}/composer`)
+      .then((next) => live && setMeta(next))
       .catch(() => {});
     return () => {
       live = false;
@@ -121,6 +130,7 @@ export function Chat({
       if (op.kind === "turn") {
         setDraft((current) => (current === op.input ? "" : current));
         if (drafts.get(id) === op.input) drafts.delete(id);
+        att.consume(sentKeys.current);
       }
       onChanged();
     } catch (cause) {
@@ -139,18 +149,29 @@ export function Chat({
     } catch {}
     if (key) void checkReceipt(key);
   }, [id, !!state]);
+  const hasContent = att.images.length + att.files.length > 0;
   const send = async (kind: "turn" | "compact") => {
     if (
       !state ||
       submitting.current ||
       busy ||
       !agent ||
-      (kind === "turn" && !draft.trim())
+      (kind === "turn" && (att.uploading || (!draft.trim() && !hasContent)))
     )
       return;
     submitting.current = true;
     setPending(true);
     setError("");
+    const uploads = att.images;
+    const references = att.files;
+    const sent = [...uploads, ...references].map((chip) => chip.key);
+    sentKeys.current = sent;
+    // An attachment-only turn still needs text; the model input is never empty.
+    const text = draft.trim()
+      ? draft
+      : uploads.length
+        ? `Please look at the attached image${uploads.length > 1 ? "s" : ""}.`
+        : "Please look at the referenced file" + (references.length > 1 ? "s." : ".");
     const clientRequestId = crypto.randomUUID();
     try {
       sessionStorage.setItem(`raw.dashboard.pending.${id}`, clientRequestId);
@@ -163,7 +184,17 @@ export function Chat({
           clientRequestId,
           kind,
           agent,
-          ...(kind === "turn" ? { input: draft } : {}),
+          ...(kind === "turn"
+            ? {
+                input: text,
+                ...(uploads.length
+                  ? { attachments: uploads.map((chip) => chip.serverId) }
+                  : {}),
+                ...(references.length
+                  ? { files: references.map((chip) => chip.path) }
+                  : {}),
+              }
+            : {}),
         },
       );
       receipt(op);
@@ -173,12 +204,15 @@ export function Chat({
       if (kind === "turn") {
         setDraft((current) => (current === draft ? "" : current));
         if (drafts.get(id) === draft) drafts.delete(id);
+        att.consume(sent);
       }
       following.current = true;
       setAtBottom(true);
       onChanged();
     } catch (cause) {
       setError(errorText(cause));
+      if (cause instanceof ApiError && cause.code === "unknown_attachment")
+        att.expire();
       if (!(cause instanceof ApiError)) await checkReceipt(clientRequestId);
       else
         try {
@@ -230,6 +264,10 @@ export function Chat({
       : busy
         ? "Wait for the current work to finish"
         : undefined;
+  const files = useMemo(
+    () => fileProvider(id, att.addFileRef),
+    [id, att.addFileRef],
+  );
   const providers = useMemo(
     () => [
       slashProvider(
@@ -249,10 +287,11 @@ export function Chat({
         },
         skills,
       ),
+      files,
     ],
     // `send` closes over live state; the rebuilt provider only needs to track what changes the list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [skills, compactDisabled, state, agent, busy],
+    [skills, compactDisabled, state, agent, busy, files],
   );
   return (
     <Dialog.Root open={inspector} onOpenChange={setInspector} modal={narrow}>
@@ -436,8 +475,34 @@ export function Chat({
                 onDraft={update}
                 onSend={() => void send("turn")}
                 sendDisabled={
-                  !state || !!busy || !draft.trim() || !agent || !!unconfirmed
+                  !state ||
+                  !!busy ||
+                  (!draft.trim() && !hasContent) ||
+                  att.uploading ||
+                  !agent ||
+                  !!unconfirmed
                 }
+                chips={
+                  <AttachmentChips
+                    chips={att.chips}
+                    metas={meta.attachmentKinds}
+                    onRemove={att.remove}
+                    onRetry={att.retry}
+                  />
+                }
+                onFiles={att.addFiles}
+                accept={
+                  meta.attachmentKinds.flatMap((kind) => kind.accept).join(",") ||
+                  "image/png,image/jpeg"
+                }
+                {...(!meta.vision &&
+                state?.history.items.some((item) =>
+                  item.attachments?.some((entry) => entry.kind === "image"),
+                )
+                  ? {
+                      note: "Images in this chat are sent to this agent as text placeholders.",
+                    }
+                  : {})}
                 sendMode={preferences.sendMode}
                 providers={providers}
                 {...(current && state?.ownership === "here"

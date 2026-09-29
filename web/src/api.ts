@@ -47,6 +47,47 @@ export async function api<T>(
   });
   return decode<T>(response);
 }
+/** Uploads one raw file to the session's staging area. */
+export async function upload<T>(
+  sessionId: string,
+  file: Blob & { name?: string },
+  signal: AbortSignal,
+): Promise<T> {
+  const response = await fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/attachments`,
+    {
+      method: "POST",
+      signal,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": file.type || "application/octet-stream",
+        ...(file.name ? { "X-Raw-Filename": encodeURIComponent(file.name) } : {}),
+      },
+      body: file,
+    },
+  );
+  return decode<T>(response);
+}
+/** Fetches authenticated bytes and returns a `data:` URL (the CSP allows `data:` images, not `blob:`). */
+export async function fetchDataUrl(
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const response = await fetch(`/api${path}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) throw new ApiError(response.status, "request_failed", "Could not load attachment");
+  return blobDataUrl(await response.blob());
+}
+export function blobDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
 async function decode<T>(response: Response): Promise<T> {
   const data = await response.json();
   if (!response.ok)

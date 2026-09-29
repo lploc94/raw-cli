@@ -5,9 +5,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type RefObject,
 } from "react";
-import { ArrowUp, Plus, Square } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
+import { AttachMenu } from "./AttachMenu.js";
 import { SuggestionPopover, optionId } from "./SuggestionPopover.js";
 import { useAutoGrow } from "./useAutoGrow.js";
 import type {
@@ -25,6 +27,10 @@ export function Composer({
   sendMode,
   stop,
   providers,
+  chips,
+  onFiles,
+  accept,
+  note,
 }: {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   draft: string;
@@ -35,6 +41,12 @@ export function Composer({
   /** Present while an owned operation runs; replaces Send. */
   stop?: () => void;
   providers: SuggestionProvider[];
+  /** Attachment chips, rendered above the message box. */
+  chips: ReactNode;
+  onFiles: (files: File[]) => void;
+  /** `accept` attribute for the file picker, from composer metadata. */
+  accept: string;
+  note?: string;
 }) {
   const listId = useId();
   const hintId = useId();
@@ -60,25 +72,34 @@ export function Composer({
   const key = found ? `${found.provider.id}:${found.match.query}` : "";
 
   // One call per provider+query: synchronous lists are used directly so a keystroke never sees the previous query's list; a promise is awaited once.
-  const result = useMemo(
-    () => (found ? found.provider.items(found.match.query) : []),
+  const call = useMemo(() => {
+    const controller = new AbortController();
+    return {
+      controller,
+      result: found
+        ? found.provider.items(found.match.query, controller.signal)
+        : [],
+    };
     // `key` covers provider identity and query.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key, found?.provider],
-  );
+  }, [key, found?.provider]);
+  const result = call.result;
   const direct = Array.isArray(result) ? result : null;
   useEffect(() => {
-    if (Array.isArray(result)) return;
+    // A superseded query aborts its request; the promise's rejection is handled below.
+    const controller = call.controller;
     let live = true;
-    result.then(
-      (next) => live && setLoaded({ key, items: next }),
-      () => live && setLoaded({ key, items: [] }),
-    );
+    if (!Array.isArray(result))
+      result.then(
+        (next) => live && setLoaded({ key, items: next }),
+        () => live && setLoaded({ key, items: [] }),
+      );
     return () => {
       live = false;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result]);
+  }, [call]);
   const ready = direct !== null || loaded.key === key;
   const items = direct ?? (loaded.key === key ? loaded.items : []);
   useEffect(() => setActive(0), [key]);
@@ -111,13 +132,52 @@ export function Composer({
     pendingCaret.current = { value: next, at: match.start + text.length };
     onDraft(next);
   };
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const insert = (next: string, at: number) => {
+    pendingCaret.current = { value: next, at };
+    onDraft(next);
+  };
+  const insertReference = () => {
+    const at = inputRef.current?.selectionStart ?? draft.length;
+    const lead = at > 0 && !/\s/.test(draft[at - 1]!) ? " " : "";
+    insert(draft.slice(0, at) + lead + "@" + draft.slice(at), at + lead.length + 1);
+  };
+  const insertCommands = () => insert("/" + draft, 1);
   const pick = (item: SuggestionItem) => {
     if (!found || item.disabled) return;
     item.onSelect({ replace: replace(found.match) });
   };
 
+  const hasFiles = (event: React.DragEvent) =>
+    Array.from(event.dataTransfer.types).includes("Files");
   return (
-    <div className="composer-box" ref={boxRef}>
+    <div
+      className={`composer-box ${dragging ? "dragging" : ""}`}
+      ref={boxRef}
+      onDragEnter={(event) => hasFiles(event) && setDragging(true)}
+      onDragOver={(event) => {
+        if (!hasFiles(event)) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          setDragging(false);
+      }}
+      onDrop={(event) => {
+        if (!hasFiles(event)) return;
+        event.preventDefault();
+        setDragging(false);
+        onFiles(Array.from(event.dataTransfer.files));
+      }}
+    >
+      {dragging && (
+        <div className="drop-overlay" aria-hidden="true">
+          Drop to attach
+        </div>
+      )}
+      {chips}
       {open && found && (
         <SuggestionPopover
           id={listId}
@@ -153,6 +213,14 @@ export function Composer({
           onDraft(event.target.value);
         }}
         onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData.files);
+          if (!files.length) return;
+          // Text that travels with the files (a copied spreadsheet range, say) still pastes normally.
+          if (!event.clipboardData.getData("text/plain"))
+            event.preventDefault();
+          onFiles(files);
+        }}
         onCompositionStart={() => {
           composing.current = true;
         }}
@@ -201,16 +269,29 @@ export function Composer({
           ? "Enter to send, Shift-Enter for newline"
           : "Ctrl or Command-Enter to send"}
       </span>
+      {note && <p className="composer-note muted small">{note}</p>}
       <div className="composer-toolbar">
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="Add attachment"
-          title="Add attachment"
-          disabled
-        >
-          <Plus size={16} aria-hidden="true" />
-        </button>
+        <AttachMenu
+          onUpload={() => fileInput.current?.click()}
+          onReference={insertReference}
+          onCommands={insertCommands}
+          onClosed={(event) => {
+            event.preventDefault();
+            inputRef.current?.focus();
+          }}
+        />
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          accept={accept}
+          aria-label="Upload image"
+          onChange={(event) => {
+            onFiles(Array.from(event.target.files ?? []));
+            event.target.value = "";
+          }}
+        />
         <span className="composer-spacer" />
         {stop ? (
           <button type="button" className="stop" onClick={stop}>

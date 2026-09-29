@@ -18,13 +18,14 @@ export const answer = {
 };
 export const test = base.extend<{
   raw: Awaited<ReturnType<typeof dashboardFixture>>;
-  scenario: { responses?: MockResponse[]; agent?: Record<string, unknown> };
+  scenario: { responses?: MockResponse[]; agent?: Record<string, unknown>; model?: Record<string, unknown> };
 }>({
   scenario: [{}, { option: true }],
   raw: async ({ scenario }, use) => {
     const f = await dashboardFixture({
       responses: scenario.responses ?? [answer, answer, answer],
       agent: scenario.agent ?? {},
+      ...(scenario.model ? { model: scenario.model } : {}),
     });
     try {
       await use(f);

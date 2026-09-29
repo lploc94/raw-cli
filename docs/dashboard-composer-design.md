@@ -85,6 +85,9 @@ Built-ins map to actions that already exist in the UI: `/compact` (compact opera
 ### D11. Preserved behavior
 IME composition never selects or sends, `preferences.sendMode` is honored, per-session drafts persist, and the durable pending-receipt / duplicate-submit flow is unchanged. An open popover consumes Enter for selection instead of sending.
 
+### D12. Web client details
+Image bytes need the Bearer header, so the client fetches history images with `fetch` and renders `data:` URLs (`img-src 'self' data:` stays; no `blob:`). Chip thumbnails are read from the local file as `data:` too. A chip error (unsupported type, too large, server limit, expired) is local to that chip and never disables Send; only an in-flight upload does, and failed chips are simply not sent. Ready chips survive a session switch while the page lives.
+
 ## Limits
 
 | Item | Value |

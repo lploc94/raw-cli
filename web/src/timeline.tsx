@@ -22,6 +22,7 @@ import { api, errorText } from "./api.js";
 import { isTerminal, type ChatState } from "./session.js";
 import { CodeBlock, Markdown } from "./markdown.js";
 import { CopyButton, ErrorMessage } from "./ui.js";
+import { HistoryAttachments } from "./composer/HistoryAttachments.js";
 
 export function ApprovalActions({ approval }: { approval: Approval }) {
   const [busy, setBusy] = useState(false);
@@ -562,7 +563,16 @@ export function Timeline({
           ) : item.kind === "assistant" ? (
             <Markdown>{item.text ?? ""}</Markdown>
           ) : (
-            <div className="user-text">{item.text}</div>
+            <>
+              <div className="user-text">{item.text}</div>
+              {item.attachments?.length ? (
+                <HistoryAttachments
+                  items={item.attachments}
+                  sessionId={state.session.id}
+                  sequence={item.sequence}
+                />
+              ) : null}
+            </>
           )}
           {item.status === "interrupted" && (
             <small className="warning">Incomplete response</small>

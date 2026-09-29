@@ -24,7 +24,11 @@ export interface SuggestionProvider {
   emptyText: string;
   /** Returns the active trigger in `text` before `caret`, or null. */
   match: (text: string, caret: number) => TriggerMatch | null;
-  items: (query: string) => SuggestionItem[] | Promise<SuggestionItem[]>;
+  /** `signal` aborts when the query is superseded; synchronous providers ignore it. */
+  items: (
+    query: string,
+    signal?: AbortSignal,
+  ) => SuggestionItem[] | Promise<SuggestionItem[]>;
 }
 
 /** Subsequence match; lower score is better, null means no match. */
