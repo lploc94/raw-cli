@@ -746,21 +746,6 @@ main > .error-banner {
 .menu-chevron {
   margin-left: auto;
 }
-.connection {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.connection:before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--warning);
-}
-.connection.connected:before {
-  background: var(--success);
-}
 .workspace-path {
   min-width: 0;
   font-size: 11px;

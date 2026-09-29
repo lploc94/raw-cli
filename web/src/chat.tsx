@@ -21,7 +21,7 @@ import { Skeleton, TimelineSkeleton } from "./states.js";
 import { ContextRing } from "./composer/ContextRing.js";
 import { RequestControls } from "./composer/RequestControls.js";
 import { useRequestChoice } from "./composer/useRequestChoice.js";
-import { isTerminal, useSession } from "./session.js";
+import { forgetSession, isTerminal, useSession } from "./session.js";
 import { Timeline } from "./timeline.js";
 import { Inspector } from "./inspector.js";
 import { ErrorMessage, Field, Modal } from "./ui.js";
@@ -55,7 +55,6 @@ export function Chat({
   const {
     state,
     setState,
-    connection,
     error: streamError,
     earlier,
     receipt,
@@ -310,10 +309,6 @@ export function Chat({
             <div>
               {title_ ? <h1>{title_}</h1> : <h1 aria-label="Loading session"><Skeleton width={30} className="skeleton-title" /></h1>}
               <div className="metadata">
-                {connection !== "Connected" && (
-                  <span className="connection">{connection}</span>
-                )}
-                {milestone !== "Ready" && <span>{milestone}</span>}
                 {agent && <span className="agent-chip">{agent}</span>}
                 <span className="workspace-path" title={cwd_}>
                   {cwd_ ?? <Skeleton width={50} className="skeleton-small" />}
@@ -640,6 +635,7 @@ export function Chat({
                   () => {
                     setDeleting(false);
                     drafts.delete(id);
+                    forgetSession(id);
                     onChanged();
                     navigate("/chat");
                   },

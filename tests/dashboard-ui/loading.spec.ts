@@ -209,3 +209,41 @@ test.describe("a provisional summary agent", () => {
     await expect(page.locator(".agent-chip")).toHaveText("raw");
   });
 });
+
+test("the chat header carries no connection or status chips", async ({ page, raw }) => {
+  await page.route("**/api/sessions/*/events", async (route) => {
+    await delay(800);
+    await route.continue();
+  });
+  await page.goto(raw.server.launchUrl);
+  await page.getByRole("button", { name: "New chat", exact: true }).first().click();
+  const metadata = page.locator(".page-header .metadata");
+  await expect(metadata).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+  for (const word of ["Connecting", "Connected", "Disconnected", "Ready"])
+    await expect(metadata).not.toContainText(word);
+  await expect(page.locator(".connection")).toHaveCount(0);
+});
+
+test("reopening a chat shows its last known conversation at once instead of a skeleton", async ({
+  page,
+  raw,
+}) => {
+  await page.goto(raw.server.launchUrl);
+  const newChat = page.getByRole("button", { name: "New chat", exact: true }).first();
+  await newChat.click();
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+  const first = new URL(page.url()).pathname;
+  await newChat.click();
+  await expect(page).not.toHaveURL(new RegExp(`${first}$`));
+  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+
+  await page.route("**/api/sessions/*/events", async (route) => {
+    await delay(1500);
+    await route.continue();
+  });
+  await page.locator(`a[href="${first}"]`).click();
+  await expect(page).toHaveURL(new RegExp(`${first}$`));
+  await expect(page.getByRole("heading", { name: "What would you like to work on?" })).toBeVisible({ timeout: 700 });
+  await expect(page.getByText("Loading conversation")).toHaveCount(0);
+});

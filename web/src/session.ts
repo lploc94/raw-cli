@@ -163,12 +163,32 @@ export function reduceEvent(
       return state;
   }
 }
+/**
+ * Last known state per session (in memory only). Reopening a chat renders this immediately
+ * instead of a skeleton, and the stream's first snapshot then reconciles it (stale-while-revalidate).
+ */
+const remembered = new Map<string, ChatState>();
+const REMEMBER_LIMIT = 20;
+function remember(sessionId: string, state: ChatState): void {
+  remembered.delete(sessionId);
+  remembered.set(sessionId, state);
+  if (remembered.size > REMEMBER_LIMIT)
+    remembered.delete(remembered.keys().next().value!);
+}
+export function forgetSession(sessionId: string): void {
+  remembered.delete(sessionId);
+}
 export function useSession(sessionId: string | undefined) {
-  const [state, setState] = useState<ChatState>();
+  const [state, setState] = useState<ChatState | undefined>(() =>
+    sessionId ? remembered.get(sessionId) : undefined,
+  );
   const [connection, setConnection] = useState("Connecting");
   const [error, setError] = useState("");
   useEffect(() => {
-    setState(undefined);
+    if (sessionId && state) remember(sessionId, state);
+  }, [sessionId, state]);
+  useEffect(() => {
+    setState(sessionId ? remembered.get(sessionId) : undefined);
     setError("");
     if (!sessionId) return;
     const controller = new AbortController();
