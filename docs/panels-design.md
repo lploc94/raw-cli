@@ -4,7 +4,7 @@ Design and contract for **tool panels**: live, structured state that a tool publ
 
 This file is the source of truth for the protocol. User-facing behavior will be summarized in `tools.md`, `dashboard.md`, `dashboard-api.md`, `acp.md` and `cli.md` when it is implemented. The machine-readable schema will be `schemas/raw-panel.schema.json`, and it must agree with this file.
 
-Status: design proposed 2026-09-29; Codex (gpt-6-astra) design review APPROVE after 4 rounds on 2026-09-29; section-stack revision (D13) APPROVE after 3 rounds on 2026-09-29; not implemented. Update this file whenever a decision changes. A change to a wire shape is a protocol change (see §13).
+Status: design proposed 2026-09-29; Codex (gpt-6-astra) design review APPROVE after 4 rounds on 2026-09-29; section-stack revision (D13) APPROVE after 3 rounds on 2026-09-29; **Implemented** in commits 5a28ed4..41a5a0d (plan: `implement-tool-panels-plan.md`). Update this file whenever a decision changes. A change to a wire shape is a protocol change (see §13).
 
 ## Contents
 
@@ -610,8 +610,8 @@ These routes use the existing `DashboardError` shapes and the same origin and to
 
 ### 13.4 Library
 
-- `getSessionPanels(sessionId)` returns the same items as the HTTP API.
-- `RunEvent` gains `{ type: "panel_update"; panel; revision; document; closed; live: boolean }`.
+- `getSessionPanels({ sessionId })` returns the stored panels of a saved session (`StoredPanel[]`: full id, owner, revision, declaration and latest document), oldest first. The HTTP API adds the computed `stale` flag and the stack order, which need the agent's current declarations.
+- `RunEvent` gains `{ type: "panel_update"; panel; owner; revision; document; closed; live: boolean }` (`panel` is the local id), and `tool_result` may carry `panelReceipts` (the receipts committed with that result).
 
 ## 14. Limits
 

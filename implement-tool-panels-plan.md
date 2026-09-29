@@ -591,7 +591,7 @@ Reuse the existing notice mechanism; no change when no panel qualifies.
 ### Acceptance criteria
 - [x] AC-9.1: Reminder content, order and caps match §10 — proven by `tests/compact.test.ts`.
 - [x] AC-9.2: D5 row passes (no panel bytes in normal requests, cache key unchanged) — proven by request snapshot.
-- [ ] AC-9.3: Every §22 verification row maps to a passing test — proven by the final audit table in the Progress Log.
+- [x] AC-9.3: Every §22 verification row maps to a passing test — proven by the final audit table in the Progress Log.
 
 ### Focused verification
 `node --import tsx --test tests/compact.test.ts`
@@ -607,10 +607,10 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Completion Criteria
 
-- All 9 phases committed with APPROVE reviews.
-- Every row of the §22 verification map (D1–D13) is mapped to a passing test in the Progress Log.
-- Global Gates pass on final `HEAD`.
-- `docs/panels-design.md` Status says Implemented, with the commit range.
+- [x] All 9 phases committed with APPROVE reviews.
+- [x] Every row of the §22 verification map (D1–D13) is mapped to a passing test in the Progress Log.
+- [x] Global Gates pass on final `HEAD`.
+- [x] `docs/panels-design.md` Status says Implemented, with the commit range.
 
 ## Progress Log
 
@@ -624,4 +624,25 @@ Implementation review is required; verdict must be APPROVE.
 | 6 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (10 findings fixed) | 13 panel-state tests + 45 panels.spec runs (3 browsers), mutation-checked (offscreen/unknown visibility marked seen); `npm run test:web` 399 pass; `npm test` only the 3 known PTY failures |
 | 7 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (10 findings fixed) | 15 panels-actions tests; panels.spec 63 passed, `npm run test:web` 417 passed; `npm test` only the 3 known PTY failures |
 | 8 | complete | see git log | Codex gpt-6-astra APPROVE after 2 rounds (4 findings fixed) | 10 tests in tests/panels-surfaces.test.ts (used instead of the four listed files); `npm test` only the 3 known PTY failures |
-| 9 | complete (AC-9.3 closes in the finalization audit) | see git log | Codex gpt-6-astra APPROVE after 3 rounds (4 findings fixed) | 6 tests in tests/panels-compaction.test.ts (used instead of tests/compact.test.ts); `npm test` only the 3 known PTY failures; `npm run test:web` 416/417 then the flaky webkit spec passes alone; `npm run test:package` pass |
+| 9 | complete | see git log | Codex gpt-6-astra APPROVE after 3 rounds (4 findings fixed) | 6 tests in tests/panels-compaction.test.ts (used instead of tests/compact.test.ts); `npm test` only the 3 known PTY failures; `npm run test:web` 416/417 then the flaky webkit spec passes alone; `npm run test:package` pass |
+
+### Finalization audit (HEAD 41a5a0d, phases 1–9 = 5a28ed4..41a5a0d)
+
+Global Gates on final HEAD: `npm run typecheck` exit 0; `npm test` 733 pass, 3 fail (only the known PTY failures in `tests/cli.test.ts`); `npm run test:web` 417 passed (3 browsers, axe); `npm run test:package` 4/4. The "no provider byte / schema / cache-key change without a panel tool" gate is asserted by `tests/panels-host.test.ts` "a panel-free agent sends exactly the request bytes captured before panels existed" and by the cache-key assertions in `tests/panels-compaction.test.ts`.
+
+| Decision | Evidence (passing tests) |
+| --- | --- |
+| D1, D3 | `tests/panels-host.test.ts`: "session deletion cascades to panels and receipts…", "eviction deletes and closed state survive a restart of the store", "a fresh session on the same store sees the last revision"; `tests/panels-compaction.test.ts` (state survives compaction: the second compaction reads revision 2 from the store) |
+| D2 | `tests/panels-protocol.test.ts` (every block kind, limits, text rendering); `tests/dashboard-ui/panels.spec.ts` "all eight block kinds render… axe is clean" |
+| D4 | `tests/panels-declarations.test.ts` "D4: result block, context.panels, MCP _meta and ACP-style blocks store identical panel state"; `tests/panels-host.test.ts` "registry extraction happens before hooks and caps", "a store failure inside the transaction…" |
+| D5 | `tests/panels-host.test.ts` "a panel-free agent sends exactly the request bytes…", "a panel-only result gives the model a confirmation line…"; `tests/panels-compaction.test.ts` (no request mentions panel state before a compaction, one cache key) |
+| D6 | `tests/panels-protocol.test.ts` patch tests, "random patch sequences match an independent reference model" |
+| D7 | `tests/panels-actions.test.ts` (allow/ask/deny, agent_mismatch, hooks `user_action`, note once, restart, idempotency); `tests/dashboard-ui/panels.spec.ts` "panel actions" (unsent agent switch) |
+| D8 | `tests/panels-host.test.ts` "ownership uses canonical identity: aliases and foreign panels cannot be written" |
+| D9 | `tests/dashboard-ui/panels.spec.ts` "the first update opens the side panel once…", "Never keeps the side panel closed…", "a narrow viewport never opens the drawer…" |
+| D10 | `tests/panels-host.test.ts` "a rejected update tells the model, keeps isError false…"; `tests/web-panel-state.test.ts` (lower revision replaces); `panels.spec.ts` unknown kind fallback |
+| D11 | `tests/todo-tool.test.ts` "builtin/todo is opt-in: the starter config never selects it…" |
+| D12 | `tests/panels-surfaces.test.ts` ACP plan mapping, negotiation gate, replay order, resume, `_raw/panel/action` |
+| D13 | `tests/dashboard-ui/panels.spec.ts` (order, drag, keyboard move, insertion rule, hide); `tests/dashboard-panels.test.ts` (declared panels before data, stack order); `tests/panels-declarations.test.ts` (MCP config panels in order) |
+
+Cross-phase notes: `RunEvent` `tool_result` gained an optional `panelReceipts` (Phase 8, for the CLI renderer); the compaction reminder starts with a `[Raw panel state]` marker line (Phase 9, same pattern as the skill reload notice); `getSessionPanels` returns the stored panels (`StoredPanel[]`), not the HTTP stack items, because stale flags and order need the agent's declarations. Design §10 and §13.4 were updated to say so.
