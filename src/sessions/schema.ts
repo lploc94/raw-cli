@@ -126,6 +126,14 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       document_json TEXT NOT NULL,
       PRIMARY KEY (session_id, panel_id)
     )`);
+    // Notes about panel actions the user ran; the next user message carries and clears them (docs/panels-design.md §10).
+    database.exec(`CREATE TABLE IF NOT EXISTS session_pending_notes (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      sequence INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (session_id, sequence)
+    )`);
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");

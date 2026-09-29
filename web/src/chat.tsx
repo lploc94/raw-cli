@@ -24,6 +24,8 @@ import { useRequestChoice } from "./composer/useRequestChoice.js";
 import { forgetSession, isTerminal, useSession } from "./session.js";
 import { Timeline } from "./timeline.js";
 import { Inspector } from "./inspector.js";
+import { resolveAction } from "../../src/panels/actions.js";
+import type { ActionHost } from "./panels/actions.js";
 import { usePanelStack } from "./panels/use-panels.js";
 import { ErrorMessage, Field, Modal } from "./ui.js";
 import { useRouter } from "./router.js";
@@ -123,6 +125,31 @@ export function Chat({
   const prepending = useRef(false);
   const current = state?.operations.find((op) => !isTerminal(op.state));
   const busy = pending || !!current || state?.ownership === "elsewhere";
+  const [confirming, setConfirming] = useState<{ message: string; go: () => void }>();
+  const savedAgent = state?.session.agentName;
+  const panelActions: ActionHost = {
+    toolBlocked: busy ? "Wait for the current operation to finish" : agent && savedAgent && agent !== savedAgent ? `Send a message to switch to ${agent} first` : undefined,
+    run: (item, action, request) => {
+      const go = () => {
+        if (action.kind === "prompt") {
+          let text: string;
+          try { text = resolveAction(item.declaration, request, item.document).text ?? ""; } catch (cause) { setError(errorText(cause)); return; }
+          if (action.send && !busy) {
+            void api<SessionOperation>(`/sessions/${id}/operations`, "POST", { clientRequestId: crypto.randomUUID(), kind: "turn", agent, input: text }).then((op) => { receipt(op); onChanged(); }, (cause) => setError(errorText(cause)));
+          } else {
+            setDraft(text);
+            drafts.set(id, text);
+            input.current?.focus();
+          }
+          return;
+        }
+        setError("");
+        void api(`/sessions/${id}/panels/${encodeURIComponent(item.panel)}/actions`, "POST", { ...request, agent: savedAgent, clientRequestId: crypto.randomUUID() })
+          .then(() => onChanged(), (cause) => setError(errorText(cause)));
+      };
+      if (action.confirm) setConfirming({ message: action.confirm, go }); else go();
+    },
+  };
   useEffect(() => {
     setDraft(drafts.get(id) ?? "");
     setError("");
@@ -613,10 +640,17 @@ export function Chat({
               setPrefs: panels.setPrefs,
               history: state?.history.items ?? [],
               onInsert: insertRef,
+              actions: panelActions,
               reveal: panels.reveal,
             }}
           />
         )}
+        <Modal open={!!confirming} onOpenChange={(open) => { if (!open) setConfirming(undefined); }} title="Run this action?" {...(confirming ? { description: confirming.message } : {})}>
+          <button className="primary" type="button" onClick={() => { const go = confirming?.go; setConfirming(undefined); go?.(); }}>
+            <Check size={15} aria-hidden="true" />
+            Run
+          </button>
+        </Modal>
         <Modal
           open={renaming}
           onOpenChange={setRenaming}

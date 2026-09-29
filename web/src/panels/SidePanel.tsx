@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type PointerEvent, type ReactNode, type SetStateAction } from "react";
 import type { PanelStackItem } from "../../../src/panels/stack.js";
+import { ActionScope, offeredActions, type ActionHost } from "./actions.js";
 import { Blocks } from "./Blocks.js";
 import { Section, progressFor, statusTextFor, summaryFor } from "./Section.js";
 import {
@@ -17,6 +18,8 @@ export interface SidePanelProps {
   setPrefs: Dispatch<SetStateAction<PanelPrefs>>;
   history: ReadonlyArray<{ panelReceipt?: { panel: string; owner: string; error?: { code: string } } }>;
   onInsert: InsertRef;
+  /** Runs panel actions; without it no action is offered. */
+  actions?: ActionHost | undefined;
   /** A receipt click asks for this section to be shown; `nonce` makes repeated requests to the same panel distinct. */
   reveal: { panel: string; nonce: number } | undefined;
   /** The Details section content (the former inspector). */
@@ -24,7 +27,7 @@ export interface SidePanelProps {
 }
 
 /** The stack of sections shown in the side panel (docs/panels-design.md §13.1). */
-export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, history, onInsert, reveal, details }: SidePanelProps) {
+export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, history, onInsert, actions, reveal, details }: SidePanelProps) {
   const box = useRef<HTMLDivElement>(null);
   const [boxHeight, setBoxHeight] = useState(0);
   const [showHidden, setShowHidden] = useState(false);
@@ -148,7 +151,9 @@ export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, histo
     const shown = order.filter((id) => !hiddenIds.has(id));
     const at = shown.indexOf(item.panel);
     const reorder = (direction: "up" | "down") => setPrefs((old) => setOrder(old, agent, move(currentOrder(items, old, agent), item.panel, direction, new Set(layout(items, old, agent).hidden.map((entry) => entry.panel)))));
+    const own = actions ? offeredActions(item, actions, "panel").map((entry) => ({ id: entry.action.id, label: entry.action.label, disabled: entry.disabled, run: entry.run })) : [];
     return {
+      actions: own,
       up: index > 0 && at > 0 ? () => reorder("up") : undefined,
       down: at >= 0 && at < shown.length - 1 ? () => reorder("down") : undefined,
       hide: () => setPrefs((old) => setHidden(old, agent, item.panel, true)),
@@ -177,9 +182,11 @@ export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, histo
             drag={dragFor(item)}
             menu={menuFor(item)}
           >
+            <ActionScope value={actions && { item, host: actions }}>
             {item.stale && <p className="panel-banner" role="note">The tool that owns this panel is not selected by this agent.</p>}
             {rejected && <p className="panel-banner error" role="note">Update rejected: {rejected}</p>}
             {item.document ? <Blocks document={item.document} onInsert={onInsert} hideCompleted={prefs.hideCompleted} onHideCompleted={(value) => setPrefs((old) => setHideCompleted(old, value))} /> : <p className="muted small">No data yet.</p>}
+            </ActionScope>
           </Section>
         );
       })}

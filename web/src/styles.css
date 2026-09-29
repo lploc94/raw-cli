@@ -3023,3 +3023,24 @@ summary::-webkit-details-marker {
     animation: none;
   }
 }
+.panel-glyph-button {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.panel-glyph-button:hover:not(:disabled) {
+  color: var(--accent);
+}
+.panel-glyph-button:disabled {
+  cursor: default;
+}
+.panel-row .panel-action-menu {
+  margin-left: auto;
+}
+.panel-block-header .panel-action-menu {
+  margin-left: auto;
+}

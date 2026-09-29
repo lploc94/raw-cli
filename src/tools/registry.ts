@@ -109,6 +109,12 @@ export class ToolRegistry {
     return tool?.canonicalName ?? tool?.name;
   }
 
+  /** The registered tool name for a canonical identity, when this registry has it. */
+  nameForIdentity(identity: string): string | undefined {
+    for (const tool of this.tools.values()) if ((tool.canonicalName ?? tool.name) === identity) return tool.name;
+    return undefined;
+  }
+
   definitions(whitelist?: readonly string[]): readonly ToolDefinition[] {
     const ordered = whitelist === undefined ? [...this.tools.values()]
       : [...new Set(whitelist)].map((name) => this.tools.get(name)).filter((item): item is ToolRegistration => item !== undefined);

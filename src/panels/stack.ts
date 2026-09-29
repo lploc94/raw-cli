@@ -16,6 +16,10 @@ export interface PanelStackItem {
   document: PanelDocument | null;
 }
 
+/** A `deny` rule hides tool actions entirely; prompt actions only draft a message and stay. */
+const visibleActions = (declaration: PanelDeclaration, owner: string, known: KnownPanels | undefined): PanelDeclaration =>
+  known?.denied?.(owner) ? { ...declaration, actions: declaration.actions.filter((action) => action.kind !== "tool") } : declaration;
+
 const fromStored = (stored: StoredPanel, declaration: PanelDeclaration, stale: boolean): PanelStackItem => ({
   panel: stored.panelId, owner: stored.owner, title: declaration.title, icon: declaration.icon, revision: stored.revision,
   updatedAt: stored.updatedAt, closed: stored.closed, stale, declaration, document: structuredClone(stored.document) });
@@ -36,13 +40,14 @@ export function buildPanelStack(known: KnownPanels | undefined, stored: readonly
     if (listed.has(id)) continue;
     listed.add(id);
     const found = byId.get(id);
-    items.push(found ? fromStored(found, declaration, false) : { panel: id, owner, title: declaration.title, icon: declaration.icon,
-      revision: 0, updatedAt: null, closed: false, stale: false, declaration, document: null });
+    const shown = visibleActions(declaration, owner, known);
+    items.push(found ? fromStored(found, shown, false) : { panel: id, owner, title: declaration.title, icon: declaration.icon,
+      revision: 0, updatedAt: null, closed: false, stale: false, declaration: shown, document: null });
   }
   const implicit = new Set(known?.implicitOwners ?? []);
   for (const panel of oldestFirst(stored.filter((item) => !listed.has(item.panelId) && (known === undefined || implicit.has(item.owner))))) {
     listed.add(panel.panelId);
-    items.push(fromStored(panel, panel.declaration, false));
+    items.push(fromStored(panel, visibleActions(panel.declaration, panel.owner, known), false));
   }
   for (const panel of oldestFirst(stored.filter((item) => !listed.has(item.panelId)))) items.push(fromStored(panel, panel.declaration, true));
   return items;

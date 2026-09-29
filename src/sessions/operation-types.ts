@@ -6,10 +6,12 @@ export type OperationState = "accepted" | "starting" | "running" | "compacting" 
 export interface OperationIntent {
   sessionId: string;
   clientRequestId: string;
-  kind: "turn" | "compact";
+  kind: "turn" | "compact" | "panel_action";
   agentName: string;
   configPath: string;
   input?: string;
+  /** For `panel_action`: the full panel id and what the user picked (docs/panels-design.md §11). */
+  action?: { panel: string; action: string; block?: string; item?: string };
 }
 export interface SessionOperation extends OperationIntent {
   id: string;
@@ -24,7 +26,7 @@ export interface SessionOperation extends OperationIntent {
 }
 export const terminalOperationStates: ReadonlySet<OperationState> = new Set(["completed", "max_steps", "cancelled", "error", "interrupted"]);
 export class SessionOperationError extends Error {
-  constructor(readonly code: "conflict" | "busy" | "not_found" | "invalid_input" | "closed", message: string) {
+  constructor(readonly code: "conflict" | "busy" | "not_found" | "invalid_input" | "closed" | "agent_mismatch", message: string) {
     super(message); this.name = "SessionOperationError";
   }
 }

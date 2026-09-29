@@ -32,7 +32,7 @@ export interface SectionProps {
   onResize?: (height: number) => void;
   /** Header drag-to-reorder (§13.1): the parent owns the gesture, the header only reports pointer events. */
   drag?: { onPointerDown: (event: PointerEvent<HTMLDivElement>) => void; state?: "dragging" | "target" | undefined } | undefined;
-  menu?: { up?: (() => void) | undefined; down?: (() => void) | undefined; hide?: (() => void) | undefined } | undefined;
+  menu?: { actions?: Array<{ id: string; label: string; disabled?: string | undefined; run: () => void }> | undefined; up?: (() => void) | undefined; down?: (() => void) | undefined; hide?: (() => void) | undefined } | undefined;
   children?: ReactNode;
 }
 /** One accordion section (WAI-ARIA accordion): a header button with `aria-expanded`, and a fixed-height body that scrolls inside. */
@@ -70,6 +70,10 @@ export function Section(props: SectionProps) {
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="workspace-menu" align="end" sideOffset={4} collisionPadding={8}>
+                  {menu.actions?.map((entry) => (
+                    <DropdownMenu.Item key={entry.id} className="workspace-menu-item" disabled={!!entry.disabled} title={entry.disabled} onSelect={entry.run}>{entry.label}</DropdownMenu.Item>
+                  ))}
+                  {!!menu.actions?.length && <DropdownMenu.Separator className="workspace-menu-separator" />}
                   <DropdownMenu.Item className="workspace-menu-item" disabled={!menu.up} onSelect={() => menu.up?.()}><MoveUp size={15} aria-hidden="true" />Move up</DropdownMenu.Item>
                   <DropdownMenu.Item className="workspace-menu-item" disabled={!menu.down} onSelect={() => menu.down?.()}><MoveDown size={15} aria-hidden="true" />Move down</DropdownMenu.Item>
                   <DropdownMenu.Item className="workspace-menu-item" disabled={!menu.hide} onSelect={() => menu.hide?.()}><EyeOff size={15} aria-hidden="true" />Hide section</DropdownMenu.Item>

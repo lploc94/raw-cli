@@ -186,6 +186,12 @@ function sessionRow(row: DbRow): SessionSummary {
   };
 }
 
+const boundedText = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
+function validAction(action: OperationIntent["action"]): boolean {
+  return !!action && boundedText(action.panel, 600) && boundedText(action.action, 64)
+    && (action.block === undefined || boundedText(action.block, 64)) && (action.item === undefined || boundedText(action.item, 128));
+}
+
 export class SessionStore {
   readonly database: DatabaseSync;
   readonly path: string;
@@ -272,14 +278,17 @@ export class SessionStore {
 
   acceptOperation(intent: OperationIntent): { operation: SessionOperation; owner?: SessionOwner } {
     if (![intent.sessionId, intent.clientRequestId, intent.agentName, intent.configPath].every((value) => typeof value === "string" && value.trim())
-      || intent.clientRequestId.length > 128 || !["turn", "compact"].includes(intent.kind)
+      || intent.clientRequestId.length > 128 || !["turn", "compact", "panel_action"].includes(intent.kind)
       || (intent.kind === "turn" ? typeof intent.input !== "string" || !intent.input.trim() : intent.input !== undefined)
+      || (intent.kind === "panel_action" ? !validAction(intent.action) : intent.action !== undefined)
       || Buffer.byteLength(intent.input ?? "") > 1024 * 1024) {
       throw new SessionOperationError("invalid_input", "invalid session operation intent");
     }
     const normalized: OperationIntent = { sessionId: intent.sessionId, clientRequestId: intent.clientRequestId,
       kind: intent.kind, agentName: intent.agentName, configPath: intent.configPath,
-      ...(intent.input === undefined ? {} : { input: intent.input }) };
+      ...(intent.input === undefined ? {} : { input: intent.input }),
+      ...(intent.action === undefined ? {} : { action: { panel: intent.action.panel, action: intent.action.action,
+        ...(intent.action.block === undefined ? {} : { block: intent.action.block }), ...(intent.action.item === undefined ? {} : { item: intent.action.item }) } }) };
     const requestHash = digest(JSON.stringify(normalized));
     return this.transaction(() => {
       const existing = this.database.prepare("SELECT * FROM session_operations WHERE session_id = ? AND client_request_id = ?")
@@ -287,6 +296,11 @@ export class SessionStore {
       if (existing) {
         if (existing.request_hash !== requestHash) throw new SessionOperationError("conflict", "client request ID conflicts with an earlier submitted intent");
         return { operation: this.operationRow(existing) };
+      }
+      // An action runs under the saved agent's rules and never switches it: check in the same transaction that claims the session.
+      if (intent.kind === "panel_action") {
+        const saved = this.database.prepare("SELECT agent_name FROM sessions WHERE id = ?").get(intent.sessionId)?.agent_name;
+        if (saved !== intent.agentName) throw new SessionOperationError("agent_mismatch", `This session's saved agent is ${saved ?? "not set"}; send a message to switch to ${intent.agentName} first`);
       }
       const owner = this.claimInTransaction(intent.sessionId);
       const operation: SessionOperation = { ...normalized, id: randomUUID(), state: "accepted",
@@ -848,7 +862,7 @@ export class SessionStore {
   }
 
   appendAgentMessage(sessionId: string, owner: SessionOwner, message: ModelMessage, metadata: AgentMetadata = {},
-    display: readonly VisibleRecord[] = [], operationId?: string, panels?: PanelWrites): void {
+    display: readonly VisibleRecord[] = [], operationId?: string, panels?: PanelWrites, consumeNotes?: readonly number[]): void {
     this.ownerRow(sessionId, owner);
     const staged = this.stageStored(message, owner);
     const visible = display.map((item) => ({ item, stored: this.stageStored(item.payload, owner) }));
@@ -871,11 +885,42 @@ export class SessionStore {
           .run(sessionId, sequence, this.now(), item.kind, stored.encoded, item.status ?? "complete");
       }
       if (panels) this.writePanels(sessionId, panels);
+      for (const sequence of consumeNotes ?? []) this.database.prepare("DELETE FROM session_pending_notes WHERE session_id = ? AND sequence = ?").run(sessionId, sequence);
       this.writeMetadata(sessionId, metadata);
       this.database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(this.now(), sessionId);
       this.renewSession(sessionId, owner);
     });
     this.discardDuplicateStages([staged, ...visible.map((item) => item.stored)]);
+  }
+
+  /** Notes about panel actions the user ran, oldest first, not yet delivered to the model. */
+  pendingNotes(sessionId: string): Array<{ sequence: number; text: string }> {
+    return this.database.prepare("SELECT sequence, text FROM session_pending_notes WHERE session_id = ? ORDER BY sequence ASC").all(sessionId)
+      .map((row) => ({ sequence: Number(row.sequence), text: String(row.text) }));
+  }
+
+  /**
+   * One committed panel action: the updated panels, its receipts and the note for the model, in one transaction. Nothing
+   * is added to the model context here; the note travels with the next user message (docs/panels-design.md §10).
+   */
+  commitPanelAction(sessionId: string, owner: SessionOwner, commit: { panels?: PanelWrites; display: readonly VisibleRecord[]; note: string }): void {
+    this.ownerRow(sessionId, owner);
+    const visible = commit.display.map((item) => ({ item, stored: this.stageStored(item.payload, owner) }));
+    this.transaction(() => {
+      this.ownerRow(sessionId, owner);
+      for (const { item, stored } of visible) {
+        const sequence = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM history WHERE session_id = ?").get(sessionId)?.next);
+        this.addPayloadReference(stored);
+        this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
+          .run(sessionId, sequence, this.now(), item.kind, stored.encoded, item.status ?? "complete");
+      }
+      if (commit.panels) this.writePanels(sessionId, commit.panels);
+      const next = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM session_pending_notes WHERE session_id = ?").get(sessionId)?.next);
+      this.database.prepare("INSERT INTO session_pending_notes(session_id, sequence, text, created_at) VALUES (?, ?, ?, ?)").run(sessionId, next, commit.note, this.now());
+      this.database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(this.now(), sessionId);
+      this.renewSession(sessionId, owner);
+    });
+    this.discardDuplicateStages(visible.map((item) => item.stored));
   }
 
   /** Runs inside the caller's transaction. */

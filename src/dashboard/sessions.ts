@@ -2,6 +2,8 @@ import { realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { record } from "../management/agents.js";
 import { loadConfig } from "../config.js";
+import { PanelActionError, resolveAction } from "../panels/actions.js";
+import { ToolRegistry } from "../tools/registry.js";
 import { knownPanelDeclarations, type KnownPanels } from "../panels/declarations.js";
 import { buildPanelStack, declarationsFor, loadDeclarationsForSaved, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
 import { parseRequestOverride, requestControls, RequestOverrideError, type RequestControl, type RequestOverride } from "../request-controls.js";
@@ -108,7 +110,9 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     if (!agentName) return undefined;
     try {
       const runtime = await loadConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env, flags: { agent: agentName }, requireModel: false });
-      return await knownPanelDeclarations(runtime, { cwd: context.cwd, env: context.env });
+      const known = await knownPanelDeclarations(runtime, { cwd: context.cwd, env: context.env });
+      const policy = new ToolRegistry(runtime.toolRules);
+      return { ...known, denied: (owner: string) => policy.policyEffect(owner) === "deny" };
     } catch { return undefined; }
   };
   const knownForSession = (id: string) => loadDeclarationsForSaved(() => store.getSession(id)?.agentName, knownPanels);
@@ -209,6 +213,37 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       const found = items.find((item) => item.panel === wanted);
       if (!found) throw new DashboardError(404, "unknown_panel", `Panel ${wanted} does not exist in this session`);
       return reply(found);
+    }
+    const actionRoute = /^\/api\/sessions\/([^/]+)\/panels\/([^/]+)\/actions$/.exec(path);
+    if (actionRoute && method === "POST") {
+      const id = decodeURIComponent(actionRoute[1]!); const session = requireSession(id);
+      const panel = decodeURIComponent(actionRoute[2]!);
+      const body = await context.readJson(request);
+      const clientRequestId = textField(body.clientRequestId, "clientRequestId", 128);
+      const agent = textField(body.agent, "agent");
+      const request_ = { action: textField(body.action, "action", 64),
+        ...(body.block === undefined ? {} : { block: textField(body.block, "block", 64) }), ...(body.item === undefined ? {} : { item: textField(body.item, "item", 128) }) };
+      const intent: OperationIntent = { sessionId: id, clientRequestId, kind: "panel_action", agentName: agent, configPath: context.configPath, action: { panel, ...request_ } };
+      // A replayed request id returns the existing receipt and never re-validates against newer state.
+      if (store.findOperation(id, clientRequestId)) return reply({ operationId: operations.submit(intent).id }, 202);
+      // The saved agent is the one policy and dispatch use; a view showing another agent must not run an action under it.
+      if (session.agentName !== agent) throw new DashboardError(409, "agent_mismatch", `This session's saved agent is ${session.agentName ?? "not set"}; send a message to switch to ${agent} first`);
+      const known = await knownPanels(agent);
+      const found = buildPanelStack(known, store.listSessionPanels(id)).find((item) => item.panel === panel);
+      if (!found) throw new DashboardError(404, "unknown_panel", `Panel ${panel} does not exist in this session`);
+      if (found.stale) throw new DashboardError(409, "stale_panel", "The tool that owns this panel is not selected by this agent");
+      // `deny` hides the tool actions; a stale request for one is forbidden and nothing runs.
+      const declared = known?.declared.find((entry) => `${entry.owner}#${entry.declaration.id}` === panel)?.declaration.actions.find((action) => action.id === request_.action);
+      if (declared?.kind === "tool" && known?.denied?.(found.owner)) throw new DashboardError(403, "action_denied", "Policy denies this tool");
+      let resolved;
+      try { resolved = resolveAction(found.declaration, request_, found.document); }
+      catch (error) {
+        if (error instanceof PanelActionError) throw new DashboardError(422, "invalid_action", error.message);
+        throw error;
+      }
+      if (resolved.action.kind !== "tool") throw new DashboardError(422, "invalid_action", "Prompt actions run in the browser");
+      if (store.sessionIsBusy(id)) throw new DashboardError(409, "session_busy", "Wait for the active operation to finish");
+      return reply({ operationId: operations.submit(intent).id }, 202);
     }
     const sessionRoute = /^\/api\/sessions\/([^/]+)(?:\/(history|operations|metrics|events|output))?$/.exec(path);
     if (sessionRoute) {

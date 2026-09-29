@@ -98,10 +98,10 @@ export class PanelHost {
   }
 
   /** Starts one tool call. `owner` is the tool's canonical identity, never a presentation alias. */
-  begin(callId: string, info: PanelOwnerInfo): PanelCall {
+  begin(callId: string, info: PanelOwnerInfo, source: PanelReceipt["source"] = "tool"): PanelCall {
     // An earlier call that never reached its commit (for example an aborted run) leaves nothing behind.
     if (this.touched.size || this.pendingDeletes.size) this.rollback();
-    return new PanelCall(this, callId, info);
+    return new PanelCall(this, callId, info, source);
   }
 
   /** @internal Applies one update to the working state; used by PanelCall only. */
@@ -183,7 +183,8 @@ export class PanelCall {
   private collected: ToolContentPanel[] = [];
   private readonly ops = new Map<string, "replace" | "patch" | "close">();
 
-  constructor(private readonly host: PanelHost, private readonly callId: string, private readonly info: PanelOwnerInfo) {}
+  constructor(private readonly host: PanelHost, private readonly callId: string, private readonly info: PanelOwnerInfo,
+    private readonly source: PanelReceipt["source"] = "tool") {}
 
   /** Counts accepted updates per canonical panel; rejected attempts and alternative spellings neither add to nor dodge the limit. */
   private run(panel: unknown, body: unknown): { revision: number } {
@@ -244,7 +245,7 @@ export class PanelCall {
       const summary = derivedSummary(doc, title);
       receipts.push({ panel: stored.panelId.slice(stored.owner.length + 1), owner: stored.owner, title, revision: stored.revision, summary,
         ...(progress ? { progress } : {}), status: doc.status ?? "active", op: this.ops.get(stored.panelId) ?? "replace",
-        toolCallId: this.callId, source: "tool" });
+        toolCallId: this.callId, source: this.source });
       confirmations.push(`panel ${stored.panelId.slice(stored.owner.length + 1)} updated (revision ${stored.revision}): ${summary}`);
     }
     for (const [local, error] of rejected) {
@@ -252,7 +253,7 @@ export class PanelCall {
       const declared = this.info.declarations.find((item) => item.id === local);
       receipts.push({ panel: local, owner: this.info.owner, title: current?.document.title ?? current?.declaration.title ?? declared?.title ?? local,
         revision: current?.revision ?? 0, summary: "", status: current?.document.status ?? "idle", op: "replace",
-        toolCallId: this.callId, source: "tool", error });
+        toolCallId: this.callId, source: this.source, error });
     }
     if (resultIsEmpty) lines.unshift(...confirmations);
     return { lines, receipts: receipts.map((receipt) => this.bounded(receipt)), ...(writes ? { writes } : {}) };
@@ -273,6 +274,16 @@ export class PanelCall {
     if (size(out) > PANEL_LIMITS.receiptBytes) out = { ...out, title: truncateBytes(out.title, 80) };
     if (size(out) > PANEL_LIMITS.receiptBytes && out.error) out = { ...out, error: { ...out.error, message: truncateBytes(out.error.message, 120) } };
     return out;
+  }
+
+  /** The receipt of a panel this call did not change: its current state, bounded like every other receipt. */
+  unchangedReceipt(local: string): PanelReceipt {
+    const current = this.host.get(`${this.info.owner}#${local}`);
+    const declared = this.info.declarations.find((item) => item.id === local);
+    const title = current?.document.title ?? current?.declaration.title ?? declared?.title ?? local;
+    const progress = current && derivedProgress(current.document);
+    return this.bounded({ panel: local, owner: this.info.owner, title, revision: current?.revision ?? 0, summary: current ? derivedSummary(current.document, title) : "",
+      ...(progress ? { progress } : {}), status: current ? current.document.status ?? "active" : "idle", op: "replace", toolCallId: this.callId, source: this.source });
   }
 
   commit(): void { this.host.markCommitted(); }

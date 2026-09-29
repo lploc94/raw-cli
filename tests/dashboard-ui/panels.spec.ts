@@ -363,3 +363,93 @@ test.describe("unseen updates", () => {
     await expect(section(page, "local/two#p").locator(".panel-unseen")).toHaveCount(0);
   });
 });
+
+test.describe("panel actions", () => {
+  test.use({ scenario: { agent: { tools: { use: ["builtin/todo"] } }, extraAgents: { other: { model: "fixture", tools: { use: ["builtin/todo"] } } }, responses: [call("c1", "todo", todos(3)), answer] } });
+  const row = (page: Page, label: string) => page.locator(".panel-checklist li", { hasText: label }).first();
+
+  test("the primary action runs on click, updates the row and leaves a receipt from the user", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await send(page, "plan it");
+    await expect(page.getByText("Step 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Mark done: Step 2" }).click();
+    await expect(row(page, "Step 2").getByText("Done", { exact: true })).toBeAttached();
+    await expect(page.getByRole("button", { name: "Mark done: Step 2" })).toHaveCount(0);
+    await expect(page.locator(".panel-tag", { hasText: "You" })).toBeVisible();
+    // The menu offers every applicable action, and Reopen is now available for the finished row.
+    await row(page, "Step 2").getByRole("button", { name: "Actions for Step 2" }).click();
+    await expect(page.getByRole("menuitem", { name: "Reopen" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Mark done" })).toHaveCount(0);
+  });
+
+  test("a prompt action fills the message box without sending", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await send(page, "plan it");
+    await expect(page.getByText("Step 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Todo section menu" }).click();
+    await page.getByRole("menuitem", { name: "Continue" }).click();
+    await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("Continue with the next pending todo item.");
+    await expect(page.getByTestId("assistant-message")).toHaveCount(1);
+  });
+
+  test("an unsent agent switch disables tool actions with the reason but keeps prompt actions", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await send(page, "plan it");
+    await expect(page.getByText("Step 3", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("menuitem", { name: /^Agent:/ }).press("ArrowRight");
+    await page.getByRole("menuitemradio", { name: "other" }).press("Enter");
+    const primary = page.getByRole("button", { name: "Mark done: Step 2" });
+    await expect(primary).toBeDisabled();
+    await expect(primary).toHaveAttribute("title", "Send a message to switch to other first");
+    await page.getByRole("button", { name: "Todo section menu" }).click();
+    await expect(page.getByRole("menuitem", { name: "Continue" })).not.toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByRole("menuitem", { name: "Clear completed" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  test("the section menu lists panel actions even while the section is collapsed, and the glyph is the primary action", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await send(page, "plan it");
+    await expect(page.getByText("Step 3", { exact: true })).toBeVisible();
+    // The status glyph itself is the button.
+    await expect(page.getByRole("button", { name: "Mark done: Step 2" }).locator(".panel-status")).toBeVisible();
+    await toggle(page, "Todo").click();
+    await expect(toggle(page, "Todo")).toHaveAttribute("aria-expanded", "false");
+    await page.getByRole("button", { name: "Todo section menu" }).click();
+    await expect(page.getByRole("menuitem", { name: "Continue" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Clear completed" })).toBeVisible();
+  });
+
+  test("the panel with actions passes axe", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await send(page, "plan it");
+    await expect(page.getByRole("button", { name: "Mark done: Step 2" })).toBeVisible();
+    const scan = () => new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    expect((await scan()).violations).toEqual([]);
+  });
+});
+
+test.describe("actions on other blocks", () => {
+  test.use({ scenario: { agent: { tools: { use: ["local/board"], rules: [{ match: "local/board", effect: "allow" }] } }, responses: [call("b1", "board", {}), answer] } });
+  test("an untitled block and a table row offer their actions", async ({ page, raw }) => {
+    const publish = `await context.panels.update("main", { op: "replace", document: { blocks: [
+      { id: "notes", kind: "markdown", text: "Just text" },
+      { id: "rows", kind: "table", title: "Rows", columns: [{ id: "name", label: "Name" }], rows: [{ id: "r1", cells: { name: "Alpha" }, status: "pending" }] } ] } });`;
+    plugin(raw, "board", [decl("main", "Board", { actions: [
+      { id: "note", label: "Annotate", scope: "block", blocks: ["notes"], kind: "prompt", text: "About {{block.id}}" },
+      { id: "row", label: "Open row", scope: "item", blocks: ["rows"], kind: "prompt", text: "Row {{item.id}} in {{block.id}}" },
+    ] })], publish);
+    await openChat(page, raw);
+    await send(page, "go");
+    await expect(page.getByTestId("assistant-message")).toHaveCount(1);
+    await side(page).click();
+    await toggle(page, "Board").click();
+    await expect(page.getByText("Just text")).toBeVisible();
+    await page.getByRole("button", { name: "Actions for markdown" }).click();
+    await page.getByRole("menuitem", { name: "Annotate" }).click();
+    await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("About notes");
+    await page.getByRole("button", { name: "Actions for Alpha" }).click();
+    await page.getByRole("menuitem", { name: "Open row" }).click();
+    await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue("Row r1 in rows");
+  });
+});

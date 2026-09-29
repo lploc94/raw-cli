@@ -11,6 +11,8 @@ export interface KnownPanels {
   declared: KnownPanel[];
   /** Selected owners without declarations for their panels: MCP tools without config panels and ACP tools without `panels`. */
   implicitOwners: string[];
+  /** Set by hosts that know the agent's tool policy: true when a `deny` rule hides this owner's tool actions (§11). */
+  denied?: (owner: string) => boolean;
 }
 
 /** A tool registered by an ACP client for the current session; the runtime cannot know it from config. */

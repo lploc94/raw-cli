@@ -10,7 +10,9 @@ import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAd
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
+import { resolveAction } from "./panels/actions.js";
 import { PanelHost, type PanelCall } from "./panels/host.js";
+import { truncateBytes } from "./panels/render.js";
 import type { PanelDocument, PanelWrites } from "./panels/contract.js";
 import type { ToolResult } from "./tools/types.js";
 import type { SessionOwner, SessionStore } from "./sessions/store.js";
@@ -247,10 +249,10 @@ export class AgentSession {
   }
 
   private commitMessage(message: ModelMessage, metadata: AgentMetadata = {}, display: readonly VisibleRecord[] = [], consumeOperation = false,
-    panels?: PanelWrites): void {
+    panels?: PanelWrites, consumeNotes?: readonly number[]): void {
     this.durable((store, sessionId, owner) => store.appendAgentMessage(sessionId, owner, message, metadata,
       display.map((item) => ({ ...item, payload: this.visiblePayload(item.payload) })),
-      consumeOperation ? this.persistence?.operationId : undefined, panels));
+      consumeOperation ? this.persistence?.operationId : undefined, panels, consumeNotes));
     this.messages.push(structuredClone(message));
   }
 
@@ -479,6 +481,100 @@ export class AgentSession {
     return running;
   }
 
+  /**
+   * Runs one declared `tool` panel action for the user (docs/panels-design.md §11) through the unchanged dispatch path:
+   * the click consents to an `allow` rule only, `ask` still asks, `deny` never runs, and hooks see `source: "user_action"`.
+   * Updates, the receipt and a note for the model's next request commit in one transaction; nothing is committed when the
+   * handler never ran.
+   */
+  runPanelAction(request: { panel: string; action: string; block?: string; item?: string }, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+    if (this.currentState === "closed" || this.currentState === "closing") return Promise.reject(new Error("agent session is closed"));
+    if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
+    if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
+    this.currentState = "running";
+    this.currentTurnId = this.persistence?.operationId ?? randomUUID();
+    this.heartbeat?.ref();
+    const controller = new AbortController();
+    this.controller = controller;
+    const running = this.panelAction(request, controller, onEvent).finally(() => {
+      this.controller = undefined;
+      this.activeRun = undefined;
+      this.panels.setListener(undefined);
+      this.heartbeat?.unref();
+      if (this.currentState !== "closing" && this.currentState !== "closed") this.currentState = "idle";
+    });
+    this.activeRun = running;
+    return running;
+  }
+
+  private async panelAction(request: { panel: string; action: string; block?: string; item?: string }, controller: AbortController,
+    onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+    const fail = (code: string, message: string): RunResult => ({ status: "error", steps: 0, code, message });
+    const emit = (event: RunEvent) => { try { onEvent?.(structuredClone({ ...event, ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}) })); } catch { /* observers never own execution */ } };
+    const hash = request.panel.lastIndexOf("#");
+    const owner = hash < 0 ? "" : request.panel.slice(0, hash);
+    const registry = this.options.registry;
+    const toolName = registry.nameForIdentity(owner);
+    const info = toolName ? registry.panelDeclarations(toolName) : undefined;
+    const declaration = info?.declarations.find((item) => item.id === request.panel.slice(hash + 1));
+    if (!toolName || !info || !declaration) return fail("stale_panel", "the tool that owns this panel is not selected by this agent");
+    const stored = this.panels.snapshot().find((panel) => panel.panelId === request.panel);
+    let resolved;
+    try { resolved = resolveAction(declaration, request, stored?.document ?? null); }
+    catch (error) { return fail("invalid_action", (error as Error).message); }
+    if (resolved.action.kind !== "tool") return fail("invalid_action", "only tool actions run on the host");
+    const operationId = this.currentTurnId!;
+    const hookRequest = () => ({ cwd: this.options.cwd, agent_id: this.options.provider.modelConfig.agentName,
+      ...(this.persistence ? { session_id: this.persistence.sessionId } : {}), turn_id: operationId });
+    this.panels.setListener((event) => emit({ type: "panel_update", ...event }));
+    const panelCall = this.panels.begin(operationId, info, "user_action");
+    let started = false;
+    let dispatched: ToolResult;
+    try {
+      await this.start(this.messages.length ? "resume" : "create", emit, controller.signal);
+      dispatched = await registry.dispatch(toolName, resolved.arguments ?? {}, {
+        cwd: this.options.cwd,
+        maxOutputBytes: this.options.maxOutputBytes,
+        autoApprove: true,
+        ...(this.options.approve ? { approve: this.options.approve } : {}),
+        ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
+        signal: controller.signal,
+        toolCallId: operationId,
+        panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => panelCall.endWindow(),
+        ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult) =>
+          this.options.hooks!.run(event, { ...hookRequest(), tool: { identity, name, source: "user_action", arguments: args, ...(result ? { result } : {}) } },
+            { ...(event === "PreToolUse" ? { signal: controller.signal } : { deadline: Date.now() + 2000 }),
+              onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
+        onStart: () => { started = true; },
+      });
+    } catch (error) {
+      panelCall.rollback();
+      return controller.signal.aborted ? { status: "cancelled", steps: 0 } : fail("action_error", (error as Error).message);
+    }
+    if (!started) { panelCall.rollback(); if (controller.signal.aborted) return { status: "cancelled", steps: 0 }; return fail(dispatched.code ?? "action_error", dispatched.content.find((block) => block.type === "text")?.text ?? "the action did not run"); }
+    try {
+      const settled = panelCall.settle(dispatched.content.length === 0);
+      const text = truncateBytes([...dispatched.content.flatMap((block) => block.type === "text" ? [block.text] : []), ...settled.lines].join("\n"), 1024);
+      // The receipt for the panel the user clicked: the update the tool made to it, or its unchanged current state.
+      const local = request.panel.slice(hash + 1);
+      const own = settled.receipts.find((receipt) => receipt.panel === local && receipt.owner === owner) ?? panelCall.unchangedReceipt(local);
+      const receipts = settled.receipts.includes(own) ? settled.receipts : [...settled.receipts, own];
+      const title = own.title;
+      const note = `The user ran "${resolved.action.label}" on ${title}; ${owner} returned: ${text || (dispatched.isError ? "an error" : "no text")}`;
+      this.durable((store, sessionId, sessionOwner) => store.commitPanelAction(sessionId, sessionOwner, {
+        ...(settled.writes ? { panels: settled.writes } : {}), note,
+        display: receipts.map((receipt) => ({ kind: "panel_receipt", payload: this.visiblePayload({ ...receipt }) })) }));
+      panelCall.commit();
+    } catch (error) {
+      panelCall.rollback();
+      return this.persistenceError ? fail("persistence_error", this.persistenceError.message) : fail("action_error", (error as Error).message);
+    }
+    if (controller.signal.aborted) return { status: "cancelled", steps: 0 };
+    return dispatched.isError
+      ? fail(dispatched.code ?? "action_error", dispatched.content.find((block) => block.type === "text")?.text ?? "the action failed")
+      : { status: "completed", steps: 0, text: "" };
+  }
+
   private async execute(input: UserInput, controller: AbortController, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     let steps = 0;
     let observerError: Error | undefined;
@@ -607,8 +703,13 @@ export class AgentSession {
       if (promptHook?.blocked) return finish({ status: "error", steps,
         code: promptHook.blocked === "denied" ? "hook_denied" : "hook_error",
         ...(promptHook.reason ? { message: promptHook.reason } : {}) });
-      this.commitMessage({ role: "user", content: structuredClone(input) }, firstTask ? { originalTask: input } : {},
-        [{ kind: "user", payload: { input: structuredClone(input) } }], true);
+      // Notes about panel actions the user ran since the last turn travel with this message and are cleared with it (§10).
+      const notes = this.persistence ? this.persistence.store.pendingNotes(this.persistence.sessionId) : [];
+      const noteText = notes.map((note) => note.text).join("\n");
+      const modelInput: UserInput = !notes.length ? input
+        : typeof input === "string" ? `${noteText}\n\n${input}` : [{ type: "text", text: noteText }, ...input];
+      this.commitMessage({ role: "user", content: structuredClone(modelInput) }, firstTask ? { originalTask: input } : {},
+        [{ kind: "user", payload: { input: structuredClone(input) } }], true, undefined, notes.map((note) => note.sequence));
       if (firstTask) this.originalTask = structuredClone(input);
       // A chat still carrying a placeholder title is named from its first message, even when that turn predates this fix.
       this.durable((store, sessionId, owner) => store.setTitleFromPrompt(sessionId, owner, renderUserInput(input)));
@@ -735,7 +836,7 @@ export class AgentSession {
               ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => panelCall.endWindow() } : {}),
               ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
                 name: string, args: Record<string, unknown>, result?: ToolResult) => this.options.hooks!.run(event,
-                { ...hookRequest(), tool: { identity, name, arguments: args, ...(result ? { result } : {}) } },
+                { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(result ? { result } : {}) } },
                 { ...(event === "PreToolUse" ? { signal: controller.signal } : {
                   deadline: controller.signal.aborted ? (terminalDeadline ??= Date.now() + 2000) : Date.now() + 2000 }),
                   onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),

@@ -24,7 +24,8 @@ export interface HookRequest {
   turn_id?: string;
   source?: "create" | "resume";
   input?: unknown;
-  tool?: { identity: string; name: string; arguments: Record<string, unknown>; result?: unknown };
+  /** `source` is `user_action` when the user ran a panel action (docs/panels-design.md §11); a missing value means `model`. */
+  tool?: { identity: string; name: string; source?: "model" | "user_action"; arguments: Record<string, unknown>; result?: unknown };
   run?: unknown;
 }
 export interface HookExecution { decision: "continue" | "deny"; reason?: string; message?: string; durationMs: number }

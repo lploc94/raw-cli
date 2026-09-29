@@ -126,9 +126,13 @@ export class SessionOperations {
         ...(attached.compact ? { compact: attached.compact } : {}) }), historyWatermark: store.historyWatermark(operation.sessionId),
         ...(attached.capabilities ? { capabilities: attached.capabilities } : {}) });
       if (active.controller.signal.aborted) throw new Error("operation cancelled");
-      publishState(operation.kind === "turn" ? "running" : "compacting");
+      publishState(operation.kind === "compact" ? "compacting" : "running");
       if (operation.kind === "turn") {
         result = await runtime.agent.run(active.blocks ?? operation.input!, event); state = result.status;
+      } else if (operation.kind === "panel_action") {
+        const run = await runtime.agent.runPanelAction(operation.action!, event);
+        result = run; state = run.status;
+        if (run.status === "error") error = { code: run.code ?? "action_error", message: run.message ?? "the action failed" };
       } else {
         result = await runtime.agent.compact(runtime.compactOptions, event);
         state = result.status === "cancelled" ? "cancelled" : "completed";

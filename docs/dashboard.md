@@ -52,6 +52,7 @@ The chat header's **Side panel** button shows a stack of collapsible sections: o
 - **Agents.** Picking another agent in the chat's `⋯` menu rebuilds the stack for that agent. A panel whose tool the agent no longer selects is marked *Stale*.
 - **Widgets.** Checklists have collapsible child items and a **Hide completed** toggle (one choice per browser); steps show how long a finished step took; timelines list the newest event first with relative time. Unknown block kinds show their fallback text.
 - **Unseen.** A section's dot clears only when it is expanded and inside the visible part of the stack.
+- **Actions.** A panel can declare actions: a primary glyph button on an item (for example *Mark done*), and a `⋯` menu on the item, block or section with the rest. `prompt` actions fill the message box (or send it, if declared `send`); `tool` actions run through the same tool policy, approvals and hooks as a model call, never call the model, and leave a receipt tagged *You*. Their result reaches the model as a short note in front of your next message. Tool actions are disabled while an operation runs, after an unsent agent switch (*Send a message to switch to <agent> first*), and for a stale panel; a `deny` rule hides them. A `confirm` text asks first.
 - **File references** in a panel insert `@path` into your message.
 
 [Side panel](dashboard/chat-dark-side-panel.png) shows the Todo section beside its receipt in the chat. Reproduce it after building with `node --import tsx tests/dashboard-ui/capture-panels.ts`.
