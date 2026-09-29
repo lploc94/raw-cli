@@ -4,7 +4,7 @@ Design and contract for **tool panels**: live, structured state that a tool publ
 
 This file is the source of truth for the protocol. User-facing behavior will be summarized in `tools.md`, `dashboard.md`, `dashboard-api.md`, `acp.md` and `cli.md` when it is implemented. The machine-readable schema will be `schemas/raw-panel.schema.json`, and it must agree with this file.
 
-Status: design proposed 2026-09-29; Codex (gpt-6-astra) design review APPROVE after 4 rounds on 2026-09-29; not implemented. Update this file whenever a decision changes. A change to a wire shape is a protocol change (see §13).
+Status: design proposed 2026-09-29; Codex (gpt-6-astra) design review APPROVE after 4 rounds on 2026-09-29; section-stack revision (D13) APPROVE after 3 rounds on 2026-09-29; not implemented. Update this file whenever a decision changes. A change to a wire shape is a protocol change (see §13).
 
 ## Contents
 
@@ -96,7 +96,7 @@ ACP _raw/tool/call response {type:"panel"} ────────────�
             ACP plan / _raw/panel     history "panel_receipt"
                            │                 │
                            ▼                 ▼
-              side panel tab / CLI receipt / reminder after compact
+              side panel section / CLI receipt / reminder after compact
 ```
 
 - `PanelHost` is the single owner of panel state for an attached session runtime. All emission paths converge on it, so validation, limits and revisions are identical everywhere.
@@ -150,7 +150,7 @@ ACP _raw/tool/call response {type:"panel"} ────────────�
 | Field | Type | Default | Rule |
 | --- | --- | --- | --- |
 | `id` | string | required | `^[a-z][a-z0-9_-]{0,31}$`. Unique within the tool. |
-| `title` | string | required | 1–40 characters. The tab label and receipt title. The document may override the displayed title. |
+| `title` | string | required | 1–40 characters. The section and receipt title. The document may override the displayed title. |
 | `icon` | string | `"panel"` | One of `list-checks`, `list-ordered`, `file-text`, `table`, `activity`, `gauge`, `folder-tree`, `flag`, `panel`. An unknown value falls back to `panel` with a load warning, not an error. |
 | `open` | `"never"` \| `"first_update"` | `"never"` | A hint for the dashboard (§13.1). The user preference overrides it. |
 | `context` | `"none"` \| `"summary"` | `"none"` | Whether the model is reminded of this panel after compaction (§10). |
@@ -161,8 +161,8 @@ Validation happens when the loader reads the manifest, **before** any handler is
 
 **Tools without a manifest** (MCP and ACP-registered tools) declare panels implicitly:
 
-- **MCP.** The first update for an unknown panel ID creates a declaration with defaults. `title` is the document's `title`, or the panel ID when the document has none. Also, `actions`, `context` and `acp_plan` are off. An MCP server entry in config may add `"panels": [...]` with the same shape to opt into more.
-- **ACP client tools.** `_raw/tool/register` accepts an optional `panels` array with the same shape.
+- **MCP.** The first update for an unknown panel ID creates a declaration with defaults. `title` is the document's `title`, or the panel ID when the document has none. Also, `actions`, `context` and `acp_plan` are off. An MCP server entry in config may add `"panels": [...]` with the same shape plus a required `"tool": "<MCP tool name>"` field naming the owner (`mcp/<server>/<tool>`). Such panels are **explicitly declared**, like `tool.json` panels.
+- **ACP client tools.** `_raw/tool/register` accepts an optional `panels` array with the same shape. A registration belongs to one ACP peer's runtime and ends with it. The dashboard is a different peer, so it treats ACP-registered panels like implicit ones: they join the dashboard stack on their first update.
 
 ## 6. Panel document
 
@@ -496,48 +496,87 @@ Actions let the user change panel state or steer the agent, without free-form ed
 - **Retention and deletion** follow the session. Deleting a session cascades.
 - **States.** `open`, then `closed` (by `close`), then `open` again (by `replace`). `stale` is derived, not stored: the owner is not in the current agent's selection, or its declaration no longer contains the panel ID. A stale panel stays readable and loses its actions.
 - **Resume under a different agent or tool version.** The document is kept. The declaration used for display comes from the current manifest when the owner is still selected, and from the stored snapshot otherwise.
-- **Limit reached.** When a session already has 16 panels, the first update to a new panel is rejected with `panel_limit`. The least recently updated closed panel is evicted first when one exists.
+- **Limit reached.** Only panels that hold data count. Declared panels shown empty in the dashboard (§13.1) do not. When a session already has 16 panels with data, the first update to a new panel is rejected with `panel_limit`. The least recently updated closed panel is evicted first when one exists.
 
 ## 13. Surfaces
 
 ### 13.1 Dashboard
 
-**Side panel structure**
+**Side panel structure: a stack of sections**
 
-- The right-hand inspector becomes the **side panel**, a tabbed container using the WAI-ARIA tabs pattern.
-- **Tab order.** Tool panels come first, in the order they were created in this session. **Details**, the current inspector content, is always last. The order never reorders on update, so tabs do not jump.
-- **Tab contents.** Each tab shows the declaration icon, the title, and one of two badges: an unseen dot when the revision is newer than the last one viewed in this browser, or `done/total` when progress exists.
-- **Overflow.** Tabs beyond the width move into a `⋯` menu. Closed panels are listed there under "Closed".
+The right-hand inspector becomes the **side panel**: a vertical stack of collapsible sections, like the views in VS Code's Explorer. There are no tabs. Each section is one panel. Its header doubles as a summary card when the section is collapsed.
+
+- **Always present.** The stack lists every **known declaration** for the session's **stack agent** (defined below), even before a tool has run:
+  - panels in the `tool.json` of each tool the agent selects;
+  - panels in the config `panels` of each MCP server the agent selects (§5).
+
+  The server reads only manifests and config to build this list, the same way the loader validates manifests before importing any handler. No handler runs and no MCP server starts. A declared panel without data shows a muted, collapsed card: "No data yet", with no progress bar. **Implicit** panels (MCP panels without a config declaration, and every ACP-registered panel) join the stack on their first update.
+- **Stack agent.** The stack agent is the agent currently selected for the chat in this view, which is the agent the next operation will use.
+  - It starts as the session's saved agent.
+  - When the user picks another agent in the chat's `⋯` menu, or a snapshot or reset frame reports a different saved agent, the dashboard refetches `GET /api/sessions/:id/panels?agent=NAME`. The stack is then rebuilt from that response.
+  - `stale` (§12) is computed against the same agent, so the stack and the stale labels always agree.
+  - An agent switch that produces no panel update still refreshes the stack immediately, including after a stream resume.
+  - **Actions during an unsent agent switch.** While the stack agent differs from the session's saved agent, `tool` actions are disabled with the tooltip "Send a message to switch to <agent> first". `prompt` actions stay available, because they only fill or send a user message. The saved agent is the one policy and dispatch use. The action request therefore names the agent the dashboard displayed (`agent`), and the server rejects it with `409 agent_mismatch` when that is not the saved agent, so a stale view can never run an action under another agent's rules.
+- **Default order.**
+  1. Declared `tool.json` panels, ordered by the owner's position in the agent's `tools.use`, then by the order of the tool's `panels` array.
+  2. Config-declared MCP panels, ordered by the server's position in the agent's MCP selection, then by the order of its `panels` array.
+  3. Implicit panels, in the order they first updated.
+  4. Stale panels (§12) that still hold data, each labeled "Stale", in the order they were created.
+  5. **Details**, the current inspector content, always last.
+- **User order.** The user can move a section by dragging its header, or with **Move up** and **Move down** in its `⋯` menu, so reordering also works from the keyboard. The order is stored in the browser per agent, keyed by full panel ID (`raw.dashboard.panels.v1`), and never in config. A stored ID that no longer exists is ignored. Details cannot be moved.
+- **Insertion rule.** A panel new to the stack (for example after the agent selects another tool) is inserted deterministically, and existing sections never change their relative order:
+  - walk **backwards** through the default order from the new panel, and insert it immediately after the first predecessor present in the user's order;
+  - if it has no present predecessor, insert it at the top of the stack.
+- **Hide.** The `⋯` menu has **Hide section**, stored per agent in the same browser key.
+  - A hidden section stays hidden when its panel updates. Its chat receipts still open it on click, which unhides it.
+  - A final row, "N hidden sections", lists hidden sections so they can be shown again.
+- **Section header (the card).** It has a **fixed height** of one line, whatever its content. The summary is truncated with an ellipsis. The progress bar is drawn as a 2 px line along the header's bottom edge, so it takes no extra height when it first appears. The header shows, in order:
+  - the declaration icon and the title;
+  - the summary and a thin progress bar when progress exists;
+  - an unseen dot when the revision is newer than the last one viewed in this browser;
+  - status text for `done`, `failed`, "Closed" and "Stale";
+  - the `⋯` menu with the panel actions (§11), Move up, Move down and Hide section.
+
+  The header is a button with `aria-expanded` (the WAI-ARIA accordion pattern), toggled by Enter or Space.
+- **Expand and collapse.** Every section starts collapsed. The user's expand state is stored per session in the browser.
+  - **Updates never expand, collapse, move or resize a section.** New content appears in place, or as a changed header while collapsed. Content that someone is reading therefore never jumps.
+- **Size.** An expanded section has a **fixed outer height**, never derived from its content:
+  - by default, 50% of the side panel's height when it is expanded;
+  - after the user drags the divider below it, the height the user chose, stored per agent in the browser.
+
+  New content never changes this height, and it scrolls inside the section. Only the user changes the height, by dragging, collapsing or resizing the window. A section whose content is shorter than its height shows empty space. The whole side panel scrolls only when the stacked headers and sections exceed its height.
+- **Closed panels.** A tool's `close` (§9) keeps the section in the stack, collapsed, with "Closed" in the header and its document still readable. A later `replace` reopens it.
+- **Details.** A section like the others, collapsed by default.
 
 **Header control**
 
-- The Info button becomes a side-panel toggle, `aria-label="Side panel"` with a `PanelRight` icon.
-- When a panel with progress exists, a compact chip beside it shows the most recently updated panel's `done/total`. Clicking the chip opens that tab.
+- The Info button becomes a side-panel toggle, `aria-label="Side panel"` with a `PanelRight` icon. The side panel shows or hides the whole stack. There is no progress chip on the chat header: collapsed section headers already show every panel's progress.
 
 **Opening**
 
+- **Default.** The side panel is closed, and nothing opens without a reason.
 - **Preference.** "Open the side panel for tool updates" is either **Follow the tool** (default) or **Never**.
-- **Follow the tool.** A panel declared with `open: "first_update"` opens the side panel at that tab once per session per browser, on its first revision. Focus never moves. Later updates only set the unseen dot.
-- **Narrow viewports.** The side panel is the existing modal drawer and never opens automatically.
+- **Follow the tool.** When a panel declared with `open: "first_update"` receives its first revision **and its section is not hidden**, the side panel opens once per session per browser and scrolls that section into view. The section is expanded only if no other section is expanded at that moment. Focus never moves. Later updates only set the unseen dot. An update to a hidden section never opens the side panel, never scrolls and never unhides it; only a receipt click or the "N hidden sections" row does.
+- **Narrow viewports.** The side panel is the existing modal drawer holding the same stack. It never opens automatically.
 
 **Chat receipts**
 
-- A `panel_receipt` shows as a compact row under its tool result: icon, title, summary and a thin progress bar. Clicking it opens the tab. Receipts from `user_action` are labeled "You".
+- A `panel_receipt` shows as a compact row under its tool result: icon, title, summary and a thin progress bar. Clicking it opens the side panel, unhides and expands that section, and scrolls it into view. Receipts from `user_action` are labeled "You".
 
 **Live and reload**
 
 - The session stream gains event type `panel`: `{ panel, revision, closed, receipt?, document }`. It carries the full document (≤ 64 KiB) and is coalesced to 250 ms per panel.
-- `snapshot` and `reset` frames include all panels and are **authoritative**. On receiving one, the dashboard replaces its whole panel state with the frame's content, even when a panel's revision is lower than one it showed before. This is how provisional live revisions lost in a crash (§8.2) are corrected. Between snapshots, a `panel` frame whose revision is not greater than the one shown is ignored. A new stream epoch always starts with a snapshot.
+- `snapshot` and `reset` frames include the session's saved agent and all panels, and are **authoritative**. On receiving one, the dashboard replaces its whole panel state with the frame's content, even when a panel's revision is lower than one it showed before. This is how provisional live revisions lost in a crash (§8.2) are corrected. Between snapshots, a `panel` frame whose revision is not greater than the one shown is ignored. A new stream epoch always starts with a snapshot.
 
 **Accessibility**
 
-- Tabs, trees and tables use native semantics. A polite live region announces `"<title>: <done> of <total> done"`, at most once every 5 s per panel. Everything is operable from the keyboard.
+- Section headers follow the accordion pattern. Trees and tables use native semantics. Drag reordering always has the keyboard alternative in the `⋯` menu. A polite live region announces `"<title>: <done> of <total> done"`, at most once every 5 s per panel. Everything is operable from the keyboard.
 - The side panel passes the axe checks in light and dark themes, like the other dashboard surfaces.
 
 **Stale and error states**
 
 - A stale panel shows the banner "The tool that owns this panel is not selected by this agent." and disables its actions.
-- A rejected update shows the notice "Update rejected: <code>" once in the tab, and the previous revision stays visible.
+- A rejected update shows the notice "Update rejected: <code>" once in the section, and the previous revision stays visible.
 
 **HTTP API**
 
@@ -545,9 +584,9 @@ Full panel IDs are URL-encoded in paths.
 
 | Route | Result |
 | --- | --- |
-| `GET /api/sessions/:id/panels` | `{ items: [{ panel, owner, title, icon, revision, updatedAt, closed, stale, declaration, document }] }` |
+| `GET /api/sessions/:id/panels[?agent=NAME]` | `{ agent, items: [{ panel, owner, title, icon, revision, updatedAt, closed, stale, declaration, document }] }`, in default order (§13.1) for `agent`, which defaults to the session's saved agent. An unknown agent returns `422 unknown_agent`. A declared panel without data has `revision: 0`, `updatedAt: null` and `document: null`. |
 | `GET /api/sessions/:id/panels/:panel` | One item. `404 unknown_panel` if it does not exist. |
-| `POST /api/sessions/:id/panels/:panel/actions` | Body `{ action, block?, item?, clientRequestId }`. Returns `202 { operationId }`, or an error: `404 unknown_panel`, `409 session_busy`, `409 stale_panel`, `422 invalid_action`, or `403 action_denied` when a policy rule is `deny`. |
+| `POST /api/sessions/:id/panels/:panel/actions` | Body `{ action, agent, block?, item?, clientRequestId }`. Returns `202 { operationId }`, or an error: `404 unknown_panel`, `409 session_busy`, `409 stale_panel`, `409 agent_mismatch` (when `agent` is not the session's saved agent), `422 invalid_action`, or `403 action_denied` when a policy rule is `deny`. |
 
 These routes use the existing `DashboardError` shapes and the same origin and token checks as the other session routes.
 
@@ -719,9 +758,8 @@ The reference tool proves the contract end to end.
 
 | Surface | Todo |
 | --- | --- |
-| Dashboard side panel | The "Todo" tab with `3/7`. A checklist tree where clicking a glyph marks the item done. The header menu has Continue and Clear completed. |
+| Dashboard side panel | The "Todo" section, present in the stack even before the first call ("No data yet"). Collapsed, its header shows `3/7 · Fix the API` and a progress bar. Expanded, it shows a checklist tree where clicking a glyph marks the item done. The header `⋯` menu has Continue and Clear completed. |
 | Dashboard chat | Receipt `Todo · 3/7 · Fix the API` under each `todo` call. |
-| Header chip | `3/7`, which opens the tab. |
 | CLI | Receipt line after each call. `/panels todo` prints the list. |
 | ACP | A standard `plan` update, which Zed and other ACP clients show natively. |
 | Model after compaction | The reminder "Current state of Todo (builtin/todo) at revision N: …". |
@@ -769,7 +807,10 @@ A `tool` action is a real tool call with `source: "user_action"`, under the same
 `<owner>#<id>` prevents one tool from overwriting another tool's panel. Presentation aliases cannot impersonate an owner.
 
 ### D9. Open quietly by default
-The tool can hint `first_update`, the user preference decides, focus never moves, and narrow viewports never open automatically. Later updates only set a dot. This avoids a panel stealing attention on every step.
+The side panel starts closed. The tool can hint `first_update`, and the user preference decides. Focus never moves, and narrow viewports never open automatically. Updates never expand, collapse, move or resize a section; they only change the header and set a dot. This keeps a panel from stealing attention, or moving text under the reader, on every step.
+
+### D13. A stack of always-present sections, not tabs
+Panels are collapsible sections stacked top to bottom, in declaration order, and the user can reorder and hide them. Collapsed headers show every panel's summary and progress at once, so the user can watch Todo and Spec together without switching. There is no tab overflow and no need to pick one panel for a header chip. Listing declared panels before they have data makes the layout stable and shows what the agent can track. The costs are vertical space and possible noise from empty cards. Capped section heights with inner scrolling, user-sized dividers, collapsed defaults, one-line empty cards and Hide section address them.
 
 ### D10. Degrade, never block
 Invalid updates are dropped with a visible notice, and the tool call still succeeds. Unknown blocks fall back to text. Older clients and dashboards keep working. An older Raw rejects a panel tool at install or load time with an explicit error, never partway through a turn.
@@ -789,6 +830,9 @@ Standard ACP clients get todo progress natively through `plan`. Richer panels ne
 - **JSON Patch (RFC 6902) as the patch language.** It is too general for models and tool authors. Operations addressed by item ID are safer and easier to validate.
 - **A model-facing "panel" tool.** Any model could then write any panel without the owning tool's validation. Panels belong to tools.
 - **Storing every revision in history.** History grows without bound for chatty tools, and the full snapshots add nothing beyond receipts.
+- **Tabs for panels.** Only one panel is visible at a time, tabs overflow with many tools, and progress needs a separate header chip whose target shifts between panels.
+- **Showing a panel only after its first update.** The layout changes as tools run, and the user cannot see what the agent can track.
+- **Split views that show two panels side by side.** The side panel is too narrow; stacked sections already show several panels at once.
 - **Images in panels.** Payload lifecycle and size questions have no use case in `raw.panel/1`. `view_image` and the tool result already carry images.
 
 ## 22. Implementation outline and verification map
@@ -796,9 +840,9 @@ Standard ACP clients get todo progress natively through `plan`. Richer panels ne
 The outline is for a later `loop-plan`. Each phase is one commit, and every phase keeps all existing gates green.
 
 1. **Core.** Types, `schemas/raw-panel.schema.json`, validator, patch engine, `PanelHost`, `session_panels`, `panel_receipt`, result-block stripping and model confirmation lines, and `context.panels`.
-2. **Declarations.** The `panels` manifest field, package capability `raw.panel/1`, MCP `_meta["raw/panel"]`, ACP registration `panels`, and the stale derivation.
+2. **Declarations.** The `panels` manifest field, config `panels` on MCP server entries (with `tool`), package capability `raw.panel/1`, MCP `_meta["raw/panel"]`, ACP registration `panels`, the stale derivation, and computing known declarations per agent without importing handlers.
 3. **`builtin/todo`.** Manifest, handler and validator, `examples/tools/todo`, and `tools.md`.
-4. **Dashboard read path.** Side-panel tabs, all eight widgets, receipts, the header chip, the SSE `panel` event and snapshot, the open preference, the unseen dot, and axe checks.
+4. **Dashboard read path.** The side-panel section stack (declared panels always present, default and user order, hide, expand state, divider height), all eight widgets, receipts, the SSE `panel` event and snapshot, the open preference, the unseen dot, and axe checks.
 5. **Actions.** The `panel_action` operation, the HTTP route, approval and hooks with `source`, the model note, and the dashboard action UI.
 6. **CLI and ACP.** Receipt lines, `/panels`, `raw sessions panels`, ACP `plan`, `_raw/panel/update` and `_raw/panel/action`, and replay.
 7. **Compaction reminder.** Plus final docs: `dashboard.md`, `dashboard-api.md`, `acp.md`, `cli.md` and `context.md`.
@@ -810,9 +854,10 @@ The outline is for a later `loop-plan`. Each phase is one commit, and every phas
 | D4 | The same update via a result block, `context.panels`, MCP `_meta` and an ACP tool yields identical stored documents and revisions. `PostToolUse` hooks and `capResult` never see panel blocks. A failed commit transaction keeps no panel state. |
 | D5 | Provider request snapshots contain no panel bytes, and the cache key is unchanged by panel-only updates. |
 | D6 | Patch engine tests: atomic rejection, `base_revision` conflict, `upsert_items` merge semantics, and timeline trimming. |
-| D7 | Action tests: `allow` runs on click with no approval, `ask` prompts even with `-y`, `deny` hides the action and returns 403, hooks see `source: "user_action"` in the existing order, and the model note appears before the next request. |
+| D7 | Action tests: after switching the chat agent but before sending, `tool` actions are disabled, `prompt` actions work, and a forced request returns `409 agent_mismatch`. `allow` runs on click with no approval, `ask` prompts even with `-y`, `deny` hides the action and returns 403, hooks see `source: "user_action"` in the existing order, and the model note appears before the next request. |
 | D8 | `panel_not_owned` for cross-owner writes, including through an `as` alias. |
-| D9 | Playwright: `first_update` opens once without moving focus, "Never" is respected, and narrow viewports stay closed. |
+| D9 | Playwright: the side panel starts closed. `first_update` opens it once without moving focus, and "Never" is respected. Narrow viewports stay closed. A live update does not change any section's expanded state, position or height. A section hidden before its first update does not open the side panel or scroll on that update. |
+| D13 | Playwright: declared panels appear before any call, in `tools.use` and `panels` order, with Details last. Move up and Move down (keyboard) and drag change the order, which persists per agent. A new tool's panel is inserted by the insertion rule, including when the user reversed its default neighbors. Config-declared MCP panels appear before any call. An agent switch with no panel update refreshes the stack, also after a stream resume. A live update changes neither a section's outer height nor its header height. Hide persists across updates, and a receipt click unhides the section. Axe passes for the accordion. API test: declared panels without data return `revision: 0` and `document: null`. |
 | D10 | An invalid update leaves the tool result successful with a rejection line, and an unknown kind renders its fallback. A snapshot with a lower revision replaces the shown state. |
 | D11 | The starter config is unchanged. `builtin/todo` loads only when selected. |
 | D12 | An ACP test client receives `plan` with mapped statuses, and receives `_raw/panel/update` only after negotiation. |
