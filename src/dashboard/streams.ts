@@ -14,6 +14,10 @@ import type { VisibleToolCall, VisibleToolResult } from "../sessions/visible.js"
 import type { SessionMetrics } from "../sessions/metrics.js";
 import type { RunEvent } from "../agent.js";
 import type { Approval } from "./approvals.js";
+import type { PanelDocument } from "../panels/contract.js";
+import type { LoadedDeclarations } from "../panels/stack.js";
+
+const PANEL_FRAME_INTERVAL_MS = 250;
 
 export interface DashboardEventData {
   snapshot: SessionSnapshot; reset: SessionSnapshot;
@@ -25,6 +29,8 @@ export interface DashboardEventData {
   approval: Approval & { status: "pending" | "allowed" | "denied" | "expired" | "cancelled" };
   ownership: { ownership: "idle" | "here" | "elsewhere" };
   host_error: { message: string };
+  /** A committed or live panel state: the full document (at most 64 KiB), keyed by the full panel id (§13.1). */
+  panel: { panel: string; owner: string; revision: number; closed: boolean; live: boolean; document: PanelDocument };
 }
 export type DashboardEvent = {
   id: string; instanceId: string; sessionId: string; operationId?: string; sequence: number;
@@ -37,8 +43,11 @@ export class SessionStreams {
   private readonly poll: ReturnType<typeof setInterval>;
   private pending: { sessionId: string; operationId: string; data: DashboardEventData["text"] } | undefined;
   private flushTimer: ReturnType<typeof setImmediate> | undefined;
+  /** Per session and panel: when the last frame went out and the newest state waiting for its turn (latest wins). */
+  private readonly panelFrames = new Map<string, { at: number; timer?: ReturnType<typeof setTimeout> | undefined; pending?: { data: DashboardEventData["panel"]; operationId: string } | undefined }>();
   constructor(private readonly context: DashboardContext, private readonly output: LiveOutput,
-    private readonly snapshot: (sessionId: string) => SessionSnapshot, private readonly limits = { frames: MAX_REPLAY_FRAMES, bytes: MAX_REPLAY_BYTES }) {
+    private readonly snapshot: (sessionId: string, loaded?: LoadedDeclarations) => SessionSnapshot,
+    private readonly known: (sessionId: string) => Promise<LoadedDeclarations>, private readonly limits = { frames: MAX_REPLAY_FRAMES, bytes: MAX_REPLAY_BYTES }) {
     this.poll = setInterval(() => {
       for (const [id, channel] of this.channels) if (channel.clients.size) {
         try { this.syncHistory(id); const ownership = this.ownership(id);
@@ -99,6 +108,29 @@ export class SessionStreams {
     else this.pending = { sessionId, operationId, data };
     this.flushTimer ??= setImmediate(() => this.flushText());
   }
+  /**
+   * At most one `panel` frame per panel every 250 ms. A state that arrives inside the window replaces any waiting state and is
+   * sent when the window ends, so the last state always reaches the client; a snapshot stays authoritative.
+   */
+  private publishPanel(sessionId: string, operationId: string, data: DashboardEventData["panel"]): void {
+    const key = `${sessionId}\0${data.panel}`;
+    // Entries idle past their window carry no state; dropping them keeps this map to the panels that are active right now.
+    if (this.panelFrames.size >= 64) for (const [other, idle] of this.panelFrames) {
+      if (!idle.timer && !idle.pending && Date.now() - idle.at >= PANEL_FRAME_INTERVAL_MS) this.panelFrames.delete(other);
+    }
+    const entry = this.panelFrames.get(key) ?? { at: 0 };
+    this.panelFrames.set(key, entry);
+    const send = (frame: DashboardEventData["panel"], operation: string) => { entry.at = Date.now(); this.publish(sessionId, "panel", frame, operation); };
+    const wait = PANEL_FRAME_INTERVAL_MS - (Date.now() - entry.at);
+    if (wait <= 0 && !entry.timer) { send(data, operationId); return; }
+    entry.pending = { data, operationId };
+    entry.timer ??= setTimeout(() => {
+      entry.timer = undefined;
+      const pending = entry.pending; entry.pending = undefined;
+      if (pending) send(pending.data, pending.operationId);
+    }, Math.max(1, wait));
+    entry.timer.unref();
+  }
   syncHistory(sessionId: string): void {
     this.flushText();
     const channel = this.channel(sessionId); const through = this.context.store!.historyWatermark(sessionId);
@@ -139,6 +171,9 @@ export class SessionStreams {
     } else if (event.type === "tool_result") {
       this.publish(sessionId, "tool", { callId: event.id, result: event.display ?? projectToolResult(event.name,
         this.context.operations!.toolIdentity(operationId, event.name), event.result), ...(event.turnId ? { turnId: event.turnId } : {}) }, operationId);
+    } else if (event.type === "panel_update") {
+      this.publishPanel(sessionId, operationId, { panel: `${event.owner}#${event.panel}`, owner: event.owner, revision: event.revision,
+        closed: event.closed, live: event.live, document: event.document });
     } else if (event.type === "compact_start" || event.type === "compact_end" || event.type === "compact_error") this.publish(sessionId, "compaction", event, operationId);
     // Core commits can follow the synchronous callback. Flush after that commit and before a snapshot.
     queueMicrotask(() => { try { this.syncHistory(sessionId); } catch { /* Closing the host cannot abort execution through an observer. */ } });
@@ -146,7 +181,10 @@ export class SessionStreams {
       const metrics = this.context.operations!.metrics(operationId); if (metrics) this.publish(sessionId, "metrics", metrics, operationId);
     }
   }
-  subscribe(sessionId: string, response: ServerResponse, cursor?: string): void {
+  async subscribe(sessionId: string, response: ServerResponse, cursor?: string): Promise<void> {
+    // Declarations are read before the boundary is captured, so no await separates the capture from the subscription below.
+    const known = await this.known(sessionId);
+    if (response.destroyed || response.writableEnded) return;
     this.syncHistory(sessionId); const channel = this.channel(sessionId);
     response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", Connection: "keep-alive" });
     const prefix = `${this.context.instanceId}:${channel.epoch}:`;
@@ -155,7 +193,7 @@ export class SessionStreams {
     // No await between boundary capture and subscription: this process cannot publish an intervening delta.
     if (cursor && valid) for (const item of channel.frames) { if (item.event.sequence > sequence) this.write(response, item.frame); }
     else {
-      const event = this.envelope(sessionId, channel, cursor ? "reset" : "snapshot", this.snapshot(sessionId));
+      const event = this.envelope(sessionId, channel, cursor ? "reset" : "snapshot", this.snapshot(sessionId, known));
       this.write(response, `id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
     }
     channel.clients.add(response);
@@ -163,5 +201,7 @@ export class SessionStreams {
     response.once("close", () => { clearInterval(heartbeat); channel.clients.delete(response); });
   }
   close(): void { clearInterval(this.poll); if (this.flushTimer) clearImmediate(this.flushTimer); this.pending = undefined;
+    for (const entry of this.panelFrames.values()) if (entry.timer) clearTimeout(entry.timer);
+    this.panelFrames.clear();
     for (const channel of this.channels.values()) for (const client of channel.clients) client.end(); this.channels.clear(); }
 }

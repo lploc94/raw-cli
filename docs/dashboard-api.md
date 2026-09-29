@@ -50,6 +50,15 @@ Stop requests cancellation; the receipt becomes terminal after owned startup/run
 
 `GET /api/activity` returns bounded metadata for this server's active/recent operations and pending approval identities. It excludes transcript and argument bodies. Polling never starts a runtime, renews retention or extends approval deadlines. Work owned by another CLI/ACP process has committed-history refresh only, without fabricated live deltas or control rights.
 
+### Tool panels
+
+Tools may publish side panels ([panels-design.md](panels-design.md)). Snapshot and reset frames (and `GET /api/sessions/:id`) carry `agent` (the session's saved agent, or `null`) and `panels`, the committed stack for that agent; they are authoritative and replace all panel state on the client, even when a revision is lower than one shown before.
+
+- `GET /api/sessions/:id/panels[?agent=NAME]` returns `{ agent, items }`. Each item is `{ panel, owner, title, icon, revision, updatedAt, closed, stale, declaration, document }`, where `panel` is the full id `<owner>#<panel id>` (URL-encode it in paths). Order: declared panels (tool.json panels in `tools.use` order, then config MCP panels), then implicit panels by creation time, then stale panels that still hold data. A declared panel without data has `revision: 0`, `updatedAt: null` and `document: null`. `stale` is computed against `agent`; an unknown agent returns `422 unknown_agent`.
+- `GET /api/sessions/:id/panels/:panel` returns one item, or `404 unknown_panel`.
+- Stream event `panel`: `{ panel, owner, revision, closed, live, document }` with the whole document (at most 64 KiB). At most one frame per panel every 250 ms; a newer state replaces one that is still waiting, so the last state is always delivered. `live: true` frames are provisional until a `live: false` frame for a committed revision arrives. A frame whose revision is not greater than the one shown is ignored between snapshots.
+- Declarations are read from manifests and config only: no tool is imported and no MCP server is started. If the agent's declarations cannot be read, every stored panel is still listed and none is marked stale. Panels never change config bytes or OS permissions.
+
 ## Management
 
 All paths below are relative to `/api`. Writes use the displayed config authority.

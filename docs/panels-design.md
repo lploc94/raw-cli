@@ -565,7 +565,7 @@ The right-hand inspector becomes the **side panel**: a vertical stack of collaps
 
 **Live and reload**
 
-- The session stream gains event type `panel`: `{ panel, revision, closed, receipt?, document }`. It carries the full document (≤ 64 KiB) and is coalesced to 250 ms per panel.
+- The session stream gains event type `panel`: `{ panel (the full ID), owner, revision, closed, live, document }`; receipts travel in history frames. It carries the full document (≤ 64 KiB) and is coalesced to 250 ms per panel.
 - `snapshot` and `reset` frames include the session's saved agent and all panels, and are **authoritative**. On receiving one, the dashboard replaces its whole panel state with the frame's content, even when a panel's revision is lower than one it showed before. This is how provisional live revisions lost in a crash (§8.2) are corrected. Between snapshots, a `panel` frame whose revision is not greater than the one shown is ignored. A new stream epoch always starts with a snapshot.
 
 **Accessibility**
@@ -584,7 +584,7 @@ Full panel IDs are URL-encoded in paths.
 
 | Route | Result |
 | --- | --- |
-| `GET /api/sessions/:id/panels[?agent=NAME]` | `{ agent, items: [{ panel, owner, title, icon, revision, updatedAt, closed, stale, declaration, document }] }`, in default order (§13.1) for `agent`, which defaults to the session's saved agent. An unknown agent returns `422 unknown_agent`. A declared panel without data has `revision: 0`, `updatedAt: null` and `document: null`. |
+| `GET /api/sessions/:id/panels[?agent=NAME]` | `{ agent, items: [{ panel (the full ID), owner, title, icon, revision, updatedAt, closed, stale, declaration, document }] }`, in default order (§13.1) for `agent`, which defaults to the session's saved agent. An unknown agent returns `422 unknown_agent`. A declared panel without data has `revision: 0`, `updatedAt: null` and `document: null`. |
 | `GET /api/sessions/:id/panels/:panel` | One item. `404 unknown_panel` if it does not exist. |
 | `POST /api/sessions/:id/panels/:panel/actions` | Body `{ action, agent, block?, item?, clientRequestId }`. Returns `202 { operationId }`, or an error: `404 unknown_panel`, `409 session_busy`, `409 stale_panel`, `409 agent_mismatch` (when `agent` is not the session's saved agent), `422 invalid_action`, or `403 action_denied` when a policy rule is `deny`. |
 

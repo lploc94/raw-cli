@@ -2,6 +2,8 @@ import { realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { record } from "../management/agents.js";
 import { loadConfig } from "../config.js";
+import { knownPanelDeclarations, type KnownPanels } from "../panels/declarations.js";
+import { buildPanelStack, declarationsFor, loadDeclarationsForSaved, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
 import { parseRequestOverride, requestControls, RequestOverrideError, type RequestControl, type RequestOverride } from "../request-controls.js";
 import { loadSelectedSkills } from "../skills/loader.js";
 import type { UserBlock } from "../llm/types.js";
@@ -25,6 +27,8 @@ export interface SessionSnapshot {
   ownership: "idle" | "here" | "elsewhere"; operations: SessionOperation[];
   metrics: SessionMetrics | null; metricsStale: boolean;
   context: { summary?: string; messageCount: number }; live: LiveSegment[]; approvals: Approval[];
+  /** The session's saved agent and its committed panels; authoritative for the dashboard's panel state (§13.1). */
+  agent: string | null; panels: PanelStackItem[];
 }
 export function workspacePath(value: unknown, base: string): string {
   const input = textField(value, "cwd", 4096);
@@ -99,15 +103,25 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     const value = (active ? operations.metrics(active) : undefined) ?? store.getLastSessionMetrics(id) ?? null;
     return { metrics: value, metricsStale: !!value && value.historyWatermark !== store.historyWatermark(id) };
   };
-  const snapshot = (id: string): SessionSnapshot => {
+  /** Declarations come from manifests and config only. Any failure degrades to "unknown" so panels never block the chat. */
+  const knownPanels = async (agentName: string | undefined): Promise<KnownPanels | undefined> => {
+    if (!agentName) return undefined;
+    try {
+      const runtime = await loadConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env, flags: { agent: agentName }, requireModel: false });
+      return await knownPanelDeclarations(runtime, { cwd: context.cwd, env: context.env });
+    } catch { return undefined; }
+  };
+  const knownForSession = (id: string) => loadDeclarationsForSaved(() => store.getSession(id)?.agentName, knownPanels);
+  const snapshot = (id: string, loaded?: LoadedDeclarations): SessionSnapshot => {
     const session = requireSession(id); const historyWatermark = store.historyWatermark(id);
     const page = store.getSessionHistory({ sessionId: id, limit: 50, atOrBefore: historyWatermark });
     const receipts = store.listOperations(id, 20);
     return { session, history: { ...page, items: page.items.map(projectHistoryItem) }, historyWatermark,
       ownership: streams.ownership(id), operations: receipts, ...metrics(id), context: store.getContextSummary(id),
-      live: output.list(new Set(receipts.filter((op) => !terminalOperationStates.has(op.state)).map((op) => op.id))), approvals: approvals.list(id) };
+      live: output.list(new Set(receipts.filter((op) => !terminalOperationStates.has(op.state)).map((op) => op.id))), approvals: approvals.list(id),
+      agent: session.agentName ?? null, panels: buildPanelStack(declarationsFor(session.agentName, loaded), store.listSessionPanels(id)) };
   };
-  streams = new SessionStreams(context, output, snapshot);
+  streams = new SessionStreams(context, output, snapshot, knownForSession);
   const unsubscribe = operations.subscribe((message) => streams.observe(message));
   context.onClose(() => { unsubscribe(); approvals.close(); streams.close(); output.close(); });
   return [async (request, response) => {
@@ -180,11 +194,27 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new DashboardError(400, "invalid_limit", "limit must be 1 to 50");
       return reply({ items: await searchWorkspaceFiles(session.cwd, url.searchParams.get("q") ?? "", limit) });
     }
+    const panelRoute = /^\/api\/sessions\/([^/]+)\/panels(?:\/([^/]+))?$/.exec(path);
+    if (panelRoute && method === "GET") {
+      const id = decodeURIComponent(panelRoute[1]!); const session = requireSession(id);
+      const requested = url.searchParams.get("agent");
+      const agent = requested ?? session.agentName ?? null;
+      if (requested !== null) {
+        const config = await readManagedConfig({ configPath: context.configPath, cwd: context.cwd, env: context.env });
+        if (!Object.hasOwn(record(config.data?.agents), requested)) throw new DashboardError(422, "unknown_agent", `Agent ${requested} is not configured`);
+      }
+      const items = buildPanelStack(await knownPanels(agent ?? undefined), store.listSessionPanels(id));
+      if (panelRoute[2] === undefined) return reply({ agent, items });
+      const wanted = decodeURIComponent(panelRoute[2]);
+      const found = items.find((item) => item.panel === wanted);
+      if (!found) throw new DashboardError(404, "unknown_panel", `Panel ${wanted} does not exist in this session`);
+      return reply(found);
+    }
     const sessionRoute = /^\/api\/sessions\/([^/]+)(?:\/(history|operations|metrics|events|output))?$/.exec(path);
     if (sessionRoute) {
       const id = decodeURIComponent(sessionRoute[1]!); const action = sessionRoute[2]; requireSession(id);
       if (!action) {
-        if (method === "GET") return reply(snapshot(id));
+        if (method === "GET") return reply(snapshot(id, await knownForSession(id)));
         if (method === "PATCH") return reply(store.renameSession(id, textField((await context.readJson(request)).title, "title", 200)));
         if (method === "DELETE") {
           if (store.sessionIsBusy(id)) throw new DashboardError(409, "busy", "Stop the active operation or wait for its current owner before deleting");
@@ -197,7 +227,7 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         catch (error) { if (error instanceof DashboardError) throw error; throw new DashboardError(400, "invalid_cursor", String(error)); }
       }
       if (action === "metrics" && method === "GET") return reply(metrics(id));
-      if (action === "events" && method === "GET") { streams.subscribe(id, response, typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined); return true; }
+      if (action === "events" && method === "GET") { await streams.subscribe(id, response, typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined); return true; }
       if (action === "output" && method === "GET") {
         const op = requireOperation(textField(url.searchParams.get("operationId"), "operationId"));
         if (op.sessionId !== id) throw new DashboardError(404, "not_found", "Output not found in this session");
