@@ -63,7 +63,7 @@ test("the inspector traps focus on narrow screens and both panels resize from th
   await expect(separator).toHaveAttribute("aria-valuenow", "270");
   await page.keyboard.press("Home");
   await expect(separator).toHaveAttribute("aria-valuenow", "260");
-  await page.getByRole("button", { name: "Session details" }).click();
+  await page.getByRole("button", { name: "Side panel", exact: true }).click();
   const inspectorWidth = page.getByRole("separator", {
     name: "Inspector width",
   });
@@ -72,10 +72,11 @@ test("the inspector traps focus on narrow screens and both panels resize from th
   await expect(inspectorWidth).toHaveAttribute("aria-valuenow", "330");
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 800, height: 900 });
-  await page.getByRole("button", { name: "Session details" }).click();
+  await page.getByRole("button", { name: "Side panel", exact: true }).click();
   await expect(
-    page.getByRole("dialog", { name: "Context", exact: true }),
+    page.getByRole("dialog", { name: "Side panel", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
   await page.getByRole("button", { name: "Copy resume command" }).focus();
   await page.keyboard.press("Tab");
   expect(
@@ -83,7 +84,7 @@ test("the inspector traps focus on narrow screens and both panels resize from th
   ).toBe(true);
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("button", { name: "Session details" }),
+    page.getByRole("button", { name: "Side panel", exact: true }),
   ).toBeFocused();
 });
 

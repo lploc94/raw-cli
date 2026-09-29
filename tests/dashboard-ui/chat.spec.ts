@@ -77,10 +77,11 @@ test("real chat renders highlighted Markdown, reasoning and context without dupl
     page.getByText("Checking the request.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByTestId("user-message")).toHaveCount(1);
-  await page.getByRole("button", { name: "Session details" }).click();
+  await page.getByRole("button", { name: "Side panel", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Context", exact: true }),
+    page.getByRole("heading", { name: "Side panel", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
   await expect(page.getByText("8,192", { exact: false }).first()).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Copy resume command" }),

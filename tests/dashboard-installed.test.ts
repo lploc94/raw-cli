@@ -106,7 +106,7 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await page.reload(); await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
     assert.equal(await readFile(join(workspace, "effects.txt"), "utf8"), "v1\n"); await writeFile(join(workspace, "release"), "continue");
     await expect(page.getByText("First installed answer", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Session details", exact: true }).click(); await expect(page.getByText(/16,384/).first()).toBeVisible(); await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Side panel", exact: true }).click(); await page.getByRole("button", { name: "Details", exact: true }).click(); await expect(page.getByText(/16,384/).first()).toBeVisible(); await page.keyboard.press("Escape");
     await page.getByRole("link", { name: "Library", exact: true }).click(); await page.getByRole("link", { name: "Packages", exact: true }).click(); await page.getByRole("link", { name: "kit", exact: true }).click();
     await writeFile(join(source, "tools/echo/helper.mjs"), 'export const value="v2";\n');
     await page.getByRole("button", { name: "Update package", exact: true }).click(); await page.getByLabel("Local package path").fill(source); await page.getByRole("button", { name: "Inspect path", exact: true }).click();

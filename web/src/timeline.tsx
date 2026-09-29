@@ -22,6 +22,8 @@ import { api, errorText } from "./api.js";
 import { isTerminal, type ChatState } from "./session.js";
 import { CodeBlock, Markdown } from "./markdown.js";
 import { CopyButton, ErrorMessage } from "./ui.js";
+import { Receipt } from "./panels/Receipt.js";
+import { receiptPanel } from "./panels/panel-state.js";
 import { HistoryAttachments } from "./composer/HistoryAttachments.js";
 
 export function ApprovalActions({ approval }: { approval: Approval }) {
@@ -339,9 +341,11 @@ function WorkGroup({
 export function Timeline({
   state,
   preferences,
+  onOpenPanel,
 }: {
   state: ChatState;
   preferences: Preferences;
+  onOpenPanel: (panel: string) => void;
 }) {
   const records = [...state.history.items];
   for (const segment of state.live)
@@ -509,6 +513,15 @@ export function Timeline({
           />,
         );
       }
+      continue;
+    }
+    if (item.panelReceipt) {
+      // Under its tool result, inside the same work group; alone when the receipt outlived its group.
+      const full = receiptPanel(item.panelReceipt);
+      const icon = state.panels.find((panel) => panel.panel === full)?.icon ?? "panel";
+      const row = <Receipt key={item.id} receipt={item.panelReceipt} icon={icon} onOpen={() => onOpenPanel(full)} />;
+      if (work.length) work.push(row);
+      else result.push(row);
       continue;
     }
     flush();

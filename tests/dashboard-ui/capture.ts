@@ -161,8 +161,9 @@ try {
   });
   await page.keyboard.press("Escape");
   await page.goto(raw.server.url + sessionPath);
-  await page.getByRole("button", { name: "Session details" }).click();
-  await page.getByRole("heading", { name: "Context", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Side panel", exact: true }).click();
+  await page.getByRole("heading", { name: "Side panel", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Details", exact: true }).click();
   await page.screenshot({
     path: "docs/dashboard/chat-dark-inspector.png",
     animations: "disabled",

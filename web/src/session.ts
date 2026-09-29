@@ -8,11 +8,18 @@ import type { SessionOperation } from "../../src/sessions/operations.js";
 import type { HistoryView } from "../../src/sessions/view.js";
 import type { Page } from "../../src/sessions/store.js";
 import { api, ApiError, errorText, subscribe } from "./api.js";
+import { applyFrame } from "./panels/panel-state.js";
 
 export type LiveTool = DashboardEventData["tool"] & { operationId: string };
 export interface ChatState extends SessionSnapshot {
   tools: Record<string, LiveTool>;
   compactions: Record<string, DashboardEventData["compaction"]>;
+  /** Counts snapshot and reset frames: what a stream (re)connect, or an agent switch, must react to. */
+  snapshotCount: number;
+  /** Counts live panel frames, for a stack shown for an agent other than the saved one. */
+  panelTick: number;
+  /** Panels that live frames named but this stack does not list yet (implicit panels); the stack must be refetched until they appear. */
+  unknownPanels: string[];
 }
 export const isTerminal = (state: string) =>
   ["completed", "max_steps", "cancelled", "error", "interrupted"].includes(
@@ -49,6 +56,9 @@ export function reduceEvent(
       },
       tools: {},
       compactions: {},
+      snapshotCount: (state?.snapshotCount ?? 0) + 1,
+      panelTick: state?.panelTick ?? 0,
+      unknownPanels: [],
     };
   }
   if (!state) return state;
@@ -159,6 +169,11 @@ export function reduceEvent(
         : state;
     case "ownership":
       return { ...state, ownership: event.data.ownership };
+    case "panel": {
+      const applied = applyFrame(state.panels, event.data);
+      return { ...state, panels: applied.items, panelTick: state.panelTick + 1,
+        unknownPanels: applied.known || state.unknownPanels.includes(event.data.panel) ? state.unknownPanels : [...state.unknownPanels, event.data.panel].slice(-50) };
+    }
     default:
       return state;
   }

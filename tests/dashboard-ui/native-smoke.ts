@@ -51,12 +51,12 @@ try {
       console.log("VoiceOver reader is ready.");
       await page.waitForTimeout(5000);
       apple(`tell application "System Events" to set frontmost of first application process whose unix id is ${pid} to true`);
-      await page.getByRole("button", { name: "Session details", exact: true }).focus();
+      await page.getByRole("button", { name: "Side panel", exact: true }).focus();
       await page.getByRole("textbox", { name: "Message", exact: true }).click();
       console.log("Manual listening: Message editor. Record the actual announcement separately.");
       await page.waitForTimeout(10_000);
-      await page.getByRole("button", { name: "Session details", exact: true }).focus();
-      console.log("Manual listening: Session details button. Record the actual announcement separately.");
+      await page.getByRole("button", { name: "Side panel", exact: true }).focus();
+      console.log("Manual listening: Side panel button. Record the actual announcement separately.");
       await page.waitForTimeout(10_000);
       console.log("Listening steps finished; this driver does not assert a screen-reader verdict.");
     } finally { if (!wasRunning) apple('tell application "VoiceOver" to quit'); }

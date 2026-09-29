@@ -105,6 +105,17 @@ export function PreferencesPage({
               <option value="modifier">Ctrl/Cmd-Enter</option>
             </select>
           </Field>
+          <Field label="Open the side panel for tool updates">
+            <select
+              value={value.panelOpen}
+              onChange={(event) =>
+                update("panelOpen", event.target.value as Preferences["panelOpen"])
+              }
+            >
+              <option value="follow">Follow the tool</option>
+              <option value="never">Never</option>
+            </select>
+          </Field>
           {(
             [
               ["Expand reasoning by default", "reasoning"],

@@ -26,7 +26,7 @@ The workspace button in the sidebar opens the **workspace switcher**. It lists t
 
 Choose a workspace and agent, then create a chat. Enter sends; Shift-Enter adds a line. The Chat browser preference can require Ctrl/Cmd-Enter instead. Composition input is never sent before the IME confirms it. Drafts stay in memory when navigating between sessions. No inference starts until Send.
 
-The message box grows with its content up to about eight lines, then scrolls. Send (or Stop while your operation runs) sits in the toolbar below it. Typing `/` at the start of the message opens a command list above the box: `↑`/`↓` move, `Enter` or `Tab` select, `Esc` closes, and focus never leaves the message box. Built-in commands: `/compact` (summarize model context; disabled with a reason while work is running), `/rename`, `/new` and `/details` (show or hide the inspector). The selected agent's skills are listed too; choosing one inserts `Use the skill "<name>" for this task. ` into the message for you to complete. While the list is open, Enter selects instead of sending; text that matches nothing, such as `/unknown`, is sent as written.
+The message box grows with its content up to about eight lines, then scrolls. Send (or Stop while your operation runs) sits in the toolbar below it. Typing `/` at the start of the message opens a command list above the box: `↑`/`↓` move, `Enter` or `Tab` select, `Esc` closes, and focus never leaves the message box. Built-in commands: `/compact` (summarize model context; disabled with a reason while work is running), `/rename`, `/new` and `/details` (show or hide the side panel). The selected agent's skills are listed too; choosing one inserts `Use the skill "<name>" for this task. ` into the message for you to complete. While the list is open, Enter selects instead of sending; text that matches nothing, such as `/unknown`, is sent as written.
 
 Use the `+` button for **Upload image…**, **Reference workspace file…** (inserts `@`) or **Commands** (inserts `/`). Images can also be pasted or dropped on the composer ("Drop to attach"). Each attachment appears as a chip above the message box: uploading (Send waits), ready, or an error with Retry and Remove. A chip error (unsupported type, too large, expired) affects only that chip and never blocks the text turn; failed chips are not sent. Typing `@` at the start of a word searches workspace files; choosing one adds a file chip instead of leaving text behind. An attachment-only turn sends a default line (`Please look at the attached image.`). Sent images show as thumbnails in the conversation (click to enlarge) and load again after a reload. When the selected agent cannot read images, its chips carry a warning and the note "Images in this chat are sent to this agent as text placeholders." appears; nothing is blocked.
 
@@ -36,9 +36,25 @@ A pill in the toolbar, right before Send, sets the reasoning level and service t
 
 History is chronological and Load earlier prepends older records. Jump to latest resumes following output. Work groups disclose actual reasoning, tool arguments and saved result previews; they do not replay tools. An abbreviated display and a tool-truncated result are labeled separately. Stop remains available during preparation, tool execution, approval and compaction. Inline Allow once/Deny answers only that pending call. Activity remains available from every page.
 
-Open the Context inspector for estimated current tokens/window/percentage, last-turn and session usage, cache measurement coverage, current summary and a copyable CLI resume command. Compact context summarizes model context while preserving visible history. Empty/no-smaller/cancelled/failed attempts retain their distinct outcomes. Closing a tab keeps the operation running; reconnect replaces transient state from the server and never sends your prompt again.
+Open the side panel (the panel-right button in the chat header) to see the tool panels of the agent shown in this chat and, in the last section, Details: estimated current tokens/window/percentage, last-turn and session usage, cache measurement coverage, current summary and a copyable CLI resume command. Compact context summarizes model context while preserving visible history. Empty/no-smaller/cancelled/failed attempts retain their distinct outcomes. Closing a tab keeps the operation running; reconnect replaces transient state from the server and never sends your prompt again.
 
 Use Ctrl/Cmd-K for navigation and session-title search; Ctrl/Cmd-comma opens Settings. Appearance and Chat preferences apply only to this browser. Theme, density, font sizes, panel widths and disclosure defaults never change Raw config or model context. Preferences have a versioned, validated local-storage record; credentials and transcripts are excluded.
+
+## Side panel
+
+The chat header's **Side panel** button shows a stack of collapsible sections: one for every panel a selected tool or MCP server declares (`docs/panels-design.md`, §13.1), even before the tool has run ("No data yet"), and **Details** last. The panel is closed when you open a chat and every section starts collapsed.
+
+- **Sections.** A section header is one line: icon, title, summary, a thin progress line along its bottom edge, an unseen dot for a newer update, and `Done`, `Failed`, `Closed` or `Stale`. Drag a header to reorder sections; its `⋯` menu has **Move up**, **Move down** and **Hide section** for the keyboard; a **N hidden sections** row shows hidden ones again. The header is an accordion button (`Enter` or `Space`).
+- **Nothing moves.** Updates never expand, collapse, move or resize a section. An expanded section has a fixed height (half of the side panel by default); drag the divider below it, or use `↑`/`↓` on it, to change the height for the current agent. Content scrolls inside.
+- **Remembered here only.** Order, hidden sections and heights are stored per agent, expanded sections and seen updates per session, in this browser (`raw.dashboard.panels.v1`). Raw's config is never written. Corrupt storage falls back to defaults.
+- **Opening.** Under **Settings → Chat → Open the side panel for tool updates**, *Follow the tool* (default) opens the panel once per session when a panel declared `first_update` receives its first update and its section is not hidden; focus does not move. *Never* leaves it closed. Narrow windows use the modal drawer and never open it automatically.
+- **Receipts.** Each update leaves a compact row under its tool result in the chat; clicking it opens the side panel, unhides and expands that section. A rejected update shows `Update rejected: <code>` and the previous revision stays visible.
+- **Agents.** Picking another agent in the chat's `⋯` menu rebuilds the stack for that agent. A panel whose tool the agent no longer selects is marked *Stale*.
+- **Widgets.** Checklists have collapsible child items and a **Hide completed** toggle (one choice per browser); steps show how long a finished step took; timelines list the newest event first with relative time. Unknown block kinds show their fallback text.
+- **Unseen.** A section's dot clears only when it is expanded and inside the visible part of the stack.
+- **File references** in a panel insert `@path` into your message.
+
+[Side panel](dashboard/chat-dark-side-panel.png) shows the Todo section beside its receipt in the chat. Reproduce it after building with `node --import tsx tests/dashboard-ui/capture-panels.ts`.
 
 ## Frontend development
 
@@ -66,7 +82,7 @@ scrolling without document-level horizontal overflow. On macOS, reproduce the na
 zoom smoke with `node --import tsx tests/dashboard-ui/native-smoke.ts`. It opens a
 disposable browser and restores the previously focused application. The optional
 `--voiceover` smoke starts the system screen reader and requires the user's macOS
-permission. A person listens to the Message editor and Session details button and
+permission. A person listens to the Message editor and Side panel button and
 records the actual announcements; a successful driver exit alone is not a
 screen-reader verdict. This is separate from the automated browser suite.
 

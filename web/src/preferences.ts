@@ -12,6 +12,8 @@ export interface Preferences {
   reasoning: boolean;
   toolDetails: boolean;
   follow: boolean;
+  /** "Open the side panel for tool updates": follow the tool (default) or never. */
+  panelOpen: "follow" | "never";
 }
 export const defaultPreferences: Preferences = {
   version: 1,
@@ -25,6 +27,7 @@ export const defaultPreferences: Preferences = {
   reasoning: false,
   toolDetails: false,
   follow: true,
+  panelOpen: "follow",
 };
 const key = "raw.dashboard.preferences.v1";
 export function loadPreferences(): Preferences {
@@ -54,6 +57,7 @@ export function loadPreferences(): Preferences {
       reasoning: typeof p.reasoning === "boolean" ? p.reasoning : false,
       toolDetails: typeof p.toolDetails === "boolean" ? p.toolDetails : false,
       follow: typeof p.follow === "boolean" ? p.follow : true,
+      panelOpen: p.panelOpen === "never" ? "never" : "follow",
     };
   } catch {
     return { ...defaultPreferences };

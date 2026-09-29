@@ -5,6 +5,7 @@ import type { UsageSummary } from "../../src/llm/cache.js";
 import type { ChatState } from "./session.js";
 import type { Preferences } from "./preferences.js";
 import { CopyButton } from "./ui.js";
+import { SidePanelStack, type SidePanelProps } from "./panels/SidePanel.js";
 
 const resume = (id: string) => `raw --resume ${id} "Your next message"`;
 function Usage({ name, value }: { name: string; value: UsageSummary }) {
@@ -63,83 +64,23 @@ function Usage({ name, value }: { name: string; value: UsageSummary }) {
     </section>
   );
 }
-export function Inspector({
+function Details({
   id,
   state,
   bootstrap,
-  preferences,
-  narrow,
-  resizeInspector,
 }: {
   id: string;
   state: ChatState | undefined;
   bootstrap: DashboardBootstrap;
-  preferences: Preferences;
-  narrow: boolean;
-  resizeInspector: (width: number) => void;
 }) {
   const metrics = state?.metrics;
   const context = metrics?.context;
   return (
     <>
-      <Dialog.Overlay className="inspector-shade" />
-      <Dialog.Content
-        asChild
-        role={narrow ? "dialog" : "complementary"}
-        onInteractOutside={(event) => {
-          if (!narrow) event.preventDefault();
-        }}
-      >
-        <aside className="inspector" aria-label="Session context and usage">
-          <div
-            className="inspector-resize"
-            role="separator"
-            tabIndex={0}
-            aria-label="Inspector width"
-            aria-orientation="vertical"
-            aria-valuemin={300}
-            aria-valuemax={360}
-            aria-valuenow={preferences.inspectorWidth}
-            onKeyDown={(event) => {
-              if (["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) {
-                event.preventDefault();
-                resizeInspector(
-                  event.key === "Home"
-                    ? 320
-                    : Math.max(
-                        300,
-                        Math.min(
-                          360,
-                          preferences.inspectorWidth +
-                            (event.key === "ArrowLeft" ? 10 : -10),
-                        ),
-                      ),
-                );
-              }
-            }}
-            onPointerDown={(event) =>
-              event.currentTarget.setPointerCapture(event.pointerId)
-            }
-            onPointerMove={(event) => {
-              if (event.currentTarget.hasPointerCapture(event.pointerId))
-                resizeInspector(
-                  Math.max(300, Math.min(360, innerWidth - event.clientX)),
-                );
-            }}
-            onDoubleClick={() => resizeInspector(320)}
-          />
-          <div className="section-heading">
-            <Dialog.Title asChild>
-              <h2>Context</h2>
-            </Dialog.Title>
-            <Dialog.Close className="icon-button" aria-label="Close details">
-              <X size={18} aria-hidden="true" />
-            </Dialog.Close>
-          </div>
-          <Dialog.Description className="muted small">
-            History shows what happened. Model context contains the current
-            summary and retained messages.
-          </Dialog.Description>
+      <p className="muted small">
+        History shows what happened. Model context contains the current summary
+        and retained messages.
+      </p>
           <dl className="stats">
             <dt>Estimated tokens</dt>
             <dd>
@@ -231,6 +172,97 @@ export function Inspector({
             <code>{resume(id)}</code>
             <CopyButton value={resume(id)} label="Copy resume command" />
           </div>
+    </>
+  );
+}
+export function Inspector({
+  id,
+  state,
+  bootstrap,
+  preferences,
+  narrow,
+  resizeInspector,
+  keepFocus,
+  stack,
+}: {
+  id: string;
+  state: ChatState | undefined;
+  bootstrap: DashboardBootstrap;
+  preferences: Preferences;
+  narrow: boolean;
+  resizeInspector: (width: number) => void;
+  keepFocus: { current: boolean };
+  stack: Omit<SidePanelProps, "details" | "sessionId">;
+}) {
+  return (
+    <>
+      <Dialog.Overlay className="inspector-shade" />
+      <Dialog.Content
+        asChild
+        role={narrow ? "dialog" : "complementary"}
+        onOpenAutoFocus={(event) => {
+          if (!keepFocus.current) return;
+          keepFocus.current = false;
+          event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (!narrow) event.preventDefault();
+        }}
+      >
+        <aside className="inspector" aria-label="Side panel">
+          <div
+            className="inspector-resize"
+            role="separator"
+            tabIndex={0}
+            aria-label="Inspector width"
+            aria-orientation="vertical"
+            aria-valuemin={300}
+            aria-valuemax={360}
+            aria-valuenow={preferences.inspectorWidth}
+            onKeyDown={(event) => {
+              if (["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) {
+                event.preventDefault();
+                resizeInspector(
+                  event.key === "Home"
+                    ? 320
+                    : Math.max(
+                        300,
+                        Math.min(
+                          360,
+                          preferences.inspectorWidth +
+                            (event.key === "ArrowLeft" ? 10 : -10),
+                        ),
+                      ),
+                );
+              }
+            }}
+            onPointerDown={(event) =>
+              event.currentTarget.setPointerCapture(event.pointerId)
+            }
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId))
+                resizeInspector(
+                  Math.max(300, Math.min(360, innerWidth - event.clientX)),
+                );
+            }}
+            onDoubleClick={() => resizeInspector(320)}
+          />
+          <div className="section-heading">
+            <Dialog.Title asChild>
+              <h2>Side panel</h2>
+            </Dialog.Title>
+            <Dialog.Close className="icon-button" aria-label="Close side panel">
+              <X size={18} aria-hidden="true" />
+            </Dialog.Close>
+          </div>
+          <Dialog.Description className="sr-only">
+            Tool panels and session details for this chat.
+          </Dialog.Description>
+          <SidePanelStack
+            {...stack}
+            sessionId={id}
+            details={<Details id={id} state={state} bootstrap={bootstrap} />}
+          />
         </aside>
       </Dialog.Content>
     </>

@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   Bot,
   Check,
   ChevronRight,
   Copy,
-  Info,
+  PanelRight,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -24,6 +24,7 @@ import { useRequestChoice } from "./composer/useRequestChoice.js";
 import { forgetSession, isTerminal, useSession } from "./session.js";
 import { Timeline } from "./timeline.js";
 import { Inspector } from "./inspector.js";
+import { usePanelStack } from "./panels/use-panels.js";
 import { ErrorMessage, Field, Modal } from "./ui.js";
 import { useRouter } from "./router.js";
 import { Composer } from "./composer/Composer.js";
@@ -94,6 +95,27 @@ export function Chat({
     media.addEventListener("change", change);
     return () => media.removeEventListener("change", change);
   }, []);
+  const inspectorOpen = useRef(false);
+  inspectorOpen.current = inspector;
+  /** Set when the side panel opens by itself, so the dialog does not take focus from what the user is doing. */
+  const keepFocus = useRef(false);
+  const openSide = useCallback(() => setInspector(true), []);
+  const autoOpen = useCallback(() => {
+    if (!inspectorOpen.current) keepFocus.current = true;
+    setInspector(true);
+  }, []);
+  const panels = usePanelStack({
+    sessionId: id,
+    state,
+    setState,
+    agent,
+    narrow,
+    panelOpen: preferences.panelOpen,
+    openSide,
+    autoOpen,
+  });
+  const insertRef = (path: string) =>
+    setDraft((current) => `${current}${current && !/\s$/.test(current) ? " " : ""}@${path} `);
   const scroll = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const following = useRef(preferences.follow);
@@ -319,10 +341,10 @@ export function Chat({
               <Dialog.Trigger asChild>
                 <button
                   className={`icon-button ${inspector ? "selected" : ""}`}
-                  aria-label="Session details"
-                  title="Session details"
+                  aria-label="Side panel"
+                  title="Side panel"
                 >
-                  <Info size={19} aria-hidden="true" />
+                  <PanelRight size={19} aria-hidden="true" />
                 </button>
               </Dialog.Trigger>
               <DropdownMenu.Root>
@@ -419,7 +441,7 @@ export function Chat({
                 </button>
               )}
               {!state && !streamError && <TimelineSkeleton />}
-              {state && <Timeline state={state} preferences={preferences} />}
+              {state && <Timeline state={state} preferences={preferences} onOpenPanel={panels.show} />}
               {state && !state.history.items.length && !current && (
                 <div className="chat-intro">
                   <h2>What would you like to work on?</h2>
@@ -583,6 +605,16 @@ export function Chat({
             preferences={preferences}
             narrow={narrow}
             resizeInspector={resizeInspector}
+            keepFocus={keepFocus}
+            stack={{
+              agent: panels.stackAgent,
+              items: panels.items,
+              prefs: panels.prefs,
+              setPrefs: panels.setPrefs,
+              history: state?.history.items ?? [],
+              onInsert: insertRef,
+              reveal: panels.reveal,
+            }}
           />
         )}
         <Modal
