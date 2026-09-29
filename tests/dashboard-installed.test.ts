@@ -8,6 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+import { makePng } from "./fixtures/images.js";
 
 async function command(bin: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   const child = spawn(bin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], signal: AbortSignal.timeout(90_000) });
@@ -32,7 +33,7 @@ test("packed dashboard configures, reconnects, updates a package, then installed
   const consumer = join(root, "consumer"), workspace = join(root, "unrelated-workspace"), author = join(root, "author");
   const call = { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "effect", type: "function", function: { name: "package_echo", arguments: '{"text":"test"}' } }] }, "tool_calls"), openAiDone] };
   const answer = (content: string) => ({ frames: [openAiFrame({ content }, "stop"), openAiDone] });
-  const provider = await startMockProvider([call, answer("First installed answer"), call, answer("Updated installed answer"), answer("CLI continued")]);
+  const provider = await startMockProvider([call, answer("First installed answer"), call, answer("Updated installed answer"), answer("Image turn answer"), answer("CLI continued")]);
   let host: ReturnType<typeof spawn> | undefined, closed: Promise<number | null> | undefined;
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   let stdout = "", stderr = "";
@@ -114,13 +115,21 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await page.goto(`${origin}/chat/${id}`); await page.getByRole("textbox", { name: "Message", exact: true }).fill("After package update"); await page.getByRole("button", { name: "Send", exact: true }).click();
     await expect(page.getByText("Updated installed answer", { exact: true })).toBeVisible(); assert.equal(await readFile(join(workspace, "effects.txt"), "utf8"), "v1\nv2\n");
     assert.equal(await readFile(join(workspace, "hook-effects.txt"), "utf8"), "notice\nnotice\n");
+    // An image turn from the installed artifact: this agent's model has no vision, so the model receives a placeholder and the turn is not blocked.
+    const png = makePng();
+    await page.locator("input[type=file]").setInputFiles({ name: "installed.png", mimeType: "image/png", buffer: png });
+    await expect(page.locator(".attachment-chip.ready", { hasText: "installed.png" })).toBeVisible();
+    await page.getByRole("textbox", { name: "Message", exact: true }).fill("Look at this image"); await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByText("Image turn answer", { exact: true })).toBeVisible();
+    await page.reload(); await expect(page.getByTestId("user-message").last().locator("img")).toBeVisible();
     assert.deepEqual(errors, []); assert.deepEqual(external, []); await browser.close(); browser = undefined;
     host.kill("SIGTERM"); assert.equal(await closed, 0); host = undefined;
     const resumed = await command(bin, ["--resume", id, "Continue in CLI"], workspace, env); assert.equal(resumed.stdout, "CLI continued\n"); assert.match(resumed.stderr, new RegExp(id));
-    assert.equal(await readFile(join(workspace, "hook-effects.txt"), "utf8"), "notice\nnotice\nnotice\n");
+    assert.equal(await readFile(join(workspace, "hook-effects.txt"), "utf8"), "notice\nnotice\nnotice\nnotice\n"); // three dashboard turns (the third is the image turn) and the CLI turn
     const requests = provider.requests.map(item => item.body as { prompt_cache_key: string; messages: unknown[]; tools: unknown[] });
-    assert.equal(requests.length, 5); assert.notEqual(requests[0]!.prompt_cache_key, requests[2]!.prompt_cache_key); assert.equal(requests[2]!.prompt_cache_key, requests[4]!.prompt_cache_key);
-    assert.deepEqual(requests[4]!.messages.slice(0, requests[3]!.messages.length), requests[3]!.messages); assert.deepEqual(requests[4]!.tools, requests[3]!.tools);
+    assert.equal(requests.length, 6); assert.notEqual(requests[0]!.prompt_cache_key, requests[2]!.prompt_cache_key); assert.equal(requests[2]!.prompt_cache_key, requests[5]!.prompt_cache_key);
+    const imageRequest = JSON.stringify(requests[4]); assert.match(imageRequest, /Image omitted/); assert.doesNotMatch(imageRequest, /image_url/); assert.ok(!imageRequest.includes(png.toString("base64")));
+    assert.deepEqual(requests[5]!.messages.slice(0, requests[4]!.messages.length), requests[4]!.messages); assert.deepEqual(requests[5]!.tools, requests[4]!.tools);
     assert.equal(await readFile(join(workspace, "effects.txt"), "utf8"), "v1\nv2\n");
     const dependencyHash = createHash("sha256").update(await readFile(join(consumer, "package-lock.json"))).digest("hex");
     const staticFiles = (await readdir(join(installed, "dist/dashboard/assets"))).sort();

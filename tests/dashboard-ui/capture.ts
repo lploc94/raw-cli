@@ -2,10 +2,12 @@ import { chromium } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { dashboardFixture } from "../fixtures/dashboard.js";
 import { openAiFrame, openAiDone } from "../fixtures/mock-provider.js";
+import { makePngOfSize } from "../fixtures/images.js";
 
 // Run after npm run build. These are real HTTP/tool flows in disposable local state.
 mkdirSync("docs/dashboard", { recursive: true });
 const raw = await dashboardFixture({
+  model: { vision: true },
   agent: { tools: { use: ["builtin/bash"] } },
   responses: [
     {
@@ -64,6 +66,12 @@ try {
     title: "Make sessions resumable",
   });
   await page.reload();
+  await page.locator("input[type=file]").setInputFiles({
+    name: "terminal-session.png",
+    mimeType: "image/png",
+    buffer: makePngOfSize(24 * 1024),
+  });
+  await page.locator(".attachment-chip.ready").waitFor();
   await page
     .getByRole("textbox", { name: "Message" })
     .fill("Explain how I can continue a task from the browser or terminal.");
@@ -101,6 +109,14 @@ try {
       console.log(JSON.stringify({ label, theme, width, overflow }));
     }
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(raw.server.url + sessionPath);
+  await page.getByLabel("Message", { exact: true }).pressSequentially("/");
+  await page.getByRole("listbox", { name: "Suggestions" }).waitFor();
+  await page.screenshot({
+    path: "docs/dashboard/chat-dark-commands.png",
+    animations: "disabled",
+  });
+  await page.getByLabel("Message", { exact: true }).fill("");
   await page.getByRole("button", { name: "Session details" }).click();
   await page.getByRole("heading", { name: "Context", exact: true }).waitFor();
   await page.screenshot({

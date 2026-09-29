@@ -2,7 +2,7 @@
 
 Design reference for the dashboard chat composer: attachments, images, `@` file references and `/` commands. It records decisions and their reasons so later changes can be checked against them. User-facing behavior lives in `dashboard.md`, routes in `dashboard-api.md`. The implementation plan is `add-chat-composer-attachments-and-commands-plan.md`.
 
-Status: design accepted 2026-09-29; update this file when a decision changes.
+Status: design accepted 2026-09-29 and implemented across the six phases of the plan (reconciled 2026-09-29; deviations are called out in D9 and D12). Update this file when a decision changes.
 
 ## Goals
 
@@ -63,7 +63,7 @@ Three registries, each seeded with `image`:
 | --- | --- | --- |
 | Model | `nativeUserContent` in `src/llm/content.ts` | validator + ordered content parts; adapters map parts, in order, to wire shape |
 | Server | `AttachmentKind` in `src/dashboard/attachments.ts` | `{id, mimeTypes, maxBytes, validate, toBlock, fromBlock}` |
-| Web | `web/src/composer/attachment-kinds.ts` | `{id, accept, icon, preview, timelineRenderer}` |
+| Web | `web/src/composer/attachment-kinds.ts` (registry) and `builtin-kinds.tsx` (seeds) | `{id, label, icon, thumbnail?, timeline}`; `accept` and limits come from server metadata, never from the client |
 
 `accept`, limits and enabled/disabled reasons reach the UI through `GET /api/agents/:name/composer` (`attachmentKinds`). Adding a kind therefore means one server entry, one model mapping (per adapter that supports it; others raise `unsupported_content`) and one client renderer. Tests register a fake kind to keep this true.
 
@@ -125,4 +125,6 @@ If a step beyond these is needed, the design has regressed; fix the registry rat
 | D1, D4, D6 | `tests/provider-content.test.ts`, `tests/vision.test.ts` |
 | D2, D3, D5 (server), D7 | `tests/dashboard-attachments.test.ts`, `tests/dashboard-sessions.test.ts` |
 | D8 | `tests/session-view.test.ts`, `tests/dashboard-streams.test.ts` |
-| D5 (web), D9, D10, D11 | `tests/dashboard-ui/composer.spec.ts`, `attachments.spec.ts`, `accessibility.spec.ts` |
+| D5 (web) | `tests/web-attachment-kinds.test.ts` (fake kind through the registry), `tests/dashboard-ui/attachments.spec.ts` |
+| D9, D10, D11 | `tests/dashboard-ui/composer.spec.ts`, `chat.spec.ts`, `accessibility.spec.ts` |
+| D12, image flow end to end | `tests/dashboard-ui/attachments.spec.ts`, `tests/dashboard-installed.test.ts` (installed artifact), `tests/dashboard-assets.test.ts` (bundle and CSP) |

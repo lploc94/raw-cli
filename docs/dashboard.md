@@ -52,6 +52,8 @@ These screenshots use a disposable workspace and a mock provider. Reproduce them
 | Tablet, 800×900 | [View](dashboard/chat-light-tablet.png) | [View](dashboard/chat-dark-tablet.png) |
 | Narrow, 320×900 | [View](dashboard/chat-light-narrow.png) | [View](dashboard/chat-dark-narrow.png) |
 
+[Command suggestions](dashboard/chat-dark-commands.png) show the `/` list above the composer; the desktop and narrow screenshots include an attached image in the conversation.
+
 [Context inspector](dashboard/chat-dark-inspector.png) shows estimates, available usage, measurement coverage and the last attached capabilities. Older measurements may be unavailable or stale; viewing them does not start a model or tool.
 
 [Native 400% zoom](dashboard/chat-native-400-percent.png) shows the complete browser

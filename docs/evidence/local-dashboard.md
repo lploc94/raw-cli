@@ -204,3 +204,21 @@ report and the plan, neither of which enters the npm artifact or executable-sour
 manifest. Qualification is limited to this host/runtime, these browser versions,
 local mock providers and the bounded user-observed VoiceOver smoke. It is not a
 paid-provider, native Linux/Windows, complete WCAG or model-behavior certification.
+
+## Composer attachments and commands (2026-09-29)
+
+Scope: the dashboard chat composer (auto-growing message box, `/` commands, `@` file references, image upload, timeline images) per `add-chat-composer-attachments-and-commands-plan.md` and `docs/dashboard-composer-design.md`. Each phase was committed separately after a Codex (`gpt-6-astra`) implementation review reached APPROVE.
+
+Evidence by contract:
+
+| Contract | Proof |
+| --- | --- |
+| User image blocks reach all four provider wire shapes; non-vision models get a text placeholder, stored context is never rewritten | `tests/user-images.test.ts` (7) |
+| Upload, staging limits, structured turns, duplicate `clientRequestId`, workspace containment | `tests/dashboard-attachments.test.ts` |
+| History metadata without base64, byte-exact serving from any page, restart, SSE, CSP | `tests/dashboard-attachments.test.ts` (history section) |
+| `/` and `@` popovers, focus, IME, send mode, drafts, axe | `tests/dashboard-ui/composer.spec.ts`, `attachments.spec.ts` on chromium, firefox and webkit |
+| Client kind registry extensible with a fake kind | `tests/web-attachment-kinds.test.ts` |
+| Installed tarball serves the composer and completes an image turn (placeholder path, provider request checked) | `tests/dashboard-installed.test.ts` via `npm run test:package` |
+
+Screenshots in `docs/dashboard/` were regenerated with `node --import tsx tests/dashboard-ui/capture.ts` (desktop, tablet, narrow in light and dark, no horizontal overflow, plus `chat-dark-commands.png`). Known limits: PNG/JPEG only, uploads are workspace-independent staging (30 minutes, in memory), ACP `session/prompt` does not accept images, and qualification covers this host, local mock providers and the recorded browser versions only. The three PTY REPL tests in `tests/cli.test.ts` fail identically on the pre-change baseline (environmental) and are unrelated.
+
