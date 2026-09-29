@@ -4,7 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 
 const schema = { type: "object" as const, properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false };
 
-export function fixtureMcpServer(label: string, count = 2, reverse = false, mode?: "async-schema" | "unsupported-hidden" | "draft7-schema" | "large-discovery" | "large-result"): Server {
+export function fixtureMcpServer(label: string, count = 2, reverse = false, mode?: "async-schema" | "unsupported-hidden" | "draft7-schema" | "numeric-formats-schema" | "large-discovery" | "large-result"): Server {
   const server = new Server({ name: `raw-fixture-${label}`, version: "1.0.0" }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async (request) => {
     if (process.env.MCP_LIST_STARTED_FILE) writeFileSync(process.env.MCP_LIST_STARTED_FILE, "started");
@@ -17,6 +17,7 @@ export function fixtureMcpServer(label: string, count = 2, reverse = false, mode
     return { tools: slice.map((name) => ({ name, description: mode === "large-discovery" ? "x".repeat(17 * 1024 * 1024) : `${label} ${name}`,
       inputSchema: mode === "async-schema" ? { ...schema, $async: true }
         : mode === "draft7-schema" ? { ...schema, $schema: "http://json-schema.org/draft-07/schema#" }
+        : mode === "numeric-formats-schema" ? { ...schema, properties: { ...schema.properties, limit: { type: "integer", format: "uint32" }, max_hops: { type: "integer", format: "uint8" } } }
         : mode === "unsupported-hidden" && name.startsWith("hidden_") ? { ...schema, $schema: "https://example.invalid/unsupported-schema" } : schema })),
       ...(page ? {} : { nextCursor: "second" }) };
   });

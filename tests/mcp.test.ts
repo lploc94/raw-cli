@@ -105,6 +105,19 @@ test("MCP tools declaring JSON Schema draft-07 are exposed and validated", async
   } finally { await connection.close(); }
 });
 
+test("MCP tools declaring Rust-style numeric formats (uint32/uint8) are exposed and validated", async () => {
+  const fixture = stdio("numeric");
+  const connection = await connectMcpServers({ servers: { numeric: { ...fixture, env: { ...fixture.env, MCP_MODE: "numeric-formats-schema" } } },
+    cwd: process.cwd(), timeoutMs: 3000 });
+  try {
+    assert.equal(connection.exposed.length, 1);
+    const alias = connection.exposed[0]!.alias;
+    const context = { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true };
+    assert.match(JSON.stringify(await connection.registry.dispatch(alias, { value: "ok", limit: 5, max_hops: 2 }, context)), /numeric:selected:ok/);
+    assert.equal((await connection.registry.dispatch(alias, { value: "ok", limit: "nope" }, context)).code, "invalid_arguments");
+  } finally { await connection.close(); }
+});
+
 test("T-06b: all-selection, long-prefix collisions and shuffled discovery remain deterministic", async () => {
   const long = "same_prefix_".repeat(8);
   const servers = {
