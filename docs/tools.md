@@ -111,6 +111,10 @@ identity, so an `as` alias cannot write another tool's panel. `context.panels` i
 
 A `tool.json` may declare up to four panels with the optional `panels` array (`id`, `title`, and optionally `icon`, `open`, `context`, `acp_plan`, `actions`; see the design document). Unknown keys, duplicate ids or an invalid declaration make the manifest invalid; an unknown `icon` falls back to `panel` with a load warning. The declarations are read from `tool.json` alone: they are known without importing `index.mjs`, so the dashboard can list a tool's panels before the tool has ever run.
 
+### `builtin/todo`
+
+`builtin/todo` is the reference panel tool ([panels-design.md §18](panels-design.md)). Select it like any tool (`"tools": {"use": ["builtin/todo"]}`); the starter config does not. The model sends `todos` with `mode` `replace` (default: the whole list, ids optional) or `merge` (items by `id`, `remove: true` deletes an item with its subtasks, `clear: "done"` removes finished items). Generated ids are the smallest unused `t<n>`. Rules: at most 100 items, one `in_progress`, subtasks only one level deep, and a `done` or `skipped` item cannot have an unfinished subtask. A rule violation returns `invalid_todo` naming the item and changes nothing. The result is a text list with ids (`[x] t1 …`); the user sees the same list live in the Todo panel. The state lives in the panel, so it survives restarts and compaction. The tool does no file I/O.
+
 ## Agent rules
 
 An optional agent `tools.rules` array applies to built-ins, MCP tools and ACP-injected tools. Each rule is `{ "match": "<glob>", "effect": "allow" | "ask" | "deny" }`. `*` matches any number of characters and `?` matches one character; the pattern covers the whole canonical tool identity. Built-in identities are `builtin/read_file`, `builtin/write_file`, `builtin/bash`, and `builtin/view_image`; local plugin identities are `local/<id>` or `agent/<id>`; MCP identities are `mcp/<server>/<original-tool-name>`; ACP-injected identities are `acp:<registered-name>`. Rules run in array order and the last match wins. No match means `allow`.

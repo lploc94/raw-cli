@@ -12,7 +12,7 @@ import type { SelectedSkill } from "../../skills/contract.js";
 import { selectedToolSnapshot } from "./snapshot.js";
 import type { PackageAsset } from "../../packages/resolve-agent.js";
 
-const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var"]);
+const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo"]);
 
 export interface LoadToolPluginsOptions {
   selectedIds: readonly string[];
