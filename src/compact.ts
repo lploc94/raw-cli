@@ -1,6 +1,6 @@
 import type { AgentSession } from "./agent.js";
 import { normalizeUsage } from "./llm/cache.js";
-import type { ModelMessage, ProviderAdapter, UserInput } from "./llm/types.js";
+import { base64ByteLength, type ModelMessage, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import type { ToolDefinition } from "./tools/registry.js";
 
 export interface CompactOptions {
@@ -31,11 +31,31 @@ export interface CompactWorkResult {
 export const COMPACT_SYSTEM_PROMPT =
   "Summarize prior conversation for continuation. Include objective, constraints, decisions, completed work, changed files, unresolved failures, and next work. Use only supplied facts.";
 
+/** Conservative token cost of one user image; base64 is never counted as text. */
+export const USER_IMAGE_TOKEN_ESTIMATE = 1600;
+
 export function estimateRequestTokens(system: string, messages: readonly ModelMessage[], tools: readonly ToolDefinition[]): number {
-  return Math.ceil(Buffer.byteLength(JSON.stringify({ system, messages, tools }), "utf8") / 2) + 32;
+  let images = 0;
+  const light = messages.map((message): ModelMessage => {
+    if (message.role !== "user" || typeof message.content === "string" || !message.content.some((block) => block.type === "image")) return message;
+    return { role: "user", content: message.content.map((block) => {
+      if (block.type !== "image") return block;
+      images++;
+      return { type: "image" as const, data: "", mimeType: block.mimeType };
+    }) };
+  });
+  return Math.ceil(Buffer.byteLength(JSON.stringify({ system, messages: light, tools }), "utf8") / 2) + 32 + images * USER_IMAGE_TOKEN_ESTIMATE;
+}
+
+function summaryUserInput(input: UserInput): UserInput {
+  if (typeof input === "string" || !input.some((block) => block.type === "image")) return input;
+  return input.map((block) => block.type === "image"
+    ? { type: "text" as const, text: `[Image: ${block.mimeType}, ${base64ByteLength(block.data)} bytes${block.name ? `, ${JSON.stringify(block.name)}` : ""}]` }
+    : block);
 }
 
 function summaryMessage(message: ModelMessage): ModelMessage {
+  if (message.role === "user") return { role: "user", content: structuredClone(summaryUserInput(message.content)) };
   if (message.role !== "tool") return structuredClone(message);
   return { ...structuredClone(message), result: { ...message.result,
     content: message.result.content.map((block) => block.type === "image"
@@ -44,7 +64,7 @@ function summaryMessage(message: ModelMessage): ModelMessage {
 }
 
 function summaryInput(originalTask: UserInput | undefined, previousSummary: string | undefined, turns: readonly ModelMessage[][]): string {
-  return JSON.stringify({ originalTask, ...(previousSummary ? { previousSummary } : {}), olderTurns: turns });
+  return JSON.stringify({ originalTask: originalTask === undefined ? undefined : summaryUserInput(originalTask), ...(previousSummary ? { previousSummary } : {}), olderTurns: turns });
 }
 
 function summaryFits(provider: ProviderAdapter, input: string, outputTokens: number): boolean {

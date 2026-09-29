@@ -1,8 +1,8 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
+import type { ChatCompletionContentPart, ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
-import { nativeToolContent } from "./content.js";
+import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
@@ -18,7 +18,14 @@ function inputMessages(request: ProviderRequest, provider: ResolvedModelConfig["
   };
   for (const message of request.messages) {
     if (message.role !== "tool") flushImages();
-    if (message.role === "user") messages.push({ role: "user", content: renderUserInput(message.content) });
+    if (message.role === "user") {
+      const parts = nativeUserContent(message.content);
+      messages.push({ role: "user", content: parts.some((part) => part.type === "image")
+        ? parts.flatMap((part): ChatCompletionContentPart[] => part.type === "image"
+          ? [{ type: "image_url", image_url: { url: `data:${part.mimeType};base64,${part.data}` } }]
+          : part.text ? [{ type: "text", text: part.text }] : [])
+        : renderUserInput(message.content) });
+    }
     else if (message.role === "assistant") {
       const opaque = (provider === "openrouter" || provider === "deepseek") && message.opaque && typeof message.opaque === "object" && !Array.isArray(message.opaque)
         ? message.opaque as Record<string, unknown> : {};

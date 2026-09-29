@@ -55,6 +55,13 @@ function jpegValid(data: Buffer): boolean {
   return false;
 }
 
+/** Sniffs structurally valid PNG/JPEG bytes; undefined when neither. */
+export function detectImageMime(data: Buffer): "image/png" | "image/jpeg" | undefined {
+  if (pngValid(data)) return "image/png";
+  if (jpegValid(data)) return "image/jpeg";
+  return undefined;
+}
+
 export async function viewImageTool(args: { path: string }, context: ToolContext): Promise<ToolResult> {
   const path = resolve(context.cwd, args.path);
   if (context.signal?.aborted) return errorResult("aborted", "image read aborted");

@@ -1,14 +1,21 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
 import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
-import { nativeToolContent } from "./content.js";
+import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
 function inputMessages(request: ProviderRequest): MessageParam[] {
   const messages: MessageParam[] = [];
   for (const message of request.messages) {
-    if (message.role === "user") messages.push({ role: "user", content: renderUserInput(message.content) });
+    if (message.role === "user") {
+      const parts = nativeUserContent(message.content);
+      messages.push({ role: "user", content: (parts.some((part) => part.type === "image")
+        ? parts.flatMap((part): Array<Record<string, unknown>> => part.type === "image"
+          ? [{ type: "image", source: { type: "base64", media_type: part.mimeType, data: part.data } }]
+          : part.text ? [{ type: "text", text: part.text }] : [])
+        : renderUserInput(message.content)) as MessageParam["content"] });
+    }
     else if (message.role === "assistant") {
       const blocks = Array.isArray(message.opaque) ? message.opaque : [
         ...(message.text ? [{ type: "text", text: message.text }] : []),

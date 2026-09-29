@@ -1,6 +1,6 @@
 import { GoogleGenAI, ThinkingLevel, type Content, type Part } from "@google/genai";
 import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
-import { nativeToolContent } from "./content.js";
+import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
@@ -13,7 +13,14 @@ function inputContents(request: ProviderRequest): Content[] {
   };
   for (const message of request.messages) {
     if (message.role !== "tool") flushResults();
-    if (message.role === "user") contents.push({ role: "user", parts: [{ text: renderUserInput(message.content) }] });
+    if (message.role === "user") {
+      const parts = nativeUserContent(message.content);
+      contents.push({ role: "user", parts: parts.some((part) => part.type === "image")
+        ? parts.flatMap((part): Part[] => part.type === "image"
+          ? [{ inlineData: { mimeType: part.mimeType, data: part.data } }]
+          : part.text ? [{ text: part.text }] : [])
+        : [{ text: renderUserInput(message.content) }] });
+    }
     else if (message.role === "assistant") {
       syntheticIds.clear();
       for (const call of message.toolCalls) if (call.syntheticId) syntheticIds.add(call.id);

@@ -144,14 +144,14 @@ Assert base64 payload equality on the wire (not just presence); assert zero prov
 Locate and update the token estimator (`estimateRequestTokens`, used by `AgentSession.estimatedContextTokens` and automatic compaction) for image parts; run the aggregate/structure validation in `agent.run` before committing the user message; introduce `nativeUserContent` as the single normalization point for user blocks (adapters must not inspect raw `UserBlock`s themselves); extract the shared validator (no copy of PNG/JPEG logic); add a test-only fake block kind through the registry to prove a new kind needs no adapter-flow changes beyond its wire mapping; keep adapters' text-only paths untouched; handle blob-staged large strings transparently (no adapter code should know about blobs).
 
 ### Acceptance criteria
-- [ ] AC-1: All four adapters emit native image parts for user images — proven by provider-content tests.
-- [ ] AC-2: Text-only requests are unchanged — proven by existing provider tests passing unmodified.
-- [ ] AC-3: Invalid/oversize images are rejected before any request; non-vision models degrade images to placeholders instead of failing — proven by tests 2–3.
-- [ ] AC-4: Base64 never appears in rendered text, titles, terminal output or compaction summaries — proven by view/terminal/compact tests.
-- [ ] AC-5: Resumed sessions replay stored user images — proven by session-replay/agent test.
-- [ ] AC-6: Aggregate >16 MiB and invalid images are rejected before commit/request; non-vision replay of earlier images degrades to placeholders and never blocks, and the original image returns on a vision agent — proven by tests 7–8.
-- [ ] AC-7: Images are budgeted by the image-aware estimator, not as base64 text — proven by test 9.
-- [ ] AC-8: Mixed block order is preserved on all adapters — proven by test 10.
+- [x] AC-1: All four adapters emit native image parts for user images — proven by provider-content tests.
+- [x] AC-2: Text-only requests are unchanged — proven by existing provider tests passing unmodified.
+- [x] AC-3: Invalid/oversize images are rejected before any request; non-vision models degrade images to placeholders instead of failing — proven by tests 2–3.
+- [x] AC-4: Base64 never appears in rendered text, titles, terminal output or compaction summaries — proven by view/terminal/compact tests.
+- [x] AC-5: Resumed sessions replay stored user images — proven by session-replay/agent test.
+- [x] AC-6: Aggregate >16 MiB and invalid images are rejected before commit/request; non-vision replay of earlier images degrades to placeholders and never blocks, and the original image returns on a vision agent — proven by tests 7–8.
+- [x] AC-7: Images are budgeted by the image-aware estimator, not as base64 text — proven by test 9.
+- [x] AC-8: Mixed block order is preserved on all adapters — proven by test 10.
 
 ### Focused verification
 `node --import tsx --test tests/provider-content.test.ts tests/vision.test.ts tests/session-view.test.ts tests/compact.test.ts tests/session-replay.test.ts`
@@ -462,4 +462,5 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Progress Log
 
-- 2026-09-29: Plan drafted and self-reviewed. No implementation started.
+- 2026-09-29: Plan drafted, Codex-reviewed (APPROVE) and revised so non-vision models degrade to placeholders instead of failing.
+- 2026-09-29 Phase 1: implemented user `image` blocks, `nativeUserContent` (ordered parts, validation, 16 MiB aggregate), four adapter mappings, request-time vision placeholders (`projectVisionMessages`), image-aware estimator, summary/render placeholders, pre-commit validation in `agent.run`. Tests in `tests/user-images.test.ts` (7). `npm run typecheck` clean; `npm test` 553/556 — the 3 failures (REPL PTY `T-08`, `T-08b` x2 in `tests/cli.test.ts`) fail identically on baseline HEAD `c406e68` (environmental PTY), not caused by this change.

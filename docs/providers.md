@@ -31,4 +31,13 @@ Function calls and tool results remain linked by call ID. Responses output items
 
 For `vision:true`, `view_image` produces a typed PNG/JPEG tool result. Chat Completions sends the linked text tool response followed by an image user block; Responses sends image content inside the linked `function_call_output`; Anthropic uses an image within the `tool_result`; Gemini uses `inlineData` in the function response. A provider may still reject a specific model's vision capability; that upstream error remains visible. Text-only agents can use MCP vision-to-text tools that perform OCR or visual analysis outside the selected model and return text.
 
+## User images
+
+A user message may contain PNG/JPEG `image` blocks next to text and resource links (`{type:"image", data, mimeType, name?}`, base64 data). All four adapters send them natively and in original block order: Chat Completions `image_url` data URLs, Responses `input_image`, Anthropic base64 `image` sources and Gemini `inlineData`. A message without images keeps its previous request shape.
+
+Images are validated before the message enters the session: base64 syntax, PNG/JPEG structure matching the declared type, and at most 16 MiB of decoded image bytes per message. An invalid message returns `unsupported_content` without a provider request and without changing the saved context.
+
+`vision:false` models never receive image bytes. When the request is built, every user image, including images earlier in the session, is replaced by a text placeholder that says the image was omitted because the current model cannot read images and that earlier assistant messages may describe it. The saved context keeps the original image, so a later vision-capable agent receives it natively. Context estimates count an image as a fixed conservative token cost instead of counting its base64 text, and compaction summaries see only an `[Image: type, bytes]` description.
+
+
 Usage reports include observed input, output, cache read and cache write counters. Missing fields remain unknown. This is not a tokenizer-based estimate of the model's remaining context.

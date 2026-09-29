@@ -2,14 +2,21 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ResponseInput, ResponseOutputItem } from "openai/resources/responses/responses";
 import { renderUserInput, type ModelToolCall, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn } from "./types.js";
-import { nativeToolContent } from "./content.js";
+import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
 function inputItems(request: ProviderRequest): ResponseInput {
   const input: unknown[] = [];
   for (const message of request.messages) {
-    if (message.role === "user") input.push({ role: "user", content: renderUserInput(message.content) });
+    if (message.role === "user") {
+      const parts = nativeUserContent(message.content);
+      input.push({ role: "user", content: parts.some((part) => part.type === "image")
+        ? parts.flatMap((part): Array<Record<string, unknown>> => part.type === "image"
+          ? [{ type: "input_image", detail: "auto", image_url: `data:${part.mimeType};base64,${part.data}` }]
+          : part.text ? [{ type: "input_text", text: part.text }] : [])
+        : renderUserInput(message.content) });
+    }
     else if (message.role === "assistant") {
       if (Array.isArray(message.opaque)) input.push(...structuredClone(message.opaque));
       else {

@@ -1,4 +1,4 @@
-import type { ModelMessage } from "./types.js";
+import { imagePlaceholderText, type ModelMessage } from "./types.js";
 
 function historicalResult(message: Extract<ModelMessage, { role: "tool" }>): string {
   const content = message.result.content.map((block) => {
@@ -19,4 +19,17 @@ export function projectReplayMessages(messages: readonly ModelMessage[], replayB
     return [{ role: "assistant", text: [message.text, ...calls].filter(Boolean).join("\n")
       || "[Historical assistant response contained no portable text]", toolCalls: [] }];
   });
+}
+
+/**
+ * Request-time vision degradation: a model that cannot read images receives a text placeholder for
+ * every user image. The stored context is never rewritten, so a later vision model sees the original.
+ */
+export function projectVisionMessages(messages: readonly ModelMessage[], vision: boolean): ModelMessage[] {
+  if (vision) return [...messages];
+  return messages.map((message): ModelMessage => message.role === "user" && typeof message.content !== "string"
+    && message.content.some((block) => block.type === "image")
+    ? { role: "user", content: message.content.map((block) => block.type === "image"
+      ? { type: "text" as const, text: imagePlaceholderText(block) } : block) }
+    : message);
 }

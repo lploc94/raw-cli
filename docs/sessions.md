@@ -13,3 +13,7 @@ Compaction summarizes eligible older model context and retains recent turns. Suc
 History projections accept existing CLI and ACP envelopes. They preserve record order, tool linkage and available statuses, and label abbreviated previews. Historical output, image bytes, detailed timing or full write diffs may be unavailable; reading current files is not a reconstruction of historical results. No history read executes a tool.
 
 Operation receipts and metrics are optional host records in the same format-5 database, cascade-deleted with their session. They are never injected into the model prompt. An unrelated unsupported legacy database remains isolated by the existing store-location policy.
+
+## User message blocks
+
+A stored user message is text or an ordered list of `text`, `resource_link` and `image` blocks. Image bytes stay inside the saved message (large values use the existing payload files); history views, terminal history, titles and compaction summaries show `[Image: type, N bytes]` instead of base64, while ACP replay forwards the stored image block. Switching between vision and non-vision agents never rewrites the saved image; see `docs/providers.md` for request-time placeholders.

@@ -49,14 +49,34 @@ export interface ModelToolCall {
 
 export type UserBlock =
   | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: "image/png" | "image/jpeg"; name?: string }
   | { type: "resource_link"; uri: string; name: string; title?: string | null; description?: string | null;
       mimeType?: string | null; size?: number | null; annotations?: unknown };
 
 export type UserInput = string | readonly UserBlock[];
+export type UserImageBlock = Extract<UserBlock, { type: "image" }>;
+
+/** Decoded byte length of a base64 string without allocating the decoded buffer. */
+export function base64ByteLength(data: string): number {
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
+}
 
 export function renderUserInput(input: UserInput): string {
   if (typeof input === "string") return input;
-  return input.map((block) => block.type === "text" ? block.text : `\n[Resource link] ${JSON.stringify(block)}\n`).join("");
+  return input.map((block) => block.type === "text" ? block.text
+    : block.type === "image" ? `\n[Image: ${block.mimeType}, ${base64ByteLength(block.data)} bytes]\n`
+    : `\n[Resource link] ${JSON.stringify(block)}\n`).join("");
+}
+
+export function userInputHasImage(input: UserInput): boolean {
+  return typeof input !== "string" && input.some((block) => block.type === "image");
+}
+
+/** Text that stands in for an image when the model cannot read images. */
+export function imagePlaceholderText(block: UserImageBlock): string {
+  const label = block.name ? `, ${JSON.stringify(block.name)}` : "";
+  return `[Image omitted: ${block.mimeType}, ${base64ByteLength(block.data)} bytes${label}. The current model cannot read images, so this image was replaced by this text placeholder. Its content may be described in earlier assistant messages of this conversation; ask the user to describe it or to switch to a vision-capable agent if you need to see it.]`;
 }
 
 export type ModelMessage =

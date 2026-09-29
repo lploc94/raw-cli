@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
-import { projectReplayMessages } from "./llm/replay.js";
+import { projectReplayMessages, projectVisionMessages } from "./llm/replay.js";
+import { nativeUserContent } from "./llm/content.js";
 import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
@@ -214,10 +215,14 @@ export class AgentSession {
   get requestTimeoutMs(): number { return this.options.requestTimeoutMs; }
   stats(fromRequest = 0): UsageSummary { return summarizeUsage(this.usageEntries.slice(fromRequest)); }
   estimatedContextTokens(): number {
-    return Math.ceil(estimateRequestTokens(this.options.system, this.requestMessages(), this.schemaView) * this.tokenCalibration);
+    return Math.ceil(estimateRequestTokens(this.options.system, this.sendMessages(), this.schemaView) * this.tokenCalibration);
   }
 
   private requestMessages(): ModelMessage[] { return projectReplayMessages(this.messages, this.replayBefore); }
+  /** What the provider actually receives: replay projection plus text placeholders for images on non-vision models. */
+  private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
+    return projectVisionMessages(messages, this.options.provider.modelConfig.vision === true);
+  }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
     const binding = this.persistence;
@@ -357,7 +362,7 @@ export class AgentSession {
         const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
         if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
         const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: work.summary, beforeBytes, afterBytes: finalBytes,
-          afterTokens: Math.ceil(estimateRequestTokens(this.options.system, replacement, this.schemaView) * this.tokenCalibration) };
+          afterTokens: Math.ceil(estimateRequestTokens(this.options.system, this.sendMessages(replacement), this.schemaView) * this.tokenCalibration) };
         this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
           { summaryText: work.summary!, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
             tokenCalibration: this.tokenCalibration, replayBefore: 0, ...(notice ? { skillNotice: notice } : {}) },
@@ -572,6 +577,8 @@ export class AgentSession {
     let autoCompacted = false;
     try {
       await this.start(this.messages.length ? "resume" : "create", emit, controller.signal);
+      try { nativeUserContent(input); }
+      catch (error) { return finish({ status: "error", steps, code: "unsupported_content", message: (error as Error).message }); }
       const promptHook = await this.options.hooks?.run("UserPromptSubmit", { ...hookRequest(), input },
         { signal: controller.signal, onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
       if (controller.signal.aborted) return finish(interrupted());
@@ -595,7 +602,7 @@ export class AgentSession {
           const outputReserve = modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
           const inputBudget = effectiveInputBudget(context, outputReserve);
           const estimate = () => {
-            baseEstimate = estimateRequestTokens(this.options.system, this.requestMessages(), this.schemaView);
+            baseEstimate = estimateRequestTokens(this.options.system, this.sendMessages(), this.schemaView);
             return Math.ceil(baseEstimate * this.tokenCalibration);
           };
           requestEstimate = estimate();
@@ -614,7 +621,7 @@ export class AgentSession {
                 ...(this.originalTask === undefined ? [] : [{ role: "user" as const, content: this.originalTask }]),
                 { role: "user", content: `[Conversation summary]\n${summaryPlaceholder}` }, ...tail,
               ];
-              if (Math.ceil(estimateRequestTokens(this.options.system, candidate, this.schemaView) * this.tokenCalibration) <= inputBudget) break;
+              if (Math.ceil(estimateRequestTokens(this.options.system, this.sendMessages(candidate), this.schemaView) * this.tokenCalibration) <= inputBudget) break;
               keep--;
             }
             try { compactResult = await this.compactAttempt(this.options.provider, keep, compact.maxOutputTokens,
@@ -656,7 +663,7 @@ export class AgentSession {
         try {
           turn = await Promise.race([this.options.provider.generate({
             system: this.options.system,
-            messages: this.requestMessages(),
+            messages: this.sendMessages(),
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
             cacheKey: this.cacheKey,
