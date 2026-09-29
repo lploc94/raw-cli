@@ -58,7 +58,8 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     const counts = new Map<string, number>();
     for (const id of operations.activeIds()) {
       const operation = store.getOperation(id); const session = operation && store.getSession(operation.sessionId);
-      if (session) counts.set(session.cwd, (counts.get(session.cwd) ?? 0) + 1);
+      const path = session && store.workspaceCanonicalPath(session.workspaceId);
+      if (path) counts.set(path, (counts.get(path) ?? 0) + 1);
     }
     return counts;
   };

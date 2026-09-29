@@ -69,6 +69,28 @@ test("the workspace list reports chat counts, running operations and whether eac
   } finally { await f.close(); rmSync(a, { recursive: true, force: true }); rmSync(b, { recursive: true, force: true }); rmSync(gone, { recursive: true, force: true }); }
 });
 
+test("the workspace list names a folder by its canonical path even when a chat stored a symlinked cwd", async () => {
+  const f = await dashboardFixture({ responses: [{ hold: true }] });
+  const real = tempDir("raw-ws-real-"); const aliasRoot = tempDir("raw-ws-alias-"); const alias = join(aliasRoot, "link"); symlinkSync(real, alias);
+  try {
+    const chat = await f.json<SessionSummary>("/sessions", "POST", { cwd: real });
+    const db = new DatabaseSync(join(f.root, "state", "raw", "sessions.sqlite"));
+    db.prepare("UPDATE workspaces SET display_path = ? WHERE canonical_path = ?").run(alias, real);
+    db.close();
+    const listing = await f.json<Listing>("/workspaces");
+    assert.equal(listing.items.filter((item) => item.cwd === real).length, 1);
+    assert.equal(listing.items.some((item) => item.cwd === alias), false);
+    assert.equal(listing.items.find((item) => item.cwd === real)!.sessions, 1);
+    const op = await f.json<{ id: string }>(`/sessions/${chat.id}/operations`, "POST", { clientRequestId: "run", kind: "turn", agent: "raw", input: "hold" });
+    for (let attempt = 0; attempt < 200 && (await f.json<Listing>("/workspaces")).items.find((i) => i.cwd === real)!.running === 0; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal((await f.json<Listing>("/workspaces")).items.find((item) => item.cwd === real)!.running, 1);
+    await f.json(`/operations/${op.id}/cancel`, "POST", {}); await f.wait(op.id);
+    const included = await f.json<Listing>(`/workspaces?include=${encodeURIComponent(alias)}`);
+    assert.equal(included.items.filter((item) => item.cwd === real).length, 1);
+  } finally { await f.close(); rmSync(real, { recursive: true, force: true }); rmSync(aliasRoot, { recursive: true, force: true }); }
+});
+
 test("include adds real metadata for paths outside the recent list and validates its input", async () => {
   const f = await dashboardFixture({ responses: [{ hold: true }] });
   const dirs: string[] = [];
