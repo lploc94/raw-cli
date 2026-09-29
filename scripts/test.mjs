@@ -8,7 +8,7 @@ const files = readdirSync(new URL("../tests/", import.meta.url))
   .sort()
   .map((name) => `tests/${name}`);
 
-const required = ["dashboard-assets", "dashboard-management", "dashboard-packages", "dashboard-installed", "dashboard-sessions", "dashboard-streams", "dashboard-approval", "dashboard-server", "dashboard-cli", "management-config", "management-components", "config", "prompt", "foundation-cli", "primitives", "registry", "overhead", "providers",
+const required = ["dashboard-assets", "dashboard-management", "dashboard-packages", "dashboard-installed", "dashboard-sessions", "dashboard-attachments", "dashboard-streams", "dashboard-approval", "dashboard-server", "dashboard-cli", "management-config", "management-components", "config", "prompt", "foundation-cli", "primitives", "registry", "overhead", "providers",
   "provider-content", "user-images", "agent", "agent-lifecycle", "compact", "cache", "usage", "mcp", "mcp-content",
   "acp", "acp-client", "acp-transport", "cli", "repl", "package", "session-operations", "session-view", "session-store", "session-agent", "session-process", "session-cli", "session-api", "session-acp", "session-retention", "session-transition", "session-replay", "tool-plugins", "package-manifest", "component-references", "skill-frontmatter", "package-export", "package-archive", "package-store", "package-lifecycle", "package-config", "package-cli", "package-runtime", "package-sharing-installed"]
   .map((name) => `tests/${name}.test.ts`);

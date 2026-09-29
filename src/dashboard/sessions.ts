@@ -1,14 +1,19 @@
 import { realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { record } from "../management/agents.js";
+import { loadConfig } from "../config.js";
+import { loadSelectedSkills } from "../skills/loader.js";
+import type { UserBlock } from "../llm/types.js";
 import { readManagedConfig } from "../management/config.js";
 import { SessionOperations, type AttachSessionRuntime, type SessionOperation } from "../sessions/operations.js";
-import { terminalOperationStates } from "../sessions/operation-types.js";
+import { terminalOperationStates, type OperationIntent } from "../sessions/operation-types.js";
 import { projectHistoryItem, type HistoryView } from "../sessions/view.js";
 import type { Page, SessionSummary } from "../sessions/store.js";
 import type { SessionMetrics } from "../sessions/metrics.js";
 import { Approvals, type Approval } from "./approvals.js";
-import { DashboardError, textField } from "./errors.js";
+import { DashboardError, readBody, textField } from "./errors.js";
+import { AttachmentStaging } from "./attachments.js";
+import { searchWorkspaceFiles, workspaceFileLink } from "./files.js";
 import { LiveOutput, type LiveSegment } from "./live-output.js";
 import { SessionStreams } from "./streams.js";
 import type { DashboardContext, DashboardRoute } from "./server.js";
@@ -23,6 +28,12 @@ export function workspacePath(value: unknown, base: string): string {
   const input = textField(value, "cwd", 4096);
   try { const path = realpathSync(resolve(base, input)); if (statSync(path).isDirectory()) return path; } catch {}
   throw new DashboardError(400, "invalid_workspace", "Choose an existing directory");
+}
+function stringList(value: unknown, field: string, max: number): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > max || value.some((item) => typeof item !== "string")) throw new DashboardError(400, "invalid_input", `${field} must be an array of at most ${max} strings`);
+  if (new Set(value).size !== value.length) throw new DashboardError(400, "invalid_input", `${field} must not repeat an entry`);
+  return value as string[];
 }
 export function pageOptions(search: URLSearchParams): { before?: string; limit?: number } {
   const raw = search.get("limit"); const limit = raw === null ? undefined : Number(raw);
@@ -41,6 +52,28 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   const operations: SessionOperations = new SessionOperations({ store, env: context.env, ...(attach ? { attach } : {}),
     approve: (operation) => approvals.forOperation(operation, () => operations.approvalTimeout(operation.id)) });
   context.operations = operations;
+  const staging = new AttachmentStaging(); context.attachments = staging;
+  context.onClose(() => staging.clear());
+  const composer = async (name: string) => {
+    const options = { cwd: context.cwd, configPath: context.configPath, env: context.env };
+    const config = await readManagedConfig(options);
+    if (!Object.hasOwn(record(config.data?.agents), name)) throw new DashboardError(404, "not_found", `Agent ${name} is not configured`);
+    // The effective selection (direct agents and installed package agents) needs no model credentials; a broken skill only empties the list.
+    let vision = false; let skills: Array<{ name: string; description: string }> = [];
+    try {
+      const runtime = await loadConfig({ ...options, configPath: context.configPath, flags: { agent: name }, requireModel: false });
+      vision = runtime.modelConfig?.vision === true;
+      for (const skillId of runtime.skillIds) {
+        try { // one broken skill must not hide the others
+          const [skill] = await loadSelectedSkills({ selectedIds: [skillId], configPath: runtime.configPath, maxOutputBytes: runtime.maxOutputBytes,
+            env: context.env, cwd: context.cwd, globalConfigRoot: runtime.globalConfigRoot, packageSkills: runtime.packageSkills });
+          if (skill) skills.push({ name: skill.name, description: skill.description });
+        } catch { /* skipped */ }
+      }
+    } catch { /* metadata stays best-effort so the composer never blocks */ }
+    return { vision, skills, attachmentKinds: staging.kinds.list().map((kind) => ({ id: kind.id, accept: kind.mimeTypes, maxBytes: kind.maxBytes, enabled: true,
+      ...(kind.needsVision && !vision ? { warning: "This agent cannot see images; it will receive a text placeholder instead." } : {}) })) };
+  };
   const requireSession = (id: string): SessionSummary => { const value = store.getSession(id); if (!value) throw new DashboardError(404, "not_found", store.missingSessionMessage()); return value; };
   const requireOperation = (id: string): SessionOperation => { const value = store.getOperation(id); if (!value) throw new DashboardError(404, "not_found", "Operation not found"); requireSession(value.sessionId); return value; };
   const metrics = (id: string) => {
@@ -61,8 +94,10 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   context.onClose(() => { unsubscribe(); approvals.close(); streams.close(); output.close(); });
   return [async (request, response) => {
     const url = new URL(request.url!, "http://localhost"); const path = url.pathname; const method = request.method;
-    if (!/^\/api\/(?:workspaces|sessions|operations|permissions|activity)(?:\/|$)/.test(path)) return false;
+    if (!/^\/api\/(?:workspaces|sessions|operations|permissions|activity|agents\/[^/]+\/composer)(?:\/|$)/.test(path)) return false;
     const reply = (value: unknown, status = 200) => { context.json(response, status, value); return true; };
+    const agentRoute = /^\/api\/agents\/([^/]+)\/composer$/.exec(path);
+    if (agentRoute && method === "GET") return reply(await composer(decodeURIComponent(agentRoute[1]!)));
     if (path === "/api/workspaces" && method === "GET") {
       const items = store.recentWorkspaces(); if (!items.some((item) => item.cwd === context.cwd)) items.unshift({ cwd: context.cwd, updatedAt: 0 });
       return reply({ items });
@@ -91,6 +126,29 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         return reply(store.createSession({ cwd, agentName, configPath: context.configPath,
           title: body.title === undefined ? "New chat" : textField(body.title, "title", 200) }), 201);
       }
+    }
+    const attachmentRoute = /^\/api\/sessions\/([^/]+)\/attachments(?:\/([^/]+))?$/.exec(path);
+    if (attachmentRoute) {
+      const id = decodeURIComponent(attachmentRoute[1]!); requireSession(id);
+      if (!attachmentRoute[2] && method === "POST") {
+        const mimeType = (request.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
+        const kind = staging.kinds.byMime(mimeType);
+        if (!kind) { request.resume(); throw new DashboardError(415, "unsupported_media_type", "Unsupported attachment type"); }
+        const bytes = await readBody(request, kind.maxBytes).catch((error) => {
+          throw error instanceof DashboardError && error.code === "body_too_large"
+            ? new DashboardError(413, "attachment_too_large", `Attachment exceeds ${kind.maxBytes} bytes`) : error; });
+        let name = "attachment"; const header = request.headers["x-raw-filename"];
+        if (typeof header === "string") { try { name = decodeURIComponent(header); } catch { name = header; } }
+        return reply(staging.stage(id, { mimeType, name: name.replace(/[\\/\0]/g, "_"), bytes }), 201);
+      }
+      if (attachmentRoute[2] && method === "DELETE") return reply({ removed: staging.remove(id, decodeURIComponent(attachmentRoute[2])) });
+    }
+    const fileSearch = /^\/api\/sessions\/([^/]+)\/files$/.exec(path);
+    if (fileSearch && method === "GET") {
+      const session = requireSession(decodeURIComponent(fileSearch[1]!));
+      const raw = url.searchParams.get("limit"); const limit = raw === null ? 20 : Number(raw);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new DashboardError(400, "invalid_limit", "limit must be 1 to 50");
+      return reply({ items: await searchWorkspaceFiles(session.cwd, url.searchParams.get("q") ?? "", limit) });
     }
     const sessionRoute = /^\/api\/sessions\/([^/]+)(?:\/(history|operations|metrics|events|output))?$/.exec(path);
     if (sessionRoute) {
@@ -125,9 +183,21 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
           const body = await context.readJson(request);
           if (body.kind !== "turn" && body.kind !== "compact") throw new DashboardError(400, "invalid_kind", "kind must be turn or compact");
           if (body.kind === "compact" && body.input !== undefined) throw new DashboardError(400, "invalid_input", "compact does not accept input");
-          return reply(operations.submit({ sessionId: id, clientRequestId: textField(body.clientRequestId, "clientRequestId", 128),
-            kind: body.kind, agentName: textField(body.agent, "agent"), configPath: context.configPath,
-            ...(body.kind === "turn" ? { input: textField(body.input, "input", 1024 * 1024) } : {}) }), 202);
+          const clientRequestId = textField(body.clientRequestId, "clientRequestId", 128);
+          const intent: OperationIntent = { sessionId: id, clientRequestId, kind: body.kind, agentName: textField(body.agent, "agent"), configPath: context.configPath,
+            ...(body.kind === "turn" ? { input: textField(body.input, "input", 1024 * 1024) } : {}) };
+          const ids = stringList(body.attachments, "attachments", 8); const files = stringList(body.files, "files", 20);
+          if (body.kind === "compact" && (ids.length || files.length)) throw new DashboardError(400, "invalid_input", "compact does not accept attachments");
+          // A replayed request id returns the existing receipt and never re-reads or consumes staged items.
+          if (body.kind !== "turn" || (!ids.length && !files.length) || store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
+          const staged = staging.resolve(id, ids); const session = requireSession(id);
+          const links: UserBlock[] = [];
+          for (const file of files) links.push(await workspaceFileLink(session.cwd, file));
+          const blocks: UserBlock[] = [{ type: "text", text: intent.input! }, ...links, ...staged.map((item) => staging.kinds.list().find((kind) => kind.id === item.kind)!.toBlock(item))];
+          // No await separates this check from submit, so a concurrent duplicate cannot consume staged items.
+          if (store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
+          const accepted = operations.submit(intent, blocks); staging.release(ids);
+          return reply(accepted, 202);
         }
       }
     }

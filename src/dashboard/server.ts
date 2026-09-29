@@ -15,11 +15,12 @@ import { serveDashboardStatic } from "./static.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createManagementRoutes } from "./management.js";
 import { createPackageRoutes } from "./packages.js";
+import type { AttachmentStaging } from "./attachments.js";
 
 export type DashboardRoute = (request: IncomingMessage, response: ServerResponse, context: DashboardContext) => Promise<boolean>;
 export interface DashboardContext {
   instanceId: string; cwd: string; configPath: string; env: NodeJS.ProcessEnv; signal: AbortSignal;
-  preferredAgent?: string; store?: SessionStore; operations?: SessionOperations; storeDiagnostic?: string;
+  preferredAgent?: string; store?: SessionStore; operations?: SessionOperations; attachments?: AttachmentStaging; storeDiagnostic?: string;
   json: typeof json; readJson: typeof readJson;
   onClose(cleanup: () => void | Promise<void>): void;
 }

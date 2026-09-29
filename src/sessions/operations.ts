@@ -3,6 +3,7 @@ import type { CompactOptions, CompactResult } from "../compact.js";
 import type { CompactSettings } from "../config.js";
 import type { ResolvedModelConfig } from "../llm/types.js";
 import type { ToolContext } from "../tools/primitives.js";
+import type { UserInput } from "../llm/types.js";
 import { measureSession, type SessionMetrics } from "./metrics.js";
 import { SessionOperationError, terminalOperationStates, type OperationIntent, type OperationState, type SessionOperation } from "./operation-types.js";
 import { attachSessionRuntime } from "./runtime.js";
@@ -30,6 +31,8 @@ export type OperationEvent = { sessionId: string; operationId: string } & (
   | { type: "host_error"; message: string }
 );
 interface ActiveOperation {
+  /** Structured turn input for this process only; the persisted operation keeps the text. */
+  blocks?: UserInput;
   controller: AbortController;
   done: Promise<SessionOperation>;
   agent?: AgentSession;
@@ -59,7 +62,7 @@ export class SessionOperations {
   approvalTimeout(operationId: string): number { return this.active.get(operationId)?.agent?.requestTimeoutMs ?? 120000; }
   toolIdentity(operationId: string, name: string): string | undefined { return this.active.get(operationId)?.agent?.toolIdentity(name); }
 
-  submit(intent: OperationIntent): SessionOperation {
+  submit(intent: OperationIntent, blocks?: UserInput): SessionOperation {
     if (this.closed) throw new SessionOperationError("closed", "session operations are closed");
     this.options.store.recoverOperations();
     const { operation, owner } = this.options.store.acceptOperation(intent);
@@ -67,7 +70,7 @@ export class SessionOperations {
     const controller = new AbortController();
     let resolveDone!: (operation: SessionOperation) => void;
     let rejectDone!: (error: unknown) => void;
-    const active: ActiveOperation = { controller, done: new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; }) };
+    const active: ActiveOperation = { ...(blocks ? { blocks } : {}), controller, done: new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; }) };
     // A detached HTTP client is not responsible for consuming a terminal persistence error.
     void active.done.catch(() => {});
     this.active.set(operation.id, active);
@@ -119,7 +122,7 @@ export class SessionOperations {
       if (active.controller.signal.aborted) throw new Error("operation cancelled");
       publishState(operation.kind === "turn" ? "running" : "compacting");
       if (operation.kind === "turn") {
-        result = await runtime.agent.run(operation.input!, event); state = result.status;
+        result = await runtime.agent.run(active.blocks ?? operation.input!, event); state = result.status;
       } else {
         result = await runtime.agent.compact(runtime.compactOptions, event);
         state = result.status === "cancelled" ? "cancelled" : "completed";

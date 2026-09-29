@@ -206,12 +206,12 @@ Assert the mock provider receives the exact uploaded bytes; assert staging map i
 Implement the `AttachmentKind` registry with `image` as the only entry; upload/staging/consume code must be kind-agnostic (a test registers a temporary fake kind and uploads/consumes it without route changes); composer metadata returns `attachmentKinds: [{id, accept, maxBytes, enabled, reason?}]`; no image bytes in `session_operations` rows (assert by reading the row); `submit` keeps validation of `input` text; bounded memory (byte cap across sessions); clean error mapping via `DashboardError`.
 
 ### Acceptance criteria
-- [ ] AC-1: An uploaded image reaches the provider intact through a dashboard turn — proven by dashboard-attachments test.
-- [ ] AC-2: Duplicate submissions never re-consume or duplicate attachments — proven by test.
-- [ ] AC-3: File references and search cannot escape cwd — proven by traversal/symlink tests.
-- [ ] AC-4: Non-vision agents never cause a vision error: the turn completes with placeholders and no image on the wire — proven by test.
-- [ ] AC-5: Composer metadata reports `vision` and the agent's selected skills without credentials — proven by test.
-- [ ] AC-6: Operation rows contain no image bytes — proven by store inspection test.
+- [x] AC-1: An uploaded image reaches the provider intact through a dashboard turn — proven by dashboard-attachments test.
+- [x] AC-2: Duplicate submissions never re-consume or duplicate attachments — proven by test.
+- [x] AC-3: File references and search cannot escape cwd — proven by traversal/symlink tests.
+- [x] AC-4: Non-vision agents never cause a vision error: the turn completes with placeholders and no image on the wire — proven by test.
+- [x] AC-5: Composer metadata reports `vision` and the agent's selected skills without credentials — proven by test.
+- [x] AC-6: Operation rows contain no image bytes — proven by store inspection test.
 
 ### Focused verification
 `node --import tsx --test tests/dashboard-attachments.test.ts tests/dashboard-sessions.test.ts tests/session-operations.test.ts`
@@ -463,4 +463,5 @@ Implementation review is required; verdict must be APPROVE.
 ## Progress Log
 
 - 2026-09-29: Plan drafted, Codex-reviewed (APPROVE) and revised so non-vision models degrade to placeholders instead of failing.
-- 2026-09-29 Phase 1: implemented user `image` blocks, `nativeUserContent` (ordered parts, validation, 16 MiB aggregate), four adapter mappings, request-time vision placeholders (`projectVisionMessages`), image-aware estimator, summary/render placeholders, pre-commit validation in `agent.run`. Tests in `tests/user-images.test.ts` (7). `npm run typecheck` clean; `npm test` 553/556 — the 3 failures (REPL PTY `T-08`, `T-08b` x2 in `tests/cli.test.ts`) fail identically on baseline HEAD `c406e68` (environmental PTY), not caused by this change.
+- 2026-09-29 Phase 1 (commit 3aa9c68, Codex gpt-6-astra review APPROVE in 2 rounds): implemented user `image` blocks, `nativeUserContent` (ordered parts, validation, 16 MiB aggregate), four adapter mappings, request-time vision placeholders (`projectVisionMessages`), image-aware estimator, summary/render placeholders, pre-commit validation in `agent.run`. Tests in `tests/user-images.test.ts` (7). `npm run typecheck` clean; `npm test` 553/556 — the 3 failures (REPL PTY `T-08`, `T-08b` x2 in `tests/cli.test.ts`) fail identically on baseline HEAD `c406e68` (environmental PTY), not caused by this change.
+- 2026-09-29 Phase 2: `AttachmentKinds`/`AttachmentStaging` registry and staging (`src/dashboard/attachments.ts`), workspace search and file links (`src/dashboard/files.ts`), routes for upload/delete, structured turns (`attachments`, `files`), file search and `GET /api/agents/:name/composer` (effective config + per-skill loading), `SessionOperations.submit(intent, blocks?)`. `tests/dashboard-attachments.test.ts` (10 tests). `npm run typecheck` clean; `npm test` 561/564 before the final review fixes and the same 3 baseline PTY failures. Codex gpt-6-astra review: APPROVE in 3 rounds (8 findings fixed; residual file-name-only directory swap window accepted, Node has no handle-tied readdir).
