@@ -2362,6 +2362,7 @@ summary::-webkit-details-marker {
 .folder-bar .field {
   flex: 1;
   min-width: 0;
+  margin-bottom: 0;
 }
 .folder-tools {
   display: flex;

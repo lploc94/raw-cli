@@ -149,7 +149,7 @@ function FolderBrowserBody({ initialPath, onOpen }: { initialPath: string; onOpe
               setPath(event.target.value);
             }} spellCheck={false} autoComplete="off" />
         </Field>
-        <button type="submit" className="folder-go">
+        <button type="submit" className="folder-go" disabled={!path.trim() || path === listing?.path} title="Open the typed path in the list below">
           Go
         </button>
       </form>
