@@ -77,6 +77,18 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
 import { pathToFileURL } from "node:url";
 const module = await import(pathToFileURL(${JSON.stringify(join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", "write_file", "index.mjs"))}).href);
 if (typeof module.handler !== "function" || typeof module.validateArgs !== "function") throw new Error("missing plugin exports");
+const { readFile } = await import("node:fs/promises");
+const { resolve } = await import("node:path");
+const patch = ["*** Begin Patch", "*** Add File: installed-patch.txt", "+installed patch", "*** End Patch"].join("\\n");
+if (module.validateArgs({patch}) !== undefined) throw new Error("installed patch validator failed");
+const effects = module.describeEffects({patch}, {cwd:process.cwd()});
+if (effects.files[0].path !== resolve("installed-patch.txt")) throw new Error("installed patch effects failed");
+let document;
+const result = await module.handler({patch}, {cwd:process.cwd(), maxOutputBytes:8192,
+ panels:{protocol:2,get:()=>document ? {revision:1,document}:undefined,update:async(_id,update)=>{document=update.document;return {revision:1};}}});
+if (result.isError || await readFile("installed-patch.txt","utf8") !== "installed patch\\n") throw new Error("installed patch execution failed");
+if (!document?.blocks.some(block=>block.kind === "files" && block.entries.some(entry=>entry.path === resolve("installed-patch.txt")))) throw new Error("installed Files changed missing");
+
 const invalid = module.validateArgs({ operations: [
   { path: "sentinel", mode: "overwrite", content: "x" },
   { path: "sentinel", mode: "replace_lines", start_line: 2, end_line: 1, content: "x", expected_sha256: "0".repeat(64) },

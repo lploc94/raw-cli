@@ -3,7 +3,7 @@
   "id": "write_file",
   "version": "1.0.0",
   "name": "write_file",
-  "description": "Apply 1-16 file operations in array order. Example: {\"operations\":[{\"path\":\"notes.txt\",\"mode\":\"append\",\"content\":\"text\"}]}. Results correspond to operations by zero-based index. Relative paths use the session cwd. overwrite and append require content and create the file and parent directories. replace_text requires nonempty old_text and a new_text string; it changes exactly one literal occurrence, otherwise fails without writing. Empty new_text deletes that occurrence. replace_lines requires existing 1-based inclusive start_line and end_line, content, and lowercase expected_sha256. First read exactly those lines with read_file, then copy that result's sha256 into expected_sha256; it hashes the original selected bytes, including BOM and line endings. A changed selected span or missing line fails without writing. Empty content deletes the lines; a nonempty replacement without a final newline keeps the original separator before following lines. Invalid arguments reject the whole batch before any write. Runtime errors are reported per operation and later operations continue; completed writes are not rolled back. Abort skips remaining operations.",
+  "description": "Apply 1-16 file operations in array order. Example: {\"operations\":[{\"path\":\"notes.txt\",\"mode\":\"append\",\"content\":\"text\"}]}. Results correspond to operations by zero-based index. Relative paths use the session cwd. overwrite and append require content and create the file and parent directories. replace_text requires nonempty old_text and a new_text string; it changes exactly one literal occurrence, otherwise fails without writing. Empty new_text deletes that occurrence. replace_lines requires existing 1-based inclusive start_line and end_line, content, and lowercase expected_sha256. First read exactly those lines with read_file, then copy that result's sha256 into expected_sha256; it hashes the original selected bytes, including BOM and line endings. A changed selected span or missing line fails without writing. Empty content deletes the lines; a nonempty replacement without a final newline keeps the original separator before following lines. Invalid arguments reject the whole batch before any write. Runtime errors are reported per operation and later operations continue; completed writes are not rolled back. Abort skips remaining operations. Alternatively pass {\"patch\":\"*** Begin Patch\\n...\\n*** End Patch\"}, exclusively instead of operations. Supports Add File (+ lines), Update File (bare @@ context hunks), optional Move to, and Delete File. Unique exact context only; EOF and no-final-newline markers supported. Patch limits: 1 MiB, 64 paths, 16 MiB per file. Preflight all files before changes; symlinks and clobbering renames rejected. Runtime patch failure stops subsequent files and reports partial success. Successful writes publish bounded Files changed session history.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -62,12 +62,31 @@
           ],
           "additionalProperties": false
         }
+      },
+      "patch": {
+        "type": "string",
+        "description": "Documented raw text patch dialect; mutually exclusive with operations."
       }
     },
-    "required": [
-      "operations"
-    ],
-    "additionalProperties": false
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "properties": {
+          "operations": {}
+        },
+        "required": [
+          "operations"
+        ]
+      },
+      {
+        "properties": {
+          "patch": {}
+        },
+        "required": [
+          "patch"
+        ]
+      }
+    ]
   },
   "entry": "./index.mjs",
   "condition_sources": [
@@ -107,5 +126,17 @@
       "files"
     ],
     "additionalProperties": false
-  }
+  },
+  "panels": [
+    {
+      "id": "files_changed",
+      "placement": "sidebar",
+      "title": "Files changed",
+      "icon": "folder-tree",
+      "open": "first_update",
+      "context": "none",
+      "acp_plan": false,
+      "actions": []
+    }
+  ]
 }

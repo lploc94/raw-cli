@@ -1,8 +1,11 @@
+import { constants as fsConstants } from "node:fs";
+import { parseFilePatch, applyFilePatch } from "./file-patch.js";
+import { publishWriteChanges } from "./write-changes.js";
 import type { CommandActivity } from "../processes/presentation.js";
 import type { ProcessContext } from "../processes/contract.js";
 import type { InteractionContext } from "../interactions/contract.js";
 import type { VariableContext } from "../vars/contract.js";
-import { open, mkdir, writeFile, readFile, appendFile } from "node:fs/promises";
+import { open, mkdir, writeFile, readFile, appendFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { runBash } from "./process.js";
@@ -24,6 +27,8 @@ export interface ToolApprovalRequest {
 }
 
 export interface ToolContext {
+  /** Host accounting for actual successful builtin writes; never provider metadata. */
+  onWriteCompleted?: () => void;
   commandActivity?: CommandActivity;
   interactions?: InteractionContext;
   processes?: ProcessContext;
@@ -218,7 +223,26 @@ function selectedLineSpan(bytes: Buffer, startLine: number, endLine: number): { 
   return undefined;
 }
 
-export async function writeFileTool(args: { operations: WriteOperation[] }, context: ToolContext): Promise<ToolResult> {
+async function writeSnapshot(path: string): Promise<{ bytes?: Buffer; missing: boolean }> {
+  let file;
+  try {
+    if (!(await stat(path)).isFile()) return { missing: false };
+    file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    if (!(await file.stat()).isFile()) return { missing: false };
+    const bytes = Buffer.alloc(8193);
+    const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
+    return { bytes: bytes.subarray(0, bytesRead), missing: false };
+  } catch (error) { return { missing: (error as NodeJS.ErrnoException).code === "ENOENT" }; }
+  finally { await file?.close().catch(() => {}); }
+}
+
+export async function writeFileTool(args: { operations: WriteOperation[]; patch?: never } | { patch: string; operations?: never }, context: ToolContext): Promise<ToolResult> {
+  if (typeof args.patch === "string") {
+    try {
+      return await applyFilePatch(parseFilePatch(args.patch, context.cwd), { maxOutputBytes: context.maxOutputBytes,
+        ...(context.signal ? { signal: context.signal } : {}), onCompleted: change => publishWriteChanges(context, [change]) });
+    } catch (error) { return errorResult("invalid_patch", error instanceof Error ? error.message : "invalid patch"); }
+  }
   const rows: IndexedResult[] = args.operations.map((op, index) => ({ index, path: op.path, mode: op.mode, status: "error", error: "x".repeat(120) }));
   if (!indexedResultFits(rows, context.maxOutputBytes)) {
     return errorResult("output_budget_too_small", "write batch outcomes exceed output budget");
@@ -230,6 +254,7 @@ export async function writeFileTool(args: { operations: WriteOperation[] }, cont
     }
     const path = resolve(context.cwd, op.path);
     try {
+      const before = context.panels ? await writeSnapshot(path) : { missing: false };
       let bytesWritten = 0;
       if (op.mode === "overwrite" || op.mode === "append") {
         await mkdir(dirname(path), { recursive: true });
@@ -264,6 +289,10 @@ export async function writeFileTool(args: { operations: WriteOperation[] }, cont
         bytesWritten = replacement.length;
       }
       rows[index] = { index, path: op.path, mode: op.mode, status: "ok", bytes_written: bytesWritten };
+      const after = context.panels ? await writeSnapshot(path) : { missing: false };
+      await publishWriteChanges(context, [{ path, kind: before.missing ? "added" : "modified",
+        ...(before.bytes ? { before: before.bytes } : !before.missing ? { beforeUnavailable: true } : {}),
+        ...(after.bytes ? { after: after.bytes } : { afterUnavailable: true }) }]);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
       rows[index] = { index, path: op.path, mode: op.mode, status: "error", error: /^[A-Za-z0-9_]+$/.test(code) ? code : "write_error" };

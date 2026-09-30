@@ -43,3 +43,11 @@ test("tool-provided control bytes cannot erase terminal output", () => {
   assert.doesNotMatch(shown, /\u001b\[2J/);
   assert.match(shown, /␛\[2Jdanger/);
 });
+
+test("terminal patch summary names paths without printing patch contents", () => {
+  const call = projectToolCall("write_file", "builtin/write_file", { patch: "*** Begin Patch\n*** Add File: hello.txt\n+private-patch-content\n*** End Patch" }, true);
+  const printed = strip(formatToolStart(call, resolveUiOptions({}), caps, 120));
+  assert.match(printed, /hello.txt/);
+  assert.match(printed, /patch/);
+  assert.doesNotMatch(printed, /private-patch-content/);
+});

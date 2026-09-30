@@ -75,7 +75,7 @@ Text and JSON results retain at most `maxOutputBytes` of content (8192 by defaul
 
 For example, `{"files":[{"path":"package.json"},{"path":"src/agent.ts","start_line":40,"max_lines":20},{"path":"src/config.ts","start_line":10,"end_line":30}]}` requests one full file and two independent slices. A count longer than the remaining file is a successful shorter read.
 
-`write_file` accepts `{"operations":[...]}`. Each operation has a `path` and one mode:
+`write_file` accepts exactly one of `{"operations":[...]}` or `{"patch":"..."}`. Each operation has a `path` and one mode:
 
 - `overwrite`: `content` replaces the whole file, creating parent directories and the file if needed.
 - `append`: `content` adds bytes at EOF, creating parent directories and the file if needed.
@@ -83,6 +83,34 @@ For example, `{"files":[{"path":"package.json"},{"path":"src/agent.ts","start_li
 - `replace_lines`: `start_line`, inclusive `end_line`, `content`, and `expected_sha256` replace existing 1-based lines only when the SHA-256 of their original UTF-8 bytes matches a `read_file` result for that exact span. An empty `content` deletes the selected lines. Raw preserves bytes outside the selected range, including a file BOM and CRLF; when following lines exist, a nonempty replacement without a line ending receives the original boundary separator.
 
 For example, `{"operations":[{"path":"notes.txt","mode":"append","content":"next\n"},{"path":"src/main.ts","mode":"replace_text","old_text":"oldName","new_text":"newName"}]}` applies two writes in order. Same-path operations also run in array order. Raw validates all entries before any approval or write. Runtime failures are reported per index and later entries continue; successful earlier writes are not rolled back. One approval, when policy requires it, covers the entire batch. Results share the single `maxOutputBytes` cap; if their minimum indexed status envelope cannot fit, Raw rejects the call before any write.
+
+### Multi-file patches
+
+The patch string uses this one text dialect (not arbitrary Git patches):
+
+```text
+*** Begin Patch
+*** Add File: notes.txt
++First line
+*** Update File: src/main.ts
+*** Move to: src/entry.ts
+@@
+ unchanged context
+-old line
++new line
+*** End of File
+*** No newline at end of file
+*** Delete File: obsolete.txt
+*** End Patch
+```
+
+Add lines begin with `+`. Update hunks start with bare `@@`; each following line begins with a space for unchanged context, `-` for removed text, or `+` for inserted text. Matching is literal, including whitespace, and must be unique in the remaining ordered source. Overlapping, out-of-order, and ambiguous matches fail. An update hunk with no context or removed lines is accepted only for an empty source; use a context line to anchor insertions in a nonempty file. `*** End of File` anchors that hunk to EOF. The terminal `*** No newline at end of file` marker, following an add body or final update hunk, removes the resulting final separator. Without it, added files end in LF and updated files retain their original final-newline state. Empty additions create empty files. Original BOM and unchanged line separators are retained; inserted lines use an adjacent source separator, then the file's first separator, then LF. Numeric Git hunk headers, binary patches, other marker spellings and invalid UTF-8 source files are rejected.
+
+Limits are 1 MiB of patch UTF-8 text, 64 distinct affected paths (both rename paths count), and 16 MiB of source UTF-8 bytes per file. To bound staging memory, the combined retained source and result bytes across a patch must fit 64 MiB; each source and result is limited to 200,000 lines. Context matching may examine at most 8,000,000 source lines cumulatively across all hunks and files; split a patch containing many separate hunks if it exceeds this work budget. These are independent limits: a patch cannot necessarily combine 64 files of the maximum individual size. Exceeding a limit fails before any mutation. Paths resolve lexically against session cwd. Repeated or contradictory normalized targets are rejected. Add destinations must not exist; update/delete sources must be regular files; moves must not overwrite a destination. Patch mode rejects symlink targets and symlinked ancestors, including destination parents. These restrictions do not change ordinary operations' path behavior.
+
+All file contents and output envelopes are staged before the first mutation. Invalid syntax, missing files, conflicting context or known destination conflicts leave every target unchanged. Sources are rechecked before application; source edits detected at that point also leave targets unchanged. During application, each remaining source/destination is rechecked. Updates use same-directory staged replacement and retain file permissions. Changes apply in patch order. An I/O failure or newly detected external edit stops remaining changes and reports indexed successful, failed and skipped outcomes; successful earlier changes remain. A failed move can report an already-created destination if deleting its source fails. No rollback overwrites external writers. This is not a cross-file transaction or a guarantee against races after the final check.
+
+Both input forms expose the same immutable intended effects before conditional policy, hooks and approval. For example, `{"source":"effects","any":"files[*].path","regex":"/protected/"}` protects operations and patches alike. Deletes expose `delete`; moves expose both `rename_source` and `rename_destination`; other writes expose `write`. Effect paths are absolute lexical paths, not realpath or a filesystem security boundary. Original arguments retain their exact spelling and shape. Failed preflight is not a completed write.
 
 `bash` accepts `{"commands":[{"command":"printf first"},{"command":"exit 7"},{"command":"printf third","timeout_ms":5000}]}`. Every `commands` entry is an object with a `command` field; an array of strings is invalid. Commands run one at a time in array order. A nonzero exit is an ordinary indexed outcome and later commands still run. Each row includes separate `stdout` and `stderr`, exit code, signal, timeout and truncation status. A timeout or abort terminates the active process group, skips later commands, and reports their indices. Invalid input rejects the whole call before approval or spawning. The old single `{ "command": ... }` shape is unsupported; the error names the unexpected field and shows the required batch shape.
 

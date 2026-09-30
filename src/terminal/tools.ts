@@ -24,6 +24,9 @@ function shortArguments(call: VisibleToolCall): string {
     return args.files.map((item) => item && typeof item === "object" && "path" in item
       ? String(item.path) : JSON.stringify(item)).join(" · ");
   }
+  if (call.identity === "builtin/write_file" && Array.isArray(args.patch_paths)) {
+    return `patch (${String(args.patch_bytes)} bytes): ${args.patch_paths.join(" · ")}`;
+  }
   if (call.identity === "builtin/write_file" && Array.isArray(args.operations)) {
     return args.operations.map((item) => item && typeof item === "object" && "path" in item
       ? `${String(item.path)}${"mode" in item ? ` (${String(item.mode)})` : ""}` : JSON.stringify(item)).join(" · ");

@@ -750,11 +750,14 @@ export class AgentSession {
       : observerError ? { status: "error", steps, code: "event_handler_error", message: observerError.message }
       : { status: "cancelled", steps };
     const cancelled = (call: ModelToolCall): ToolResult => capResult(errorResult("cancelled", `tool ${call.name} cancelled`), this.options.maxOutputBytes);
+    const completedWriteCalls = new Set<string>();
     const appendResult = (call: ModelToolCall, dispatchedResult: ToolResult, panelCall?: PanelCall) => {
       let result = dispatchedResult;
       let panelWrites: PanelWrites | undefined;
       let panelRecords: VisibleRecord[] = [];
-      if (panelCall && controller.signal.aborted) panelCall.rollback();
+      const preserveCompletedWrites = this.toolIdentity(call.name) === "builtin/write_file" && completedWriteCalls.has(call.id)
+        && this.options.registry.panelDeclarations(call.name)?.declarations.every(panel => panel.id === "files_changed");
+      if (panelCall && controller.signal.aborted && !preserveCompletedWrites) panelCall.rollback();
       else if (panelCall) {
         // Ends the handler's panel window, applies result-block updates and prepares the atomic commit (panels-design §8.0, §10).
         const settled = panelCall.settle(result.content.length === 0);
@@ -931,6 +934,7 @@ export class AgentSession {
               ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
               signal: controller.signal,
               toolCallId: call.id,
+              ...(this.toolIdentity(call.name) === "builtin/write_file" ? { onWriteCompleted: () => { completedWriteCalls.add(call.id); } } : {}),
               ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId), commandActivity: this.options.processes.commands.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
               interactions: this.interactionContext(call.id, panelInfo?.owner ?? call.name, panelCall, controller.signal),
               onHandlerSettled: () => this.settleHandler(call.id, panelCall),

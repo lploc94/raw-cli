@@ -1,18 +1,26 @@
-// src/tools/primitives.ts
-import { open, mkdir, writeFile, readFile, appendFile } from "fs/promises";
-import { createHash } from "crypto";
-import { dirname, resolve } from "path";
-
-// src/tools/process.ts
-import { spawn } from "child_process";
-import { StringDecoder } from "string_decoder";
+// src/tools/file-patch.ts
+import { createHash, randomUUID } from "crypto";
+import { constants } from "fs";
+import { chmod, link, lstat, mkdir, open, rename, unlink } from "fs/promises";
+import { dirname, join, parse, relative, resolve, sep } from "path";
 
 // src/tools/types.ts
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 
 // src/tools/results.ts
-function errorResult(code, message) {
-  return { isError: true, code, content: [{ type: "text", text: message }] };
+function utf8Prefix(value, limit) {
+  let text = "";
+  let bytes = 0;
+  for (const scalar of value) {
+    const size = Buffer.byteLength(scalar);
+    if (bytes + size > limit) return { text, bytes, truncated: true };
+    text += scalar;
+    bytes += size;
+  }
+  return { text, bytes, truncated: false };
+}
+function errorResult(code2, message) {
+  return { isError: true, code: code2, content: [{ type: "text", text: message }] };
 }
 function indexedResultFits(results, maxOutputBytes) {
   return Buffer.byteLength(JSON.stringify({ results }), "utf8") <= maxOutputBytes;
@@ -22,9 +30,475 @@ function indexedResult(results, maxOutputBytes, isError) {
   return { isError, content: [{ type: "json", value: { results } }] };
 }
 
+// src/tools/file-patch.ts
+var PATCH_BYTES = 1024 * 1024;
+var SOURCE_BYTES = 16 * 1024 * 1024;
+var STAGED_BYTES = 64 * 1024 * 1024;
+var FILE_LINES = 2e5;
+var MATCH_LINE_VISITS = 8e6;
+var PatchError = class extends Error {
+  constructor(code2) {
+    super(code2);
+    this.code = code2;
+  }
+  code;
+};
+var fail = (code2) => {
+  throw new PatchError(code2);
+};
+var hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+function checkLines(bytes) {
+  let lines = bytes.length && bytes.at(-1) !== 10 ? 1 : 0;
+  for (const byte of bytes) if (byte === 10 && ++lines > FILE_LINES) fail("patch_too_many_lines");
+}
+var code = (error) => {
+  const candidate = error instanceof PatchError ? error.code : error?.code;
+  return typeof candidate === "string" && /^[a-zA-Z0-9_]{1,80}$/.test(candidate) ? candidate : "patch_io_error";
+};
+function parseFilePatch(source, cwd) {
+  return parsePatch(source, cwd, true);
+}
+function validateFilePatchSyntax(source) {
+  parsePatch(source, "/", false);
+}
+function parsePatch(source, cwd, checkResolvedTargets) {
+  if (typeof source !== "string" || Buffer.byteLength(source) > PATCH_BYTES || source.includes("\0")) fail("patch_invalid_size_or_binary");
+  const lines = source.split("\n").map((line) => line.endsWith("\r") ? line.slice(0, -1) : line);
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.shift() !== "*** Begin Patch" || lines.pop() !== "*** End Patch") fail("patch_invalid_envelope");
+  const changes = [];
+  const targets = /* @__PURE__ */ new Set();
+  let targetCount = 0;
+  const target = (raw) => {
+    if (!raw || raw.trim() !== raw || /[\r\n\0]/.test(raw)) fail("patch_invalid_path");
+    const path = resolve(cwd, raw);
+    if (++targetCount > 64) fail("patch_too_many_paths");
+    if (!checkResolvedTargets) return path;
+    if (targets.has(path)) fail("patch_repeated_target");
+    for (const other of targets) if (path.startsWith(other + sep) || other.startsWith(path + sep)) fail("patch_conflicting_targets");
+    targets.add(path);
+    if (targets.size > 64) fail("patch_too_many_paths");
+    return path;
+  };
+  let cursor = 0;
+  while (cursor < lines.length) {
+    const header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(lines[cursor++]);
+    if (!header) fail("patch_invalid_header");
+    const rawPath = header[2];
+    const kind = header[1] === "Add" ? "add" : header[1] === "Update" ? "update" : "delete";
+    const change = { kind, path: target(rawPath), rawPath, hunks: [], added: [], noNewline: false };
+    if (kind === "update" && lines[cursor]?.startsWith("*** Move to: ")) {
+      change.rawDestination = lines[cursor++].slice("*** Move to: ".length);
+      change.destination = target(change.rawDestination);
+    }
+    if (kind === "add") {
+      while (lines[cursor]?.startsWith("+")) change.added.push(lines[cursor++].slice(1));
+    } else if (kind === "update") {
+      while (lines[cursor] === "@@") {
+        cursor++;
+        const hunk = { lines: [], eof: false };
+        while (cursor < lines.length && /^[ +\-]/.test(lines[cursor])) {
+          const line = lines[cursor++];
+          hunk.lines.push({ kind: line[0], text: line.slice(1) });
+        }
+        if (!hunk.lines.length) fail("patch_empty_hunk");
+        if (lines[cursor] === "*** End of File") {
+          hunk.eof = true;
+          cursor++;
+        }
+        change.hunks.push(hunk);
+        if (hunk.eof && lines[cursor] === "@@") fail("patch_hunk_after_eof");
+      }
+      if (!change.hunks.length) fail("patch_missing_hunk");
+    }
+    if (kind !== "delete" && lines[cursor] === "*** No newline at end of file") {
+      change.noNewline = true;
+      cursor++;
+    }
+    changes.push(change);
+  }
+  if (!changes.length) fail("patch_empty");
+  return { changes };
+}
+function describePatchEffects(parsed) {
+  return { files: parsed.changes.flatMap((change) => change.destination ? [{ path: change.path, operation: "rename_source" }, { path: change.destination, operation: "rename_destination" }] : [{ path: change.path, operation: change.kind === "delete" ? "delete" : "write" }]) };
+}
+async function safeParents(path) {
+  const root = parse(path).root;
+  let current = root;
+  const parts = relative(root, dirname(path)).split(sep).filter(Boolean);
+  for (const component of ["", ...parts]) {
+    if (component) current = join(current, component);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink()) fail("patch_symlink_path");
+      if (!info.isDirectory()) fail("patch_parent_not_directory");
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+async function absent(path) {
+  await safeParents(path);
+  try {
+    await lstat(path);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  fail("patch_destination_exists");
+}
+async function snapshot(path) {
+  await safeParents(path);
+  const before = await lstat(path);
+  if (before.isSymbolicLink()) fail("patch_symlink_path");
+  if (!before.isFile()) fail("patch_not_regular_file");
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.dev !== before.dev || info.ino !== before.ino) fail("patch_source_changed");
+    if (info.size > SOURCE_BYTES) fail("patch_source_too_large");
+    const buffer = Buffer.alloc(Math.min(SOURCE_BYTES + 1, info.size + 1));
+    let count = 0;
+    while (count < buffer.length) {
+      const read = await handle.read(buffer, count, buffer.length - count, count);
+      if (!read.bytesRead) break;
+      count += read.bytesRead;
+    }
+    if (count !== info.size) fail("patch_source_changed");
+    const bytes = buffer.subarray(0, count);
+    if (bytes.includes(0)) fail("patch_binary_source");
+    checkLines(bytes);
+    try {
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    } catch {
+      fail("patch_invalid_utf8");
+    }
+    return { bytes, hash: hash(bytes), mode: info.mode & 4095, dev: info.dev, ino: info.ino };
+  } finally {
+    await handle.close();
+  }
+}
+function applyHunks(bytes, change, work) {
+  const decoded = bytes.toString("utf8");
+  const bom = decoded.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const text = bom ? decoded.slice(1) : decoded;
+  const source = [];
+  let offset = 0;
+  while (offset < text.length) {
+    const end = text.indexOf("\n", offset);
+    if (end < 0) {
+      source.push({ text: text.slice(offset), ending: "" });
+      break;
+    }
+    const crlf = end > offset && text[end - 1] === "\r";
+    source.push({ text: text.slice(offset, crlf ? end - 1 : end), ending: crlf ? "\r\n" : "\n" });
+    offset = end + 1;
+  }
+  const fallback = source.find((line) => line.ending)?.ending ?? "\n";
+  const output = [];
+  let cursor = 0;
+  for (const hunk of change.hunks) {
+    const expected = hunk.lines.filter((line) => line.kind !== "+");
+    const matches = [];
+    if (!expected.length) {
+      if (source.length || cursor || output.length) fail("patch_unanchored_insertion");
+      matches.push(0);
+    } else {
+      const prefix = new Array(expected.length).fill(0);
+      for (let i = 1, matched = 0; i < expected.length; i++) {
+        while (matched && expected[i].text !== expected[matched].text) matched = prefix[matched - 1];
+        if (expected[i].text === expected[matched].text) matched++;
+        prefix[i] = matched;
+      }
+      for (let i = cursor, matched = 0; i < source.length; i++) {
+        if (--work.remaining < 0) fail("patch_matching_limit");
+        while (matched && source[i].text !== expected[matched].text) matched = prefix[matched - 1];
+        if (source[i].text === expected[matched].text) matched++;
+        if (matched === expected.length) {
+          if (!hunk.eof || i === source.length - 1) matches.push(i - matched + 1);
+          if (matches.length > 1) break;
+          matched = prefix[matched - 1];
+        }
+      }
+    }
+    if (matches.length !== 1) fail(matches.length ? "patch_ambiguous_context" : "patch_context_not_found");
+    const at = matches[0];
+    for (let i = cursor; i < at; i++) output.push({ ...source[i] });
+    let input = at;
+    for (const line of hunk.lines) {
+      if (line.kind === " ") output.push({ ...source[input++] });
+      else if (line.kind === "-") input++;
+      else {
+        const ending = source[input]?.ending || source[input - 1]?.ending || fallback;
+        output.push({ text: line.text, ending });
+      }
+    }
+    cursor = input;
+  }
+  for (let i = cursor; i < source.length; i++) output.push({ ...source[i] });
+  for (let i = 0; i < output.length - 1; i++) if (!output[i].ending) output[i].ending = fallback;
+  if (output.length) output[output.length - 1].ending = change.noNewline || !text.endsWith("\n") ? "" : output.at(-1).ending || fallback;
+  return Buffer.from(bom + output.map((line) => line.text + line.ending).join(""));
+}
+async function stageFilePatch(parsed) {
+  const changes = [];
+  const work = { remaining: MATCH_LINE_VISITS };
+  let retained = 0;
+  const account = (bytes) => {
+    retained += bytes.length;
+    if (retained > STAGED_BYTES) fail("patch_staging_too_large");
+    checkLines(bytes);
+    return bytes;
+  };
+  for (const change of parsed.changes) {
+    if (change.kind === "add") {
+      await absent(change.path);
+      const text = change.added.join("\n") + (change.added.length && !change.noNewline ? "\n" : "");
+      changes.push({ change, after: account(Buffer.from(text)) });
+    } else {
+      const source = await snapshot(change.path);
+      account(source.bytes);
+      if (change.destination) await absent(change.destination);
+      changes.push({ change, source, ...change.kind === "update" ? { after: account(applyHunks(source.bytes, change, work)) } : {} });
+    }
+  }
+  return { changes };
+}
+async function recheck(staged) {
+  if (staged.source) {
+    const current = await snapshot(staged.change.path);
+    if (current.hash !== staged.source.hash || current.mode !== staged.source.mode || current.dev !== staged.source.dev || current.ino !== staged.source.ino) fail("patch_source_changed");
+  } else await absent(staged.change.path);
+  if (staged.change.destination) await absent(staged.change.destination);
+}
+function reserved(parsed) {
+  return parsed.changes.map((change, index) => ({
+    index,
+    path: change.rawPath,
+    mode: "patch",
+    status: "skipped",
+    ...change.rawDestination ? { destination: change.rawDestination } : {},
+    error: "x".repeat(120),
+    bytes_written: 999999999,
+    destination_created: true
+  }));
+}
+function basic(change, index) {
+  return {
+    index,
+    path: change.rawPath,
+    mode: "patch",
+    status: "skipped",
+    ...change.rawDestination ? { destination: change.rawDestination } : {}
+  };
+}
+async function notify(options, change) {
+  try {
+    await options.onCompleted?.(change);
+  } catch {
+  }
+}
+async function applyStagedFilePatch(staged, options) {
+  const parsed = { changes: staged.changes.map((item) => item.change) };
+  if (!indexedResultFits(reserved(parsed), options.maxOutputBytes)) return errorResult("output_budget_too_small", "patch outcomes exceed output budget");
+  const rows = parsed.changes.map(basic);
+  if (options.signal?.aborted) return indexedResult(rows.map((row) => ({ ...row, error: "aborted" })), options.maxOutputBytes, true);
+  try {
+    for (const item of staged.changes) await recheck(item);
+  } catch (error) {
+    return errorResult("patch_preflight_failed", code(error));
+  }
+  let stopped = false;
+  for (const [index, item] of staged.changes.entries()) {
+    const { change, source, after } = item;
+    if (stopped || options.signal?.aborted) {
+      rows[index] = { ...rows[index], error: options.signal?.aborted ? "aborted" : "prior_patch_failure" };
+      continue;
+    }
+    let temporary;
+    let destinationCreated = false;
+    try {
+      await recheck(item);
+      if (options.signal?.aborted) fail("aborted");
+      if (change.kind === "delete") {
+        await unlink(change.path);
+        await notify(options, { path: change.path, kind: "deleted", before: source.bytes });
+      } else {
+        const destination = change.destination ?? change.path;
+        await mkdir(dirname(destination), { recursive: true });
+        await safeParents(destination);
+        temporary = join(dirname(destination), `.raw-patch-${randomUUID()}.tmp`);
+        const handle = await open(temporary, "wx", source?.mode ?? 438);
+        try {
+          await handle.writeFile(after);
+        } finally {
+          await handle.close();
+        }
+        if (source) await chmod(temporary, source.mode);
+        await recheck(item);
+        if (options.signal?.aborted) fail("aborted");
+        if (change.kind === "add" || change.destination) {
+          await link(temporary, destination);
+          destinationCreated = true;
+          if (change.destination) await unlink(change.path);
+        } else await rename(temporary, destination);
+        await notify(options, {
+          path: destination,
+          kind: change.destination ? "renamed" : change.kind === "add" ? "added" : "modified",
+          ...change.destination ? { oldPath: change.path } : {},
+          ...source ? { before: source.bytes } : {},
+          after
+        });
+      }
+      rows[index] = { ...rows[index], status: "ok", bytes_written: after?.length ?? 0 };
+    } catch (error) {
+      stopped = true;
+      if (destinationCreated && change.destination) await notify(options, { path: change.destination, kind: "added", after });
+      rows[index] = {
+        ...rows[index],
+        status: code(error) === "aborted" ? "skipped" : "error",
+        error: code(error),
+        ...destinationCreated ? { destination_created: true } : {}
+      };
+    } finally {
+      if (temporary) {
+        try {
+          await unlink(temporary);
+        } catch {
+        }
+      }
+    }
+  }
+  return indexedResult(rows, options.maxOutputBytes, rows.some((row) => row.status !== "ok"));
+}
+async function applyFilePatch(parsed, options) {
+  if (!indexedResultFits(reserved(parsed), options.maxOutputBytes)) return errorResult("output_budget_too_small", "patch outcomes exceed output budget");
+  if (options.signal?.aborted) return indexedResult(parsed.changes.map((change, index) => ({ ...basic(change, index), error: "aborted" })), options.maxOutputBytes, true);
+  let staged;
+  try {
+    staged = await stageFilePatch(parsed);
+  } catch (error) {
+    return errorResult("patch_preflight_failed", code(error));
+  }
+  return applyStagedFilePatch(staged, options);
+}
+
+// src/tools/primitives.ts
+import { constants as fsConstants } from "fs";
+
+// src/panels/contract.ts
+var PANEL_LIMITS = {
+  panelsPerTool: 4,
+  actionsPerPanel: 8,
+  panelsPerSession: 16,
+  documentBytes: 64 * 1024,
+  blocks: 20,
+  items: 200,
+  steps: 30,
+  checklistDepth: 3,
+  updatesPerCall: 200,
+  receiptBytes: 1024,
+  reminderBytes: 2 * 1024,
+  reminderTotalBytes: 8 * 1024,
+  markdownBytes: 16 * 1024,
+  fallbackBytes: 4 * 1024,
+  contextSummaryBytes: 2048
+};
+
+// src/tools/write-changes.ts
+var clean = (text) => text.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "\uFFFD");
+var omittedKey = "Omitted history entries";
+function buildWriteChanges(previous, changes) {
+  const files = previous?.blocks.find((b) => b.id === "files" && b.kind === "files");
+  const retention = previous?.blocks.find((b) => b.id === "retention" && b.kind === "key_value");
+  let omitted = Number(retention?.entries.find((e) => e.key === omittedKey)?.value ?? 0) || 0;
+  const byPath = new Map((files?.entries ?? []).map((e) => [e.path, { ...e }]));
+  const put = (path, status, label) => {
+    if ([...path].length > 500 || /[\u0000-\u001F\u007F]/.test(path)) {
+      omitted++;
+      return;
+    }
+    const old = byPath.get(path);
+    byPath.delete(path);
+    byPath.set(path, {
+      path,
+      status: status === "modified" && old?.status === "added" ? "added" : status,
+      ...label ? { label: [...clean(label)].slice(0, 200).join("") } : {}
+    });
+  };
+  const previews = [];
+  for (const change of changes) {
+    if (change.kind === "renamed" && change.oldPath) {
+      put(change.oldPath, "deleted", `${change.oldPath} \u2192 ${change.path}`);
+      put(change.path, "added", `${change.oldPath} \u2192 ${change.path}`);
+    } else put(change.path, change.kind === "deleted" ? "deleted" : change.kind === "added" ? "added" : "modified");
+    const snapshot2 = (bytes) => {
+      const prefix = utf8Prefix(clean(bytes?.subarray(0, 3076).toString("utf8") ?? ""), 3072);
+      return { text: prefix.text, truncated: prefix.truncated || (bytes?.length ?? 0) > 3072 };
+    };
+    const before = snapshot2(change.before);
+    const after = snapshot2(change.after);
+    const lines = [...change.before ? before.text.split("\n").map((line) => `    -${line}`) : [], ...change.after ? after.text.split("\n").map((line) => `    +${line}`) : []];
+    previews.push(`Recent diff: ${clean(change.oldPath ? `${change.oldPath} \u2192 ${change.path}` : change.path)}
+
+${lines.join("\n")}
+${before.truncated || after.truncated ? "\n[diff truncated]" : ""}${change.beforeUnavailable || change.afterUnavailable ? "\n[diff unavailable: file bytes could not be read]" : ""}`);
+  }
+  while (byPath.size > 200) {
+    byPath.delete(byPath.keys().next().value);
+    omitted++;
+  }
+  const oldPreview = previous?.blocks.find((b) => b.id === "recent_diff" && b.kind === "markdown");
+  const allPreview = [...previews.reverse(), ...oldPreview ? [oldPreview.text] : []].join("\n\n");
+  const preview = utf8Prefix(allPreview, 12e3);
+  const doc = () => ({
+    title: "Files changed",
+    status: "done",
+    subtitle: "Successful tool writes in this session; not Git status or Bash edits.",
+    summary: `${byPath.size} paths shown; ${omitted} history entries omitted`,
+    context_summary: `${byPath.size} successful tool-write paths retained; ${omitted} history entries omitted.`,
+    blocks: [
+      { id: "files", kind: "files", entries: [...byPath.values()] },
+      { id: "retention", kind: "key_value", entries: [{ key: omittedKey, value: String(omitted) }] },
+      { id: "recent_diff", kind: "markdown", title: "Recent diff", text: preview.text + (preview.truncated ? "\n\n[diff truncated]" : "") }
+    ]
+  });
+  let document = doc();
+  while (Buffer.byteLength(JSON.stringify(document)) > PANEL_LIMITS.documentBytes && byPath.size) {
+    byPath.delete(byPath.keys().next().value);
+    omitted++;
+    document = doc();
+  }
+  return document;
+}
+async function publishWriteChanges(context, changes) {
+  if (!changes.length) return;
+  try {
+    context.onWriteCompleted?.();
+  } catch {
+  }
+  if (!context.panels) return;
+  try {
+    const previous = context.panels.get("files_changed")?.document;
+    await context.panels.update("files_changed", { op: "replace", document: buildWriteChanges(previous, changes) });
+  } catch {
+  }
+}
+
+// src/tools/primitives.ts
+import { open as open2, mkdir as mkdir2, writeFile, readFile, appendFile, stat } from "fs/promises";
+import { createHash as createHash2 } from "crypto";
+import { dirname as dirname2, resolve as resolve2 } from "path";
+
+// src/tools/process.ts
+import { spawn } from "child_process";
+import { StringDecoder } from "string_decoder";
+
 // src/tools/primitives.ts
 function selectedHash(bytes) {
-  return createHash("sha256").update(bytes).digest("hex");
+  return createHash2("sha256").update(bytes).digest("hex");
 }
 function selectedLineSpan(bytes, startLine, endLine) {
   let start = 0;
@@ -40,7 +514,34 @@ function selectedLineSpan(bytes, startLine, endLine) {
   }
   return void 0;
 }
+async function writeSnapshot(path) {
+  let file;
+  try {
+    if (!(await stat(path)).isFile()) return { missing: false };
+    file = await open2(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    if (!(await file.stat()).isFile()) return { missing: false };
+    const bytes = Buffer.alloc(8193);
+    const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
+    return { bytes: bytes.subarray(0, bytesRead), missing: false };
+  } catch (error) {
+    return { missing: error.code === "ENOENT" };
+  } finally {
+    await file?.close().catch(() => {
+    });
+  }
+}
 async function writeFileTool(args, context) {
+  if (typeof args.patch === "string") {
+    try {
+      return await applyFilePatch(parseFilePatch(args.patch, context.cwd), {
+        maxOutputBytes: context.maxOutputBytes,
+        ...context.signal ? { signal: context.signal } : {},
+        onCompleted: (change) => publishWriteChanges(context, [change])
+      });
+    } catch (error) {
+      return errorResult("invalid_patch", error instanceof Error ? error.message : "invalid patch");
+    }
+  }
   const rows = args.operations.map((op, index) => ({ index, path: op.path, mode: op.mode, status: "error", error: "x".repeat(120) }));
   if (!indexedResultFits(rows, context.maxOutputBytes)) {
     return errorResult("output_budget_too_small", "write batch outcomes exceed output budget");
@@ -50,11 +551,12 @@ async function writeFileTool(args, context) {
       rows[index] = { index, path: op.path, mode: op.mode, status: "skipped", error: "aborted" };
       continue;
     }
-    const path = resolve(context.cwd, op.path);
+    const path = resolve2(context.cwd, op.path);
     try {
+      const before = context.panels ? await writeSnapshot(path) : { missing: false };
       let bytesWritten = 0;
       if (op.mode === "overwrite" || op.mode === "append") {
-        await mkdir(dirname(path), { recursive: true });
+        await mkdir2(dirname2(path), { recursive: true });
         if (op.mode === "overwrite") await writeFile(path, op.content, "utf8");
         else await appendFile(path, op.content, "utf8");
         bytesWritten = Buffer.byteLength(op.content);
@@ -85,26 +587,44 @@ async function writeFileTool(args, context) {
         bytesWritten = replacement.length;
       }
       rows[index] = { index, path: op.path, mode: op.mode, status: "ok", bytes_written: bytesWritten };
+      const after = context.panels ? await writeSnapshot(path) : { missing: false };
+      await publishWriteChanges(context, [{
+        path,
+        kind: before.missing ? "added" : "modified",
+        ...before.bytes ? { before: before.bytes } : !before.missing ? { beforeUnavailable: true } : {},
+        ...after.bytes ? { after: after.bytes } : { afterUnavailable: true }
+      }]);
     } catch (error) {
-      const code = error.code ?? error.message;
-      rows[index] = { index, path: op.path, mode: op.mode, status: "error", error: /^[A-Za-z0-9_]+$/.test(code) ? code : "write_error" };
+      const code2 = error.code ?? error.message;
+      rows[index] = { index, path: op.path, mode: op.mode, status: "error", error: /^[A-Za-z0-9_]+$/.test(code2) ? code2 : "write_error" };
     }
   }
   return indexedResult(rows, context.maxOutputBytes, rows.some((row) => row.status !== "ok"));
 }
 
 // src/tools/bundled/write_file/index.ts
-import { resolve as resolve2 } from "path";
+import { resolve as resolve3 } from "path";
 function describeEffects(args, context) {
+  if (typeof args.patch === "string") return describePatchEffects(parseFilePatch(args.patch, context.cwd));
   const operations = args.operations;
-  const paths = [...new Set(operations.map((operation) => resolve2(context.cwd, operation.path)))];
+  const paths = [...new Set(operations.map((operation) => resolve3(context.cwd, operation.path)))];
   return { files: paths.map((path) => ({ path, operation: "write" })) };
 }
 function validateArgs(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
   const args = value;
-  const unexpected = Object.keys(args).find((key) => key !== "operations");
+  const unexpected = Object.keys(args).find((key) => key !== "operations" && key !== "patch");
   if (unexpected !== void 0) return `unknown write_file property ${JSON.stringify(unexpected)}; use {"operations":[{"path":"...","mode":"overwrite","content":"..."}]}`;
+  if (Object.hasOwn(args, "operations") === Object.hasOwn(args, "patch")) return "provide exactly one of operations or patch";
+  if (Object.hasOwn(args, "patch")) {
+    if (typeof args.patch !== "string") return "patch must be a string";
+    try {
+      validateFilePatchSyntax(args.patch);
+    } catch (error) {
+      return error instanceof Error ? error.message : "invalid patch";
+    }
+    return void 0;
+  }
   if (!Array.isArray(args.operations) || args.operations.length < 1 || args.operations.length > 16) return "operations must contain 1 to 16 entries";
   const fields = {
     overwrite: ["path", "mode", "content"],

@@ -273,3 +273,39 @@ test("local tool aliases cannot acquire the host foreground Bash projection call
   const result=await registry.dispatch("bash",{payload:{value:"test"}},{cwd:options.cwd,maxOutputBytes:4096,commandActivity:{begin(){throw new Error("forged activity");}}});
   assert.deepEqual(result.content,[{type:"json",value:{hasActivity:false}}]);
 });
+
+test("copied standalone write_file preserves patch effects and Files changed under a local alias", async () => {
+  const options = await workspace();
+  const folder = join(dirname(options.configPath), "tools", "forked_write");
+  await cp(join(process.cwd(), "examples/tools/write_file"), folder, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8"));
+  manifest.id = "forked_write"; manifest.name = "forked_write";
+  await writeFile(join(folder, "tool.json"), JSON.stringify(manifest));
+  const [tool] = await loadToolPlugins({ ...options, selectedIds: ["agent/forked_write"] });
+  const registry = new ToolRegistry([{ match: "agent/forked_write", effect: "ask",
+    when: { source: "effects", any: "files[*].path", regex: "protected\\.txt$" } }]);
+  registry.register(tool!.registration);
+  const renameArgs = { patch: "*** Begin Patch\n*** Update File: absent.txt\n*** Move to: protected.txt\n@@\n-old\n+new\n*** End Patch" };
+  let approved = false;
+  const denied = await registry.dispatch("forked_write", renameArgs, { cwd: options.cwd, maxOutputBytes: 8192,
+    approve: request => { approved = true; assert.deepEqual(request.arguments, renameArgs); assert.deepEqual(request.effects,
+      { files: [{ path: join(options.cwd, "absent.txt"), operation: "rename_source" },
+        { path: join(options.cwd, "protected.txt"), operation: "rename_destination" }] }); return false; } });
+  assert.equal(approved, true);
+  assert.equal(denied.code, "approval_denied");
+  await assert.rejects(readFile(join(options.cwd, "protected.txt")), { code: "ENOENT" });
+  const { PanelHost } = await import("../src/panels/host.js");
+  const host = new PanelHost();
+  const call = host.begin("forked-patch", registry.panelDeclarations("forked_write")!);
+  let hostCompletion = false;
+  const result = await registry.dispatch("forked_write", { patch: "*** Begin Patch\n*** Add File: created.txt\n+standalone\n*** End Patch" },
+    { cwd: options.cwd, maxOutputBytes: 8192, panels: call.context, onWriteCompleted: () => { hostCompletion = true; } });
+  assert.equal(result.isError, false);
+  assert.equal(hostCompletion, false, "local aliases cannot acquire trusted builtin write completion accounting");
+  call.settle(false); call.commit();
+  assert.equal(await readFile(join(options.cwd, "created.txt"), "utf8"), "standalone\n");
+  const panel = host.snapshot()[0]!;
+  assert.equal(panel.panelId, "agent/forked_write#files_changed");
+  assert.match(JSON.stringify(panel.document), /created.txt/);
+  host.close();
+});

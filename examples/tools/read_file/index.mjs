@@ -1,11 +1,11 @@
 // src/tools/primitives.ts
-import { open, mkdir, writeFile, readFile, appendFile } from "fs/promises";
-import { createHash } from "crypto";
-import { dirname, resolve } from "path";
+import { constants as fsConstants } from "fs";
 
-// src/tools/process.ts
-import { spawn } from "child_process";
-import { StringDecoder } from "string_decoder";
+// src/tools/file-patch.ts
+import { createHash, randomUUID } from "crypto";
+import { constants } from "fs";
+import { chmod, link, lstat, mkdir, open, rename, unlink } from "fs/promises";
+import { dirname, join, parse, relative, resolve, sep } from "path";
 
 // src/tools/types.ts
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
@@ -22,9 +22,42 @@ function indexedResult(results, maxOutputBytes, isError) {
   return { isError, content: [{ type: "json", value: { results } }] };
 }
 
+// src/tools/file-patch.ts
+var PATCH_BYTES = 1024 * 1024;
+var SOURCE_BYTES = 16 * 1024 * 1024;
+var STAGED_BYTES = 64 * 1024 * 1024;
+
+// src/panels/contract.ts
+var PANEL_LIMITS = {
+  panelsPerTool: 4,
+  actionsPerPanel: 8,
+  panelsPerSession: 16,
+  documentBytes: 64 * 1024,
+  blocks: 20,
+  items: 200,
+  steps: 30,
+  checklistDepth: 3,
+  updatesPerCall: 200,
+  receiptBytes: 1024,
+  reminderBytes: 2 * 1024,
+  reminderTotalBytes: 8 * 1024,
+  markdownBytes: 16 * 1024,
+  fallbackBytes: 4 * 1024,
+  contextSummaryBytes: 2048
+};
+
+// src/tools/primitives.ts
+import { open as open2, mkdir as mkdir2, writeFile, readFile, appendFile, stat } from "fs/promises";
+import { createHash as createHash2 } from "crypto";
+import { dirname as dirname2, resolve as resolve2 } from "path";
+
+// src/tools/process.ts
+import { spawn } from "child_process";
+import { StringDecoder } from "string_decoder";
+
 // src/tools/primitives.ts
 function selectedHash(bytes) {
-  return createHash("sha256").update(bytes).digest("hex");
+  return createHash2("sha256").update(bytes).digest("hex");
 }
 async function readFileTool(args, context) {
   const rows = args.files.map((file, index) => ({ index, path: file.path, status: "budget_exhausted" }));
@@ -46,20 +79,20 @@ async function readFileTool(args, context) {
       put(index, { index, path: file.path, status: "skipped", error: "aborted" });
       continue;
     }
-    const path = resolve(context.cwd, file.path);
+    const path = resolve2(context.cwd, file.path);
     try {
-      const handle = await open(path, "r");
+      const handle = await open2(path, "r");
       try {
-        const stat = await handle.stat();
-        if (!stat.isFile()) {
+        const stat2 = await handle.stat();
+        if (!stat2.isFile()) {
           put(index, { index, path: file.path, status: "error", error: "not a regular file" });
           continue;
         }
         const ranged = file.start_line !== void 0 || file.end_line !== void 0 || file.max_lines !== void 0;
-        if (!ranged && stat.size <= Math.min(file.max_bytes ?? Infinity, context.maxOutputBytes)) {
-          const buffer = Buffer.alloc(stat.size + 1);
+        if (!ranged && stat2.size <= Math.min(file.max_bytes ?? Infinity, context.maxOutputBytes)) {
+          const buffer = Buffer.alloc(stat2.size + 1);
           const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-          if (bytesRead === stat.size) {
+          if (bytesRead === stat2.size) {
             const selected2 = buffer.subarray(0, bytesRead);
             const count = bytesRead === 0 ? 0 : selected2.reduce((sum, byte) => sum + (byte === 10 ? 1 : 0), 0) + (selected2[bytesRead - 1] === 10 ? 0 : 1);
             const candidate2 = {
@@ -95,7 +128,7 @@ async function readFileTool(args, context) {
           pending = [];
           pendingBytes = 0;
           const nextBytes = Buffer.concat([...accepted, ...deferred, raw], acceptedBytes + deferredBytes + raw.length);
-          const complete = line >= requestedEnd || position === stat.size;
+          const complete = line >= requestedEnd || position === stat2.size;
           const candidate2 = {
             index,
             path: file.path,
@@ -103,7 +136,7 @@ async function readFileTool(args, context) {
             text: nextBytes.toString("utf8"),
             start_line: start,
             end_line: line,
-            eof: position === stat.size,
+            eof: position === stat2.size,
             ...!complete ? { next_line: line + 1 } : {},
             sha256: selectedHash(nextBytes)
           };
@@ -151,7 +184,7 @@ async function readFileTool(args, context) {
             if (newline < 0) continue;
             if (currentLine >= start && !acceptLine(currentLine)) break scan;
             if (currentLine >= requestedEnd) {
-              reachedEof = position === stat.size;
+              reachedEof = position === stat2.size;
               stopped = true;
               break scan;
             }

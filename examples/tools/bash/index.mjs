@@ -1,11 +1,11 @@
 // src/tools/primitives.ts
-import { open, mkdir, writeFile, readFile, appendFile } from "fs/promises";
-import { createHash } from "crypto";
-import { dirname, resolve } from "path";
+import { constants as fsConstants } from "fs";
 
-// src/tools/process.ts
-import { spawn } from "child_process";
-import { StringDecoder } from "string_decoder";
+// src/tools/file-patch.ts
+import { createHash, randomUUID } from "crypto";
+import { constants } from "fs";
+import { chmod, link, lstat, mkdir, open, rename, unlink } from "fs/promises";
+import { dirname, join, parse, relative, resolve, sep } from "path";
 
 // src/tools/types.ts
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
@@ -33,7 +33,38 @@ function indexedResult(results, maxOutputBytes, isError) {
   return { isError, content: [{ type: "json", value: { results } }] };
 }
 
+// src/tools/file-patch.ts
+var PATCH_BYTES = 1024 * 1024;
+var SOURCE_BYTES = 16 * 1024 * 1024;
+var STAGED_BYTES = 64 * 1024 * 1024;
+
+// src/panels/contract.ts
+var PANEL_LIMITS = {
+  panelsPerTool: 4,
+  actionsPerPanel: 8,
+  panelsPerSession: 16,
+  documentBytes: 64 * 1024,
+  blocks: 20,
+  items: 200,
+  steps: 30,
+  checklistDepth: 3,
+  updatesPerCall: 200,
+  receiptBytes: 1024,
+  reminderBytes: 2 * 1024,
+  reminderTotalBytes: 8 * 1024,
+  markdownBytes: 16 * 1024,
+  fallbackBytes: 4 * 1024,
+  contextSummaryBytes: 2048
+};
+
+// src/tools/primitives.ts
+import { open as open2, mkdir as mkdir2, writeFile, readFile, appendFile, stat } from "fs/promises";
+import { createHash as createHash2 } from "crypto";
+import { dirname as dirname2, resolve as resolve2 } from "path";
+
 // src/tools/process.ts
+import { spawn } from "child_process";
+import { StringDecoder } from "string_decoder";
 function spawnShell(options, platform = process.platform) {
   return spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
     cwd: options.cwd,
@@ -69,8 +100,8 @@ async function runBash(options) {
   let reapTimer;
   let deadline;
   let resolveCancelled;
-  const cancellationWatchdog = new Promise((resolve2) => {
-    resolveCancelled = resolve2;
+  const cancellationWatchdog = new Promise((resolve3) => {
+    resolveCancelled = resolve3;
   });
   let escalation;
   const signalGroup = (signal) => signalShellGroup(child, signal);
@@ -79,10 +110,10 @@ async function runBash(options) {
     if (reason === "abort") aborted = true;
     else timedOut = true;
     signalGroup("SIGTERM");
-    escalation = new Promise((resolve2) => {
+    escalation = new Promise((resolve3) => {
       killTimer = setTimeout(() => {
         signalGroup("SIGKILL");
-        resolve2();
+        resolve3();
       }, 500);
     });
     drainTimer = setTimeout(() => {
@@ -115,22 +146,22 @@ async function runBash(options) {
   child.stdout?.on("data", (chunk) => append("stdout", chunk));
   child.stderr?.on("data", (chunk) => append("stderr", chunk));
   let exited = { code: null, signal: null };
-  const exitedPromise = new Promise((resolve2) => {
+  const exitedPromise = new Promise((resolve3) => {
     child.once("exit", (code, signal) => {
       exited = { code, signal };
-      resolve2();
+      resolve3();
     });
   });
-  const closedPromise = new Promise((resolve2) => {
+  const closedPromise = new Promise((resolve3) => {
     child.once("error", (error) => {
       spawnError = error;
     });
-    child.once("close", () => resolve2());
+    child.once("close", () => resolve3());
   });
   const outcome = await Promise.race([closedPromise.then(() => "closed"), cancellationWatchdog.then(() => "watchdog")]);
   if (outcome === "watchdog") {
-    await Promise.race([exitedPromise, new Promise((resolve2) => {
-      reapTimer = setTimeout(resolve2, 1300);
+    await Promise.race([exitedPromise, new Promise((resolve3) => {
+      reapTimer = setTimeout(resolve3, 1300);
     })]);
     if (reapTimer) clearTimeout(reapTimer);
   }

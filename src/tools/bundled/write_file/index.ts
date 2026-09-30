@@ -1,8 +1,10 @@
+import { parseFilePatch, describePatchEffects, validateFilePatchSyntax } from "../../file-patch.js";
 import { writeFileTool, type ToolContext } from "../../primitives.js";
 import type { ToolResult } from "../../types.js";
 import { resolve } from "node:path";
 
 export function describeEffects(args: Record<string, unknown>, context: { cwd: string }): Record<string, unknown> {
+  if (typeof args.patch === "string") return describePatchEffects(parseFilePatch(args.patch, context.cwd));
   const operations = args.operations as Array<{ path: string }>;
   const paths = [...new Set(operations.map((operation) => resolve(context.cwd, operation.path)))];
   return { files: paths.map((path) => ({ path, operation: "write" })) };
@@ -11,8 +13,14 @@ export function describeEffects(args: Record<string, unknown>, context: { cwd: s
 export function validateArgs(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
   const args = value as Record<string, unknown>;
-  const unexpected = Object.keys(args).find((key) => key !== "operations");
+  const unexpected = Object.keys(args).find((key) => key !== "operations" && key !== "patch");
   if (unexpected !== undefined) return `unknown write_file property ${JSON.stringify(unexpected)}; use {"operations":[{"path":"...","mode":"overwrite","content":"..."}]}`;
+  if (Object.hasOwn(args, "operations") === Object.hasOwn(args, "patch")) return "provide exactly one of operations or patch";
+  if (Object.hasOwn(args, "patch")) {
+    if (typeof args.patch !== "string") return "patch must be a string";
+    try { validateFilePatchSyntax(args.patch); } catch (error) { return error instanceof Error ? error.message : "invalid patch"; }
+    return undefined;
+  }
   if (!Array.isArray(args.operations) || args.operations.length < 1 || args.operations.length > 16) return "operations must contain 1 to 16 entries";
   const fields: Record<string, readonly string[]> = {
     overwrite: ["path", "mode", "content"], append: ["path", "mode", "content"],

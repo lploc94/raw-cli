@@ -150,6 +150,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),
           ...(context.panels ? { panels: context.panels } : {}), // onPanelUpdates stays host-only
           ...(context.effects ? { effects: context.effects } : {}),
+          ...(item.id === "builtin/write_file" && context.onWriteCompleted ? { onWriteCompleted: context.onWriteCompleted } : {}),
           ...(item.id === "builtin/bash" && context.commandActivity ? { commandActivity: context.commandActivity } : {}),
           ...(context.processes ? { processes: context.processes } : {}),
           ...(context.interactions ? { interactions: context.interactions } : {}),

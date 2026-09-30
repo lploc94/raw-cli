@@ -139,3 +139,41 @@ test("async effects descriptors fail one call without an unhandled rejection", (
   const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test("builtin write operations and patches share effects gates including rename destinations", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { describeEffects, validateArgs, handler } = await import("../src/tools/bundled/write_file/index.js");
+  const manifest = JSON.parse(await readFile(new URL("../src/tools/bundled/write_file/tool.json", import.meta.url), "utf8"));
+  const registry = new ToolRegistry([{ match: "builtin/write_file", effect: "ask", when: { source: "effects", any: "files[*].path", regex: "protected\\.txt$" } }]);
+  registry.register({ name: "write_file", canonicalName: "builtin/write_file", description: "write", inputSchema: manifest.input_schema,
+    conditionSources: ["effects"], effectsSchema: manifest.effects_schema, describeEffects, validateArgs, handler });
+  const cases = [
+    { operations: [{ path: "protected.txt", mode: "overwrite", content: "no" }] },
+    { patch: "*** Begin Patch\n*** Add File: protected.txt\n+no\n*** End Patch" },
+    { patch: "*** Begin Patch\n*** Delete File: protected.txt\n*** End Patch" },
+    { patch: "*** Begin Patch\n*** Update File: old.txt\n*** Move to: protected.txt\n@@\n-old\n+new\n*** End Patch" },
+  ];
+  for (const args of cases) {
+    let approved = false;
+    const result = await registry.dispatch("write_file", args, { cwd: "/nonexistent-phase7", maxOutputBytes: 8192,
+      approve: (request) => { approved = true; assert.deepEqual(request.arguments, args); assert.ok((request.effects!.files as Array<{path:string}>).some(f => f.path === "/nonexistent-phase7/protected.txt")); return false; } });
+    assert.equal(approved, true);
+    assert.equal(result.code, "approval_denied");
+    const denied = await registry.dispatch("write_file", args, { cwd: "/nonexistent-phase7", maxOutputBytes: 8192, autoApprove: true,
+      onHook: async (event, _identity, _name, original, _result, effects) => { assert.deepEqual(original, args); assert.ok(effects); return event === "PreToolUse" ? { blocked: "denied", reason: "protected" } : {}; } });
+    assert.equal(denied.code, "hook_denied");
+  }
+  assert.ok(validateArgs({ patch: cases[1]!.patch, operations: [] }));
+  assert.ok(validateArgs({}));
+  assert.throws(() => describeEffects({ patch: "malformed" }, { cwd: "/tmp" }));
+});
+
+test("write validator does not invent cwd aliases and real effects reject actual aliases", async () => {
+  const { validateArgs, describeEffects } = await import("../src/tools/bundled/write_file/index.js");
+  const patch = "*** Begin Patch\n*** Add File: ../a\n+one\n*** Add File: /a\n+two\n*** End Patch";
+  assert.equal(validateArgs({ patch }), undefined);
+  assert.deepEqual(describeEffects({ patch }, { cwd: "/work/project" }), { files: [
+    { path: "/work/a", operation: "write" }, { path: "/a", operation: "write" },
+  ] });
+  assert.throws(() => describeEffects({ patch }, { cwd: "/work" }));
+});

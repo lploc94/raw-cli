@@ -1,3 +1,4 @@
+import { parseFilePatch } from "../tools/file-patch.js";
 import type { ToolResult } from "../tools/types.js";
 
 export interface VisibleToolCall {
@@ -33,6 +34,11 @@ const builtins = new Set(["builtin/read_file", "builtin/write_file", "builtin/ba
 
 export function projectToolCall(name: string, identity: string | undefined, args: Record<string, unknown>, started: boolean): VisibleToolCall {
   if (identity === "builtin/write_file") {
+    if (typeof args.patch === "string") {
+      let paths: string[] = [];
+      try { paths = parseFilePatch(args.patch, "/").changes.map(change => change.rawDestination ? `${change.rawPath} → ${change.rawDestination}` : change.rawPath); } catch { /* invalid patch still gets a content-free summary */ }
+      return { name, identity, started, arguments: { patch_bytes: Buffer.byteLength(args.patch), patch_paths: paths } };
+    }
     if (!Array.isArray(args.operations)) return { name, identity, started, arguments: { argument_keys: Object.keys(args) } };
     return { name, identity, started, arguments: { operations: args.operations.map((value: unknown) => {
       const op = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

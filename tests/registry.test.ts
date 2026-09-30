@@ -13,9 +13,9 @@ test("packaged bundled plugins preserve exact definitions and semantic batch pre
   const registry = new ToolRegistry();
   for (const plugin of plugins) registry.register(plugin);
   assert.deepEqual(registry.definitions(), createTestToolRegistry([], true).definitions());
-  // Intentional contract revision: Bash now supports per-command env_refs.
+  // Intentional phase-7 contract revision: write_file accepts exclusive operations or patch inputs.
   assert.equal(createHash("sha256").update(JSON.stringify(registry.definitions())).digest("hex"),
-    "fa6d6ded1cde9668d377b6fa94f772c254f00f74fee8ad6bf749beb9d412b9a1");
+    "f4c774045a017af0b7a9d7e032f5872257a62c247a597b19bdfd23f8b9b156c2");
 
   const cwd = await mkdtemp(join(tmpdir(), "raw-bundled-"));
   const marker = join(cwd, "side-effect");
