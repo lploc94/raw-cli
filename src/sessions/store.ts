@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { ContextAnchor } from "../context-anchor.js";
 import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -103,6 +104,8 @@ export interface StoredAgentState {
   tokenCalibration: number;
   rawUsage: unknown[];
   usageEntries: UsageRecord[];
+  /** The provider-reported context size at the last response, as stored; validated when an agent restores it. */
+  anchor?: unknown;
 }
 export interface AgentMetadata {
   originalTask?: UserInput;
@@ -110,6 +113,8 @@ export interface AgentMetadata {
   rawUsage?: readonly unknown[];
   usageEntries?: readonly UsageRecord[];
   tokenCalibration?: number;
+  /** The reported context size to keep with the usage; `null` forgets it (the context was replaced). */
+  anchor?: ContextAnchor | null;
   contextRevision?: number;
   skillVisibility?: SkillVisibility;
   skillNotice?: string;
@@ -620,13 +625,14 @@ export class SessionStore {
     const row = this.ownerRow(sessionId, owner);
     const messages = this.database.prepare("SELECT payload_json FROM model_context WHERE session_id = ? ORDER BY position")
       .all(sessionId).map((item) => this.decodeStored(String(item.payload_json)) as ModelMessage);
-    const usage = row.usage_json === null ? {} : JSON.parse(String(row.usage_json)) as { rawUsage?: unknown[]; usageEntries?: UsageRecord[] };
+    const usage = row.usage_json === null ? {} : JSON.parse(String(row.usage_json)) as { rawUsage?: unknown[]; usageEntries?: UsageRecord[]; anchor?: unknown };
     return {
       messages, cacheKey: String(row.cache_key), selectedTools: JSON.parse(String(row.selected_tools_json)) as readonly string[] | null,
       replayBefore: this.runtimeMetadata(sessionId)?.replayBefore ?? 0,
       contextRevision: Number(row.context_revision), tokenCalibration: Number(row.token_calibration),
       skillVisibility: JSON.parse(String(row.skill_visibility_json)) as SkillVisibility,
       rawUsage: usage.rawUsage ?? [], usageEntries: usage.usageEntries ?? [],
+      ...(usage.anchor === undefined ? {} : { anchor: usage.anchor }),
       ...(row.original_task === null ? {} : { originalTask: JSON.parse(String(row.original_task)) as UserInput }),
       ...(row.summary_text === null ? {} : { summaryText: String(row.summary_text) }),
     };
@@ -647,11 +653,13 @@ export class SessionStore {
     const values: Array<string | number | null> = [];
     if (metadata.originalTask !== undefined) { fields.push("original_task = ?"); values.push(JSON.stringify(metadata.originalTask)); }
     if (metadata.summaryText !== undefined) { fields.push("summary_text = ?"); values.push(metadata.summaryText); }
-    if (metadata.rawUsage !== undefined || metadata.usageEntries !== undefined) {
+    if (metadata.rawUsage !== undefined || metadata.usageEntries !== undefined || metadata.anchor !== undefined) {
       const current = this.database.prepare("SELECT usage_json FROM sessions WHERE id = ?").get(sessionId)?.usage_json;
       const usage = current === null || current === undefined ? {} : JSON.parse(String(current)) as Record<string, unknown>;
       if (metadata.rawUsage !== undefined) usage.rawUsage = metadata.rawUsage;
       if (metadata.usageEntries !== undefined) usage.usageEntries = metadata.usageEntries;
+      if (metadata.anchor === null) delete usage.anchor;
+      else if (metadata.anchor !== undefined) usage.anchor = metadata.anchor;
       fields.push("usage_json = ?"); values.push(JSON.stringify(usage));
     }
     if (metadata.tokenCalibration !== undefined) { fields.push("token_calibration = ?"); values.push(metadata.tokenCalibration); }
@@ -983,7 +991,7 @@ export class SessionStore {
   }
 
   clearAgentContext(sessionId: string, owner: SessionOwner): void {
-    this.replaceAgentContext(sessionId, owner, [], { replayBefore: 0 }, true);
+    this.replaceAgentContext(sessionId, owner, [], { replayBefore: 0, anchor: null }, true);
   }
 
   appendOwnedHistory(sessionId: string, owner: SessionOwner, kind: string, payload: Record<string, unknown>, status = "complete"): HistoryItem {

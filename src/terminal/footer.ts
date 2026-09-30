@@ -11,6 +11,8 @@ export interface TurnFooterInput {
   notRunToolCalls: number;
   stats: UsageSummary;
   contextTokens: number;
+  /** The size is the provider's own count of the last response, not an estimate: it is shown without the `~`. */
+  contextReported?: boolean;
   contextWindow?: number;
   inputBudget?: number;
   compactTrigger?: number;
@@ -45,7 +47,7 @@ export function formatResumeCommand(id: string, ui: UiOptions, caps: TerminalCap
 
 export function formatTurnFooter(input: TurnFooterInput): string {
   const { status, code, elapsedMs, startedToolCalls, notRunToolCalls, stats,
-    contextTokens, contextWindow, inputBudget, compactTrigger, sessionId, resumable, ui, caps } = input;
+    contextTokens, contextReported, contextWindow, inputBudget, compactTrigger, sessionId, resumable, ui, caps } = input;
   const okay = status === "completed";
   const label = state(status);
   const headline = `${paint(okay ? "success" : status === "cancelled" ? "warning" : "error",
@@ -57,12 +59,12 @@ export function formatTurnFooter(input: TurnFooterInput): string {
     ...(inputBudget !== undefined && contextTokens >= inputBudget ? ["input budget"] : []),
   ];
   let context = contextWindow === undefined
-    ? `Context  ~${amount(contextTokens)} tokens (window unknown)`
+    ? `Context  ${contextReported ? "" : "~"}${amount(contextTokens)} tokens (window unknown)`
     : `Context  ${caps.unicode ? "▰".repeat(Math.max(0, Math.min(10, Math.floor(contextTokens / contextWindow * 10))))
       + "▱".repeat(Math.max(0, 10 - Math.min(10, Math.floor(contextTokens / contextWindow * 10))))
       : "#".repeat(Math.max(0, Math.min(10, Math.floor(contextTokens / contextWindow * 10))))
       + "-".repeat(Math.max(0, 10 - Math.min(10, Math.floor(contextTokens / contextWindow * 10))))}`
-      + `  ~${amount(contextTokens)} / ${amount(contextWindow)} · ${(contextTokens / contextWindow * 100).toFixed(1)}% used`;
+      + `  ${contextReported ? "" : "~"}${amount(contextTokens)} / ${amount(contextWindow)} · ${(contextTokens / contextWindow * 100).toFixed(1)}% used`;
   if (warnings.length) context = paint("warning", `${context} · ${warnings.join(" / ")}`, ui, caps);
   if (input.repl) return `${headline}\n  ${context}\n`;
   const lines = [headline, `  ${context}`];

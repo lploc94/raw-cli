@@ -112,9 +112,10 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   const formatFooter = (result: RunResult, renderer: TerminalRenderer, id: string, resumable: boolean, repl = false) => {
     const window = runtime.modelConfig!.contextWindow;
     const reserve = runtime.modelConfig!.request?.maxOutputTokens ?? runtime.modelConfig!.maxOutputTokens ?? 1024;
+    const context = session.contextUsage();
     return formatTurnFooter({ status: result.status, ...(result.code ? { code: result.code } : {}),
       elapsedMs: renderer.elapsedMs, startedToolCalls: renderer.startedToolCalls, notRunToolCalls: renderer.notRunToolCalls,
-      stats: session.stats(), contextTokens: session.estimatedContextTokens(),
+      stats: session.stats(), contextTokens: context.tokens, contextReported: context.source === "provider",
       ...(window === undefined ? {} : { contextWindow: window, inputBudget: effectiveInputBudget(window, reserve) }),
       ...(runtime.compact.triggerTokens === undefined ? {} : { compactTrigger: runtime.compact.triggerTokens }),
       sessionId: id, resumable, repl, ui: runtime.ui, caps });

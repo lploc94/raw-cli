@@ -82,10 +82,10 @@ function Details({
         and retained messages.
       </p>
           <dl className="stats">
-            <dt>Estimated tokens</dt>
+            <dt>{context?.source === "provider" ? "Context tokens" : "Estimated tokens"}</dt>
             <dd>
               {context
-                ? `~${context.estimatedTokens.toLocaleString()}`
+                ? `${context.source === "provider" ? "" : "~"}${context.estimatedTokens.toLocaleString()}`
                 : "Unavailable"}
             </dd>
             <dt>Context window</dt>

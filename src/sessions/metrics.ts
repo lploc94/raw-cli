@@ -17,6 +17,8 @@ export interface SessionMetrics {
   turn: UsageSummary;
   context: {
     estimatedTokens: number;
+    /** `provider` when the size is the provider's own count of the last response, `estimate` when it is derived from the bytes. */
+    source?: "provider" | "estimate";
     contextWindow?: number;
     percentage?: number;
     inputBudget?: number;
@@ -29,11 +31,11 @@ export function measureSession(agent: AgentSession, model: Readonly<ResolvedMode
   startedAt: number; firstRequest: number; startedTools: number; failedTools: number;
   compact?: Readonly<CompactSettings>;
 }): SessionMetrics {
-  const estimatedTokens = agent.estimatedContextTokens();
+  const { tokens: estimatedTokens, source } = agent.contextUsage();
   const outputReserve = model.request?.maxOutputTokens ?? model.maxOutputTokens ?? 1024;
   return { measuredAt: Date.now(), elapsedMs: Math.max(0, Math.round(performance.now() - options.startedAt)),
     model: model.model, agentName: model.agentName, startedTools: options.startedTools, failedTools: options.failedTools,
-    session: agent.stats(), turn: agent.stats(options.firstRequest), context: { estimatedTokens, outputReserve,
+    session: agent.stats(), turn: agent.stats(options.firstRequest), context: { estimatedTokens, source, outputReserve,
       ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow,
         percentage: estimatedTokens / model.contextWindow * 100, inputBudget: effectiveInputBudget(model.contextWindow, outputReserve) }),
       ...(options.compact?.triggerTokens === undefined ? {} : { compactTrigger: options.compact.triggerTokens }) } };

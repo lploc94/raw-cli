@@ -1,5 +1,6 @@
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anchor.js";
 import { estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
@@ -121,6 +122,10 @@ export class AgentSession {
   private readonly selectedSkills: readonly SelectedSkill[];
   private skillVisibility: SkillVisibility = { listed: false, loaded: [] };
   private tokenCalibration = 1;
+  /** The provider-reported size at the last response, and the size of the response in flight until its reply is committed. */
+  private anchor: ContextAnchor | undefined;
+  private reported: number | undefined;
+  private signatureCache: { key: string; view: readonly ToolDefinition[]; signature: string } | undefined;
   private persistence: { store: SessionStore; sessionId: string; owner: SessionOwner; surface: HistorySurface; ownership: "agent" | "host"; operationId?: string } | undefined;
   private heartbeat: NodeJS.Timeout | undefined;
   private persistenceFailed = false;
@@ -192,6 +197,7 @@ export class AgentSession {
         this.rawUsage = structuredClone(saved.rawUsage);
         this.usageEntries = structuredClone(saved.usageEntries);
         this.tokenCalibration = saved.tokenCalibration;
+        this.anchor = parseAnchor(saved.anchor, saved.messages.length);
         this.contextGenerationRevision = saved.contextRevision;
         this.replayBefore = saved.replayBefore;
         this.skillVisibility = saved.skillVisibility;
@@ -227,10 +233,37 @@ export class AgentSession {
   toolIdentity(name: string): string | undefined { return this.options.registry.canonicalIdentity(name); }
   get requestTimeoutMs(): number { return this.options.requestTimeoutMs; }
   stats(fromRequest = 0): UsageSummary { return summarizeUsage(this.usageEntries.slice(fromRequest)); }
-  estimatedContextTokens(): number {
-    return Math.ceil(estimateRequestTokens(this.options.system, this.sendMessages(), this.schemaView) * this.tokenCalibration);
+  estimatedContextTokens(): number { return this.contextUsage().tokens; }
+  /** The size of the conversation now: the provider's own count when one covers it, else the calibrated byte estimate. */
+  contextUsage(): { tokens: number; source: "provider" | "estimate" } {
+    const { tokens, exact } = this.nextRequestSize();
+    return { tokens, source: exact ? "provider" : "estimate" };
   }
-
+  /** What identifies the measurement conditions: system prompt, tool schemas, model, image projection and replay boundary. */
+  private anchorSignature(): string {
+    const { provider, model, method, vision } = this.options.provider.modelConfig;
+    const key = JSON.stringify([this.options.system, provider, model, method, vision === true, this.replayBefore]);
+    if (this.signatureCache?.view !== this.schemaView || this.signatureCache.key !== key) {
+      this.signatureCache = { key, view: this.schemaView, signature: createHash("sha256")
+        .update(JSON.stringify([key, this.schemaView])).digest("hex").slice(0, 24) };
+    }
+    return this.signatureCache.signature;
+  }
+  /**
+   * Tokens of the request that would be sent for `messages`. With `anchored` (the live conversation) a reported size plus the
+   * estimated addition is used when it applies; a candidate context, or one the anchor does not describe, is the calibrated estimate.
+   */
+  private nextRequestSize(messages: readonly ModelMessage[] = this.sendMessages(), anchored = true): { tokens: number; exact: boolean; base: number } {
+    const base = estimateRequestTokens(this.options.system, messages, this.schemaView);
+    const known = anchored ? anchoredEstimate(this.anchor, this.anchorSignature(), this.messages.length, base, this.tokenCalibration) : undefined;
+    return known ? { ...known, base } : { tokens: Math.ceil(base * this.tokenCalibration), exact: false, base };
+  }
+  /** The anchor for a reply about to be added: the reported size of the request it answers plus the byte estimate of request and reply. */
+  private anchorFor(reply: ModelMessage): ContextAnchor | undefined {
+    if (this.reported === undefined) return undefined;
+    const base = estimateRequestTokens(this.options.system, this.sendMessages([...this.requestMessages(), reply]), this.schemaView);
+    return { tokens: this.reported, base, messageCount: this.messages.length + 1, signature: this.anchorSignature() };
+  }
   private requestMessages(): ModelMessage[] { return projectReplayMessages(this.messages, this.replayBefore); }
   /** What the provider actually receives: replay projection plus text placeholders for images on non-vision models. */
   private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
@@ -256,10 +289,12 @@ export class AgentSession {
 
   private commitMessage(message: ModelMessage, metadata: AgentMetadata = {}, display: readonly VisibleRecord[] = [], consumeOperation = false,
     panels?: PanelWrites, consumeNotes?: readonly number[]): void {
-    this.durable((store, sessionId, owner) => store.appendAgentMessage(sessionId, owner, message, metadata,
+    const anchor = message.role === "assistant" ? this.anchorFor(message) : undefined;
+    this.durable((store, sessionId, owner) => store.appendAgentMessage(sessionId, owner, message, anchor ? { ...metadata, anchor } : metadata,
       display.map((item) => ({ ...item, payload: this.visiblePayload(item.payload) })),
       consumeOperation ? this.persistence?.operationId : undefined, panels, consumeNotes));
     this.messages.push(structuredClone(message));
+    if (anchor) { this.anchor = anchor; this.reported = undefined; }
   }
 
   private recordVisible(kind: string, payload: Record<string, unknown>, status = "complete"): void {
@@ -304,6 +339,8 @@ export class AgentSession {
     if (this.currentState !== "idle") throw new Error(this.currentState === "closed" ? "agent session is closed" : "agent session is busy");
     if (this.persistence) this.persistence.store.clearAgentContext(this.persistence.sessionId, this.persistence.owner);
     this.messages = [];
+    this.anchor = undefined;
+    this.reported = undefined;
     this.replayBefore = 0;
     this.originalTask = undefined;
     this.summaryText = undefined;
@@ -380,13 +417,14 @@ export class AgentSession {
         const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
         if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
         const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: work.summary, beforeBytes, afterBytes: finalBytes,
-          afterTokens: Math.ceil(estimateRequestTokens(this.options.system, this.sendMessages(replacement), this.schemaView) * this.tokenCalibration) };
+          afterTokens: this.nextRequestSize(this.sendMessages(replacement), false).tokens };
         this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
           { summaryText: work.summary!, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
-            tokenCalibration: this.tokenCalibration, replayBefore: 0, ...(notice ? { skillNotice: notice } : {}) },
+            tokenCalibration: this.tokenCalibration, replayBefore: 0, anchor: null, ...(notice ? { skillNotice: notice } : {}) },
           false, [{ kind: "compaction", payload: this.visiblePayload({ ...committedDetails }) }]));
         Object.assign(details, committedDetails);
         this.messages = structuredClone(replacement);
+        this.anchor = undefined;
         this.replayBefore = 0;
         this.summaryText = work.summary;
         return { ...work.result, afterBytes: finalBytes };
@@ -735,8 +773,9 @@ export class AgentSession {
           const outputReserve = modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
           const inputBudget = effectiveInputBudget(context, outputReserve);
           const estimate = () => {
-            baseEstimate = estimateRequestTokens(this.options.system, this.sendMessages(), this.schemaView);
-            return Math.ceil(baseEstimate * this.tokenCalibration);
+            const size = this.nextRequestSize();
+            baseEstimate = size.base;
+            return size.tokens;
           };
           requestEstimate = estimate();
           if (requestEstimate >= compact.triggerTokens && !autoCompacted) {
@@ -754,7 +793,7 @@ export class AgentSession {
                 ...(this.originalTask === undefined ? [] : [{ role: "user" as const, content: this.originalTask }]),
                 { role: "user", content: `[Conversation summary]\n${summaryPlaceholder}` }, ...tail,
               ];
-              if (Math.ceil(estimateRequestTokens(this.options.system, this.sendMessages(candidate), this.schemaView) * this.tokenCalibration) <= inputBudget) break;
+              if (this.nextRequestSize(this.sendMessages(candidate), false).tokens <= inputBudget) break;
               keep--;
             }
             try { compactResult = await this.compactAttempt(this.options.provider, keep, compact.maxOutputTokens,
@@ -770,16 +809,18 @@ export class AgentSession {
         steps++;
         const usageEntry: UsageRecord = { method: this.options.provider.modelConfig.method, provider: this.options.provider.modelConfig.provider, raw: undefined };
         this.usageEntries.push(usageEntry);
+        this.reported = undefined;
         this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
           { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
         let usageIndex: number | undefined;
         const recordUsage = (raw: unknown) => {
           if (controller.signal.aborted) return;
           usageEntry.raw = structuredClone(raw);
-          if (baseEstimate > 0) {
-            const actual = normalizeUsage(this.options.provider.modelConfig.method, raw, this.options.provider.modelConfig.provider).inputTokensTotal;
-            if (actual !== undefined) this.tokenCalibration = Math.max(this.tokenCalibration, actual / baseEstimate * 1.1);
-          }
+          const normalized = normalizeUsage(this.options.provider.modelConfig.method, raw, this.options.provider.modelConfig.provider);
+          const actual = normalized.inputTokensTotal;
+          if (baseEstimate > 0 && actual !== undefined) this.tokenCalibration = Math.max(this.tokenCalibration, actual / baseEstimate * 1.1);
+          // Only a complete report (input and output counts) describes the conversation; a partial one leaves the estimate in charge.
+          this.reported = actual === undefined || normalized.outputTokens === undefined ? undefined : actual + normalized.outputTokens;
           if (usageIndex === undefined) usageIndex = this.rawUsage.push(structuredClone(raw)) - 1;
           else this.rawUsage[usageIndex] = structuredClone(raw);
           this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,

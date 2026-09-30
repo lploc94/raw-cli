@@ -19,6 +19,12 @@ test("past the trigger the percentage is reported as is, not clamped to the wind
   assert.equal(contextUsage({ estimatedTokens: 400_000, contextWindow: 1_000_000, compactTrigger: 360_000 })!.percent.toFixed(1), "111.1");
 });
 
+test("a provider-reported size is shown without the estimate mark", () => {
+  assert.equal(contextUsageText({ estimatedTokens: 15_865, source: "provider", contextWindow: 1_000_000, compactTrigger: 360_000 }, false), `${(15_865).toLocaleString()} / ${(360_000).toLocaleString()} · 4.4% · until auto compact`);
+  assert.ok(contextUsageText({ estimatedTokens: 15_865, source: "estimate", contextWindow: 200_000 }, false).startsWith("~"));
+  assert.ok(contextUsageText({ estimatedTokens: 15_865, contextWindow: 200_000 }, false).startsWith("~"), "measurements saved by older releases carry no source");
+});
+
 test("footer text names the limit it uses", () => {
   assert.equal(contextUsageText({ estimatedTokens: 90_000, contextWindow: 1_000_000, compactTrigger: 360_000 }, false), `~${(90_000).toLocaleString()} / ${(360_000).toLocaleString()} · 25.0% · until auto compact`);
   assert.equal(contextUsageText({ estimatedTokens: 50_000, contextWindow: 200_000 }, true), `~${(50_000).toLocaleString()} / ${(200_000).toLocaleString()} · 25.0% · last measured`);

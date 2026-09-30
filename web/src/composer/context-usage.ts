@@ -1,5 +1,5 @@
 /** The part of the session's context metrics the usage indicator needs. */
-export interface ContextUsageInput { estimatedTokens: number; contextWindow?: number | undefined; compactTrigger?: number | undefined }
+export interface ContextUsageInput { estimatedTokens: number; source?: "provider" | "estimate" | undefined; contextWindow?: number | undefined; compactTrigger?: number | undefined }
 
 export interface ContextUsage {
   /** What the tokens are measured against: the auto-compact trigger when the agent sets one, else the model's context window. */
@@ -23,7 +23,7 @@ export function contextUsage(context: ContextUsageInput | undefined | null): Con
 export function contextUsageText(context: ContextUsageInput | undefined | null, stale: boolean): string {
   if (!context) return "Context usage unavailable";
   const usage = contextUsage(context);
-  const tokens = `~${context.estimatedTokens.toLocaleString()}`;
+  const tokens = `${context.source === "provider" ? "" : "~"}${context.estimatedTokens.toLocaleString()}`;
   const suffix = stale ? " · last measured" : "";
   if (!usage) return `${tokens} tokens · window unavailable${suffix}`;
   return `${tokens} / ${usage.limit.toLocaleString()} · ${usage.percent.toFixed(1)}%${usage.basis === "compact" ? " · until auto compact" : ""}${suffix}`;

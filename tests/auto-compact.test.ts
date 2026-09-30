@@ -37,7 +37,7 @@ test("automatic compact runs before the next over-threshold inference and keeps 
       onReasoningDelta: _onReasoningDelta, ...wire } = request;
     requests.push(structuredClone(wire));
     if (request.system === COMPACT_SYSTEM_PROMPT) return result("Summary of the prior task.", { prompt_tokens: 30, completion_tokens: 8 });
-    return result(requests.length === 1 ? "x".repeat(1600) : "continued", { prompt_tokens: 100, completion_tokens: 10 });
+    return result(requests.length === 1 ? "x".repeat(1600) : "continued", requests.length === 1 ? { prompt_tokens: 100, completion_tokens: 400 } : { prompt_tokens: 100, completion_tokens: 10 });
   } };
   const events: string[] = [];
   const agent = createAgent({ provider, cwd, system: "tiny", registry: new ToolRegistry(),
@@ -246,7 +246,7 @@ test("successive usage reports can increase absolute token calibration", async (
     return result("ok", { prompt_tokens: actual, completion_tokens: 1 });
   } };
   const agent = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
-    compact: { triggerTokens: 1900, keepRecentTurns: 1, maxOutputTokens: 100 } });
+    compact: { triggerTokens: 1700, keepRecentTurns: 1, maxOutputTokens: 100 } });
   await agent.run("a".repeat(100));
   await agent.run("b".repeat(1000));
   const events: string[] = [];

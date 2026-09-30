@@ -64,3 +64,13 @@ test("stats table reports coverage and no JSON or inferred misses", () => {
   assert.match(text, /Last turn.*1\.2s/);
   assert.doesNotMatch(text, /\{|cache miss/);
 });
+
+test("a provider-reported context size is shown without the estimate mark, with or without a known window", () => {
+  const format = (extra: object) => formatTurnFooter({ status: "completed", elapsedMs: 0, startedToolCalls: 0, notRunToolCalls: 0,
+    stats: base, contextTokens: 500, sessionId: "id", resumable: false, ui, caps, ...extra });
+  assert.match(format({ contextWindow: 1000, contextReported: true }), /Context.* 500 \/ 1k · 50\.0% used/);
+  assert.doesNotMatch(format({ contextWindow: 1000, contextReported: true }), /~500/);
+  assert.match(format({ contextWindow: 1000, contextReported: false }), /~500 \/ 1k/);
+  assert.match(format({ contextReported: true }), /Context {2}500 tokens \(window unknown\)/);
+  assert.match(format({}), /Context {2}~500 tokens/);
+});

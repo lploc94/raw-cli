@@ -146,10 +146,8 @@ test("one-shot footer shows reported session token usage without inventing cache
     assert.equal(result.stdout, "measured-answer\n");
     assert.match(result.stderr, /Session\s+120 input · 24 output · 80 cache read/);
     assert.doesNotMatch(result.stderr, /cache miss/i);
-    const context = result.stderr.match(/Context\s+[#-]+\s+~([\d.]+)k \/ 20k · (\d+\.\d)% used/);
-    assert.ok(context, result.stderr);
-    assert.ok(Math.abs(Number(context[2]) - Number(context[1]) * 1000 / 20000 * 100) < 0.3);
-    assert.notEqual(Number(context[1]) * 1000, 144, "current context is not cumulative provider usage");
+    // One request: the reported size of the conversation is its input plus output tokens, shown as such (no `~`).
+    assert.match(result.stderr, /Context\s+[#-▰▱]+\s+144 \/ 20k · 0\.7% used/);
     assert.match(result.stderr, /Continue this session\n  raw --resume [0-9a-f-]+ "query"\n$/);
   } finally { await provider.close(); }
 });
