@@ -1,3 +1,4 @@
+import { ProcessSupervisor } from "./processes/supervisor.js";
 import { terminalInteractionAdapter } from "./interactions/terminal.js";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { createAgent, type AgentSession, type RunResult } from "./agent.js";
@@ -126,8 +127,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     provider: runtime.modelConfig!.provider, method: runtime.modelConfig!.method,
     ...(runtime.modelConfig!.baseUrl ? { endpoint: runtime.modelConfig!.baseUrl } : {}),
     systemPrompt: runtime.systemPrompt });
+  const processes = new ProcessSupervisor({ store });
   const createRuntimeAgent = (id: string) => createAgent({ ...runtimeAgentOptions(runtime, tools, provider, cwd),
-    persistence: { store, sessionId: id, surface: "cli" },
+    processes, persistence: { store, sessionId: id, surface: "cli" },
     ...(process.stdin.isTTY && lines ? { interactionAdapter: (request, signal) => {
       currentRenderer?.beforeInput();
       return terminalInteractionAdapter(lines, text => process.stderr.write(text))(request, signal);
@@ -145,7 +147,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     record = selected ?? createSavedSession(task?.trim().replace(/\s+/g, " ").slice(0, 80) || "New session");
     session = createRuntimeAgent(record.id);
     await session.start(selected ? "resume" : "create", selected && task === undefined ? undefined : hookEvent);
-  } catch (error) { rl?.close(); await tools.mcp.close(); throw error; }
+  } catch (error) { rl?.close(); try { await processes.close(); } finally { await tools.mcp.close(); } throw error; }
   const interrupt = () => {
     currentRenderer?.beforeInput();
     if (session.abort()) return;
@@ -233,6 +235,6 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     process.off("SIGINT", interrupt);
     process.off("SIGTERM", onTerm);
     await session.close(hookEvent);
-    await tools.mcp.close();
+    try { await processes.close(); } finally { await tools.mcp.close(); }
   }
 }

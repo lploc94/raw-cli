@@ -101,3 +101,7 @@ export { InteractionError } from "./interactions/contract.js";
 export type { InteractionContext, InteractionRequest, InteractionRequestInput, InteractionAdapter } from "./interactions/contract.js";
 export { canonicalInteractionResult, prepareForm, validateFormAnswers, FormValidationError } from "./panels/forms.js";
 export type { InteractionResult, PreparedForm } from "./panels/forms.js";
+
+export { ProcessSupervisor } from "./processes/supervisor.js";
+export { ProcessError } from "./processes/contract.js";
+export type { ProcessContext, ProcessRecord, ProcessState, ProcessOutput, ProcessChunk, ProcessStart } from "./processes/contract.js";

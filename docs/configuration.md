@@ -141,3 +141,7 @@ Managed dashboard edits use [revision-checked configuration and owned component 
 The current development tool inspection contract uses explicit predicate sources and separate intended effects; see [tool-effects.md](tool-effects.md). Old tool/hook formats are not adapted.
 
 `builtin/ask_user` is an opt-in tool ID in `tools.use`; it is not added to the starter agent. Questions use the host's generic interaction adapter and the configured `max_output_bytes` budget. Input collection is independent of tool `ask` permission rules.
+
+`builtin/process` is opt-in and separate from `builtin/bash`. Hosts inject a session-scoped process context backed by their supervisor; starter selections are unchanged. Managed background starts support macOS/Linux, with an explicit unavailable result on unsupported platforms or hosts without a supervisor.
+
+Sessions with live managed processes remain addressable and retained while their owning host is alive, even after the conversation retention cutoff. This does not renew conversation activity. Once those jobs settle, normal expiry applies.

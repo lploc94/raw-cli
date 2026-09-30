@@ -1,3 +1,4 @@
+import type { ProcessSupervisor } from "./processes/supervisor.js";
 import { InteractionError, type InteractionContext, type InteractionAdapter } from "./interactions/contract.js";
 import { InteractionService } from "./interactions/service.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
@@ -103,13 +104,14 @@ export interface AgentOptions {
   approve?: ToolContext["approve"];
   interactions?: InteractionService;
   interactionAdapter?: InteractionAdapter;
+  processes?: ProcessSupervisor;
   whitelist?: readonly string[];
   compact?: Readonly<CompactSettings>;
   persistence?: { store: SessionStore; sessionId: string; surface: HistorySurface; owner?: SessionOwner; ownership?: "agent" | "host"; operationId?: string };
 }
 
 export class AgentSession {
-  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact" | "hooks" | "interactions">;
+  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact" | "hooks" | "interactions" | "processes">;
   private messages: ModelMessage[] = [];
   private currentState: AgentState = "idle";
   private controller: AbortController | undefined;
@@ -138,10 +140,12 @@ export class AgentSession {
   private segmentCounter = 0;
   private hookStarted = false;
   private readonly panels: PanelHost;
+  private readonly processSessionId = randomUUID();
   private readonly ownedInteractions?: InteractionService;
 
   constructor(options: AgentOptions) {
     if (options.interactions && options.interactionAdapter) throw new Error("provide interactions or interactionAdapter, not both");
+    if (options.persistence) options.processes?.assertStoreBinding(options.persistence.store);
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
     const maxSteps = options.maxSteps ?? 10000;
     const maxOutputBytes = options.maxOutputBytes ?? 8192;
@@ -169,6 +173,7 @@ export class AgentSession {
       autoApprove: options.autoApprove ?? true,
       ...(options.hooks ? { hooks: options.hooks } : {}),
       ...(options.approve ? { approve: options.approve } : {}),
+      ...(options.processes ? { processes: options.processes } : {}),
       ...(options.interactions ? { interactions: options.interactions } : {}),
       ...(options.whitelist !== undefined ? { whitelist: [...options.whitelist] } : {}),
       ...(options.compact !== undefined ? { compact: { ...options.compact } } : {}),
@@ -622,6 +627,7 @@ export class AgentSession {
         ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
         signal: controller.signal,
         toolCallId: operationId,
+        ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
         interactions: this.interactionContext(operationId, info.owner, panelCall, controller.signal),
         panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => this.settleHandler(operationId, panelCall),
         ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) =>
@@ -925,6 +931,7 @@ export class AgentSession {
               ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
               signal: controller.signal,
               toolCallId: call.id,
+              ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
               interactions: this.interactionContext(call.id, panelInfo?.owner ?? call.name, panelCall, controller.signal),
               onHandlerSettled: () => this.settleHandler(call.id, panelCall),
               ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates) } : {}),

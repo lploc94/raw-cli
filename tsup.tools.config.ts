@@ -11,6 +11,7 @@ export default defineConfig({
     "tools/builtin/list_skills/index": "src/tools/bundled/list_skills/index.ts",
     "tools/builtin/load_skill/index": "src/tools/bundled/load_skill/index.ts",
     "tools/builtin/ask_user/index": "src/tools/bundled/ask_user/index.ts",
+    "tools/builtin/process/index": "src/tools/bundled/process/index.ts",
     "tools/builtin/todo/index": "src/tools/bundled/todo/index.ts",
   },
   format: ["esm"],

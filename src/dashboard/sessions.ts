@@ -1,3 +1,4 @@
+import { ProcessSupervisor } from "../processes/supervisor.js";
 import { InteractionService } from "../interactions/service.js";
 import { InteractionError, type InteractionRequest } from "../interactions/contract.js";
 import { FormValidationError } from "../panels/forms.js";
@@ -59,11 +60,12 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   }];
   const output = new LiveOutput(join(dirname(store.path), "dashboard-live"));
   let streams!: SessionStreams;
+  const processes = new ProcessSupervisor({ store }); context.processes = processes;
   const interactions = new InteractionService({ store, available: true, publish: request => {
     if (streams) streams.publish(request.identity.sessionId!, "interaction", request, request.identity.operationId);
   } });
   const approvals = new Approvals((approval, status) => streams.publish(approval.sessionId, "approval", { ...approval, status }, approval.operationId));
-  const operations: SessionOperations = new SessionOperations({ store, interactions, env: context.env, ...(attach ? { attach } : {}),
+  const operations: SessionOperations = new SessionOperations({ store, interactions, processes, env: context.env, ...(attach ? { attach } : {}),
     approve: (operation) => approvals.forOperation(operation, () => operations.approvalTimeout(operation.id)) });
   context.operations = operations;
   const runningByWorkspace = () => {
@@ -301,7 +303,7 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         if (method === "PATCH") return reply(store.renameSession(id, textField((await context.readJson(request)).title, "title", 200)));
         if (method === "DELETE") {
           if (store.sessionIsBusy(id)) throw new DashboardError(409, "busy", "Stop the active operation or wait for its current owner before deleting");
-          try { store.deleteSession(id); } catch (error) { throw new DashboardError(409, "busy", String(error)); }
+          try { await processes.deleteSession(id); } catch (error) { throw new DashboardError(409, "busy", String(error)); }
           return reply({ deleted: true });
         }
       }

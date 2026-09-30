@@ -1,3 +1,4 @@
+import type { ProcessSupervisor } from "../processes/supervisor.js";
 import { createAgent, type AgentOptions, type AgentSession } from "../agent.js";
 import type { StoredPanel } from "../panels/contract.js";
 import { openSessionStore, type HistoryItem, type Page, type SessionStoreOptions, type SessionSummary } from "./store.js";
@@ -56,7 +57,11 @@ export function getSessionPanels(options: SessionIdOptions): StoredPanel[] {
   } finally { store.close(); }
 }
 
-export function deleteSession(options: SessionIdOptions): void {
+export async function deleteSession(options: SessionIdOptions & { processes?: ProcessSupervisor }): Promise<void> {
+  if (options.processes) {
+    if (options.storeOptions !== undefined) throw new Error("provide processes or storeOptions: deletion must have one authoritative store");
+    return options.processes.deleteSession(options.sessionId);
+  }
   const store = openSessionStore(options.storeOptions);
   try {
     if (!store.getSession(options.sessionId)) throw new Error(store.missingSessionMessage());

@@ -12,7 +12,7 @@ import type { SelectedSkill } from "../../skills/contract.js";
 import { selectedToolSnapshot } from "./snapshot.js";
 import type { PackageAsset } from "../../packages/resolve-agent.js";
 
-const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo", "ask_user"]);
+const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo", "ask_user", "process"]);
 
 export interface LoadToolPluginsOptions {
   selectedIds: readonly string[];
@@ -150,6 +150,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),
           ...(context.panels ? { panels: context.panels } : {}), // onPanelUpdates stays host-only
           ...(context.effects ? { effects: context.effects } : {}),
+          ...(context.processes ? { processes: context.processes } : {}),
           ...(context.interactions ? { interactions: context.interactions } : {}),
           ...((item.id === "builtin/list_skills" || item.id === "builtin/load_skill") && options.skills
             ? { skills: options.skills } : {}),

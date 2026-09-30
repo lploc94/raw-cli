@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadConfig } from "../src/config.js";
 import { createRuntimeTools } from "../src/tools/plugins/runtime.js";
+import { ProcessSupervisor } from "../src/processes/supervisor.js";
 
 async function fixture(rules: unknown[] = [], tools = ["builtin/bash", "builtin/list_vars", "builtin/read_var"]) {
   const dir = mkdtempSync(join(tmpdir(), "raw-var-tools-"));
@@ -18,6 +19,21 @@ async function fixture(rules: unknown[] = [], tools = ["builtin/bash", "builtin/
   return { dir, runtime, async load() { return createRuntimeTools({ runtime, cwd: dir, env: { ...process.env, VAR_COUNT: join(dir, "provider-count") } }); } };
 }
 const ctx = (cwd: string) => ({ cwd, maxOutputBytes: 8192, autoApprove: true });
+test("Process resolves selected variable references after approval and rejects invalid references before spawning", async () => {
+  const f = await fixture([{ match: "builtin/process", effect: "ask" }], ["builtin/process"]); const tools = await f.load();
+  const supervisor = new ProcessSupervisor(); const processes = supervisor.forSession("vars"); let approvals = 0;
+  const context = { ...ctx(f.dir), processes, approve: () => { approvals++; return true; } };
+  try {
+    const rejected = await tools.registry.dispatch("process", { action: "start", command: "true", env_refs: { TOKEN: "unknown" } }, context);
+    assert.equal(rejected.isError, true); assert.equal(processes.list().length, 0);
+    const started = await tools.registry.dispatch("process", { action: "start", command: "printf '%s' \"$TOKEN\"", env_refs: { TOKEN: "token" } }, context);
+    assert.equal(started.isError, false); const block = started.content[0]!; if (block.type !== "json") assert.fail("start acknowledgement must be JSON");
+    const id = (block.value as { id: string }).id;
+    for (let i = 0; i < 200 && processes.status(id).state === "running"; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(processes.output(id).chunks.map(chunk => chunk.text).join(""), "literal; $(no) '");
+    assert.equal(approvals, 2);
+  } finally { await supervisor.close(); await tools.mcp.close(); }
+});
 test("linked variable tools expose metadata only and enforce read/use without schema injection", async () => {
   const f = await fixture(); const tools = await f.load();
   try {

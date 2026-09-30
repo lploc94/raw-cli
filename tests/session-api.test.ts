@@ -30,7 +30,7 @@ test("library session APIs page history and resume with an owned store lifetime"
   assert.equal(handle.agent.cwd, cwd);
   await handle.close();
 
-  deleteSession({ sessionId: saved.id, storeOptions });
+  await deleteSession({ sessionId: saved.id, storeOptions });
   assert.equal(listSessions({ cwd, storeOptions }).items.length, 0);
 });
 

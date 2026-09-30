@@ -2,7 +2,7 @@
 
 ## Bundled plugin contract
 
-The installed package also includes `examples/tools/<name>/` copies of all ten
+The installed package also includes `examples/tools/<name>/` copies of all eleven
 bundled plugins. Copy a folder to `$XDG_CONFIG_HOME/raw/tools/<new-id>/`, edit
 its `tool.json` (`id` must match the new folder), then select `local/<new-id>`
 in `tools.use`. These generated `.mjs` files run directly; rebuild Raw only
@@ -16,7 +16,7 @@ recipient's model ID, endpoint, and credentials, and run
 `raw --config /path/to/project-helper/raw.json --agent project "task"`.
 Its `agent/` IDs resolve beside that copied config file.
 
-The ten shipped tools live in package-owned folders under
+The eleven shipped tools live in package-owned folders under
 `dist/tools/builtin/<name>/`. Each folder contains an editable `tool.json` and a
 standalone `index.mjs`. The manifest declares `api_version: 2`, `id`, `version`,
 `name`, `description`, `input_schema`, and `entry: "./index.mjs"`. The entry
@@ -165,3 +165,7 @@ Select `builtin/ask_user` explicitly to ask 1–3 questions. It uses the generic
 An accepted result is exactly one JSON block: `{ status: "answered", answers: { [fieldId]: textOrOptionIds } }`. Single select answers contain an option ID; multi select answers contain option IDs in declared order. Text and free-text answers use their field IDs. The host captures the actual output budget, reduces effective limits, and validates the entire escaped JSON result before accepting; Ask returns that value unchanged without prefixes or extra answer blocks. Cancelled, expired and interrupted requests return their terminal status as a failed tool result. An unavailable adapter or unrepresentable minimum answer fails promptly with `interaction_unavailable` or `interaction_budget_too_small`.
 
 Dashboard users answer the shared Form. TTY sessions collect the same validated fields through the existing input queue; non-TTY sessions do not wait for input. Library callers supply `interactionAdapter(request, signal)`, returning the common scoped submission (`requestId`, `expectedRevision`, `idempotencyKey`, `response`, and `answers` for submit). This callback is separate from `approve`. Hosts may instead inject an `InteractionService`; supplying both service and adapter is an error. ACP uses the negotiated interaction extension documented in [ACP](acp.md).
+
+## Background processes
+
+Select `builtin/process` for `start`, `list`, `status`, `output` and `stop`. It uses a host-owned supervisor, so acknowledged starts survive turns. This is separate shell authority from `builtin/bash`; normal policy, approval and hooks apply to dispatch. A library host supplies `AgentOptions.processes`, backed by `ProcessSupervisor`, and closes that supervisor before its store. `deleteSession({ sessionId, processes })` awaits owner-host cleanup; deletion without a supervisor rejects live foreign ownership. See [managed processes](processes.md) for limits, cursor semantics, deletion fencing and shutdown/recovery guarantees.

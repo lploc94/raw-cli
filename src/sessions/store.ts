@@ -1,3 +1,4 @@
+import { assertNoLiveProcesses, recoverProcessHosts } from "../processes/store.js";
 import { InteractionError, type InteractionRequest, type InteractionSettlement } from "../interactions/contract.js";
 import { canonicalInteractionResult, validateFormAnswers } from "../panels/forms.js";
 import type { InteractionState } from "../panels/contract.js";
@@ -195,6 +196,7 @@ function sessionRow(row: DbRow): SessionSummary {
 }
 
 const boundedText = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
+const retainedSessionSql = "(s.updated_at > ? OR EXISTS (SELECT 1 FROM session_processes p WHERE p.session_id = s.id AND p.state IN ('starting','running','stopping')))";
 function validAction(action: OperationIntent["action"]): boolean {
   return !!action && boundedText(action.panel, 600) && boundedText(action.action, 64)
     && (action.block === undefined || boundedText(action.block, 64)) && (action.item === undefined || boundedText(action.item, 128))
@@ -340,8 +342,9 @@ export class SessionStore {
   }
 
   recentWorkspaces(): WorkspaceActivity[] {
+    recoverProcessHosts(this.database, this.now());
     return this.database.prepare(`SELECT w.canonical_path, max(s.updated_at) AS updated_at, count(s.id) AS sessions FROM workspaces w
-      JOIN sessions s ON s.workspace_id = w.id WHERE s.updated_at > ? GROUP BY w.id ORDER BY updated_at DESC LIMIT 100`)
+      JOIN sessions s ON s.workspace_id = w.id WHERE ${retainedSessionSql} GROUP BY w.id ORDER BY updated_at DESC LIMIT 100`)
       .all(this.cutoff()).map(workspaceActivityRow);
   }
 
@@ -352,8 +355,9 @@ export class SessionStore {
 
   /** Activity for specific workspaces (by canonical path), with the recent-list retention cutoff but no length limit. */
   workspaceActivity(canonicalPaths: readonly string[]): WorkspaceActivity[] {
+    recoverProcessHosts(this.database, this.now());
     const statement = this.database.prepare(`SELECT w.canonical_path, max(s.updated_at) AS updated_at, count(s.id) AS sessions FROM workspaces w
-      JOIN sessions s ON s.workspace_id = w.id WHERE w.canonical_path = ? AND s.updated_at > ? GROUP BY w.id`);
+      JOIN sessions s ON s.workspace_id = w.id WHERE w.canonical_path = ? AND ${retainedSessionSql} GROUP BY w.id`);
     const cutoff = this.cutoff();
     return canonicalPaths.flatMap((path) => statement.all(path, cutoff).map(workspaceActivityRow));
   }
@@ -1194,19 +1198,21 @@ export class SessionStore {
   }
 
   getSession(id: string): SessionSummary | undefined {
+    recoverProcessHosts(this.database, this.now());
     const row = this.database.prepare(`SELECT s.*, w.display_path FROM sessions s JOIN workspaces w ON w.id = s.workspace_id
-      WHERE s.id = ? AND s.updated_at > ?`).get(id, this.cutoff());
+      WHERE s.id = ? AND ${retainedSessionSql}`).get(id, this.cutoff());
     return row ? sessionRow(row) : undefined;
   }
 
   listSessions(options: ListOptions = {}): Page<SessionSummary> {
+    recoverProcessHosts(this.database, this.now());
     const limit = boundedLimit(options.limit);
     const cwd = options.cwd === undefined ? undefined : realpathSync(resolve(options.cwd));
     const scope = `${this.storeId}:${cwd ?? "*"}:${options.title ?? ""}`;
     const before = options.before === undefined ? undefined : cursorData(options.before, "sessions", scope);
     const workspaceId = cwd === undefined ? undefined : this.database.prepare("SELECT id FROM workspaces WHERE canonical_path = ?").get(cwd)?.id;
     if (cwd !== undefined && workspaceId === undefined) return { items: [] };
-    const conditions = ["s.updated_at > ?"];
+    const conditions = [retainedSessionSql];
     const parameters: Array<string | number> = [this.cutoff()];
     if (workspaceId !== undefined) {
       conditions.unshift("s.workspace_id = ?");
@@ -1281,13 +1287,16 @@ export class SessionStore {
     }
   }
 
-  deleteSession(id: string): void {
+  deleteSession(id: string, processFenceOwner?: { token: string; generation: number }): void {
     const deleted = this.transaction(() => {
       const row = this.database.prepare("SELECT owner_token, lease_until FROM sessions WHERE id = ?").get(id);
       if (!row) return false;
       if (row.owner_token !== null && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)))) {
         throw new Error("session is busy in another process");
       }
+      assertNoLiveProcesses(this.database, id, this.now());
+      const fence = this.database.prepare("SELECT host_token, host_generation FROM session_process_fences WHERE session_id = ?").get(id);
+      if (fence && (fence.host_token !== processFenceOwner?.token || Number(fence.host_generation) !== processFenceOwner?.generation)) throw new Error("session is busy: process deletion is in progress");
       for (const item of this.database.prepare("SELECT payload_json FROM history WHERE session_id = ?").all(id)) {
         this.dropPayloadReference(String(item.payload_json));
       }

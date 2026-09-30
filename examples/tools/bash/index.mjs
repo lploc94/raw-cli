@@ -34,16 +34,25 @@ function indexedResult(results, maxOutputBytes, isError) {
 }
 
 // src/tools/process.ts
-async function runBash(options) {
-  if (options.signal?.aborted) return errorResult("aborted", "bash aborted before execution");
-  const timeoutMs = options.timeoutMs ?? 12e4;
-  const isPosix = process.platform !== "win32";
-  const child = spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
+function spawnShell(options, platform = process.platform) {
+  return spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
     cwd: options.cwd,
     ...options.env ? { env: options.env } : {},
     stdio: ["ignore", "pipe", "pipe"],
-    detached: isPosix
+    detached: platform !== "win32"
   });
+}
+function signalShellGroup(child, signal, platform = process.platform) {
+  try {
+    if (child.pid) process.kill(platform !== "win32" ? -child.pid : child.pid, signal);
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+}
+async function runBash(options) {
+  if (options.signal?.aborted) return errorResult("aborted", "bash aborted before execution");
+  const timeoutMs = options.timeoutMs ?? 12e4;
+  const child = spawnShell(options);
   let observedBytes = 0;
   let retainedBytes = 0;
   let truncated = false;
@@ -64,13 +73,7 @@ async function runBash(options) {
     resolveCancelled = resolve2;
   });
   let escalation;
-  const signalGroup = (signal) => {
-    try {
-      if (child.pid) process.kill(isPosix ? -child.pid : child.pid, signal);
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
-  };
+  const signalGroup = (signal) => signalShellGroup(child, signal);
   const stop = (reason) => {
     if (aborted || timedOut) return;
     if (reason === "abort") aborted = true;

@@ -1,3 +1,4 @@
+import type { ProcessContext } from "../processes/contract.js";
 import type { InteractionContext } from "../interactions/contract.js";
 import type { VariableContext } from "../vars/contract.js";
 import { open, mkdir, writeFile, readFile, appendFile } from "node:fs/promises";
@@ -23,6 +24,7 @@ export interface ToolApprovalRequest {
 
 export interface ToolContext {
   interactions?: InteractionContext;
+  processes?: ProcessContext;
   effects?: Readonly<Record<string, unknown>>;
   vars?: VariableContext;
   cwd: string;

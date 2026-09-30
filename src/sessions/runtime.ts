@@ -29,6 +29,7 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
       ...(operation.kind === "compact" ? { provider: createProvider(runtime.resolveCompactModelConfig()) } : {}) };
     const agent = createAgent({ ...runtimeAgentOptions(runtime, tools, provider, session.cwd),
       ...(options.approve ? { approve: options.approve } : {}),
+      ...(options.processes ? { processes: options.processes } : {}),
       ...(options.interactions ? { interactions: options.interactions } : {}),
       persistence: { store, sessionId: session.id, surface: "web", owner, ownership: "host", operationId: operation.id } });
     await agent.start(agent.transcript.length ? "resume" : "create", undefined, signal);

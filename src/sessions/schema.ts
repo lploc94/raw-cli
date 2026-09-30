@@ -113,6 +113,18 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       UNIQUE(session_id, client_request_id)
     );
     CREATE INDEX IF NOT EXISTS session_operations_recent ON session_operations(session_id, updated_at DESC, id DESC);`);
+    database.exec(`CREATE TABLE IF NOT EXISTS process_hosts (
+      token TEXT PRIMARY KEY, generation INTEGER NOT NULL, pid INTEGER NOT NULL, alive INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    ); CREATE TABLE IF NOT EXISTS session_processes (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      host_token TEXT NOT NULL REFERENCES process_hosts(token), host_generation INTEGER NOT NULL,
+      state TEXT NOT NULL, revision INTEGER NOT NULL, created_at INTEGER NOT NULL,
+      record_json TEXT NOT NULL, chunks_json TEXT NOT NULL
+    ); CREATE INDEX IF NOT EXISTS session_processes_session ON session_processes(session_id, state, created_at);
+    CREATE INDEX IF NOT EXISTS session_processes_host ON session_processes(host_token, host_generation, state);
+    CREATE TABLE IF NOT EXISTS session_process_fences (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, host_token TEXT NOT NULL, host_generation INTEGER NOT NULL
+    )`);
     // Latest tool panel documents (docs/panels-design.md §12). Created like session_runtime_metadata: no version bump.
     database.exec(`CREATE TABLE IF NOT EXISTS session_panels (
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

@@ -326,7 +326,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: add ask_user with shared interaction adapters`
 
 ## Phase 5: Add host-scoped process supervision and Process builtin
-Status: in_progress.
+Status: complete.
 ### Goal
 Run bounded background jobs across turns with truthful status, paged output and stop control.
 ### Current behavior and gap
@@ -350,8 +350,8 @@ Start in turn A, close its runtime, retrieve output in turn B; cancel unrelated 
 ### Implementation obligations
 Extract supervision carefully to preserve Bash behavior; add host injection to all supported surfaces; storage updates use host ownership rather than a stale session writer token. Add store-level deletion guard and transactional admission fence, wire owner-host cleanup to dashboard/CLI/ACP/public API paths where a supervisor is available, and make foreign deletion/expiry reject/defer consistently. Failed cleanup must not remove records. Missing foreign supervisor is explicit, never silently adopted.
 ### Acceptance criteria
-- [ ] AC-9: Process survives turn completion and is readable/stoppable later; shutdown/limits behave as documented and cross-store deletion/expiry cannot orphan live jobs or race new starts — lifecycle, two-store and admission-fence tests.
-- [ ] AC-10: Existing foreground Bash timeout/abort/batch/env semantics pass unchanged — primitive and registry tests.
+- [x] AC-9: Process survives turn completion and is readable/stoppable later; shutdown/limits behave as documented and cross-store deletion/expiry cannot orphan live jobs or race new starts — lifecycle, two-store and admission-fence tests.
+- [x] AC-10: Existing foreground Bash timeout/abort/batch/env semantics pass unchanged — primitive and registry tests.
 ### Focused verification
 `node --import tsx --test tests/process-supervisor.test.ts tests/process-tool.test.ts tests/process-lifecycle.test.ts tests/primitives.test.ts tests/registry-policy.test.ts tests/vars-tools.test.ts`
 ### Phase gates
@@ -364,6 +364,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: manage session background processes across turns`
 
 ## Phase 6: Integrate foreground and background activity in Commands
+Status: in_progress.
 ### Goal
 Provide one useful Commands section with current jobs, compact foreground results, output and Stop.
 ### Current behavior and gap
@@ -547,3 +548,11 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30: Phase 4 docs-first and tests-first: Ask missing packaged handler and terminal adapter produced expected module/loader failures. Added bundled ask_user (1–3 questions, explicit optional free text, one unchanged canonical JSON block), library-owned callback service, queue-sharing TTY adapter, and negotiated ACP callback using SDK cancellation. Real-surface/provider focused gate 41/41, typecheck, exact ACP phase gate 30/30 and package gate 4/4 passed, including installed and standalone Ask outside checkout. Hook log fixture initially parsed an extra blank input newline; fixed fixture reader without changing production or assertions. Phase 4 implementation review session 006 started, pending verdict.
 
 - 2026-09-30: Phase 4 review session 006 round 1 raw verdict APPROVE, no findings; reviewer independently passed typecheck, four focused tests and answered/expired/abort/headless standalone lifecycle checks (read-only sandbox limited full surface/package reruns). Session finalized APPROVE/stopped normally. Final focused gate 43/43 includes copied Ask sidebar placement and bounded multiline retry; typecheck, ACP gate 30/30, package gate 4/4, overhead and diff checks passed after final changes. AC-7/AC-8 and Phase 4 complete; Phase 5 in progress.
+
+- 2026-09-30: Phase 5 docs-first, recorded missing-supervisor and missing-built-tool red tests. Implemented host-owned ProcessSupervisor, bounded durable logs, shared foreground/background shell spawn/group primitive, process admission/deletion fences in SessionStore, guarded expiry, and CLI/dashboard/ACP/library ownership wiring. Public library deletion now consistently returns a Promise, enabling awaited supervised cleanup; no sync/async compatibility overload. Regression tests exposed and repaired foreign deletion crossing a fence, expired-but-live sessions becoming inaccessible, escaped JSON pages not advancing, and untyped action discriminants preventing conditional Stop policy. Initial fixture errors (explicit ask policy requires an approval callback; predicate source is arguments) and one omitted tsup entry were corrected separately from red regression evidence. Focused 31/31, tools gate 9/9, package gate 4/4, typecheck passed; final conditional-policy regression and Phase 5 review session 007 pending. No Phase 6 UI implementation yet.
+
+- 2026-09-30: Phase 5 final pre-review focused 32/32, typecheck and additional store/API/retention/ACP/dashboard regressions 64/64 passed. Review session 007 round 1 returned REVISE with five reproducible defects; all ACCEPT: ISSUE-1 non-detached descendants surviving natural shell exit; ISSUE-2 UTF-8 cursors/pages stalling; ISSUE-3 recovery bypassing 100-terminal retention; ISSUE-4 uncaught persistence errors in callbacks; ISSUE-5 supervised public deletion reporting success without a bound target store. Added red tests for each and repaired group cleanup on natural exit, boundary advancement/size errors, shared retention pruning during recovery, bounded owned-handle cleanup with retained ownership on persistence failure, and persistent-supervisor/missing-session/exclusive-store validation. All six new regression tests green; full focused 38/38 and typecheck pass. Round 2 verification and final phase gates pending; Phase 5 remains in progress.
+
+- 2026-09-30: Phase 5 review session 007 round 2 verified ISSUE-1–5 resolved, independently passed typecheck, focused 38/38 and 50 additional host/store tests. New high ISSUE-6 ACCEPT: a persisted library agent could inject an in-memory or wrong-store supervisor, bypassing durable admission and foreign deletion fencing. Added red persisted-library regression, then validated supervisor store ID and canonical database path before Agent claims ownership. Memory agents still support in-memory supervision; separate connections to the same database pass. Test also proves no provider call/claim/spawn on rejection, successful saved-agent start on same DB, and foreign deletion/expiry retaining acknowledged work after agent close. Focused now 39/39 and typecheck green; final tools/package gates and mandatory round 3 review pending.
+
+- 2026-09-30: Phase 5 review session 007 round 3 raw verdict APPROVE: ISSUE-1–6 resolved, no remaining defects, independent focused 39/39/typecheck/diff checks passed. Session finalized APPROVE and stopped normally. Final local focused 39/39, typecheck, exact tools gate 9/9, package gate 4/4 (installed Process start/stop outside checkout), and host/store regression 64/64 passed. AC-9/AC-10 and Phase 5 complete; Phase 6 in progress. POSIX process tests executed on this macOS host; Windows unsupported branch is fixture-qualified, with cross-platform final evidence reserved for Phase 9.

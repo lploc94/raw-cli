@@ -1,3 +1,4 @@
+import type { ProcessSupervisor } from "../processes/supervisor.js";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, realpathSync, statSync } from "node:fs";
@@ -20,7 +21,7 @@ import type { AttachmentStaging } from "./attachments.js";
 export type DashboardRoute = (request: IncomingMessage, response: ServerResponse, context: DashboardContext) => Promise<boolean>;
 export interface DashboardContext {
   instanceId: string; cwd: string; configPath: string; env: NodeJS.ProcessEnv; signal: AbortSignal;
-  preferredAgent?: string; store?: SessionStore; operations?: SessionOperations; attachments?: AttachmentStaging; storeDiagnostic?: string;
+  preferredAgent?: string; processes?: ProcessSupervisor; store?: SessionStore; operations?: SessionOperations; attachments?: AttachmentStaging; storeDiagnostic?: string;
   json: typeof json; readJson: typeof readJson;
   onClose(cleanup: () => void | Promise<void>): void;
 }
@@ -56,7 +57,7 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
   catch (error) {
     controller.abort(); await context.operations?.close();
     await Promise.allSettled(cleanup.map((fn) => Promise.resolve().then(fn)));
-    context.store?.close(); throw error;
+    try { await context.processes?.close(); } finally { context.store?.close(); } throw error;
   }
   const version = String((JSON.parse(readFileSync(join(packageRoot(), "package.json"), "utf8")) as { version?: string }).version ?? "unknown");
   let origin = ""; let closing: Promise<void> | undefined; let listeningReady = false;
@@ -108,7 +109,7 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
     await context.operations?.close();
     await Promise.allSettled(cleanup.map((fn) => Promise.resolve().then(fn)));
     http.closeAllConnections(); await listenerClosed;
-    context.store?.close();
+    try { await context.processes?.close(); } finally { context.store?.close(); }
     options.signal?.removeEventListener("abort", onAbort);
   })();
   const onAbort = () => {

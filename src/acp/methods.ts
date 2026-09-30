@@ -1,3 +1,4 @@
+import { ProcessSupervisor } from "../processes/supervisor.js";
 import type { InteractionResponseSubmission } from "../panels/contract.js";
 import { randomUUID, createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
@@ -150,6 +151,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   const store = openSessionStore(options.storeOptions);
   try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
   catch { process.stderr.write("raw: session maintenance deferred\n"); }
+  const processes = new ProcessSupervisor({ store });
   const sessions = new Map<string, SessionRecord>();
   const providerFactory = options.providerFactory ?? createProvider;
   const configuredMcp = options.mcpServers ?? {};
@@ -185,8 +187,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       sessions.clear();
       try { runSessionMaintenance(store); }
       catch { process.stderr.write("raw: session maintenance deferred\n"); }
-      store.close();
-      connection?.close();
+      try { await processes.close(); } finally { store.close(); connection?.close(); }
     })();
     return closing;
   };
@@ -275,7 +276,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
           created = true;
         }
         const sessionId = id;
-        const agentSession = createAgent({ provider: providerFactory(modelConfig), registry,
+        const agentSession = createAgent({ processes, provider: providerFactory(modelConfig), registry,
           whitelist: selectedNames, baseToolSelection: tools.selectedNames, explicitToolView,
           toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills,
           ...(tools.hooks ? { hooks: tools.hooks } : {}),
@@ -377,10 +378,13 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
       throw error;
     }
   });
-  app.onRequest("session/delete", ({ params }) => {
+  app.onRequest("session/delete", async ({ params }) => {
     if (!initialized) throw RequestError.invalidRequest(undefined, "initialize first");
     if (!store.getSession(params.sessionId)) throw rawError(rawErrors.unknownSession, "unknown or expired session");
-    try { store.deleteSession(params.sessionId); }
+    const owned = sessions.get(params.sessionId);
+    if (owned && owned.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");
+    if (owned) { await owned.agent.close(); await owned.mcp.close(); sessions.delete(params.sessionId); }
+    try { await processes.deleteSession(params.sessionId); }
     catch { throw rawError(rawErrors.busy, "session is busy"); }
     return {};
   });

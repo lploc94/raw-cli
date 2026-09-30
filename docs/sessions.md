@@ -19,3 +19,7 @@ Operation receipts and metrics are optional host records in the same format-5 da
 ## User message blocks
 
 A stored user message is text or an ordered list of `text`, `resource_link` and `image` blocks. Image bytes stay inside the saved message (large values use the existing payload files); history views, terminal history, titles and compaction summaries show `[Image: type, N bytes]` instead of base64, while ACP replay forwards the stored image block. Switching between vision and non-vision agents never rewrites the saved image; see `docs/providers.md` for request-time placeholders.
+
+Managed background jobs keep session ownership independently of the model-turn lease. Foreign deletion fails while their supervisor is alive; expiry defers these sessions. Owner-host deletion fences new starts and stops jobs before deleting records. A failed cleanup retains the session. See [process lifetime and recovery](processes.md).
+
+The library `deleteSession` API returns a Promise in all cases. Await it, and supply `processes` when this host owns a persistent supervisor so deletion can await cleanup. That supervisor's store is authoritative; combining it with `storeOptions` is rejected. A supervisor without a store cannot delete saved sessions. The store's direct synchronous deletion remains guarded and cannot remove live process ownership.

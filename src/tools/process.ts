@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { ToolResult } from "./types.js";
 import { errorResult, utf8Prefix } from "./results.js";
@@ -13,16 +13,21 @@ export interface BashOptions {
   bashPath?: string;
 }
 
+/** Shared shell spawn/group primitive; lifecycle and output policy belong to its caller. */
+export function spawnShell(options: { command: string; cwd: string; env?: NodeJS.ProcessEnv; bashPath?: string }, platform: NodeJS.Platform = process.platform) {
+  return spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
+    cwd: options.cwd, ...(options.env ? { env: options.env } : {}), stdio: ["ignore", "pipe", "pipe"], detached: platform !== "win32",
+  });
+}
+export function signalShellGroup(child: ChildProcess, signal: NodeJS.Signals, platform: NodeJS.Platform = process.platform): void {
+  try { if (child.pid) process.kill(platform !== "win32" ? -child.pid : child.pid, signal); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+}
+
 export async function runBash(options: BashOptions): Promise<ToolResult> {
   if (options.signal?.aborted) return errorResult("aborted", "bash aborted before execution");
   const timeoutMs = options.timeoutMs ?? 120000;
-  const isPosix = process.platform !== "win32";
-  const child = spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
-    cwd: options.cwd,
-    ...(options.env ? { env: options.env } : {}),
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: isPosix,
-  });
+  const child = spawnShell(options);
   let observedBytes = 0;
   let retainedBytes = 0;
   let truncated = false;
@@ -41,13 +46,7 @@ export async function runBash(options: BashOptions): Promise<ToolResult> {
   let resolveCancelled!: () => void;
   const cancellationWatchdog = new Promise<void>((resolve) => { resolveCancelled = resolve; });
   let escalation: Promise<void> | undefined;
-  const signalGroup = (signal: NodeJS.Signals) => {
-    try {
-      if (child.pid) process.kill(isPosix ? -child.pid : child.pid, signal);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-    }
-  };
+  const signalGroup = (signal: NodeJS.Signals) => signalShellGroup(child, signal);
   const stop = (reason: "abort" | "timeout") => {
     if (aborted || timedOut) return;
     if (reason === "abort") aborted = true;
