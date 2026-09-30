@@ -201,8 +201,9 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     const messages: PanelNotification[] = update ? [{ method: "session/update", params: { sessionId: session.id, update } }] : [];
     if (event.type === "panel_update" && !event.live) {
       const panel = `${event.owner}#${event.panel}`;
-      const declaration = session.agent.panel(panel)?.declaration;
-      if (declaration) messages.push(...panelNotifications(session.id, { panel, owner: event.owner, revision: event.revision, closed: event.closed, declaration, document: event.document }, peerRaw.panelsV2 === true));
+      const declaration = event.declaration ?? session.agent.panel(panel)?.declaration;
+      if (declaration) messages.push(...panelNotifications(session.id, { panel, owner: event.owner, revision: event.revision, closed: event.closed, declaration, document: event.document,
+        ...(event.view ? { view: event.view } : {}) }, peerRaw.panelsV2 === true));
     }
     return messages;
   };
@@ -354,6 +355,12 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     try {
       await store.scanSessionHistory(params.sessionId, async (item) => {
         for (const update of storedAcpUpdates(item)) await client.notify("session/update", { sessionId: params.sessionId, update });
+        if (peerRaw.panelsV2 && item.kind === "panel_receipt") {
+          const identity = (item.payload as { view?: { instanceId?: string } }).view;
+          const view = identity?.instanceId ? store.getToolView(params.sessionId, identity.instanceId) : undefined;
+          if (view) for (const message of panelNotifications(params.sessionId, { panel: view.panelId, owner: view.owner, revision: view.revision,
+            closed: view.closed, declaration: view.declaration, document: view.document, view: view.view }, true)) await client.notify(message.method, message.params);
+        }
       });
       await sendCurrentPanels(params.sessionId, client);
       const session = sessions.get(params.sessionId);
@@ -479,10 +486,11 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   });
   app.onRequest("_raw/panel/action", (params: unknown) => object(params, "panel action"), async ({ params, client }) => {
     requireCapability("panelsV2");
-    fields(params, ["sessionId", "panel", "action", "block", "item"], "panel action");
+    fields(params, ["sessionId", "panel", "action", "block", "item", "viewInstanceId"], "panel action");
     const session = getSession(string(params.sessionId, "sessionId"));
     if (session.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");
     const request = { panel: string(params.panel, "panel"), action: string(params.action, "action"),
+      ...(params.viewInstanceId === undefined ? {} : { viewInstanceId: string(params.viewInstanceId, "viewInstanceId") }),
       ...(params.block === undefined ? {} : { block: string(params.block, "block") }), ...(params.item === undefined ? {} : { item: string(params.item, "item") }) };
     let updateError: unknown;
     let updateChain = Promise.resolve();

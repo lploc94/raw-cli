@@ -66,7 +66,7 @@ export type { AcpWsListener } from "./acp/transport.js";
 export { openSessionStore, sessionStorePath, SessionStore } from "./sessions/store.js";
 export type { CreateSessionOptions, HistoryItem, Page, SessionStoreOptions, SessionSummary } from "./sessions/store.js";
 export { listSessions, getSessionHistory, getSessionPanels, resumeSession, deleteSession } from "./sessions/api.js";
-export type { PanelContext, PanelDeclaration, PanelDocument, PanelReceipt, PanelUpdate, StoredPanel } from "./panels/contract.js";
+export type { PanelContext, PanelDeclaration, PanelDocument, PanelReceipt, PanelUpdate, StoredPanel, StoredToolView } from "./panels/contract.js";
 export type { ToolCallUIIdentity, ToolViewIdentity, InteractionRequestIdentity, InteractionState, FormAnswers,
   InteractionResponseSubmission, InteractionResponseAcknowledgement } from "./panels/contract.js";
 export { PanelError } from "./panels/contract.js";

@@ -669,6 +669,8 @@ Placement, form/response actions and Mermaid source are part of the current bloc
 
 Host-owned envelopes identify call-scoped views and interaction requests. `ToolViewIdentity` contains an opaque instance ID, run ID, call ID, owner and declaration ID, plus session/operation IDs for durable calls. Sidebar identity remains `<owner>#<panel>`; historical chat references use their instance ID. `InteractionRequestIdentity` adds a request ID and optional chat view instance. `InteractionResponseSubmission` carries request ID, expected revision, idempotency key and either form answers or cancellation. Ownership is resolved from the stored request rather than accepted from the client. Terminal acknowledgements contain request ID, revision, state and the exact canonical result when answered. These envelopes are separate from tool-authored panel documents.
 
+`placement: "chat"` starts a fresh instance on the first update in each call, at revision 1; later updates in that call revise that instance. `context.panels.get()` never reads a previous call's inline document. Ordinary inline updates are provisional until the same result/receipt transaction commits them to `session_tool_views`. Rollback removes provisional state, and a later call cannot change a committed snapshot. The runtime keeps only active inline state; older snapshots are fetched by instance ID as history cards render. Sidebar state retains its existing revision, eviction, opening and preference rules. Chat-only declarations are excluded from the sidebar stack and its 16-panel budget. Both placements render through `ToolView` and `Blocks`; no visual block implementation is duplicated.
+
 ## 18. Reference tool: `builtin/todo`
 
 The reference tool proves the contract end to end.

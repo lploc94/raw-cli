@@ -136,6 +136,7 @@ export type PanelUpdateBody =
 
 /** The small persisted record of one committed (or rejected) update. */
 export interface PanelReceipt {
+  view?: ToolViewIdentity;
   panel: string; owner: string; title: string; revision: number; summary: string;
   progress?: { done: number; total: number }; status: PanelStatus; op: "replace" | "patch" | "close";
   toolCallId: string; source: "tool" | "user_action";
@@ -148,5 +149,6 @@ export interface StoredPanel {
   panelId: string; owner: string; revision: number; createdAt: number; updatedAt: number; closed: boolean;
   declaration: PanelDeclaration; document: PanelDocument;
 }
+export interface StoredToolView extends StoredPanel { view: ToolViewIdentity }
 /** Panel changes committed in the same transaction as one tool result. Receipts travel as `panel_receipt` history records. */
-export interface PanelWrites { upserts: StoredPanel[]; deletes: string[] }
+export interface PanelWrites { upserts: StoredPanel[]; deletes: string[]; views?: StoredToolView[] }

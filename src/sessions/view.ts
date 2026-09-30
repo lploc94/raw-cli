@@ -6,7 +6,7 @@ import type { HookReceipt } from "../hooks/dispatcher.js";
 import { projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./visible.js";
 
 /** Metadata of one non-text block of a user message; bytes are served separately, never embedded in a view. */
-import type { PanelReceipt } from "../panels/contract.js";
+import type { PanelReceipt, ToolViewIdentity } from "../panels/contract.js";
 export interface HistoryAttachment { index: number; kind: string; name: string; mimeType: string | null; byteSize: number | null }
 /** The non-text blocks of a stored user input, in order. `HistoryAttachment.index` addresses this list. */
 export function userAttachmentBlocks(input: unknown): UserBlock[] {
@@ -38,6 +38,7 @@ export interface HistoryView {
   runResult?: RunResult;
   hook?: HookReceipt;
   panelReceipt?: PanelReceipt;
+  toolView?: ToolViewIdentity;
 }
 function object(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

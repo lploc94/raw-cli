@@ -2975,6 +2975,16 @@ summary::-webkit-details-marker {
   margin: 0 0 2px;
   font-size: 13px;
 }
+
+.inline-tool-view {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
 .panel-section.drag-dragging {
   opacity: 0.6;
 }

@@ -11,7 +11,7 @@ export interface OperationIntent {
   configPath: string;
   input?: string;
   /** For `panel_action`: the full panel id and what the user picked (docs/panels-design.md §11). */
-  action?: { panel: string; action: string; block?: string; item?: string };
+  action?: { panel: string; action: string; block?: string; item?: string; viewInstanceId?: string };
 }
 export interface SessionOperation extends OperationIntent {
   id: string;

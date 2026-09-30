@@ -1,4 +1,7 @@
 import { useState, type ReactNode } from "react";
+import { InlineToolView } from "./panels/ToolView.js";
+import type { ActionHost } from "./panels/actions.js";
+import type { InsertRef } from "./panels/status.js";
 import { Tabs } from "radix-ui";
 import {
   CheckCircle2,
@@ -343,10 +346,14 @@ export function Timeline({
   state,
   preferences,
   onOpenPanel,
+  actions,
+  onInsert = () => {},
 }: {
   state: ChatState;
   preferences: Preferences;
   onOpenPanel: (panel: string) => void;
+  actions?: ActionHost | undefined;
+  onInsert?: InsertRef;
 }) {
   const records = [...state.history.items];
   for (const segment of state.live)
@@ -431,6 +438,10 @@ export function Timeline({
       });
     }
   }
+  for (const frame of Object.values(state.views)) if (frame.view && !records.some(item => item.panelReceipt?.view?.instanceId === frame.view!.instanceId)) {
+    records.push({ id: `view:${frame.view.instanceId}`, kind: "tool_view", status: frame.live ? "streaming" : "complete",
+      sequence: Number.MAX_SAFE_INTEGER, createdAt: Date.now(), operationId: frame.operationId, toolView: frame.view });
+  }
   const compactions = new Map<string, CompactionDetails>();
   for (const item of records)
     if (item.compaction) compactions.set(item.compaction.id, item.compaction);
@@ -455,6 +466,7 @@ export function Timeline({
   let elapsedMs: number | undefined;
   const renderedTools = new Set<string>();
   const renderedCompact = new Set<string>();
+  const renderedViews = new Set<string>();
   const flush = () => {
     if (work.length)
       result.push(
@@ -476,6 +488,23 @@ export function Timeline({
     elapsedMs = undefined;
   };
   for (const item of records) {
+    const identity = item.toolView ?? item.panelReceipt?.view;
+    if (identity) {
+      if (renderedViews.has(identity.instanceId)) {
+        if (item.panelReceipt) {
+          flush();
+          result.push(<Receipt key={item.id} receipt={item.panelReceipt} icon="panel" openLabel="Show this tool view"
+            onOpen={() => document.querySelector(`[data-instance="${CSS.escape(identity.instanceId)}"]`)?.scrollIntoView({ block: "nearest" })} />);
+        }
+        continue;
+      }
+      renderedViews.add(identity.instanceId);
+      flush();
+      result.push(<InlineToolView key={identity.instanceId} sessionId={state.session.id} identity={identity}
+        live={state.views[identity.instanceId]} receipt={item.panelReceipt}
+        availabilityRevision={`${state.snapshotCount}:${state.session.agentName}:${state.operations.filter(op => isTerminal(op.state)).map(op => `${op.id}:${op.state}`).join(",")}`} actions={actions} onInsert={onInsert} />);
+      continue;
+    }
     if (item.kind === "reasoning" || item.callId) {
       if (!work.length) workId = item.id;
       workActive ||= state.operations.some(

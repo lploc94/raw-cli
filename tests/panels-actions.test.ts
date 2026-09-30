@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { PanelStackItem } from "../src/panels/stack.js";
+import type { PanelStackItem, ToolViewSnapshot } from "../src/panels/stack.js";
 import type { SessionOperation } from "../src/sessions/operations.js";
 import type { SessionSummary } from "../src/sessions/store.js";
 import type { HistoryView } from "../src/sessions/view.js";
@@ -57,6 +57,55 @@ test("resolveAction enforces scope, blocks, when and templates, and fills string
   bad({ action: "done", item: "a" }, /needs a block/);
   bad({ action: "all", block: "items" }, /takes no block/);
   bad({ action: "all" }, /cannot be resolved/);
+});
+
+test("historical chat actions use that snapshot and create a new instance without altering the original", async () => {
+  const f = await dashboardFixture({ agent: { tools: { use: ["local/report"] } }, responses: [
+    { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "c", type: "function", function: { name: "report", arguments: '{"text":"Original"}' } }] }, "tool_calls"), openAiDone] }, answer(),
+  ] });
+  const folder = join(f.env.XDG_CONFIG_HOME!, "raw", "tools", "report");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 2, id: "report", version: "1.0.0", name: "report", description: "Report",
+    input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false }, entry: "./index.mjs",
+    panels: [{ id: "report", title: "Report", placement: "chat", actions: [{ id: "repeat", label: "Repeat", scope: "item", kind: "tool",
+      arguments: { text: "Action: {{item.label}}" } }] }] }));
+  writeFileSync(join(folder, "index.mjs"), `export async function handler(args, context) {
+    await context.panels.update('report', {op:'replace',document:{blocks:[{id:'items',kind:'checklist',items:[{id:'one',label:args.text}]}]}});
+    return {content:[]};
+  }`);
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "raw" });
+    assert.equal(await turn(f, session.id, "first"), "completed");
+    const before = await f.json<{ items: HistoryView[] }>(`/sessions/${session.id}/history`);
+    const identity = before.items.find(item => item.panelReceipt?.view)!.panelReceipt!.view!;
+    const path = `/sessions/${session.id}/views/${identity.instanceId}`;
+    const original = await f.json<ToolViewSnapshot>(path);
+    const modelRequests = f.provider.requests.length;
+    const action = await f.json<{ operationId: string }>(`${path}/actions`, "POST", { agent: "raw", clientRequestId: "repeat",
+      action: "repeat", block: "items", item: "one" });
+    assert.equal((await f.wait(action.operationId)).state, "completed");
+    assert.equal(f.provider.requests.length, modelRequests);
+    assert.deepEqual(await f.json(path), original);
+    const after = await f.json<{ items: HistoryView[] }>(`/sessions/${session.id}/history`);
+    const next = after.items.filter(item => item.panelReceipt?.view).at(-1)!.panelReceipt!.view!;
+    assert.notEqual(next.instanceId, identity.instanceId);
+    assert.match(JSON.stringify(await f.json(`/sessions/${session.id}/views/${next.instanceId}`)), /Action: Original/);
+    assert.deepEqual(await items(f, session.id), []);
+    setConfig(f, config => { config.agents.raw.tools.rules = [{ match: "local/report", effect: "deny" }]; });
+    const denied = await f.json<ToolViewSnapshot>(path);
+    assert.deepEqual(denied.document, original.document);
+    assert.equal(denied.presentation.stale, false);
+    assert.deepEqual(denied.presentation.declaration.actions, []);
+    setConfig(f, config => { config.agents.raw.tools.use = []; config.agents.raw.tools.rules = []; });
+    const stale = await f.json<ToolViewSnapshot>(path);
+    assert.deepEqual(stale.document, original.document);
+    assert.equal(stale.presentation.stale, true);
+    assert.equal(stale.presentation.declaration.actions[0]!.id, "repeat");
+
+    const foreign = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "raw" });
+    assert.equal((await f.api(`/sessions/${foreign.id}/views/${identity.instanceId}`)).status, 404);
+    assert.equal((await f.api(`/sessions/${foreign.id}/views/${identity.instanceId}/actions`, "POST", { agent: "raw", clientRequestId: "foreign", action: "repeat", block: "items", item: "one" })).status, 404);
+  } finally { await f.close(); }
 });
 
 test("allow runs on click without approval; the receipt is from the user; the note precedes the next user message exactly once", async () => {

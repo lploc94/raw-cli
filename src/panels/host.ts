@@ -1,13 +1,15 @@
 import {
   PANEL_LIMITS, PanelError, type PanelContext, type PanelDeclaration, type PanelDocument, type PanelReceipt,
-  type PanelUpdateBody, type PanelWrites, type StoredPanel,
+  type PanelUpdateBody, type PanelWrites, type StoredPanel, type StoredToolView, type ToolViewIdentity,
 } from "./contract.js";
+import { randomUUID } from "node:crypto";
 import { applyUpdate } from "./patch.js";
 import { derivedProgress, derivedSummary, truncateBytes } from "./render.js";
 import type { ToolContentPanel } from "../tools/types.js";
 
 /** What observers (dashboard stream, library callers) receive for each state change. */
 export interface PanelLiveEvent {
+  view?: ToolViewIdentity; declaration?: PanelDeclaration;
   panel: string; owner: string; revision: number; document: PanelDocument; closed: boolean; live: boolean;
 }
 
@@ -47,7 +49,7 @@ function implicitDeclaration(id: string, title: string): PanelDeclaration {
  * validation, ownership, limits and revisions are identical everywhere. One tool call is settled at a time.
  */
 export class PanelHost {
-  private working = new Map<string, StoredPanel>();
+  private working = new Map<string, StoredPanel & { view?: ToolViewIdentity }>();
   private committed = new Map<string, StoredPanel>();
   private pendingDeletes = new Set<string>();
   private touched = new Set<string>();
@@ -78,8 +80,10 @@ export class PanelHost {
   }
 
   private event(panel: StoredPanel, live: boolean): PanelLiveEvent {
+    const view = (panel as Partial<StoredToolView>).view;
     return { panel: panel.panelId.slice(panel.owner.length + 1), owner: panel.owner, revision: panel.revision,
-      document: clone(panel.document), closed: panel.closed, live };
+      document: clone(panel.document), closed: panel.closed, live,
+      ...(view ? { view: clone(view), declaration: clone(panel.declaration) } : {}) };
   }
 
   /** At most one live frame per panel every 250 ms; the latest state wins. */
@@ -98,18 +102,20 @@ export class PanelHost {
   }
 
   /** Starts one tool call. `owner` is the tool's canonical identity, never a presentation alias. */
-  begin(callId: string, info: PanelOwnerInfo, source: PanelReceipt["source"] = "tool"): PanelCall {
+  begin(callId: string, info: PanelOwnerInfo, source: PanelReceipt["source"] = "tool",
+    scope: { runId?: string; sessionId?: string; operationId?: string } = {}): PanelCall {
     // An earlier call that never reached its commit (for example an aborted run) leaves nothing behind.
     if (this.touched.size || this.pendingDeletes.size) this.rollback();
-    return new PanelCall(this, callId, info, source);
+    return new PanelCall(this, callId, info, source, scope);
   }
 
   /** @internal Applies one update to the working state; used by PanelCall only. */
-  applyTo(info: PanelOwnerInfo, panel: string, body: unknown): { revision: number; panelId: string; op: "replace" | "patch" | "close" } {
+  applyTo(info: PanelOwnerInfo, panel: string, body: unknown, view?: ToolViewIdentity): { revision: number; panelId: string; op: "replace" | "patch" | "close" } {
     const local = localPanelId(info, panel);
     const update = { ...(body as object), panel: local } as { panel: string; op: "replace" | "patch" | "close"; base_revision?: number };
     const panelId = `${info.owner}#${local}`;
-    const entry = this.working.get(panelId);
+    const key = view?.instanceId ?? panelId;
+    const entry = this.working.get(key);
     let declaration = info.declarations.find((item) => item.id === local);
     if (!declaration && !info.implicit) throw new PanelError("panel_undeclared", `tool ${info.owner} did not declare panel "${local}"`);
     const applied = applyUpdate(entry && { document: entry.document, closed: entry.closed }, update);
@@ -118,8 +124,8 @@ export class PanelHost {
     if (baseRevision !== undefined && baseRevision !== (entry?.revision ?? 0)) {
       throw new PanelError("panel_revision_conflict", `panel "${local}" is at revision ${entry?.revision ?? 0}, not ${baseRevision}`);
     }
-    if (!entry && this.working.size >= PANEL_LIMITS.panelsPerSession) {
-      const evictable = [...this.working.values()].filter((item) => item.closed)
+    if (!view && !entry && [...this.working.values()].filter(item => !item.view).length >= PANEL_LIMITS.panelsPerSession) {
+      const evictable = [...this.working.values()].filter((item) => !item.view && item.closed)
         .sort((a, b) => a.updatedAt - b.updatedAt || a.createdAt - b.createdAt)[0];
       if (!evictable) throw new PanelError("panel_limit", `this session already has ${PANEL_LIMITS.panelsPerSession} panels and none is closed`);
       this.working.delete(evictable.panelId);
@@ -127,23 +133,25 @@ export class PanelHost {
       this.pendingDeletes.add(evictable.panelId);
     }
     const at = this.now();
-    const next: StoredPanel = { panelId, owner: info.owner, revision: (entry?.revision ?? 0) + 1, createdAt: entry?.createdAt ?? at,
-      updatedAt: at, closed: applied.closed, declaration: clone(declaration), document: applied.document };
-    this.working.set(panelId, next);
-    this.pendingDeletes.delete(panelId);
-    this.touched.add(panelId);
-    this.scheduleLive(panelId);
-    return { revision: next.revision, panelId, op: update.op };
+    const next = { panelId, owner: info.owner, revision: (entry?.revision ?? 0) + 1, createdAt: entry?.createdAt ?? at,
+      updatedAt: at, closed: applied.closed, declaration: clone(declaration), document: applied.document, ...(view ? { view } : {}) };
+    this.working.set(key, next);
+    this.pendingDeletes.delete(key);
+    this.touched.add(key);
+    this.scheduleLive(key);
+    return { revision: next.revision, panelId: key, op: update.op };
   }
 
   /** @internal */
-  get(panelId: string): StoredPanel | undefined { return this.working.get(panelId); }
+  get(panelId: string): (StoredPanel & { view?: ToolViewIdentity }) | undefined { return this.working.get(panelId); }
 
   /** @internal Builds the commit for everything touched since the last commit or rollback. */
   takeWrites(): PanelWrites | undefined {
-    const upserts = [...this.touched].map((id) => this.working.get(id)).filter((item): item is StoredPanel => item !== undefined).map(clone);
+    const touched = [...this.touched].map(id => this.working.get(id)).filter(item => item !== undefined).map(clone);
+    const upserts = touched.filter(item => !item.view);
+    const views = touched.filter((item): item is StoredToolView => item.view !== undefined);
     const deletes = [...this.pendingDeletes];
-    return upserts.length || deletes.length ? { upserts, deletes } : undefined;
+    return upserts.length || deletes.length || views.length ? { upserts, deletes, ...(views.length ? { views } : {}) } : undefined;
   }
 
   /** @internal The writes were durably stored: they become the committed state and observers get the final frames. */
@@ -151,22 +159,25 @@ export class PanelHost {
     for (const id of this.pendingDeletes) this.committed.delete(id);
     for (const id of this.touched) {
       const panel = this.working.get(id);
-      if (panel) this.committed.set(id, clone(panel));
+      if (panel && !(panel as Partial<StoredToolView>).view) this.committed.set(id, clone(panel));
     }
-    const finals = [...this.touched].map((id) => this.working.get(id)).filter((item): item is StoredPanel => item !== undefined);
+    const finals = [...this.touched].map(id => this.working.get(id)).filter(item => item !== undefined);
     this.pendingDeletes.clear();
     this.touched.clear();
     for (const panel of finals) {
-      const timer = this.timers.get(panel.panelId);
-      if (timer) { clearTimeout(timer); this.timers.delete(panel.panelId); }
-      this.lastEmit.set(panel.panelId, Date.now());
+      const key = panel.view?.instanceId ?? panel.panelId;
+      const timer = this.timers.get(key);
+      if (timer) { clearTimeout(timer); this.timers.delete(key); }
+      this.lastEmit.set(key, Date.now());
       try { this.listener?.(this.event(panel, false)); } catch { /* observers never affect state */ }
+      if (panel.view) { this.working.delete(key); this.lastEmit.delete(key); }
     }
   }
 
   /** @internal The commit failed: forget everything since the last committed state. */
   rollback(): void {
     for (const id of [...this.touched, ...this.pendingDeletes]) {
+      if (this.working.get(id)?.view) this.lastEmit.delete(id);
       const saved = this.committed.get(id);
       if (saved) this.working.set(id, clone(saved)); else this.working.delete(id);
     }
@@ -178,13 +189,33 @@ export class PanelHost {
 
 /** One tool call's view of the host: the streaming API, the extracted result blocks, and the settle step. */
 export class PanelCall {
+  private readonly views = new Map<string, ToolViewIdentity>();
   private closed = false;
   private readonly counts = new Map<string, number>();
   private collected: ToolContentPanel[] = [];
   private readonly ops = new Map<string, "replace" | "patch" | "close">();
 
   constructor(private readonly host: PanelHost, private readonly callId: string, private readonly info: PanelOwnerInfo,
-    private readonly source: PanelReceipt["source"] = "tool") {}
+    private readonly source: PanelReceipt["source"] = "tool",
+    private readonly scope: { runId?: string; sessionId?: string; operationId?: string } = {}) {}
+
+  private view(local: string, create = false): ToolViewIdentity | undefined {
+    if (this.info.declarations.find(item => item.id === local)?.placement !== "chat") return undefined;
+    let view = this.views.get(local);
+    if (!view && create) {
+      view = { instanceId: randomUUID(), runId: this.scope.runId ?? randomUUID(), toolCallId: this.callId,
+        owner: this.info.owner, panelId: local,
+        ...(this.scope.sessionId ? { sessionId: this.scope.sessionId } : {}), ...(this.scope.operationId ? { operationId: this.scope.operationId } : {}) };
+      this.views.set(local, view);
+    }
+    return view;
+  }
+
+  private current(local: string) {
+    const chat = this.info.declarations.find(item => item.id === local)?.placement === "chat";
+    const key = chat ? this.view(local)?.instanceId : `${this.info.owner}#${local}`;
+    return key ? this.host.get(key) : undefined;
+  }
 
   /** Counts accepted updates per canonical panel; rejected attempts and alternative spellings neither add to nor dodge the limit. */
   private run(panel: unknown, body: unknown): { revision: number } {
@@ -192,7 +223,7 @@ export class PanelCall {
     if ((this.counts.get(key) ?? 0) >= PANEL_LIMITS.updatesPerCall) {
       throw new PanelError("panel_rate_limited", `more than ${PANEL_LIMITS.updatesPerCall} updates to "${panelLabel(panel)}" in one tool call`);
     }
-    const result = this.host.applyTo(this.info, panel as string, body);
+    const result = this.host.applyTo(this.info, panel as string, body, this.view(localPanelId(this.info, panel), true));
     this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
     this.ops.set(result.panelId, result.op);
     return { revision: result.revision };
@@ -205,7 +236,7 @@ export class PanelCall {
       return this.run(panel, body);
     },
     get: (panel: string) => {
-      const found = this.host.get(`${this.info.owner}#${panel}`);
+      const found = this.current(localPanelId(this.info, panel));
       return found ? { revision: found.revision, document: clone(found.document) } : undefined;
     },
   };
@@ -238,18 +269,19 @@ export class PanelCall {
     const receipts: PanelReceipt[] = [];
     const confirmations: string[] = [];
     const writes = this.host.takeWrites();
-    for (const stored of writes?.upserts ?? []) {
+    for (const stored of [...(writes?.upserts ?? []), ...(writes?.views ?? [])]) {
+      const view = (stored as Partial<StoredToolView>).view;
       const doc = stored.document;
       const title = doc.title ?? stored.declaration.title;
       const progress = derivedProgress(doc);
       const summary = derivedSummary(doc, title);
       receipts.push({ panel: stored.panelId.slice(stored.owner.length + 1), owner: stored.owner, title, revision: stored.revision, summary,
-        ...(progress ? { progress } : {}), status: doc.status ?? "active", op: this.ops.get(stored.panelId) ?? "replace",
+        ...(view ? { view: clone(view) } : {}), ...(progress ? { progress } : {}), status: doc.status ?? "active", op: this.ops.get(view?.instanceId ?? stored.panelId) ?? "replace",
         toolCallId: this.callId, source: this.source });
       confirmations.push(`panel ${stored.panelId.slice(stored.owner.length + 1)} updated (revision ${stored.revision}): ${summary}`);
     }
     for (const [local, error] of rejected) {
-      const current = this.host.get(`${this.info.owner}#${local}`);
+      const current = this.current(local);
       const declared = this.info.declarations.find((item) => item.id === local);
       receipts.push({ panel: local, owner: this.info.owner, title: current?.document.title ?? current?.declaration.title ?? declared?.title ?? local,
         revision: current?.revision ?? 0, summary: "", status: current?.document.status ?? "idle", op: "replace",
@@ -278,7 +310,7 @@ export class PanelCall {
 
   /** The receipt of a panel this call did not change: its current state, bounded like every other receipt. */
   unchangedReceipt(local: string): PanelReceipt {
-    const current = this.host.get(`${this.info.owner}#${local}`);
+    const current = this.current(local);
     const declared = this.info.declarations.find((item) => item.id === local);
     const title = current?.document.title ?? current?.declaration.title ?? declared?.title ?? local;
     const progress = current && derivedProgress(current.document);

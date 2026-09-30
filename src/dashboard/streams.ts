@@ -14,7 +14,7 @@ import type { VisibleToolCall, VisibleToolResult } from "../sessions/visible.js"
 import type { SessionMetrics } from "../sessions/metrics.js";
 import type { RunEvent } from "../agent.js";
 import type { Approval } from "./approvals.js";
-import type { PanelDocument } from "../panels/contract.js";
+import type { PanelDocument, PanelDeclaration, ToolViewIdentity } from "../panels/contract.js";
 import type { LoadedDeclarations } from "../panels/stack.js";
 
 const PANEL_FRAME_INTERVAL_MS = 250;
@@ -30,7 +30,8 @@ export interface DashboardEventData {
   ownership: { ownership: "idle" | "here" | "elsewhere" };
   host_error: { message: string };
   /** A committed or live panel state: the full document (at most 64 KiB), keyed by the full panel id (§13.1). */
-  panel: { panel: string; owner: string; revision: number; closed: boolean; live: boolean; document: PanelDocument };
+  panel: { panel: string; owner: string; revision: number; closed: boolean; live: boolean; document: PanelDocument;
+    view?: ToolViewIdentity; declaration?: PanelDeclaration };
 }
 export type DashboardEvent = {
   id: string; instanceId: string; sessionId: string; operationId?: string; sequence: number;
@@ -44,7 +45,8 @@ export class SessionStreams {
   private pending: { sessionId: string; operationId: string; data: DashboardEventData["text"] } | undefined;
   private flushTimer: ReturnType<typeof setImmediate> | undefined;
   /** Per session and panel: when the last frame went out and the newest state waiting for its turn (latest wins). */
-  private readonly panelFrames = new Map<string, { at: number; timer?: ReturnType<typeof setTimeout> | undefined; pending?: { data: DashboardEventData["panel"]; operationId: string } | undefined }>();
+  private readonly panelFrames = new Map<string, { at: number; operationId: string; chat: boolean;
+    timer?: ReturnType<typeof setTimeout> | undefined; pending?: { data: DashboardEventData["panel"]; operationId: string } | undefined }>();
   constructor(private readonly context: DashboardContext, private readonly output: LiveOutput,
     private readonly snapshot: (sessionId: string, loaded?: LoadedDeclarations) => SessionSnapshot,
     private readonly known: (sessionId: string) => Promise<LoadedDeclarations>, private readonly limits = { frames: MAX_REPLAY_FRAMES, bytes: MAX_REPLAY_BYTES }) {
@@ -113,14 +115,21 @@ export class SessionStreams {
    * sent when the window ends, so the last state always reaches the client; a snapshot stays authoritative.
    */
   private publishPanel(sessionId: string, operationId: string, data: DashboardEventData["panel"]): void {
-    const key = `${sessionId}\0${data.panel}`;
+    const key = `${sessionId}\0${data.view?.instanceId ?? data.panel}`;
     // Entries idle past their window carry no state; dropping them keeps this map to the panels that are active right now.
     if (this.panelFrames.size >= 64) for (const [other, idle] of this.panelFrames) {
       if (!idle.timer && !idle.pending && Date.now() - idle.at >= PANEL_FRAME_INTERVAL_MS) this.panelFrames.delete(other);
     }
-    const entry = this.panelFrames.get(key) ?? { at: 0 };
+    const entry = this.panelFrames.get(key) ?? { at: 0, operationId, chat: !!data.view };
+    entry.operationId = operationId;
     this.panelFrames.set(key, entry);
     const send = (frame: DashboardEventData["panel"], operation: string) => { entry.at = Date.now(); this.publish(sessionId, "panel", frame, operation); };
+    if (data.view && !data.live) {
+      if (entry.timer) clearTimeout(entry.timer);
+      send(data, operationId);
+      this.panelFrames.delete(key);
+      return;
+    }
     const wait = PANEL_FRAME_INTERVAL_MS - (Date.now() - entry.at);
     if (wait <= 0 && !entry.timer) { send(data, operationId); return; }
     entry.pending = { data, operationId };
@@ -147,7 +156,13 @@ export class SessionStreams {
     this.channel(sessionId);
     if (message.type === "operation") {
       this.syncHistory(sessionId);
-      if (terminalOperationStates.has(message.operation.state)) this.output.finish(operationId);
+      if (terminalOperationStates.has(message.operation.state)) {
+        this.output.finish(operationId);
+        for (const [key, entry] of this.panelFrames) if (entry.chat && entry.operationId === operationId) {
+          if (entry.timer) clearTimeout(entry.timer);
+          this.panelFrames.delete(key);
+        }
+      }
       this.publish(sessionId, "operation", message.operation, operationId);
       if (message.operation.metrics) this.publish(sessionId, "metrics", message.operation.metrics, operationId);
       return;
@@ -173,7 +188,8 @@ export class SessionStreams {
         this.context.operations!.toolIdentity(operationId, event.name), event.result), ...(event.turnId ? { turnId: event.turnId } : {}) }, operationId);
     } else if (event.type === "panel_update") {
       this.publishPanel(sessionId, operationId, { panel: `${event.owner}#${event.panel}`, owner: event.owner, revision: event.revision,
-        closed: event.closed, live: event.live, document: event.document });
+        closed: event.closed, live: event.live, document: event.document,
+        ...(event.view ? { view: event.view } : {}), ...(event.declaration ? { declaration: event.declaration } : {}) });
     } else if (event.type === "compact_start" || event.type === "compact_end" || event.type === "compact_error") this.publish(sessionId, "compaction", event, operationId);
     // Core commits can follow the synchronous callback. Flush after that commit and before a snapshot.
     queueMicrotask(() => { try { this.syncHistory(sessionId); } catch { /* Closing the host cannot abort execution through an observer. */ } });

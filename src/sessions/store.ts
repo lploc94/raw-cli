@@ -10,7 +10,7 @@ import type { ToolDefinition } from "../tools/registry.js";
 import type { SelectedSkill } from "../skills/contract.js";
 import { errorResult } from "../tools/results.js";
 import { projectToolResult } from "./visible.js";
-import type { PanelDeclaration, PanelDocument, PanelWrites, StoredPanel } from "../panels/contract.js";
+import type { PanelDeclaration, PanelDocument, PanelWrites, StoredPanel, StoredToolView } from "../panels/contract.js";
 import { initializeSessionSchema } from "./schema.js";
 import { validateStoredAgentState } from "./restore.js";
 import { locateSessionStore } from "./location.js";
@@ -194,7 +194,8 @@ function sessionRow(row: DbRow): SessionSummary {
 const boundedText = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 function validAction(action: OperationIntent["action"]): boolean {
   return !!action && boundedText(action.panel, 600) && boundedText(action.action, 64)
-    && (action.block === undefined || boundedText(action.block, 64)) && (action.item === undefined || boundedText(action.item, 128));
+    && (action.block === undefined || boundedText(action.block, 64)) && (action.item === undefined || boundedText(action.item, 128))
+    && (action.viewInstanceId === undefined || boundedText(action.viewInstanceId, 128));
 }
 
 export class SessionStore {
@@ -293,6 +294,7 @@ export class SessionStore {
       kind: intent.kind, agentName: intent.agentName, configPath: intent.configPath,
       ...(intent.input === undefined ? {} : { input: intent.input }),
       ...(intent.action === undefined ? {} : { action: { panel: intent.action.panel, action: intent.action.action,
+        ...(intent.action.viewInstanceId === undefined ? {} : { viewInstanceId: intent.action.viewInstanceId }),
         ...(intent.action.block === undefined ? {} : { block: intent.action.block }), ...(intent.action.item === undefined ? {} : { item: intent.action.item }) } }) };
     const requestHash = digest(JSON.stringify(normalized));
     return this.transaction(() => {
@@ -933,6 +935,11 @@ export class SessionStore {
 
   /** Runs inside the caller's transaction. */
   private writePanels(sessionId: string, panels: PanelWrites): void {
+    for (const view of panels.views ?? []) {
+      if (view.declaration.placement !== "chat" || view.view.sessionId !== sessionId) throw new Error("invalid chat view session binding");
+      this.database.prepare("INSERT INTO session_tool_views(session_id, instance_id, tool_call_id, snapshot_json) VALUES (?, ?, ?, ?)")
+        .run(sessionId, view.view.instanceId, view.view.toolCallId, JSON.stringify(view));
+    }
     for (const id of panels.deletes) this.database.prepare("DELETE FROM session_panels WHERE session_id = ? AND panel_id = ?").run(sessionId, id);
     for (const panel of panels.upserts) {
       this.database.prepare(`INSERT INTO session_panels(session_id, panel_id, owner, revision, created_at, updated_at, closed, declaration_json, document_json)
@@ -951,6 +958,12 @@ export class SessionStore {
       updatedAt: Number(row.updated_at), closed: Number(row.closed) === 1,
       declaration: JSON.parse(String(row.declaration_json)) as PanelDeclaration, document: JSON.parse(String(row.document_json)) as PanelDocument,
     }));
+  }
+
+  /** One immutable historical chat snapshot; never hydrates the session's whole UI history. */
+  getToolView(sessionId: string, instanceId: string): StoredToolView | undefined {
+    const row = this.database.prepare("SELECT snapshot_json FROM session_tool_views WHERE session_id = ? AND instance_id = ?").get(sessionId, instanceId);
+    return row ? JSON.parse(String(row.snapshot_json)) as StoredToolView : undefined;
   }
 
   replaceAgentContext(sessionId: string, owner: SessionOwner, messages: readonly ModelMessage[], metadata: AgentMetadata = {},

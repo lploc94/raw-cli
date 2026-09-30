@@ -12,6 +12,7 @@ import { applyFrame } from "./panels/panel-state.js";
 
 export type LiveTool = DashboardEventData["tool"] & { operationId: string };
 export interface ChatState extends SessionSnapshot {
+  views: Record<string, DashboardEventData["panel"] & { operationId: string }>;
   tools: Record<string, LiveTool>;
   compactions: Record<string, DashboardEventData["compaction"]>;
   /** Counts snapshot and reset frames: what a stream (re)connect, or an agent switch, must react to. */
@@ -55,6 +56,7 @@ export function reduceEvent(
         ...(before ? { nextCursor: before } : {}),
       },
       tools: {},
+      views: {},
       compactions: {},
       snapshotCount: (state?.snapshotCount ?? 0) + 1,
       panelTick: state?.panelTick ?? 0,
@@ -66,8 +68,10 @@ export function reduceEvent(
     case "history": {
       const ids = new Set(event.data.items.map((item) => item.id));
       const tools = { ...state.tools };
+      const views = { ...state.views };
       const compactions = { ...state.compactions };
       for (const item of event.data.items) {
+        if (item.panelReceipt?.view) delete views[item.panelReceipt.view.instanceId];
         if (item.callId && item.operationId)
           delete tools[`${item.operationId}:${item.callId}`];
         if (item.compaction?.status !== "running" && item.compaction)
@@ -82,6 +86,7 @@ export function reduceEvent(
         historyWatermark: event.data.historyWatermark,
         live: state.live.filter((item) => !ids.has(item.segmentId)),
         tools,
+        views,
         compactions,
       };
     }
@@ -142,6 +147,7 @@ export function reduceEvent(
                   ([, tool]) => tool.operationId !== event.data.id,
                 ),
               ),
+              views: Object.fromEntries(Object.entries(state.views).filter(([, view]) => view.operationId !== event.data.id)),
             }
           : {}),
       };
@@ -170,6 +176,13 @@ export function reduceEvent(
     case "ownership":
       return { ...state, ownership: event.data.ownership };
     case "panel": {
+      if (event.data.view) {
+        const id = event.data.view.instanceId;
+        if (state.operations.some(operation => operation.id === event.operationId && isTerminal(operation.state))
+          || state.history.items.some(item => item.panelReceipt?.view?.instanceId === id)
+          || (state.views[id]?.revision ?? 0) > event.data.revision) return state;
+        return { ...state, views: { ...state.views, [id]: { ...event.data, operationId: event.operationId! } } };
+      }
       const applied = applyFrame(state.panels, event.data);
       return { ...state, panels: applied.items, panelTick: state.panelTick + 1,
         unknownPanels: applied.known || state.unknownPanels.includes(event.data.panel) ? state.unknownPanels : [...state.unknownPanels, event.data.panel].slice(-50) };

@@ -126,6 +126,14 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       document_json TEXT NOT NULL,
       PRIMARY KEY (session_id, panel_id)
     )`);
+    // Immutable call-scoped chat snapshots, retained with their session history.
+    database.exec(`CREATE TABLE IF NOT EXISTS session_tool_views (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      instance_id TEXT NOT NULL,
+      tool_call_id TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      PRIMARY KEY (session_id, instance_id)
+    )`);
     // Notes about panel actions the user ran; the next user message carries and clears them (docs/panels-design.md §10).
     database.exec(`CREATE TABLE IF NOT EXISTS session_pending_notes (
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

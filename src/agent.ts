@@ -12,7 +12,7 @@ import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
 import { capResult, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import { resolveAction } from "./panels/actions.js";
-import { PanelHost, type PanelCall } from "./panels/host.js";
+import { PanelHost, type PanelCall, type PanelLiveEvent } from "./panels/host.js";
 import { isPanelReminder, panelReminders, truncateBytes } from "./panels/render.js";
 import type { PanelDocument, PanelReceipt, PanelWrites, StoredPanel } from "./panels/contract.js";
 import type { ToolResult } from "./tools/types.js";
@@ -65,7 +65,7 @@ export type RunEvent = (
   | { type: "compact_end"; result: CompactResult; details?: CompactionDetails }
   | { type: "compact_error"; details: CompactionDetails }
   | { type: "run_end"; result: RunResult }
-  | { type: "panel_update"; panel: string; owner: string; revision: number; document: PanelDocument; closed: boolean; live: boolean }
+  | ({ type: "panel_update" } & PanelLiveEvent)
   | { type: "hook_event"; id: string; event: HookReceipt["event"]; outcome: HookReceipt["outcome"];
       durationMs: number; message?: string; code?: string }
 ) & { turnId?: string; segmentId?: string };
@@ -226,6 +226,11 @@ export class AgentSession {
   get activeTurnId(): string | undefined { return this.currentTurnId; }
   /** The latest committed state of one panel of this session, by full ID. */
   panel(panelId: string): StoredPanel | undefined { return this.panels.snapshot().find((item) => item.panelId === panelId); }
+
+  private panelScope(runId = this.currentTurnId ?? randomUUID()) {
+    return { runId, ...(this.persistence ? { sessionId: this.persistence.sessionId,
+      ...(this.persistence.operationId ? { operationId: this.persistence.operationId } : {}) } : {}) };
+  }
   get transcript(): readonly ModelMessage[] { return structuredClone(this.messages); }
   get usageRecords(): readonly unknown[] { return structuredClone(this.rawUsage); }
   get cwd(): string { return this.options.cwd; }
@@ -537,7 +542,7 @@ export class AgentSession {
    * Updates, the receipt and a note for the model's next request commit in one transaction; nothing is committed when the
    * handler never ran.
    */
-  runPanelAction(request: { panel: string; action: string; block?: string; item?: string }, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+  runPanelAction(request: { panel: string; action: string; block?: string; item?: string; viewInstanceId?: string }, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     if (this.currentState === "closed" || this.currentState === "closing") return Promise.reject(new Error("agent session is closed"));
     if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
     if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
@@ -557,7 +562,7 @@ export class AgentSession {
     return running;
   }
 
-  private async panelAction(request: { panel: string; action: string; block?: string; item?: string }, controller: AbortController,
+  private async panelAction(request: { panel: string; action: string; block?: string; item?: string; viewInstanceId?: string }, controller: AbortController,
     onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     const fail = (code: string, message: string): RunResult => ({ status: "error", steps: 0, code, message });
     const emit = (event: RunEvent) => { try { onEvent?.(structuredClone({ ...event, ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}) })); } catch { /* observers never own execution */ } };
@@ -568,7 +573,10 @@ export class AgentSession {
     const info = toolName ? registry.panelDeclarations(toolName) : undefined;
     const declaration = info?.declarations.find((item) => item.id === request.panel.slice(hash + 1));
     if (!toolName || !info || !declaration) return fail("stale_panel", "the tool that owns this panel is not selected by this agent");
-    const stored = this.panels.snapshot().find((panel) => panel.panelId === request.panel);
+    const historical = request.viewInstanceId && this.persistence
+      ? this.persistence.store.getToolView(this.persistence.sessionId, request.viewInstanceId) : undefined;
+    if (request.viewInstanceId && (!historical || historical.panelId !== request.panel)) return fail("unknown_view", "This tool view does not exist in the session");
+    const stored = historical ?? this.panels.snapshot().find((panel) => panel.panelId === request.panel);
     let resolved;
     try { resolved = resolveAction(declaration, request, stored?.document ?? null); }
     catch (error) { return fail("invalid_action", (error as Error).message); }
@@ -577,7 +585,7 @@ export class AgentSession {
     const hookRequest = () => ({ cwd: this.options.cwd, agent_id: this.options.provider.modelConfig.agentName,
       ...(this.persistence ? { session_id: this.persistence.sessionId } : {}), turn_id: operationId });
     this.panels.setListener((event) => emit({ type: "panel_update", ...event }));
-    const panelCall = this.panels.begin(operationId, info, "user_action");
+    const panelCall = this.panels.begin(operationId, info, "user_action", this.panelScope(operationId));
     let started = false;
     let dispatched: ToolResult;
     try {
@@ -602,12 +610,16 @@ export class AgentSession {
       return controller.signal.aborted ? { status: "cancelled", steps: 0 } : fail("action_error", (error as Error).message);
     }
     if (!started) { panelCall.rollback(); if (controller.signal.aborted) return { status: "cancelled", steps: 0 }; return fail(dispatched.code ?? "action_error", dispatched.content.find((block) => block.type === "text")?.text ?? "the action did not run"); }
+    if (controller.signal.aborted) { panelCall.rollback(); return { status: "cancelled", steps: 0 }; }
     try {
       const settled = panelCall.settle(dispatched.content.length === 0);
       const text = truncateBytes([...dispatched.content.flatMap((block) => block.type === "text" ? [block.text] : []), ...settled.lines].join("\n"), 1024);
       // The receipt for the panel the user clicked: the update the tool made to it, or its unchanged current state.
       const local = request.panel.slice(hash + 1);
-      const own = settled.receipts.find((receipt) => receipt.panel === local && receipt.owner === owner) ?? panelCall.unchangedReceipt(local);
+      const own = settled.receipts.find((receipt) => receipt.panel === local && receipt.owner === owner)
+        ?? { ...panelCall.unchangedReceipt(local), ...(historical ? { view: historical.view,
+          title: historical.document.title ?? historical.declaration.title, revision: historical.revision,
+          summary: historical.document.summary ?? "", status: historical.document.status ?? "active" } : {}) };
       const receipts = settled.receipts.includes(own) ? settled.receipts : [...settled.receipts, own];
       const title = own.title;
       const note = `The user ran "${resolved.action.label}" on ${title}; ${owner} returned: ${text || (dispatched.isError ? "an error" : "no text")}`;
@@ -711,7 +723,8 @@ export class AgentSession {
       let result = dispatchedResult;
       let panelWrites: PanelWrites | undefined;
       let panelRecords: VisibleRecord[] = [];
-      if (panelCall) {
+      if (panelCall && controller.signal.aborted) panelCall.rollback();
+      else if (panelCall) {
         // Ends the handler's panel window, applies result-block updates and prepares the atomic commit (panels-design §8.0, §10).
         const settled = panelCall.settle(result.content.length === 0);
         if (settled.lines.length) result = { ...result, content: [...result.content, { type: "text", text: settled.lines.join("\n") }] };
@@ -876,7 +889,7 @@ export class AgentSession {
             return finish(interrupted());
           }
           const panelInfo = call.argumentError ? undefined : this.options.registry.panelDeclarations(call.name);
-          const panelCall = panelInfo ? this.panels.begin(call.id, panelInfo) : undefined;
+          const panelCall = panelInfo ? this.panels.begin(call.id, panelInfo, "tool", this.panelScope()) : undefined;
           const dispatched = call.argumentError
             ? capResult(errorResult("invalid_arguments", call.argumentError), this.options.maxOutputBytes)
             : await this.options.registry.dispatch(call.name, call.arguments, {

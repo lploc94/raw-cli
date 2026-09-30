@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type PointerEvent, type ReactNode, type SetStateAction } from "react";
 import type { PanelStackItem } from "../../../src/panels/stack.js";
-import { ActionScope, offeredActions, type ActionHost } from "./actions.js";
-import { Blocks } from "./Blocks.js";
+import { offeredActions, type ActionHost } from "./actions.js";
+import { ToolView } from "./ToolView.js";
 import { Section, progressFor, statusTextFor, summaryFor } from "./Section.js";
 import {
   DETAILS_ID, MIN_HEIGHT, currentOrder, heightFor, isExpanded, layout, markSeen, move, newAnnouncer, placeAt, planAnnouncements, rejectedCode, setExpanded, setHeight, setHidden,
@@ -182,11 +182,9 @@ export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, histo
             drag={dragFor(item)}
             menu={menuFor(item)}
           >
-            <ActionScope value={actions && { item, host: actions }}>
-            {item.stale && <p className="panel-banner" role="note">The tool that owns this panel is not selected by this agent.</p>}
+            <ToolView item={item} actions={actions} onInsert={onInsert} hideCompleted={prefs.hideCompleted} onHideCompleted={(value) => setPrefs((old) => setHideCompleted(old, value))}>
             {rejected && <p className="panel-banner error" role="note">Update rejected: {rejected}</p>}
-            {item.document ? <Blocks document={item.document} onInsert={onInsert} hideCompleted={prefs.hideCompleted} onHideCompleted={(value) => setPrefs((old) => setHideCompleted(old, value))} /> : <p className="muted small">No data yet.</p>}
-            </ActionScope>
+            </ToolView>
           </Section>
         );
       })}

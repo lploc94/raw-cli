@@ -5,7 +5,7 @@ import { loadConfig } from "../config.js";
 import { PanelActionError, resolveAction } from "../panels/actions.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { knownPanelDeclarations, type KnownPanels } from "../panels/declarations.js";
-import { buildPanelStack, declarationsFor, loadDeclarationsForSaved, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
+import { buildPanelStack, presentToolView, declarationsFor, loadDeclarationsForSaved, toolViewStackItem, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
 import { parseRequestOverride, requestControls, RequestOverrideError, type RequestControl, type RequestOverride } from "../request-controls.js";
 import { loadSelectedSkills } from "../skills/loader.js";
 import type { UserBlock } from "../llm/types.js";
@@ -198,6 +198,14 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new DashboardError(400, "invalid_limit", "limit must be 1 to 50");
       return reply({ items: await searchWorkspaceFiles(session.cwd, url.searchParams.get("q") ?? "", limit) });
     }
+    const viewRoute = /^\/api\/sessions\/([^/]+)\/views\/([^/]+)$/.exec(path);
+    if (viewRoute && method === "GET") {
+      const id = decodeURIComponent(viewRoute[1]!); requireSession(id);
+      const view = store.getToolView(id, decodeURIComponent(viewRoute[2]!));
+      if (!view) throw new DashboardError(404, "unknown_view", "This tool view does not exist in the session");
+      const loaded = await knownForSession(id);
+      return reply(presentToolView(view, declarationsFor(requireSession(id).agentName, loaded)));
+    }
     const panelRoute = /^\/api\/sessions\/([^/]+)\/panels(?:\/([^/]+))?$/.exec(path);
     if (panelRoute && method === "GET") {
       const id = decodeURIComponent(panelRoute[1]!); const session = requireSession(id);
@@ -214,22 +222,28 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       if (!found) throw new DashboardError(404, "unknown_panel", `Panel ${wanted} does not exist in this session`);
       return reply(found);
     }
-    const actionRoute = /^\/api\/sessions\/([^/]+)\/panels\/([^/]+)\/actions$/.exec(path);
+    const actionRoute = /^\/api\/sessions\/([^/]+)\/(panels|views)\/([^/]+)\/actions$/.exec(path);
     if (actionRoute && method === "POST") {
       const id = decodeURIComponent(actionRoute[1]!); const session = requireSession(id);
-      const panel = decodeURIComponent(actionRoute[2]!);
+      const instanceId = actionRoute[2] === "views" ? decodeURIComponent(actionRoute[3]!) : undefined;
+      const historical = instanceId ? store.getToolView(id, instanceId) : undefined;
+      if (instanceId && !historical) throw new DashboardError(404, "unknown_view", "This tool view does not exist in the session");
+      const panel = historical?.panelId ?? decodeURIComponent(actionRoute[3]!);
       const body = await context.readJson(request);
       const clientRequestId = textField(body.clientRequestId, "clientRequestId", 128);
       const agent = textField(body.agent, "agent");
       const request_ = { action: textField(body.action, "action", 64),
         ...(body.block === undefined ? {} : { block: textField(body.block, "block", 64) }), ...(body.item === undefined ? {} : { item: textField(body.item, "item", 128) }) };
-      const intent: OperationIntent = { sessionId: id, clientRequestId, kind: "panel_action", agentName: agent, configPath: context.configPath, action: { panel, ...request_ } };
+      const intent: OperationIntent = { sessionId: id, clientRequestId, kind: "panel_action", agentName: agent, configPath: context.configPath, action: { panel, ...request_,
+        ...(instanceId ? { viewInstanceId: instanceId } : {}) } };
       // A replayed request id returns the existing receipt and never re-validates against newer state.
       if (store.findOperation(id, clientRequestId)) return reply({ operationId: operations.submit(intent).id }, 202);
       // The saved agent is the one policy and dispatch use; a view showing another agent must not run an action under it.
       if (session.agentName !== agent) throw new DashboardError(409, "agent_mismatch", `This session's saved agent is ${session.agentName ?? "not set"}; send a message to switch to ${agent} first`);
       const known = await knownPanels(agent);
-      const found = buildPanelStack(known, store.listSessionPanels(id)).find((item) => item.panel === panel);
+      const current = known?.declared.find(entry => `${entry.owner}#${entry.declaration.id}` === panel)?.declaration;
+      const found = historical ? toolViewStackItem(historical, current ?? historical.declaration, !current)
+        : buildPanelStack(known, store.listSessionPanels(id)).find((item) => item.panel === panel);
       if (!found) throw new DashboardError(404, "unknown_panel", `Panel ${panel} does not exist in this session`);
       if (found.stale) throw new DashboardError(409, "stale_panel", "The tool that owns this panel is not selected by this agent");
       // `deny` hides the tool actions; a stale request for one is forbidden and nothing runs.

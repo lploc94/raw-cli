@@ -212,7 +212,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: define shared tool UI and explicit effect inspection contracts`
 
 ## Phase 2: Persist call-scoped views and share chat/sidebar rendering
-Status: in_progress.
+Status: complete.
 ### Goal
 Display the same structured blocks at either placement with correct historical identity.
 ### Current behavior and gap
@@ -236,8 +236,8 @@ Publish the same declared chat view in 20 successive calls, reload and paginate 
 ### Implementation obligations
 Add additive instance tables and bounded history hydration; ensure result/hook stripping, compaction behavior and fallback adapters. Extract shared presentation without duplicating `Blocks` by placement.
 ### Acceptance criteria
-- [ ] AC-3: Repeated calls preserve distinct historical snapshots across reload/paging — history and browser tests.
-- [ ] AC-4: Updated Todo receipts, ordering, opening and hidden preferences work — panel/browser regressions.
+- [x] AC-3: Repeated calls preserve distinct historical snapshots across reload/paging — 20-call durable and browser regressions, immutable-action/cross-session isolation and ACP replay tests passed. Implementation review round 2 explicitly APPROVE.
+- [x] AC-4: Updated Todo receipts, ordering, opening and hidden preferences work — panel/browser regressions passed across all three engines. Implementation review round 2 explicitly APPROVE.
 ### Focused verification
 `node --import tsx --test tests/tool-ui-history.test.ts tests/panels-host.test.ts tests/web-panel-state.test.ts tests/session-replay.test.ts tests/session-retention.test.ts`
 `npm run test:web -- tests/dashboard-ui/tool-ui.spec.ts tests/dashboard-ui/panels.spec.ts`
@@ -250,6 +250,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: render persistent tool views in chat and sidebar`
 
 ## Phase 3: Add durable generic form requests and response actions
+Status: in_progress.
 ### Goal
 Any eligible local tool can request structured user input using the shared UI.
 ### Current behavior and gap
@@ -531,3 +532,8 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30: Independent gpt-6-astra round 2 APPROVE; all 3 findings resolved. Started loop implementation, phase 1 in_progress. No production changes at admission.
 - 2026-09-30: Phase 1 docs-first contract replacement implemented; new effects/UI tests first failed (6 failures) then passed. First complete regression pass: 763/763, typecheck and sharing 51/51. Implementation review round 1 REVISE: six accepted in-scope findings (dynamic hook source binding, exact serialized effects validation, rejected async descriptors, complete effects-tool input validation, builtin export capabilities, host-owned view/request contracts). Added meaningful red regressions, fixed all six, and verified focused 20/20 plus real ACP dynamic-registration regression. Latest full `npm run check`: 769/769; `npm run typecheck` passed; exact `npm run test:phase -- sharing`: 52/52; `git diff --check` passed. Review round 2 pending in codex-impl-review-20260930-002; no phase commit yet.
 - 2026-09-30: Phase 1 review round 2 raw verdict explicitly APPROVE: all six issues verified closed, no new defects. The runner did not parse the verdict-only format and its finalized metadata retained round-1 REVISE; raw round-2 approval is the review evidence, not that stale metadata. Session finalized/stopped normally. Phase 1 AC-1/AC-2 complete; advancing to Phase 2 after the phase commit.
+- 2026-09-30: Phase 1 committed as `ebc4f55`. Phase 2 docs-first implementation now includes call-scoped immutable chat snapshots, shared renderer, bounded history fetch, historical actions, ACP replay and stream cleanup. Meaningful red evidence: absent view identity, abort-before-result persistence and committed-frame ordering. Focused command 56/56, state/action/stream integration 38/38, ACP surfaces 11/11, sessions gate 142/142, typecheck passed, sidebar/inline browser suite 66/66 across Chromium/Firefox/WebKit, and final inline browser rerun 3/3. An initial stale browser bundle and a concurrent build/test artifact race were resolved by finishing builds before tests; passing gates used complete artifacts.
+- 2026-09-30: Phase 2 required implementation review `codex-impl-review-20260930-003` failed before returning a verdict: `turn_failed`, exit 3, non-recoverable `workspace routing discovery unauthorized (401)`, thread `01a0f0f4-0db7-7713-9f8c-4430ba72d736`. Runner stopped once without finalization or automatic retry per skill; session preserved. Read-only `codex login status` still reports `Logged in using ChatGPT`; root cause is not established. Phase 2 remains in_progress and uncommitted because required APPROVE evidence is absent. Phase 3 and later phases have not started. Full phase-2 regression is running while resolving this external review blocker.
+- 2026-09-30: Final independent verification of current Phase 2 tree completed: `npm run check` 777/777, `npm run typecheck` passed, exact sessions gate 142/142, full targeted browser suite 66/66 and final inline rerun 3/3. `git diff --check` passed. AC-3/AC-4 behavior is verified; no review approval or phase completion is claimed. Worktree preserves the Phase 2 changes for the next authorized review invocation after the 401 routing issue is resolved.
+
+- 2026-09-30: User reauthenticated and explicitly authorized continuation. Phase 2 review session 004 round 1 identified three accepted in-scope defects: cancelled action commit, hidden no-update action receipt, and historical action availability. All fixed with regression coverage. Final typecheck passed; focused Node suites 88/88; sessions gate 142/142; browser suites 69/69 across Chromium/Firefox/WebKit; full `npm run check` 778/778; diff check passed. Round 2 raw verdict explicitly APPROVE, all three issues closed, independent history/action tests 21/21. Runner again could not parse verdict-only output, so raw approval is evidence rather than stale finalized metadata. Session finalized/stopped normally. AC-3/AC-4 and Phase 2 complete; moving directly to Phase 3.

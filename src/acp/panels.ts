@@ -1,10 +1,10 @@
-import type { PanelDeclaration, PanelDocument, StoredPanel } from "../panels/contract.js";
+import type { PanelDeclaration, PanelDocument, StoredPanel, ToolViewIdentity } from "../panels/contract.js";
 import { planEntries } from "../panels/render.js";
 
 /** One outgoing ACP notification about a panel (docs/panels-design.md §13.3). */
 export interface PanelNotification { method: "session/update" | "_raw/panel/update"; params: Record<string, unknown> }
 
-export interface PanelState { panel: string; owner: string; revision: number; closed: boolean; declaration: PanelDeclaration; document: PanelDocument }
+export interface PanelState { panel: string; owner: string; revision: number; closed: boolean; declaration: PanelDeclaration; document: PanelDocument; view?: ToolViewIdentity }
 
 /**
  * The messages for one committed panel state: the standard `plan` when the panel is declared with `acp_plan` (a closed panel
@@ -17,7 +17,7 @@ export function panelNotifications(sessionId: string, state: PanelState, rawNego
   }
   if (rawNegotiated) {
     messages.push({ method: "_raw/panel/update", params: { sessionId, panel: state.panel, owner: state.owner, revision: state.revision,
-      closed: state.closed, declaration: state.declaration, document: state.document } });
+      closed: state.closed, declaration: state.declaration, document: state.document, ...(state.view ? { view: state.view } : {}) } });
   }
   return messages;
 }

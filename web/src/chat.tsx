@@ -145,7 +145,7 @@ export function Chat({
           return;
         }
         setError("");
-        void api(`/sessions/${id}/panels/${encodeURIComponent(item.panel)}/actions`, "POST", { ...request, agent: savedAgent, clientRequestId: crypto.randomUUID() })
+        void api(`/sessions/${id}/${item.instanceId ? "views" : "panels"}/${encodeURIComponent(item.instanceId ?? item.panel)}/actions`, "POST", { ...request, agent: savedAgent, clientRequestId: crypto.randomUUID() })
           .then(() => onChanged(), (cause) => setError(errorText(cause)));
       };
       if (action.confirm) setConfirming({ message: action.confirm, go }); else go();
@@ -469,7 +469,7 @@ export function Chat({
                 </button>
               )}
               {!state && !streamError && <TimelineSkeleton />}
-              {state && <Timeline state={state} preferences={preferences} onOpenPanel={panels.show} />}
+              {state && <Timeline state={state} preferences={preferences} onOpenPanel={panels.show} actions={panelActions} onInsert={insertRef} />}
               {state && !state.history.items.length && !current && (
                 <div className="chat-intro">
                   <h2>What would you like to work on?</h2>

@@ -1,8 +1,10 @@
-import type { PanelDeclaration, PanelDocument, PanelIcon, StoredPanel } from "./contract.js";
+import type { PanelDeclaration, PanelDocument, PanelIcon, StoredPanel, StoredToolView } from "./contract.js";
 import type { KnownPanels } from "./declarations.js";
 
 /** One section of a session's panel stack: the shape shared by the HTTP API, snapshots and `getSessionPanels` (§13.1). */
 export interface PanelStackItem {
+  /** Present for a historical inline snapshot; actions bind to that instance. */
+  instanceId?: string;
   /** The full id, `<owner>#<panel id>`. */
   panel: string;
   owner: string;
@@ -24,6 +26,22 @@ const fromStored = (stored: StoredPanel, declaration: PanelDeclaration, stale: b
   panel: stored.panelId, owner: stored.owner, title: declaration.title, icon: declaration.icon, revision: stored.revision,
   updatedAt: stored.updatedAt, closed: stored.closed, stale, declaration, document: structuredClone(stored.document) });
 
+export const toolViewStackItem = (view: StoredToolView, declaration = view.declaration, stale = false): PanelStackItem =>
+  ({ ...fromStored(view, declaration, stale), instanceId: view.view.instanceId });
+
+/** Immutable historical content plus current selection/policy for its controls. */
+export interface ToolViewSnapshot extends StoredToolView {
+  presentation: { declaration: PanelDeclaration; stale: boolean };
+}
+
+export function presentToolView(view: StoredToolView, known: KnownPanels | undefined): ToolViewSnapshot {
+  const current = known?.declared.find(item => item.owner === view.owner && item.declaration.id === view.declaration.id);
+  const stale = known !== undefined && !current && !known.implicitOwners.includes(view.owner);
+  // Historical title and content stay fixed; only the available controls follow today's declaration.
+  const declaration = { ...view.declaration, actions: (current?.declaration ?? view.declaration).actions };
+  return { ...view, presentation: { declaration: visibleActions(declaration, view.owner, known), stale } };
+}
+
 /**
  * The stack for one agent in the default order of docs/panels-design.md §13.1: declared panels (with a muted, data-less
  * entry when nothing was published yet), implicit panels in creation order, then stale panels that still hold data.
@@ -31,11 +49,13 @@ const fromStored = (stored: StoredPanel, declaration: PanelDeclaration, stale: b
  * and none is called stale: the stack degrades instead of hiding data.
  */
 export function buildPanelStack(known: KnownPanels | undefined, stored: readonly StoredPanel[]): PanelStackItem[] {
+  stored = stored.filter(item => item.declaration.placement !== "chat");
   const byId = new Map(stored.map((panel) => [panel.panelId, panel]));
   const oldestFirst = (list: StoredPanel[]) => list.sort((a, b) => a.createdAt - b.createdAt || (a.panelId < b.panelId ? -1 : 1));
   const listed = new Set<string>();
   const items: PanelStackItem[] = [];
   for (const { owner, declaration } of known?.declared ?? []) {
+    if (declaration.placement === "chat") continue;
     const id = `${owner}#${declaration.id}`;
     if (listed.has(id)) continue;
     listed.add(id);

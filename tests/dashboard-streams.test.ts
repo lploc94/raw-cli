@@ -8,6 +8,45 @@ import type { SessionSnapshot } from "../src/dashboard/sessions.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openAiFrame, openAiDone } from "./fixtures/mock-provider.js";
+import { ToolRegistry } from "../src/tools/registry.js";
+
+test("inline frames carry call identity and settle before the operation terminal frame", async () => {
+  const modelConfig = { agentName: "raw", provider: "ollama", method: "openai-chat-completions" as const, model: "fixture" };
+  const f = await dashboardFixture({ attach: async ({ store, session, owner, operation }) => {
+    const registry = new ToolRegistry();
+    registry.register({ name: "report", description: "Report", inputSchema: { type: "object" }, panels: [{ id: "report", title: "Report", placement: "chat",
+      icon: "panel", open: "never", context: "none", acp_plan: false, actions: [] }], handler: async (_args, context) => {
+      for (const text of ["first", "final"]) await context.panels!.update("report", { op: "replace", document: { blocks: [{ id: "body", kind: "markdown", text }] } });
+      return { isError: false, content: [] };
+    } });
+    let requests = 0;
+    return { modelConfig, compactOptions: {}, async close() {}, agent: createAgent({ cwd: session.cwd, registry,
+      provider: { modelConfig, generate: async () => ++requests === 1
+        ? { text: "", toolCalls: [{ id: "call", name: "report", arguments: {} }], finishReason: "tool_calls" }
+        : { text: "done", toolCalls: [], finishReason: "stop" } },
+      persistence: { store, sessionId: session.id, owner, surface: "web", ownership: "host", operationId: operation.id } }) };
+  } });
+  let stream: Awaited<ReturnType<typeof eventStream>> | undefined;
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "raw" });
+    stream = await eventStream(f.server, session.id); await stream.next();
+    await f.json(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "views", kind: "turn", agent: "raw", input: "go" });
+    const frames: Array<{ data: Record<string, unknown> }> = [];
+    for (let count = 0; count < 40; count++) {
+      const event = await stream.next();
+      if (event.type === "panel") frames.push(event);
+      if (event.type === "operation" && event.data.state === "completed") break;
+    }
+    const final = frames.find(frame => frame.data.live === false)!;
+    assert.ok(final, "a terminal event must not precede the committed view frame");
+    assert.equal(final.data.revision, 2);
+    const identity = final.data.view as { instanceId: string; toolCallId: string; sessionId: string };
+    assert.equal(identity.toolCallId, "call");
+    assert.equal(identity.sessionId, session.id);
+    assert.match(JSON.stringify(await f.json(`/sessions/${session.id}/views/${identity.instanceId}`)), /final/);
+    assert.deepEqual((await f.json<{ items: unknown[] }>(`/sessions/${session.id}/panels`)).items, []);
+  } finally { stream?.close(); await f.close(); }
+});
 
 test("disconnect/replay keeps one running operation and stable live-to-history segment identities", async () => {
   let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); let requests = 0;

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PanelStackItem } from "../src/panels/stack.js";
+import { reduceEvent } from "../web/src/session.js";
+import { dashboardFixture } from "./fixtures/dashboard.js";
+import type { SessionSnapshot } from "../src/dashboard/sessions.js";
+import type { SessionSummary } from "../src/sessions/store.js";
+import type { DashboardEvent, DashboardEventData } from "../src/dashboard/streams.js";
 import {
   DETAILS_ID, MAX_HEIGHT, MIN_HEIGHT, applyFrame, announcement, arrange, formatDuration, mergeStack, newAnnouncer, placeAt, planAnnouncements, relativeTime, setHideCompleted, stepDuration, currentOrder, emptyPrefs, firstOpenTarget, hasOpened, heightFor, isExpanded, layout, loadPrefs,
   markOpened, markSeen, mayAnnounce, move, rejectedCode, savePrefs, setExpanded, setHeight, setHidden, setOrder, storageKey, unseen,
@@ -12,6 +17,43 @@ const item = (panel: string, revision = 0, open: "never" | "first_update" = "nev
   document: revision ? { blocks: [] } : null,
 });
 const store = (value: string | null) => ({ getItem: () => value });
+
+test("inline stream frames stay outside the sidebar and disappear on commit, terminal cleanup and reset", async () => {
+  const f = await dashboardFixture();
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "raw" });
+    const snapshot = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
+    const envelope = { id: "frame", instanceId: "host", sessionId: session.id, sequence: 1, operationId: "op" };
+    let state = reduceEvent(undefined, { ...envelope, type: "snapshot", data: snapshot })!;
+    const view = { instanceId: "v", runId: "run", toolCallId: "call", owner: "local/report", panelId: "report", sessionId: session.id, operationId: "op" };
+    const data: DashboardEventData["panel"] = { panel: "local/report#report", owner: "local/report", revision: 2, closed: false, live: true,
+      view, declaration: { ...item("local/report#report").declaration, placement: "chat" }, document: { blocks: [] } };
+    state = reduceEvent(state, { ...envelope, type: "panel", data })!;
+    assert.deepEqual(state.panels, []);
+    assert.deepEqual(state.unknownPanels, []);
+    assert.equal(state.panelTick, 0);
+    assert.equal(state.views.v?.revision, 2);
+    state = reduceEvent(state, { ...envelope, type: "panel", data: { ...data, revision: 1 } })!;
+    assert.equal(state.views.v?.revision, 2);
+    state = reduceEvent(state, { ...envelope, type: "history", data: { historyWatermark: 1, items: [{ id: "receipt", sequence: 1,
+      createdAt: 1, kind: "panel_receipt", status: "complete", panelReceipt: { panel: "report", owner: "local/report", title: "Report", revision: 2,
+        summary: "", status: "active", op: "replace", toolCallId: "call", source: "tool", view } }] } })!;
+    assert.deepEqual(state.views, {});
+    state = reduceEvent(state, { ...envelope, type: "panel", data })!;
+    assert.deepEqual(state.views, {}, "late final frame cannot replace committed history");
+    const other = { ...data, view: { ...view, instanceId: "other" } };
+    state = reduceEvent(state, { ...envelope, type: "panel", data: other })!;
+    state = reduceEvent(state, { ...envelope, type: "operation", data: { id: "op", sessionId: session.id, clientRequestId: "r", kind: "turn", agentName: "raw",
+      configPath: f.configPath, input: "go", state: "cancelled", ownerGeneration: 1, acceptedAt: 1, updatedAt: 2 } })!;
+    assert.deepEqual(state.views, {});
+    state = reduceEvent(state, { ...envelope, type: "panel", data: other })!;
+    assert.deepEqual(state.views, {}, "late provisional frame cannot revive a terminal operation");
+    state = reduceEvent(state, { ...envelope, operationId: "different", type: "panel", data: other })!;
+    assert.equal(Object.keys(state.views).length, 1);
+    state = reduceEvent(state, { ...envelope, type: "reset", data: snapshot } as DashboardEvent)!;
+    assert.deepEqual(state.views, {});
+  } finally { await f.close(); }
+});
 
 test("storage round-trips and corrupt or foreign storage yields defaults field by field", () => {
   const saved: string[] = [];

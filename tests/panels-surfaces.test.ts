@@ -118,7 +118,7 @@ test("planEntries flattens the first checklist depth-first with the §6 status m
 });
 
 /** An ACP peer whose registered tool answers every call with the next panel document. */
-async function acpScenario(options: { negotiate?: boolean; ask?: boolean; builtinTodo?: boolean; timeoutMs?: number } = {}) {
+async function acpScenario(options: { negotiate?: boolean; ask?: boolean; builtinTodo?: boolean; timeoutMs?: number; placement?: "chat" | "sidebar" } = {}) {
   const configPath = join(mkdtempSync(join(tmpdir(), "raw-panels-acp-config-")), "config.json");
   writeFileSync(configPath, JSON.stringify({ default_agent: "fixture",
     models: { fixture: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
@@ -153,12 +153,38 @@ async function acpScenario(options: { negotiate?: boolean; ask?: boolean; builti
   };
   const register = async (peer: Awaited<ReturnType<typeof start>>, sessionId: string, actions: object[] = []) => {
     const registration = await peer.connection.agent.request<{ alias: string }>("_raw/tool/register", { sessionId, name: "todo_tool", description: "Todo", inputSchema: { type: "object" },
-      panels: [{ id: "todo", title: "Todo", icon: "list-checks", acp_plan: true, actions }] });
+      panels: [{ id: "todo", title: "Todo", icon: "list-checks", acp_plan: options.placement !== "chat", actions,
+        ...(options.placement ? { placement: options.placement } : {}) }] });
     alias = registration.alias;
   };
   return { start, register, cwd, storeOptions, calls: () => calls, permission: (value: "allow" | "deny") => { permission = value; }, hang: () => { hang = true; } };
 }
 const plans = (notes: Array<{ method: string; params: any }>) => notes.filter((note) => note.method === "session/update" && note.params.update.sessionUpdate === "plan").map((note) => note.params.update.entries as unknown[]);
+
+test("ACP chat views carry distinct call identities and replay their immutable snapshots in history order", async () => {
+  const scenario = await acpScenario({ placement: "chat" });
+  const first = await scenario.start("inline-first");
+  let sessionId = "";
+  let snapshots: unknown[] = [];
+  try {
+    ({ sessionId } = await first.connection.agent.request("session/new", { cwd: scenario.cwd, mcpServers: [] }));
+    await scenario.register(first, sessionId);
+    for (const text of ["one", "two"]) await first.connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
+    const frames = first.notes.filter(note => note.method === "_raw/panel/update");
+    assert.equal(frames.length, 2);
+    assert.notEqual(frames[0]!.params.view.instanceId, frames[1]!.params.view.instanceId);
+    assert.deepEqual(frames.map(note => note.params.revision), [1, 1]);
+    assert.deepEqual(plans(first.notes), []);
+    snapshots = frames.map(note => ({ view: note.params.view, document: note.params.document }));
+  } finally { await first.close(); }
+  const second = await scenario.start("inline-reload");
+  try {
+    await second.connection.agent.request("session/load", { sessionId, cwd: scenario.cwd, mcpServers: [] });
+    const frames = second.notes.filter(note => note.method === "_raw/panel/update");
+    assert.deepEqual(frames.map(note => ({ view: note.params.view, document: note.params.document })), snapshots);
+    assert.deepEqual(plans(second.notes), []);
+  } finally { await second.close(); }
+});
 
 test("ACP: a committed update sends the standard plan and, once negotiated, _raw/panel/update", async () => {
   const scenario = await acpScenario();
