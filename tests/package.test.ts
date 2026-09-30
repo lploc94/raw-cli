@@ -125,6 +125,23 @@ try {
 } finally { await processes.close(); }
 `], consumer, { ...process.env });
   assert.equal(installedAsk.code, 0, installedAsk.stderr);
+  const installedDiagram = await run(process.execPath, ["--input-type=module", "--eval", `
+import { cp, mkdir, readFile } from "node:fs/promises";
+import { loadToolPlugins, ToolRegistry } from "raw-cli";
+const folder = process.env.XDG_CONFIG_HOME + "/raw/tools/diagram";
+await mkdir(folder, {recursive:true});
+await cp("./node_modules/raw-cli/examples/tools/diagram", folder, {recursive:true});
+const registry = new ToolRegistry();
+for (const item of await loadToolPlugins({selectedIds:["local/diagram"],configPath:"ignored.json"})) registry.register(item.registration);
+let document;
+const result = await registry.dispatch("diagram", {title:"Installed",source:"flowchart LR\\nA-->B"}, {
+ cwd:process.cwd(),maxOutputBytes:8192,panels:{protocol:2,get:()=>undefined,update:async(_id,update)=>{document=update.document;return {revision:1};}}});
+if(result.isError || document?.blocks[0].kind!=="mermaid" || document.blocks[0].source!=="flowchart LR\\nA-->B") throw new Error(JSON.stringify(result));
+for(const name of ["diagrams","processes","tool-effects","panels-design"]) {
+ if(!(await readFile("./node_modules/raw-cli/docs/"+name+".md","utf8")).trim()) throw new Error("missing docs: "+name);
+}
+`], consumer, { ...process.env, XDG_CONFIG_HOME: join(root, "diagram-config") });
+  assert.equal(installedDiagram.code, 0, installedDiagram.stderr);
   const installedSkillLoader = await run(process.execPath, ["--input-type=module", "--eval", `
 import { loadSelectedSkills } from "raw-cli";
 const selected = await loadSelectedSkills({ selectedIds: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_hook", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"], configPath: "ignored.json", maxOutputBytes: 8192 });

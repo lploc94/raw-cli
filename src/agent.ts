@@ -146,6 +146,7 @@ export class AgentSession {
   constructor(options: AgentOptions) {
     if (options.interactions && options.interactionAdapter) throw new Error("provide interactions or interactionAdapter, not both");
     if (options.persistence) options.processes?.assertStoreBinding(options.persistence.store);
+    if (options.persistence) options.interactions?.assertStoreBinding(options.persistence.store);
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
     const maxSteps = options.maxSteps ?? 10000;
     const maxOutputBytes = options.maxOutputBytes ?? 8192;

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import type { FormField, InteractionResponseAcknowledgement, InteractionResponseSubmission, InteractionState, PanelDeclaration, PanelDocument, ToolCallUIIdentity } from "../panels/contract.js";
 import { canonicalInteractionResult, prepareForm, validateFormAnswers, type InteractionResult } from "../panels/forms.js";
 import { resolveAction } from "../panels/actions.js";
@@ -23,6 +24,11 @@ export class InteractionService {
   private closed = false;
   constructor(private readonly options: { store?: SessionStore; available?: boolean; adapter?: InteractionAdapter;
     publish?: (request: InteractionRequest) => void } = {}) { options.store?.recoverInteractions(); }
+
+  assertStoreBinding(store: SessionStore): void {
+    if (!this.options.store || this.options.store.storeId !== store.storeId || realpathSync(this.options.store.path) !== realpathSync(store.path))
+      throw new InteractionError("interaction_invalid", "persisted agents require an interaction service bound to the same session store");
+  }
 
   get(sessionId: string | undefined, id: string): InteractionRequest | undefined {
     if (sessionId && this.options.store) return this.options.store.getInteraction(sessionId, id);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -14,7 +14,7 @@ const nestedSchema = {
 };
 
 async function workspace() {
-  const root = await mkdtemp(join(tmpdir(), "raw-plugin-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "raw-plugin-")));
   return { root, configPath: join(root, "agent", "raw.json"),
     env: { XDG_CONFIG_HOME: join(root, "global") }, cwd: root };
 }
@@ -300,7 +300,7 @@ test("copied standalone write_file preserves patch effects and Files changed und
   let hostCompletion = false;
   const result = await registry.dispatch("forked_write", { patch: "*** Begin Patch\n*** Add File: created.txt\n+standalone\n*** End Patch" },
     { cwd: options.cwd, maxOutputBytes: 8192, panels: call.context, onWriteCompleted: () => { hostCompletion = true; } });
-  assert.equal(result.isError, false);
+  assert.equal(result.isError, false, JSON.stringify(result));
   assert.equal(hostCompletion, false, "local aliases cannot acquire trusted builtin write completion accounting");
   call.settle(false); call.commit();
   assert.equal(await readFile(join(options.cwd, "created.txt"), "utf8"), "standalone\n");

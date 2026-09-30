@@ -1,6 +1,6 @@
 # Shared tool UI and extended builtins — verification evidence
 
-This records the cloud continuation of `refactor-tool-ui-and-extend-builtins-plan.md` from `6034478657b1640aaa12f74c2ca58bc044332314`. Work was stopped and committed at the user’s explicit request after phase 8. Phase 9 and final integrated qualification are incomplete.
+This records the cloud continuation of `refactor-tool-ui-and-extend-builtins-plan.md` from `6034478657b1640aaa12f74c2ca58bc044332314` and the subsequent macOS qualification. Work was stopped after phase 8, then resumed from `origin/work` at `2b9bb0d` at the user's request. Phase 9 local qualification is complete; the user explicitly waived current CI qualification and requested local installation and commit/push.
 
 ## Environment and approved exception
 
@@ -51,8 +51,29 @@ Source/CLI/ACP tests passed 17/17. Initial browser checks exposed an ambiguous s
 
 ## Phase 9 — Integrated qualification
 
-Stopped before execution by user instruction “commit và stop task đi”. README now lists all eleven registered builtins and describes the implemented shared UI, Commands, patches and diagrams. No final aggregate `npm run check`, full Chromium suite, final `npm run test:package`, `npm run test:overhead`, integrated workflow execution or phase-9 implementation review was completed. Earlier phase-specific results above remain valid; they do not establish final integrated qualification.
+Resumed locally on macOS with Node 26.0.0 and npm 11.12.1. Default Chromium, Firefox and WebKit executables are available; the cloud browser exception is unnecessary here. The integrated fixtures cover answer retry, background lifetime across turns, patches and immutable history, Todo, a copied third-party diagram tool, reconnect, Stop during a pending model request, and real killed-built-host recovery. The installed-package probe additionally loads the shipped diagram example outside the checkout.
 
-Unapplied workflow/package drafts were left outside the repository at `/tmp/raw-cli-tool-ui-workflow.pending.ts`, `/tmp/raw-cli-tool-ui-workflow.pending.spec.ts`, and `/tmp/raw-cli-package-diagram.pending.patch`. They are not shipped code or passed tests. Temporary files are not durable deliverables. Active delegated workers were interrupted. No publication was requested or performed.
+Actual Chromium captures from the built dashboard: [workflow with Todo and diagrams](tool-ui-workflow.png), [Mermaid in a narrow dark sidebar](tool-ui-mermaid-dark.png). Browser tests also verify the form, Commands, Files changed, source/error fallback, keyboard interaction and axe results. These are fixture sessions, without a paid provider.
+
+Three integration defects have regression evidence and fixes: Stop feedback was hidden when its row became terminal; dead-host pending controls remained running for an already-open observer; and a persisted library agent could accept an in-memory or wrong-database interaction host. A fourth defect discovered by the full browser gate was the dashboard's Create hook template omitting the required current `protocol_version: 2`. The template is updated directly, without an old-format adapter.
+
+Initial aggregate Node check was 882/883. Its remaining failure was a copied-tool fixture using macOS's symlink `/var` as cwd; canonicalizing the fixture root preserves the patch contract's rejection of symlink ancestors. Initial full browser gate was 492/495; all three failures were Create hook, one per browser. Both final gates passed after correction. One extra focused workflow invocation overlapped a package rebuild and failed to find a pending question; it is excluded from qualification. The exact focused rerun after the build completed passed 2/2, with no assertion change.
+
+| Final local command | Result |
+| --- | --- |
+| `npm run check` | Typecheck/build passed; 884/884 Node tests passed |
+| `npm run test:web` | 495/495 passed, 165 per configured Chromium/Firefox/WebKit project |
+| `npm run test:package` | 4/4 passed; installed Ask, Process, patch/effects/Files changed and copied diagram outside checkout |
+| `npm run test:overhead` | Passed; 41 prompt tokens, 1,612 combined tokens for the existing measured default selection |
+| `node --import tsx --test tests/tool-ui-workflow.test.ts` | 2/2 passed on complete built artifacts |
+| `npm run test:web -- tests/dashboard-ui/tool-ui-workflow.spec.ts` | 3/3 passed on the final built dashboard, including moving focus away from Stop |
+| Interaction/control/workflow/plugin regressions | 38/38 passed |
+| `git diff --check` | Passed |
+
+Implementation review `codex-impl-review-20260930-008`, thread `01a0f245-4978-7b12-9843-aea239dababf`: round 1 raw **APPROVE**, including the added Hook template repair; no findings. Reviewer independently verified typecheck, Mermaid/Commands and dead-host control transitions, live/terminal isolation, audit preservation and retention. Runner finalized APPROVE and stopped normally. Final-HEAD local gate revalidation and installation follow the phase commit.
+
+The GitHub API is accessible from this host. Repository Actions permissions allow workflows, but `gh workflow list --all` reports the CI workflow (`367120458`) as `disabled_manually`. The user explicitly instructed “CI tắt, cài vào máy tôi và commit push đi”: keep CI disabled and accept local qualification. No current-source Linux/CI pass is claimed; previous Linux phase evidence above remains distinct. This exception closes the CI decision without changing the workflow setting.
+
+The prior cloud stop left unapplied drafts outside the repository. This continuation recreated the workflow from verified current contracts; those temporary drafts are not evidence or shipped code. No PR, merge, deployment or release is part of this plan.
 
 Final phase-8 logs: `/tmp/raw-cli-p8-stable-build.log`, `/tmp/raw-cli-p8-stable-typecheck.log`, `/tmp/raw-cli-p8-mermaid-unit.log`, `/tmp/raw-cli-p8-focused.log`, `/tmp/raw-cli-p8-browser-final.log`. Actual light/dark visual captures were produced in the ignored Playwright `test-results/dashboard` directory; they are not committed artifacts.

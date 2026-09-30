@@ -75,7 +75,7 @@ function Command({ item, sessionId, now, expanded }: { item: CommandRecord; sess
     } catch (cause) { if (!abort.signal.aborted) setError(errorText(cause)); }
     finally { setStopping(false); }
   };
-  return <li ref={row} tabIndex={-1} className="command-row" hidden={!live && !expanded && !opened && !stopping && !focused}
+  return <li ref={row} tabIndex={-1} className="command-row" hidden={!live && !expanded && !opened && !stopping && !focused && !notice && !error}
     onFocusCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false); }}>
     <strong>{item.label || item.command}</strong>
     {item.label && <code>{item.command}</code>}

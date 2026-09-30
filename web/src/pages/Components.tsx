@@ -160,7 +160,7 @@ export function ComponentsPage({
             void api(`/components/${kind}`, "POST", kind === "hooks" ? {
               id: `local/${folder}`,
               files: {
-                "hook.json": JSON.stringify({ name: folder, events: [{ name: "PreToolUse", match: "builtin/bash" }],
+                "hook.json": JSON.stringify({ protocol_version: 2, name: folder, events: [{ name: "PreToolUse", match: "builtin/bash" }],
                   command: "node", args: ["./index.mjs"], timeout_ms: 5000 }, null, 2) + "\n",
                 "index.mjs": "let input = '';\nprocess.stdin.on('data', chunk => input += chunk);\nprocess.stdin.on('end', () => {\n  const event = JSON.parse(input);\n  process.stdout.write(JSON.stringify({ decision: 'continue' }));\n});\n",
               },

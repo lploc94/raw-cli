@@ -162,6 +162,7 @@ Test write/patch intentions against identical files predicates; rename destinati
 - Packaging: `npm run test:package` and installed/forked tool fixtures must prove Ask/Process entrypoints and new schemas/assets are included without source-checkout imports.
 - Browser evidence: chat/sidebar forms, ongoing/finished processes, Files changed, Mermaid diagram/source/error, light/dark, narrow viewport and keyboard/axe. Run the configured Chromium, Firefox and WebKit projects.
 - POSIX process-group tests run on the existing macOS/Linux CI matrix. Test the Windows `unsupported_platform` branch with a platform-injected supervisor fixture that asserts no spawn. No Windows tree-cleanup claim is included; adding it later requires native qualification. Do not reuse CTXE-specific personal host authorization for this different project.
+- User exception, 2026-09-30: keep CI disabled and accept local qualification. The current macOS/Linux CI matrix is explicitly waived; do not enable workflows or claim a current-source Linux CI pass. Complete local gates, install on the user's machine, commit and push `work`.
 - Do not mark complete while a required gate is unrun or failing. Record unavailable infrastructure as a blocker, not a passing result. No deployment or release work is included.
 
 ## Plan Review
@@ -479,7 +480,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: render Mermaid diagrams in chat and tool views`
 
 ## Phase 9: Qualify the integrated workflow and document the shipped contract
-Status: incomplete — stopped at user request before integration qualification. README/evidence drafts retained; workflow drafts remain outside the checkout and are not shipped.
+Status: complete — local qualification and implementation review APPROVE; current CI matrix waived explicitly by the user. Final-HEAD gate revalidation and local installation follow in finalization.
 ### Goal
 Prove the features work together on installed artifacts and leave an accurate operational handoff.
 ### Current behavior and gap
@@ -503,8 +504,8 @@ Run actual built dashboard and installed tool artifacts; inspect old history aft
 ### Implementation obligations
 Resolve integration failures, verify generated artifacts/capability export, audit all new storage retention and shutdown paths, capture actual UI, and finish documentation. No unrelated cleanup or features.
 ### Acceptance criteria
-- [ ] AC-17: Integrated workflow passes all configured browser projects and Node suite on built artifacts — workflow/regression output.
-- [ ] AC-18: Installed tools and examples work, all required platform evidence is recorded, and protocol/docs/source agree — package/evidence review.
+- [x] AC-17: Integrated workflow passes all configured browser projects and Node suite on built artifacts — workflow/regression output.
+- [x] AC-18: Installed tools and examples work, all required platform evidence is recorded, and protocol/docs/source agree — package/evidence review; current CI matrix explicitly waived by the user.
 ### Focused verification
 `node --import tsx --test tests/tool-ui-workflow.test.ts`
 `npm run test:web -- tests/dashboard-ui/tool-ui-workflow.spec.ts`
@@ -520,11 +521,11 @@ Implementation review is required; verdict must be APPROVE.
 
 ## Completion Criteria
 
-- [ ] All AC-1 through AC-18 proven and every phase implementation review APPROVE.
-- [ ] Shared blocks and forms work in chat/sidebar without Ask-specific rendering or loss of historical identity.
-- [ ] Ask adapters, background process lifecycle, Commands, write patches/Files changed, and Mermaid are usable through shipped artifacts.
-- [ ] All producers/consumers/configuration/examples use the new contract directly; starter selection, unconditional policy/approval, model isolation and established write/Bash execution behavior are verified. No migration or backward compatibility code is added.
-- [ ] Reload/reconnect/recovery, idempotency, cancellation, retention and platform boundaries are tested and documented honestly.
+- [x] All AC-1 through AC-18 proven within the explicitly approved CI exception and every phase implementation review APPROVE.
+- [x] Shared blocks and forms work in chat/sidebar without Ask-specific rendering or loss of historical identity.
+- [x] Ask adapters, background process lifecycle, Commands, write patches/Files changed, and Mermaid are usable through shipped artifacts.
+- [x] All producers/consumers/configuration/examples use the new contract directly; starter selection, unconditional policy/approval, model isolation and established write/Bash execution behavior are verified. No migration or backward compatibility code is added.
+- [x] Reload/reconnect/recovery, idempotency, cancellation, retention and platform boundaries are tested and documented honestly.
 - [ ] Global gates pass; final working tree contains only intended changes and all phase commits/evidence are recorded.
 
 ## Progress Log
@@ -569,3 +570,9 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30 (cloud Phase 8): Shared lazy Mermaid renderer, strict preflight, DOMPurify SVG allowlist, unchanged CSP, source/copy/fallback, closed streaming fences, text fallback and local sidebar example implemented. Independent review APPROVE, including re-review of the stable Markdown component fix after browser testing exposed source-toggle reset on parent updates. Final build/typecheck passed; Mermaid unit 6/6, combined source/surface suite 17/17 before the final UI-only identity fix, final system Chromium Mermaid/accessibility 9/9. Direct production sanitizer and actual-renderer hostile cases verify no script/resource requests, including same-origin probes. AC-15/16 complete under the approved unavailable-browser exception. Build retains a large-chunk warning.
 
 - 2026-09-30 (user stop): User explicitly instructed “commit và stop task đi”. All active delegated workers were interrupted; no further implementation or phase-9 execution. README reconciled to the eleven registered builtins and current docs/evidence retained in the local commit. Phase 9 and overall completion remain unchecked: final aggregate check, full Chromium regression, final installed-package/overhead qualification and phase-9 implementation review were not run. Firefox/WebKit remain skipped under the earlier exception. No push, PR, merge or deployment.
+
+- 2026-09-30 (local resume): User explicitly requested pulling origin/work and continuing. Checked clean main at 6034478, fetched origin/work and switched to its tracking branch at 2b9bb0d. Resumed Phase 9 docs-first. Added deterministic built-tool/dashboard workflow and real killed-built-host recovery fixtures, installed diagram/example qualification, and a persisted interaction-service binding regression. Initial browser workflow was 1/3: a real Stop notice was hidden when the row became terminal; keeping an active receipt/error visible fixes it, now 3/3 on default Chromium/Firefox/WebKit. Crash regression proved a pending Stop remained running on another already-open host; centralized dead-host recovery now interrupts receipts without execution. Questions/operations recover after their existing 15-second lease expires. Binding red test proved unbound service acceptance; same-database checks before Agent ownership now pass, including a separate store connection and non-persisted memory host. Focused Node 3/3 and typecheck passed. Initial full check 882/883: copied patch fixture used macOS symlink /var rather than canonical temp path; fixed fixture root, preserved strict symlink contract, isolated test passed. Full browser gate and final aggregate/package/overhead gates are pending. GitHub API works locally but reports no work-branch run; no CI pass claimed. Phase 9 review session 008 initialized; no completion or commit yet.
+
+- 2026-09-30 (local final gates): Full browser gate found the dashboard Create hook template omitted current protocol_version 2; corrected template directly and strengthened existing real create/attach browser test. Review 008 round 1 raw APPROVE including this repair, no findings; finalized APPROVE/stopped normally. Final npm run check passed typecheck/build and 884/884 Node tests; exact npm run test:package 4/4; exact npm run test:web 495/495 across default Chromium/Firefox/WebKit; overhead passed (41 prompt/1,612 combined measured tokens); focused repairs 38/38; exact workflow Node rerun 2/2; diff check passed. A discarded focused invocation overlapped package rebuild; only the post-build passing rerun is qualification evidence. Actual workflow/narrow dark Mermaid screenshots included in shipped docs/evidence. AC-17 complete. gh workflow list --all proves CI 367120458 is disabled_manually; preserve this repository setting and leave AC-18/Phase 9/final HEAD qualification incomplete until the CI decision. No phase-9 commit, push or workflow setting change yet.
+
+- 2026-09-30 (user finalization decision): User explicitly instructed “CI tắt, cài vào máy tôi và commit push đi”. Keep CI disabled, waive the current CI matrix, and finalize based on the recorded local qualification. AC-18 and Phase 9 complete under this exception. Commit the reviewed Phase 9 implementation, rerun global local gates on committed HEAD, install the packed artifact globally and verify it, then finalize bookkeeping and push work. No additional review or CI approval is requested.

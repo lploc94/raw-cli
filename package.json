@@ -45,7 +45,7 @@
     "docs/processes.md",
     "docs/diagrams.md",
     "docs/panels-design.md",
-    "docs/evidence/tool-ui-and-builtins.md"
+    "docs/evidence"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",

@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test, expect } from "./fixtures.js";
 
 test("create, edit and select a hook through Library and Agents", async ({ page, raw }) => {
@@ -9,6 +10,9 @@ test("create, edit and select a hook through Library and Agents", async ({ page,
   await page.getByLabel("Component folder").fill("guard");
   await page.getByRole("button", { name: "Create hook", exact: true }).last().click();
   await expect(page.getByRole("heading", { name: "local/guard" })).toBeVisible();
+  const hook = JSON.parse(readFileSync(join(raw.env.XDG_CONFIG_HOME!, "raw", "hooks", "guard", "hook.json"), "utf8"));
+  expect(hook.protocol_version).toBe(2);
+  expect(hook.events).toEqual([{ name: "PreToolUse", match: "builtin/bash" }]);
   await page.getByLabel("Attach to agent").selectOption("raw");
   await page.getByRole("button", { name: "Attach", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Attached" })).toBeVisible();
