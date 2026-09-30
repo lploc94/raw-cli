@@ -480,7 +480,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: render Mermaid diagrams in chat and tool views`
 
 ## Phase 9: Qualify the integrated workflow and document the shipped contract
-Status: complete — local qualification and implementation review APPROVE; current CI matrix waived explicitly by the user. Final-HEAD gate revalidation and local installation follow in finalization.
+Status: complete — implementation review APPROVE, local global gates passed again on 17bb983, packed global installation verified; current CI matrix waived explicitly by the user.
 ### Goal
 Prove the features work together on installed artifacts and leave an accurate operational handoff.
 ### Current behavior and gap
@@ -526,7 +526,7 @@ Implementation review is required; verdict must be APPROVE.
 - [x] Ask adapters, background process lifecycle, Commands, write patches/Files changed, and Mermaid are usable through shipped artifacts.
 - [x] All producers/consumers/configuration/examples use the new contract directly; starter selection, unconditional policy/approval, model isolation and established write/Bash execution behavior are verified. No migration or backward compatibility code is added.
 - [x] Reload/reconnect/recovery, idempotency, cancellation, retention and platform boundaries are tested and documented honestly.
-- [ ] Global gates pass; final working tree contains only intended changes and all phase commits/evidence are recorded.
+- [x] Global gates pass; final working tree contains only intended changes and all phase commits/evidence are recorded.
 
 ## Progress Log
 
@@ -576,3 +576,5 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30 (local final gates): Full browser gate found the dashboard Create hook template omitted current protocol_version 2; corrected template directly and strengthened existing real create/attach browser test. Review 008 round 1 raw APPROVE including this repair, no findings; finalized APPROVE/stopped normally. Final npm run check passed typecheck/build and 884/884 Node tests; exact npm run test:package 4/4; exact npm run test:web 495/495 across default Chromium/Firefox/WebKit; overhead passed (41 prompt/1,612 combined measured tokens); focused repairs 38/38; exact workflow Node rerun 2/2; diff check passed. A discarded focused invocation overlapped package rebuild; only the post-build passing rerun is qualification evidence. Actual workflow/narrow dark Mermaid screenshots included in shipped docs/evidence. AC-17 complete. gh workflow list --all proves CI 367120458 is disabled_manually; preserve this repository setting and leave AC-18/Phase 9/final HEAD qualification incomplete until the CI decision. No phase-9 commit, push or workflow setting change yet.
 
 - 2026-09-30 (user finalization decision): User explicitly instructed “CI tắt, cài vào máy tôi và commit push đi”. Keep CI disabled, waive the current CI matrix, and finalize based on the recorded local qualification. AC-18 and Phase 9 complete under this exception. Commit the reviewed Phase 9 implementation, rerun global local gates on committed HEAD, install the packed artifact globally and verify it, then finalize bookkeeping and push work. No additional review or CI approval is requested.
+
+- 2026-09-30 (completed finalization): Phase 9 committed as 17bb983. Exact global gates rerun on this committed production HEAD: npm run check typecheck/build + 884/884 Node tests; npm run test:package 4/4; npm run test:web 495/495 across configured Chromium/Firefox/WebKit; npm run test:overhead passed (41 prompt/1,612 combined measured tokens). Builds completed before browser qualification. Cumulative diff/commit audit found no additional defect after the four reviewed repairs. Installed the packed artifact globally, replacing the checkout symlink: /opt/homebrew/bin/raw, /opt/homebrew/lib/node_modules/raw-cli. Outside-checkout smoke passed --version/--help, actual Ask callback, native Process start/stop, write patch bytes and shipped diagram handler. SHA-256 comparison of installed main/CLI/Ask/Process/write entrypoints matches the tested compiled files. CI remains disabled_manually per explicit user exception. User additionally authorized merging into main; finalize documentation only, fast-forward main when possible and push both work/main, then verify remote heads and clean tree. All nine phases and completion criteria are complete within the recorded CI exception.
