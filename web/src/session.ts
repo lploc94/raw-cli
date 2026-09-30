@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SessionSnapshot } from "../../src/dashboard/sessions.js";
 import type {
   DashboardEvent,
@@ -193,12 +193,16 @@ function remember(sessionId: string, state: ChatState): void {
 export function forgetSession(sessionId: string): void {
   remembered.delete(sessionId);
 }
+/** The titles the server gives a chat before its first message (src/sessions/store.ts setTitleFromPrompt). */
+const placeholderTitle = (title: string | undefined): boolean => title === "New chat" || title === "New session";
 export function useSession(sessionId: string | undefined) {
   const [state, setState] = useState<ChatState | undefined>(() =>
     sessionId ? remembered.get(sessionId) : undefined,
   );
   const [connection, setConnection] = useState("Connecting");
   const [error, setError] = useState("");
+  const titleRef = useRef<string | undefined>(undefined);
+  titleRef.current = state?.session.title;
   useEffect(() => {
     if (sessionId && state) remember(sessionId, state);
   }, [sessionId, state]);
@@ -233,7 +237,8 @@ export function useSession(sessionId: string | undefined) {
             setConnection("Connected");
             setError("");
             setState((old) => reduceEvent(old, event));
-            if (event.type === "operation" && isTerminal(event.data.state))
+            // The title is set from the first message when its turn starts, so a placeholder is refreshed at once; everything else at the end of the turn.
+            if (event.type === "operation" && (isTerminal(event.data.state) || placeholderTitle(titleRef.current)))
               void api<SessionSnapshot>(
                 `/sessions/${sessionId}`,
                 "GET",
@@ -245,6 +250,7 @@ export function useSession(sessionId: string | undefined) {
                     old
                       ? {
                           ...old,
+                          session: snapshot.session,
                           context: snapshot.context,
                           metrics: snapshot.metrics,
                           metricsStale: snapshot.metricsStale,

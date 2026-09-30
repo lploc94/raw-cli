@@ -297,3 +297,34 @@ test("IME Enter does not send, and send-mode preferences leave model input uncha
   ).toBeVisible();
   expect(raw.provider.requests.length).toBe(1);
 });
+
+test.describe("context usage and title", () => {
+  test.use({
+    scenario: {
+      agent: { compact: { keep_recent_turns: 0, max_output_tokens: 64, trigger_tokens: 4000 } },
+      responses: [{ frames: [openAiFrame({ content: "ok" }, "stop"), openAiDone] }],
+    },
+  });
+  test("the header takes the chat's new name from its first message, without a reload", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("New chat");
+    await page.getByRole("textbox", { name: "Message" }).fill("Name this chat after me");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Name this chat after me");
+    await expect(page.locator(".page-header .metadata")).not.toContainText("New chat");
+  });
+  test("usage and the ring are measured against the auto-compact trigger, not the model window", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await page.getByRole("textbox", { name: "Message" }).fill("hello");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    const footer = page.locator(".composer-footer");
+    await expect(footer).toContainText("/ 4,000");
+    await expect(footer).toContainText("until auto compact");
+    await expect(footer).not.toContainText("8,192");
+    const shown = /~([\d,]+) \/ 4,000 · ([\d.]+)%/.exec((await footer.textContent()) ?? "");
+    expect(shown).not.toBeNull();
+    const tokens = Number(shown![1]!.replaceAll(",", ""));
+    expect(Number(shown![2])).toBeCloseTo(tokens / 4000 * 100, 1);
+    await expect(footer.locator(".context-ring")).toContainText(`${Math.round(tokens / 40)}%`);
+  });
+});

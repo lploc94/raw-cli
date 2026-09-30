@@ -19,6 +19,7 @@ import { api, ApiError, errorText } from "./api.js";
 import { useComposerMeta } from "./data/queries.js";
 import { Skeleton, TimelineSkeleton } from "./states.js";
 import { ContextRing } from "./composer/ContextRing.js";
+import { contextUsage, contextUsageText } from "./composer/context-usage.js";
 import { RequestControls } from "./composer/RequestControls.js";
 import { useRequestChoice } from "./composer/useRequestChoice.js";
 import { forgetSession, isTerminal, useSession } from "./session.js";
@@ -603,9 +604,7 @@ export function Chat({
             </form>
             <div className="composer-footer">
               <span>
-                {context
-                  ? `~${context.estimatedTokens.toLocaleString()}${context.contextWindow ? ` / ${context.contextWindow.toLocaleString()} · ${context.percentage!.toFixed(1)}%` : " tokens · window unavailable"}${state?.metricsStale ? " · last measured" : ""}`
-                  : "Context usage unavailable"}
+                {contextUsageText(context, !!state?.metricsStale)}
               </span>
               <button
                 className="text-button"
@@ -615,7 +614,7 @@ export function Chat({
                   void send("compact");
                 }}
               >
-                <ContextRing percent={context?.percentage ?? undefined} />
+                <ContextRing percent={contextUsage(context)?.percent} />
                 Compact context
               </button>
             </div>

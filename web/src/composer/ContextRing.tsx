@@ -1,4 +1,4 @@
-/** Circular progress of the context window used; the number is the same percentage the footer text reports. */
+/** Circular progress toward the level the footer text reports: the auto-compact trigger when set, else the context window. */
 export function ContextRing({ percent }: { percent: number | undefined }) {
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
