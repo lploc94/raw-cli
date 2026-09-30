@@ -1,3 +1,5 @@
+import type { InteractionAdapter, InteractionRequest } from "../interactions/contract.js";
+import { withAbort } from "./rpc.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import { client, ndJsonStream, PROTOCOL_VERSION, type ClientConnection, type ContentBlock,
@@ -17,6 +19,7 @@ export type ParentToolHandler = (call: ParentToolCall, signal: AbortSignal) => P
 
 export type AcpClientOptions = ({ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv } | { url: string }) & {
   onPermission?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse> | RequestPermissionResponse;
+  onInteraction?: InteractionAdapter;
   onUpdate?: (notification: SessionNotification) => void;
 };
 
@@ -41,6 +44,8 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
   const app = client({ name: "raw-cli-parent" });
   app.onRequest("session/request_permission", ({ params }) => options.onPermission?.(params)
     ?? { outcome: { outcome: "selected", optionId: "deny" } });
+  if (options.onInteraction) app.onRequest("_raw/interaction/request", (params: unknown) => params as InteractionRequest,
+    ({ params, signal }) => withAbort(options.onInteraction!(params, signal), signal));
   app.onNotification("session/update", ({ params }) => { options.onUpdate?.(params); });
   app.onRequest("_raw/tool/call", (params: unknown) => params as ParentToolCall, async ({ params }) => {
     const handler = handlers.get(params.toolId);
@@ -73,7 +78,7 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
   try {
     const initialize = connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {}, _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true,
-        toolCall: true, toolCancel: true, sessionCompact: true, panelsV2: true } } });
+        toolCall: true, toolCancel: true, sessionCompact: true, panelsV2: true, ...(options.onInteraction ? { interactions: true } : {}) } } });
     initializeResult = await (spawnFailure ? Promise.race([initialize, spawnFailure]) : initialize);
   } catch (error) {
     connection.close();

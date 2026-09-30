@@ -35,7 +35,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   assert.equal(install.status, 0, install.stderr);
   const bin = join(consumer, "node_modules", ".bin", "raw");
   await access(bin);
-  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo"]) {
+  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo", "ask_user"]) {
     const example = join(consumer, "node_modules", "raw-cli", "examples", "tools", name);
     await access(join(example, "tool.json"));
     await access(join(example, "index.mjs"));
@@ -65,7 +65,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     }
   }
   const skillBody = await readFile(join(packagedSkill, "SKILL.md"), "utf8");
-  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo"]) {
+  for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo", "ask_user"]) {
     const folder = join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", name);
     const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8")) as { id: string; entry: string; input_schema: { type: string } };
     assert.equal(manifest.id, name);
@@ -90,6 +90,20 @@ const tools = await loadToolPlugins({ selectedIds: ["builtin/read_file"], config
 if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new Error("installed bundled root failed");
 `], consumer, { ...process.env });
   assert.equal(installedLoader.code, 0, installedLoader.stderr);
+  const installedAsk = await run(process.execPath, ["--input-type=module", "--eval", `
+import { loadToolPlugins, ToolRegistry } from "raw-cli";
+const registry = new ToolRegistry();
+for (const item of await loadToolPlugins({ selectedIds: ["builtin/ask_user"], configPath: "ignored.json" })) registry.register(item.registration);
+const result = await registry.dispatch("ask_user", { questions: [{id:"q",label:"Q",kind:"text"}] }, { cwd: process.cwd(), maxOutputBytes: 8192, interactions: { request: async input => {
+  if (input.panel !== "questions" || input.document.blocks[0].fields[0].id !== "q") throw new Error("bad packaged form");
+  return {status:"answered",answers:{q:"installed 雪"}};
+} } });
+if (result.isError || result.content[0].value.answers.q !== "installed 雪") throw new Error(JSON.stringify(result));
+const standalone = await import("./node_modules/raw-cli/examples/tools/ask_user/index.mjs");
+const forked = await standalone.handler({questions:[{id:"fork",label:"Fork",kind:"text"}]}, {interactions:{request:async () => ({status:"cancelled"})}});
+if (forked.code !== "interaction_cancelled") throw new Error("standalone fork failed");
+`], consumer, { ...process.env });
+  assert.equal(installedAsk.code, 0, installedAsk.stderr);
   const installedSkillLoader = await run(process.execPath, ["--input-type=module", "--eval", `
 import { loadSelectedSkills } from "raw-cli";
 const selected = await loadSelectedSkills({ selectedIds: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_hook", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"], configPath: "ignored.json", maxOutputBytes: 8192 });
@@ -203,7 +217,7 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
     assert.equal(task.code, 0, task.stderr);
     assert.equal(task.stdout, "starter-ready\n");
     assert.equal(starterProvider.requests.length, 3);
-    assert.doesNotMatch(JSON.stringify(starterProvider.requests[0]?.body), /configure_raw|create_skill|create_tool|create_agent|add_mcp|create_package/);
+    assert.doesNotMatch(JSON.stringify(starterProvider.requests[0]?.body), /ask_user|configure_raw|create_skill|create_tool|create_agent|add_mcp|create_package/);
     assert.match(JSON.stringify(starterProvider.requests[1]?.body), /configure-raw/);
     assert.match(JSON.stringify(starterProvider.requests[2]?.body), /default_agent/);
     const secondInit = await run(bin, ["config", "init"], consumer, starterEnv);

@@ -1,3 +1,4 @@
+import { terminalInteractionAdapter } from "./interactions/terminal.js";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { createAgent, type AgentSession, type RunResult } from "./agent.js";
 import type { RuntimeConfig } from "./config.js";
@@ -127,7 +128,10 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     systemPrompt: runtime.systemPrompt });
   const createRuntimeAgent = (id: string) => createAgent({ ...runtimeAgentOptions(runtime, tools, provider, cwd),
     persistence: { store, sessionId: id, surface: "cli" },
-    ...(process.stdin.isTTY && lines ? { approve: ({ name, arguments: args, signal, identity, effects }: import("./tools/primitives.js").ToolApprovalRequest) => {
+    ...(process.stdin.isTTY && lines ? { interactionAdapter: (request, signal) => {
+      currentRenderer?.beforeInput();
+      return terminalInteractionAdapter(lines, text => process.stderr.write(text))(request, signal);
+    }, approve: ({ name, arguments: args, signal, identity, effects }: import("./tools/primitives.js").ToolApprovalRequest) => {
       if (effects) process.stderr.write(`raw: intended effects ${JSON.stringify(effects)}\n`);
       return askPermission(lines, name, args, signal, identity, currentRenderer);
     } } : {}) });

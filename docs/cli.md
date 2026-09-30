@@ -55,3 +55,5 @@ One server manages the displayed config authority. `--agent` preselects the new-
 agent; workspace selection changes cwd, not configuration scope or OS permissions.
 The installed app includes its static and lazy editor assets. See
 [Dashboard](dashboard.md) and [HTTP contract](dashboard-api.md).
+
+When `builtin/ask_user` is selected in a TTY, its questions use the existing input queue while the current turn waits. Text accepts one line, or multiple lines ending with a single `.` when `multiline` is enabled. Select options by displayed number or stable ID (`id:<value>` disambiguates numeric IDs); multi-select entries are comma separated. Blank skips an optional field and `/cancel` cancels the whole question. Invalid or over-budget answers are retried without starting another turn. Ctrl-C/EOF cancels the active wait. A piped/non-TTY run returns `interaction_unavailable` promptly. Explicit permission rules still run before the question; an answer never grants tool permission.

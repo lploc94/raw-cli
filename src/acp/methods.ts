@@ -1,3 +1,4 @@
+import type { InteractionResponseSubmission } from "../panels/contract.js";
 import { randomUUID, createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
@@ -282,6 +283,10 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
           maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
           requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
           persistence: { store, sessionId, surface: "acp", ...(claimed ? { owner: claimed } : {}) },
+          ...(peerRaw.interactions ? { interactionAdapter: async (request, signal) => {
+            if (!peer) throw rawError(rawErrors.upstream, "ACP client disconnected");
+            return await withAbort(peer.request<InteractionResponseSubmission>("_raw/interaction/request", request, { cancellationSignal: signal }), signal);
+          } } : {}),
           approve: async ({ name, arguments: args, signal, toolCallId, effects }) => {
             if (!peer) throw rawError(rawErrors.upstream, "ACP client disconnected");
             const response = await withAbort(peer.request("session/request_permission", {
@@ -328,7 +333,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         sessionCapabilities: { list: {}, resume: {}, delete: {} } },
       authMethods: [],
       _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true,
-        toolCall: true, sessionCompact: true, toolCancel: true, panelsV2: true } } };
+        toolCall: true, sessionCompact: true, toolCancel: true, panelsV2: true, interactions: true } } };
   });
   app.onRequest("session/new", ({ params }) => startSession(params.cwd, params.mcpServers));
   app.onRequest("session/list", ({ params }) => {

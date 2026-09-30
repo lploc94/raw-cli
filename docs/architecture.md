@@ -77,3 +77,5 @@ an active real tool, updates a package, and resumes the same ID with the install
 CLI. No source-server test substitutes for that artifact path. See the
 [dashboard API](dashboard-api.md). Contributors record qualification in the
 repository's `docs/evidence/local-dashboard.md`.
+
+Structured input belongs to the host-scoped interaction service. Agent dispatch binds the service to the current session/run/call, declared view, signal and output budget, and forwards only `context.interactions.request` to local plugin handlers. Dashboard responds through durable CAS routes; TTY, library and negotiated ACP callbacks return the same scoped submission and use the same canonical answer validator. Agent-owned callback services close with their agent; injected host services outlive per-turn runtime attachment. `ask_user` is a bundled caller of this API and has no dispatcher or UI special case.

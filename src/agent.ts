@@ -1,5 +1,5 @@
-import { InteractionError, type InteractionContext } from "./interactions/contract.js";
-import type { InteractionService } from "./interactions/service.js";
+import { InteractionError, type InteractionContext, type InteractionAdapter } from "./interactions/contract.js";
+import { InteractionService } from "./interactions/service.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { createHash, randomUUID } from "node:crypto";
 import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anchor.js";
@@ -102,6 +102,7 @@ export interface AgentOptions {
   autoApprove?: boolean;
   approve?: ToolContext["approve"];
   interactions?: InteractionService;
+  interactionAdapter?: InteractionAdapter;
   whitelist?: readonly string[];
   compact?: Readonly<CompactSettings>;
   persistence?: { store: SessionStore; sessionId: string; surface: HistorySurface; owner?: SessionOwner; ownership?: "agent" | "host"; operationId?: string };
@@ -137,8 +138,10 @@ export class AgentSession {
   private segmentCounter = 0;
   private hookStarted = false;
   private readonly panels: PanelHost;
+  private readonly ownedInteractions?: InteractionService;
 
   constructor(options: AgentOptions) {
+    if (options.interactions && options.interactionAdapter) throw new Error("provide interactions or interactionAdapter, not both");
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
     const maxSteps = options.maxSteps ?? 10000;
     const maxOutputBytes = options.maxOutputBytes ?? 8192;
@@ -221,6 +224,10 @@ export class AgentSession {
         if (options.persistence.ownership !== "host") store.releaseSession(sessionId, owner);
         throw error;
       }
+    }
+    if (options.interactionAdapter) {
+      this.ownedInteractions = new InteractionService({ adapter: options.interactionAdapter, ...(this.persistence ? { store: this.persistence.store } : {}) });
+      this.options.interactions = this.ownedInteractions;
     }
     this.panels = new PanelHost({ initial: this.persistence ? this.persistence.store.listSessionPanels(this.persistence.sessionId) : [] });
   }
@@ -501,6 +508,7 @@ export class AgentSession {
       { deadline: Date.now() + 2000, onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
     }
     finally {
+      this.ownedInteractions?.close();
       this.panels.close();
       if (this.heartbeat) clearInterval(this.heartbeat);
       if (this.persistence?.ownership === "agent") this.persistence.store.releaseSession(this.persistence.sessionId, this.persistence.owner);

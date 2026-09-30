@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -236,4 +236,31 @@ test("selected plugin image content stays typed and thrown handlers normalize to
   assert.equal(image.content[0]?.type, "image");
   const failed = await registry.dispatch("custom_throws", { payload: { value: "x" } }, ctx);
   assert.equal(failed.code, "tool_error");
+});
+
+
+test("copied standalone Ask can declare sidebar placement and use the generic interaction service", async () => {
+  const options = await workspace();
+  const folder = join(dirname(options.configPath), "tools", "forked_ask");
+  await cp(join(process.cwd(), "examples/tools/ask_user"), folder, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8"));
+  manifest.id = "forked_ask"; manifest.name = "forked_ask"; manifest.panels[0].placement = "sidebar";
+  await writeFile(join(folder, "tool.json"), JSON.stringify(manifest));
+  const tools = await loadToolPlugins({ ...options, selectedIds: ["agent/forked_ask"] });
+  const registry = new ToolRegistry(); registry.register(tools[0]!.registration);
+  const { createAgent } = await import("../src/agent.js");
+  let calls = 0;
+  const agent = createAgent({ registry, cwd: options.cwd,
+    provider: { modelConfig: { agentName: "raw", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+      generate: async () => ++calls === 1 ? { text: "", finishReason: "tool_calls", toolCalls: [{ id: "fork", name: "forked_ask", arguments: { questions: [{ id: "q", label: "Q", kind: "text" }] } }] } : { text: "done", finishReason: "stop", toolCalls: [] } },
+    interactionAdapter: async request => {
+      assert.equal(request.declaration.placement, "sidebar"); assert.equal(request.identity.owner, "agent/forked_ask");
+      return { requestId: request.identity.requestId, expectedRevision: request.revision, idempotencyKey: "fork-answer", response: "submit", answers: { q: "forked" } };
+    },
+  });
+  try {
+    assert.equal((await agent.run("ask")).status, "completed");
+    assert.match(JSON.stringify(agent.transcript.find(message => message.role === "tool")), /forked/);
+    assert.ok(agent.panel("agent/forked_ask#questions"));
+  } finally { await agent.close(); }
 });

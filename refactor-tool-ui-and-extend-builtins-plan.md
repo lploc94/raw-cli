@@ -288,7 +288,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: support durable form requests and response actions`
 
 ## Phase 4: Ship Ask and complete CLI, library and ACP interaction adapters
-Status: in_progress.
+Status: complete.
 ### Goal
 Make Ask usable through normal tool selection on every supported host, with explicit fallback when input is unavailable.
 ### Current behavior and gap
@@ -312,8 +312,8 @@ Invoke the built packaged Ask handler with an injected interaction service; test
 ### Implementation obligations
 Package generated standalone examples and schemas; expose documented library callbacks; ensure all adapters honor cancellation/deadlines. Do not silently add Ask to starter configs.
 ### Acceptance criteria
-- [ ] AC-7: Selected Ask works in dashboard, TTY, library and negotiated ACP, every accepted answer reaches the provider losslessly under the captured budget, and unavailable surfaces return promptly — tool/surface/provider-payload tests.
-- [ ] AC-8: Installed/forked Ask works without source checkout; existing starter tool schemas are unchanged — package/overhead evidence.
+- [x] AC-7: Selected Ask works in dashboard, TTY, library and negotiated ACP, every accepted answer reaches the provider losslessly under the captured budget, and unavailable surfaces return promptly — tool/surface/provider-payload tests.
+- [x] AC-8: Installed/forked Ask works without source checkout; existing starter tool schemas are unchanged — package/overhead evidence.
 ### Focused verification
 `node --import tsx --test tests/ask-tool.test.ts tests/interactions-surfaces.test.ts tests/panels-surfaces.test.ts tests/acp-client.test.ts tests/tool-plugins.test.ts`
 ### Phase gates
@@ -326,6 +326,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: add ask_user with shared interaction adapters`
 
 ## Phase 5: Add host-scoped process supervision and Process builtin
+Status: in_progress.
 ### Goal
 Run bounded background jobs across turns with truthful status, paged output and stop control.
 ### Current behavior and gap
@@ -542,3 +543,7 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30: Phase 2 committed as `ed1b8bb`; Phase 3 docs-first implementation is in progress. Generic service/store/API and shared Form controls cover budget-aware canonical results, owner fencing, atomic idempotent audit, deadlines/abort/recovery, cross-host streams and immutable question history. Review session 005 round 1 found three accepted defects (prototype-name drafts, old sidebar binding, in-memory session scope); round 2 verified them closed and found three further accepted defects (omitted prototype answers, foreign empty sidebar projection, late ACK state leakage). All six now have real regression coverage and repairs. Latest focused suites 57/57, exact dashboard gate 59/59, typecheck passed and browser suites 99/99 across all engines; full check previously 797/797 and final rerun is running. Round 3 verification pending; no Phase 3 completion/commit or later-phase implementation is claimed.
 
 - 2026-09-30: Phase 3 review session 005 round 3 raw verdict explicitly APPROVE: ISSUE-1–6 verified closed, no new defects, independent focused tests 34/34 and browser repair regressions 9/9. Verdict-only parser again retained stale REVISE metadata; raw approval is evidence. Session finalized/stopped normally. Final exact dashboard gate 59/59, focused suites 57/57, typecheck and diff check passed, full targeted browser suite 99/99, and final `npm run check` 798/798. One preceding full run missed a CLI PTY startup prompt under the 3-second test deadline; isolated unchanged test passed 1/1, then the full suite passed after review stopped. No assertions/timeouts changed. AC-5/AC-6 and Phase 3 complete; advance directly to Phase 4 after committing.
+
+- 2026-09-30: Phase 4 docs-first and tests-first: Ask missing packaged handler and terminal adapter produced expected module/loader failures. Added bundled ask_user (1–3 questions, explicit optional free text, one unchanged canonical JSON block), library-owned callback service, queue-sharing TTY adapter, and negotiated ACP callback using SDK cancellation. Real-surface/provider focused gate 41/41, typecheck, exact ACP phase gate 30/30 and package gate 4/4 passed, including installed and standalone Ask outside checkout. Hook log fixture initially parsed an extra blank input newline; fixed fixture reader without changing production or assertions. Phase 4 implementation review session 006 started, pending verdict.
+
+- 2026-09-30: Phase 4 review session 006 round 1 raw verdict APPROVE, no findings; reviewer independently passed typecheck, four focused tests and answered/expired/abort/headless standalone lifecycle checks (read-only sandbox limited full surface/package reruns). Session finalized APPROVE/stopped normally. Final focused gate 43/43 includes copied Ask sidebar placement and bounded multiline retry; typecheck, ACP gate 30/30, package gate 4/4, overhead and diff checks passed after final changes. AC-7/AC-8 and Phase 4 complete; Phase 5 in progress.

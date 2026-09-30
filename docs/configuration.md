@@ -139,3 +139,5 @@ Root `vars.NAME`, `var_providers.NAME` and `mcp.servers.NAME` may be `{"from":"p
 Managed dashboard edits use [revision-checked configuration and owned component services](management.md). Viewing a catalog never imports tool code or starts providers/MCP; changes take effect on the next turn.
 
 The current development tool inspection contract uses explicit predicate sources and separate intended effects; see [tool-effects.md](tool-effects.md). Old tool/hook formats are not adapted.
+
+`builtin/ask_user` is an opt-in tool ID in `tools.use`; it is not added to the starter agent. Questions use the host's generic interaction adapter and the configured `max_output_bytes` budget. Input collection is independent of tool `ask` permission rules.
