@@ -1,3 +1,5 @@
+import { InteractionError, type InteractionContext } from "./interactions/contract.js";
+import type { InteractionService } from "./interactions/service.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { createHash, randomUUID } from "node:crypto";
 import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anchor.js";
@@ -99,13 +101,14 @@ export interface AgentOptions {
   requestTimeoutMs?: number;
   autoApprove?: boolean;
   approve?: ToolContext["approve"];
+  interactions?: InteractionService;
   whitelist?: readonly string[];
   compact?: Readonly<CompactSettings>;
   persistence?: { store: SessionStore; sessionId: string; surface: HistorySurface; owner?: SessionOwner; ownership?: "agent" | "host"; operationId?: string };
 }
 
 export class AgentSession {
-  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact" | "hooks">;
+  private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact" | "hooks" | "interactions">;
   private messages: ModelMessage[] = [];
   private currentState: AgentState = "idle";
   private controller: AbortController | undefined;
@@ -163,6 +166,7 @@ export class AgentSession {
       autoApprove: options.autoApprove ?? true,
       ...(options.hooks ? { hooks: options.hooks } : {}),
       ...(options.approve ? { approve: options.approve } : {}),
+      ...(options.interactions ? { interactions: options.interactions } : {}),
       ...(options.whitelist !== undefined ? { whitelist: [...options.whitelist] } : {}),
       ...(options.compact !== undefined ? { compact: { ...options.compact } } : {}),
     };
@@ -230,6 +234,18 @@ export class AgentSession {
   private panelScope(runId = this.currentTurnId ?? randomUUID()) {
     return { runId, ...(this.persistence ? { sessionId: this.persistence.sessionId,
       ...(this.persistence.operationId ? { operationId: this.persistence.operationId } : {}) } : {}) };
+  }
+  private interactionContext(callId: string, owner: string, panelCall: PanelCall | undefined, signal: AbortSignal): InteractionContext {
+    const service = this.options.interactions;
+    if (!service || !panelCall) return { request: async () => { throw new InteractionError("interaction_unavailable", "interaction_unavailable: this host has no response adapter"); } };
+    return service.forCall({ identity: { ...this.panelScope(), toolCallId: callId, owner, panelId: "" },
+      maxOutputBytes: this.options.maxOutputBytes, signal,
+      ...(this.persistence ? { owner: this.persistence.owner } : {}),
+      prepare: panel => panelCall.prepareInteraction(panel),
+      publish: async (panel, document) => { await panelCall.context.update(panel, { op: "replace", document }); } });
+  }
+  private settleHandler(callId: string, panelCall: PanelCall | undefined): void {
+    this.options.interactions?.endCall(this.panelScope().runId, callId); panelCall?.endWindow();
   }
   get transcript(): readonly ModelMessage[] { return structuredClone(this.messages); }
   get usageRecords(): readonly unknown[] { return structuredClone(this.rawUsage); }
@@ -598,7 +614,8 @@ export class AgentSession {
         ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
         signal: controller.signal,
         toolCallId: operationId,
-        panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => panelCall.endWindow(),
+        interactions: this.interactionContext(operationId, info.owner, panelCall, controller.signal),
+        panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => this.settleHandler(operationId, panelCall),
         ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) =>
           this.options.hooks!.run(event, { ...hookRequest(), tool: { identity, name, source: "user_action", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
             { ...(event === "PreToolUse" ? { signal: controller.signal } : { deadline: Date.now() + 2000 }),
@@ -900,7 +917,9 @@ export class AgentSession {
               ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
               signal: controller.signal,
               toolCallId: call.id,
-              ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => panelCall.endWindow() } : {}),
+              interactions: this.interactionContext(call.id, panelInfo?.owner ?? call.name, panelCall, controller.signal),
+              onHandlerSettled: () => this.settleHandler(call.id, panelCall),
+              ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates) } : {}),
               ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
                 name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) => this.options.hooks!.run(event,
                 { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },

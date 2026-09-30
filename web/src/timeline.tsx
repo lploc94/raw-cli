@@ -1,3 +1,4 @@
+import { InteractionView } from "./panels/InteractionView.js";
 import { useState, type ReactNode } from "react";
 import { InlineToolView } from "./panels/ToolView.js";
 import type { ActionHost } from "./panels/actions.js";
@@ -438,6 +439,11 @@ export function Timeline({
       });
     }
   }
+  for (const request of state.interactions ?? []) if (!records.some(item => item.interactionRequestId === request.identity.requestId)) {
+    records.push({ id: `interaction:${request.identity.requestId}`, kind: "interaction_request", status: request.state,
+      sequence: Number.MAX_SAFE_INTEGER, createdAt: request.createdAt, interactionRequestId: request.identity.requestId,
+      ...(request.identity.viewInstanceId ? { interactionViewInstanceId: request.identity.viewInstanceId } : {}) });
+  }
   for (const frame of Object.values(state.views)) if (frame.view && !records.some(item => item.panelReceipt?.view?.instanceId === frame.view!.instanceId)) {
     records.push({ id: `view:${frame.view.instanceId}`, kind: "tool_view", status: frame.live ? "streaming" : "complete",
       sequence: Number.MAX_SAFE_INTEGER, createdAt: Date.now(), operationId: frame.operationId, toolView: frame.view });
@@ -467,6 +473,7 @@ export function Timeline({
   const renderedTools = new Set<string>();
   const renderedCompact = new Set<string>();
   const renderedViews = new Set<string>();
+  const availabilityRevision = `${state.snapshotCount}:${state.session.agentName}:${state.operations.filter(op => isTerminal(op.state)).map(op => `${op.id}:${op.state}`).join(",")}`;
   const flush = () => {
     if (work.length)
       result.push(
@@ -488,6 +495,14 @@ export function Timeline({
     elapsedMs = undefined;
   };
   for (const item of records) {
+    if (item.interactionRequestId) {
+      flush();
+      if (item.interactionViewInstanceId) renderedViews.add(item.interactionViewInstanceId);
+      result.push(<InteractionView key={item.interactionRequestId} sessionId={state.session.id} requestId={item.interactionRequestId}
+        live={state.interactions?.find(request => request.identity.requestId === item.interactionRequestId)} availabilityRevision={availabilityRevision}
+        actions={actions} onInsert={onInsert} onOpenPanel={onOpenPanel} />);
+      continue;
+    }
     const identity = item.toolView ?? item.panelReceipt?.view;
     if (identity) {
       if (renderedViews.has(identity.instanceId)) {
@@ -502,7 +517,7 @@ export function Timeline({
       flush();
       result.push(<InlineToolView key={identity.instanceId} sessionId={state.session.id} identity={identity}
         live={state.views[identity.instanceId]} receipt={item.panelReceipt}
-        availabilityRevision={`${state.snapshotCount}:${state.session.agentName}:${state.operations.filter(op => isTerminal(op.state)).map(op => `${op.id}:${op.state}`).join(",")}`} actions={actions} onInsert={onInsert} />);
+        availabilityRevision={availabilityRevision} actions={actions} onInsert={onInsert} />);
       continue;
     }
     if (item.kind === "reasoning" || item.callId) {

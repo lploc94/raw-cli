@@ -1,3 +1,6 @@
+import { InteractionService } from "../interactions/service.js";
+import { InteractionError, type InteractionRequest } from "../interactions/contract.js";
+import { FormValidationError } from "../panels/forms.js";
 import { realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { record } from "../management/agents.js";
@@ -5,7 +8,7 @@ import { loadConfig } from "../config.js";
 import { PanelActionError, resolveAction } from "../panels/actions.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { knownPanelDeclarations, type KnownPanels } from "../panels/declarations.js";
-import { buildPanelStack, presentToolView, declarationsFor, loadDeclarationsForSaved, toolViewStackItem, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
+import { buildPanelStack, presentDeclaration, presentToolView, declarationsFor, loadDeclarationsForSaved, toolViewStackItem, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
 import { parseRequestOverride, requestControls, RequestOverrideError, type RequestControl, type RequestOverride } from "../request-controls.js";
 import { loadSelectedSkills } from "../skills/loader.js";
 import type { UserBlock } from "../llm/types.js";
@@ -30,7 +33,7 @@ export interface SessionSnapshot {
   metrics: SessionMetrics | null; metricsStale: boolean;
   context: { summary?: string; messageCount: number }; live: LiveSegment[]; approvals: Approval[];
   /** The session's saved agent and its committed panels; authoritative for the dashboard's panel state (§13.1). */
-  agent: string | null; panels: PanelStackItem[];
+  agent: string | null; panels: PanelStackItem[]; interactions?: InteractionRequest[];
 }
 export function workspacePath(value: unknown, base: string): string {
   const input = textField(value, "cwd", 4096);
@@ -56,8 +59,11 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   }];
   const output = new LiveOutput(join(dirname(store.path), "dashboard-live"));
   let streams!: SessionStreams;
+  const interactions = new InteractionService({ store, available: true, publish: request => {
+    if (streams) streams.publish(request.identity.sessionId!, "interaction", request, request.identity.operationId);
+  } });
   const approvals = new Approvals((approval, status) => streams.publish(approval.sessionId, "approval", { ...approval, status }, approval.operationId));
-  const operations: SessionOperations = new SessionOperations({ store, env: context.env, ...(attach ? { attach } : {}),
+  const operations: SessionOperations = new SessionOperations({ store, interactions, env: context.env, ...(attach ? { attach } : {}),
     approve: (operation) => approvals.forOperation(operation, () => operations.approvalTimeout(operation.id)) });
   context.operations = operations;
   const runningByWorkspace = () => {
@@ -116,18 +122,26 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     } catch { return undefined; }
   };
   const knownForSession = (id: string) => loadDeclarationsForSaved(() => store.getSession(id)?.agentName, knownPanels);
+  const withInteractions = (sessionId: string, items: PanelStackItem[]): PanelStackItem[] => items.map(item => {
+    const interaction = store.latestPanelInteraction(sessionId, item.owner, item.declaration.id);
+    if (!interaction) return item;
+    // A waiting sidebar form is durable even before the ordinary tool-result transaction.
+    return { ...item, interaction, ...(interaction.state === "pending" ? { document: interaction.document } : {}) };
+  });
   const snapshot = (id: string, loaded?: LoadedDeclarations): SessionSnapshot => {
+    store.recoverInteractions();
     const session = requireSession(id); const historyWatermark = store.historyWatermark(id);
     const page = store.getSessionHistory({ sessionId: id, limit: 50, atOrBefore: historyWatermark });
     const receipts = store.listOperations(id, 20);
     return { session, history: { ...page, items: page.items.map(projectHistoryItem) }, historyWatermark,
       ownership: streams.ownership(id), operations: receipts, ...metrics(id), context: store.getContextSummary(id),
       live: output.list(new Set(receipts.filter((op) => !terminalOperationStates.has(op.state)).map((op) => op.id))), approvals: approvals.list(id),
-      agent: session.agentName ?? null, panels: buildPanelStack(declarationsFor(session.agentName, loaded), store.listSessionPanels(id)) };
+      agent: session.agentName ?? null, interactions: store.pendingInteractions(id),
+      panels: withInteractions(id, buildPanelStack(declarationsFor(session.agentName, loaded), store.listSessionPanels(id))) };
   };
   streams = new SessionStreams(context, output, snapshot, knownForSession);
   const unsubscribe = operations.subscribe((message) => streams.observe(message));
-  context.onClose(() => { unsubscribe(); approvals.close(); streams.close(); output.close(); });
+  context.onClose(() => { unsubscribe(); interactions.close(); approvals.close(); streams.close(); output.close(); });
   return [async (request, response) => {
     const url = new URL(request.url!, "http://localhost"); const path = url.pathname; const method = request.method;
     if (!/^\/api\/(?:workspaces|sessions|operations|permissions|activity|agents\/[^/]+\/composer)(?:\/|$)/.test(path)) return false;
@@ -198,6 +212,26 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new DashboardError(400, "invalid_limit", "limit must be 1 to 50");
       return reply({ items: await searchWorkspaceFiles(session.cwd, url.searchParams.get("q") ?? "", limit) });
     }
+    const interactionRoute = /^\/api\/sessions\/([^/]+)\/interactions\/([^/]+)(\/responses)?$/.exec(path);
+    if (interactionRoute) {
+      const sessionId = decodeURIComponent(interactionRoute[1]!); requireSession(sessionId);
+      const requestId = decodeURIComponent(interactionRoute[2]!);
+      store.recoverInteractions();
+      if (method === "GET" && !interactionRoute[3]) {
+        const value = interactions.get(sessionId, requestId);
+        if (!value) throw new DashboardError(404, "interaction_not_found", "Request not found in this session");
+        const loaded = await knownForSession(sessionId);
+        return reply({ ...value, presentation: presentDeclaration(value.declaration, value.identity.owner, declarationsFor(requireSession(sessionId).agentName, loaded)) });
+      }
+      if (method === "POST" && interactionRoute[3]) {
+        try { return reply(interactions.respond(sessionId, requestId, await context.readJson(request))); }
+        catch (error) {
+          if (error instanceof FormValidationError) throw new DashboardError(422, error.code, error.message);
+          if (error instanceof InteractionError) throw new DashboardError(error.code === "interaction_not_found" ? 404 : error.code === "interaction_conflict" ? 409 : 422, error.code, error.message);
+          throw error;
+        }
+      }
+    }
     const viewRoute = /^\/api\/sessions\/([^/]+)\/views\/([^/]+)$/.exec(path);
     if (viewRoute && method === "GET") {
       const id = decodeURIComponent(viewRoute[1]!); requireSession(id);
@@ -215,7 +249,7 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         const config = await readManagedConfig({ configPath: context.configPath, cwd: context.cwd, env: context.env });
         if (!Object.hasOwn(record(config.data?.agents), requested)) throw new DashboardError(422, "unknown_agent", `Agent ${requested} is not configured`);
       }
-      const items = buildPanelStack(await knownPanels(agent ?? undefined), store.listSessionPanels(id));
+      const items = withInteractions(id, buildPanelStack(await knownPanels(agent ?? undefined), store.listSessionPanels(id)));
       if (panelRoute[2] === undefined) return reply({ agent, items });
       const wanted = decodeURIComponent(panelRoute[2]);
       const found = items.find((item) => item.panel === wanted);

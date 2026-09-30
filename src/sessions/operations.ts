@@ -1,3 +1,4 @@
+import type { InteractionService } from "../interactions/service.js";
 import type { AgentSession, RunEvent, RunResult } from "../agent.js";
 import type { CompactOptions, CompactResult } from "../compact.js";
 import type { CompactSettings } from "../config.js";
@@ -23,7 +24,7 @@ export interface SessionRuntime {
 }
 export type AttachSessionRuntime = (options: {
   store: SessionStore; session: SessionSummary; operation: SessionOperation; owner: SessionOwner;
-  signal: AbortSignal; approve?: ToolContext["approve"]; env?: NodeJS.ProcessEnv;
+  signal: AbortSignal; interactions?: InteractionService; approve?: ToolContext["approve"]; env?: NodeJS.ProcessEnv;
   /** Per-turn request override, applied to this operation's provider request only. */
   request?: RequestOverride;
 }) => Promise<SessionRuntime>;
@@ -50,6 +51,7 @@ export class SessionOperations {
   private closed = false;
   constructor(private readonly options: {
     store: SessionStore; attach?: AttachSessionRuntime; env?: NodeJS.ProcessEnv;
+    interactions?: InteractionService;
     approve?: (operation: SessionOperation) => ToolContext["approve"];
   }) { options.store.recoverOperations(); }
 
@@ -117,7 +119,7 @@ export class SessionOperations {
       if (!session) throw new SessionOperationError("not_found", store.missingSessionMessage());
       const approve = this.options.approve?.(operation);
       runtime = await (this.options.attach ?? attachSessionRuntime)({ store, session, operation, owner,
-        signal: active.controller.signal, ...(approve ? { approve } : {}), ...(this.options.env ? { env: this.options.env } : {}),
+        signal: active.controller.signal, ...(this.options.interactions ? { interactions: this.options.interactions } : {}), ...(approve ? { approve } : {}), ...(this.options.env ? { env: this.options.env } : {}),
         ...(active.request && operation.kind === "turn" ? { request: active.request } : {}) });
       active.agent = runtime.agent;
       firstRequest = runtime.agent.stats().requests;

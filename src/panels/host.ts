@@ -229,6 +229,16 @@ export class PanelCall {
     return { revision: result.revision };
   }
 
+  /** Reserve the call's identity before a durable interaction is published. */
+  prepareInteraction(panel: string) {
+    if (this.closed) throw new PanelError("panel_closed_context", "interaction requested after the handler settled");
+    const local = localPanelId(this.info, panel);
+    const declaration = this.info.declarations.find(item => item.id === local);
+    if (!declaration) throw new PanelError("panel_undeclared", "interaction requires a declared view");
+    const view = this.view(local, true);
+    return { declaration: clone(declaration), ...(view ? { viewInstanceId: view.instanceId } : {}) };
+  }
+
   readonly context: PanelContext = {
     protocol: 2,
     update: async (panel: string, body: PanelUpdateBody) => {

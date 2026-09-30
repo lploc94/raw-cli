@@ -3054,3 +3054,11 @@ summary::-webkit-details-marker {
 .panel-block-header .panel-action-menu {
   margin-left: auto;
 }
+.panel-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.panel-form-field { display: grid; gap: .35rem; margin-bottom: .75rem; }
+.panel-form-field label { display: flex; gap: .4rem; align-items: center; }
+.panel-form-field input[type=text], .panel-form-field textarea, .panel-form-field select { width: 100%; }
+.panel-form-actions, .interaction-receipt { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.interaction-receipt { margin: .5rem 0; }
+.interaction-receipt dl { flex-basis: 100%; margin: 0; }
+.interaction-receipt dd { white-space: pre-wrap; overflow-wrap: anywhere; }

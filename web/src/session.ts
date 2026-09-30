@@ -153,6 +153,11 @@ export function reduceEvent(
       };
     case "metrics":
       return { ...state, metrics: event.data, metricsStale: false };
+    case "interaction":
+      if ((state.interactions?.find(request => request.identity.requestId === event.data.identity.requestId)?.revision ?? 0) > event.data.revision) return state;
+      return { ...state, interactions: state.interactions?.some(request => request.identity.requestId === event.data.identity.requestId)
+        ? state.interactions.map(request => request.identity.requestId === event.data.identity.requestId ? event.data : request)
+        : [...(state.interactions ?? []), event.data].slice(-50) };
     case "approval":
       return {
         ...state,

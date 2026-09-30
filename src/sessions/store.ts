@@ -1,3 +1,6 @@
+import { InteractionError, type InteractionRequest, type InteractionSettlement } from "../interactions/contract.js";
+import { canonicalInteractionResult, validateFormAnswers } from "../panels/forms.js";
+import type { InteractionState } from "../panels/contract.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { ContextAnchor } from "../context-anchor.js";
 import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -403,6 +406,99 @@ export class SessionStore {
         this.database.prepare("UPDATE session_operations SET state = 'interrupted', updated_at = ? WHERE id = ?")
           .run(this.now(), String(row.id));
         count++;
+      }
+      return count;
+    });
+  }
+
+  private interactionAudit(request: InteractionRequest, kind: "interaction_request" | "interaction_response"): void {
+    const sessionId = request.identity.sessionId!;
+    const sequence = this.historyWatermark(sessionId) + 1;
+    const payload = { requestId: request.identity.requestId, turnId: request.identity.runId,
+      ...(request.identity.operationId ? { operationId: request.identity.operationId } : {}),
+      ...(request.identity.viewInstanceId ? { viewInstanceId: request.identity.viewInstanceId } : {}), state: request.state };
+    this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(sessionId, sequence, this.now(), kind, JSON.stringify(payload), request.state === "pending" ? "in_progress" : "complete");
+  }
+
+  createInteraction(request: InteractionRequest, owner: SessionOwner): void {
+    const sessionId = request.identity.sessionId;
+    if (!sessionId) throw new InteractionError("interaction_invalid", "durable requests require a session");
+    this.transaction(() => {
+      this.ownerRow(sessionId, owner);
+      this.database.prepare(`INSERT INTO session_interactions(session_id, request_id, owner, panel_id, placement, created_at, owner_token, owner_generation, state, revision, request_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?)`).run(sessionId, request.identity.requestId, request.identity.owner, request.identity.panelId, request.declaration.placement ?? "sidebar", request.createdAt, owner.token, owner.generation, JSON.stringify(request));
+      this.interactionAudit(request, "interaction_request");
+    });
+  }
+
+  getInteraction(sessionId: string, requestId: string): InteractionRequest | undefined {
+    const row = this.database.prepare("SELECT request_json FROM session_interactions WHERE session_id = ? AND request_id = ?").get(sessionId, requestId);
+    return row ? JSON.parse(String(row.request_json)) as InteractionRequest : undefined;
+  }
+
+  pendingInteractions(sessionId: string): InteractionRequest[] {
+    return this.database.prepare("SELECT request_json FROM session_interactions WHERE session_id = ? AND state = 'pending' ORDER BY created_at, rowid").all(sessionId)
+      .map(row => JSON.parse(String(row.request_json)) as InteractionRequest);
+  }
+
+  latestPanelInteraction(sessionId: string, owner: string, panelId: string): InteractionRequest | undefined {
+    const row = this.database.prepare(`SELECT request_json FROM session_interactions WHERE session_id = ?
+      AND owner = ? AND panel_id = ? AND placement = 'sidebar'
+      ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(sessionId, owner, panelId);
+    return row ? JSON.parse(String(row.request_json)) as InteractionRequest : undefined;
+  }
+
+  settleInteraction(sessionId: string, requestId: string, expectedRevision: number, state: Exclude<InteractionState, "pending">,
+    canonicalResult?: string, submission?: { key: string; body: string }): InteractionSettlement {
+    return this.transaction(() => {
+      const row = this.database.prepare("SELECT * FROM session_interactions WHERE session_id = ? AND request_id = ?").get(sessionId, requestId);
+      if (!row) throw new InteractionError("interaction_not_found", "request does not exist in this session");
+      const request = JSON.parse(String(row.request_json)) as InteractionRequest;
+      const acknowledgement = () => ({ requestId, revision: request.revision, state: request.state as Exclude<InteractionState, "pending">,
+        ...(request.canonicalResult ? { canonicalResult: request.canonicalResult } : {}) });
+      if (submission && row.response_key === submission.key && row.response_body === submission.body)
+        return { request, acknowledgement: acknowledgement() };
+      if (request.state !== "pending" || request.revision !== expectedRevision)
+        throw new InteractionError("interaction_conflict", "request already settled or revision changed");
+      if (submission) {
+        const session = this.database.prepare("SELECT owner_token, owner_generation, lease_until FROM sessions WHERE id = ?").get(sessionId);
+        if (!session || session.owner_token !== row.owner_token || session.owner_generation !== row.owner_generation
+          || !(Number(session.lease_until) > this.now() || this.ownerAlive(String(row.owner_token))))
+          throw new InteractionError("interaction_conflict", "the request owner is no longer active");
+      }
+      if (submission && request.deadline <= this.now()) throw new InteractionError("interaction_conflict", "request deadline has passed");
+      if (state === "answered") {
+        if (!canonicalResult) throw new InteractionError("interaction_invalid", "an answer requires its exact canonical result");
+        const parsed = JSON.parse(canonicalResult) as { status: string; answers: unknown };
+        const validated = validateFormAnswers(request.form, parsed.answers);
+        if (parsed.status !== "answered" || canonicalInteractionResult({ status: "answered", answers: validated }) !== canonicalResult)
+          throw new InteractionError("interaction_invalid", "the accepted result is not canonical");
+      } else canonicalResult ??= canonicalInteractionResult({ status: state });
+      request.state = state; request.revision++;
+      request.canonicalResult = canonicalResult;
+      this.database.prepare(`UPDATE session_interactions SET state = ?, revision = ?, request_json = ?, response_key = ?, response_body = ?
+        WHERE session_id = ? AND request_id = ?`).run(state, request.revision, JSON.stringify(request), submission?.key ?? null, submission?.body ?? null, sessionId, requestId);
+      this.interactionAudit(request, "interaction_response");
+      return { request, acknowledgement: acknowledgement() };
+    });
+  }
+
+  recoverInteractions(): number {
+    return this.transaction(() => {
+      let count = 0;
+      const rows = this.database.prepare(`SELECT i.*, s.owner_token AS current_token, s.owner_generation AS current_generation, s.lease_until
+        FROM session_interactions i JOIN sessions s ON s.id = i.session_id WHERE i.state = 'pending'`).all();
+      for (const row of rows) {
+        const request = JSON.parse(String(row.request_json)) as InteractionRequest;
+        const alive = row.current_token === row.owner_token && row.current_generation === row.owner_generation
+          && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)));
+        if (alive && request.deadline > this.now()) continue;
+        request.state = alive ? "expired" : "interrupted"; request.revision++;
+        request.canonicalResult = canonicalInteractionResult({ status: request.state });
+        this.database.prepare("UPDATE session_interactions SET state = ?, revision = ?, request_json = ? WHERE session_id = ? AND request_id = ?")
+          .run(request.state, request.revision, JSON.stringify(request), String(row.session_id), String(row.request_id));
+        this.interactionAudit(request, "interaction_response"); count++;
       }
       return count;
     });

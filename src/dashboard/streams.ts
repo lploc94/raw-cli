@@ -1,3 +1,4 @@
+import type { InteractionRequest } from "../interactions/contract.js";
 import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { OperationEvent } from "../sessions/operations.js";
@@ -20,6 +21,7 @@ import type { LoadedDeclarations } from "../panels/stack.js";
 const PANEL_FRAME_INTERVAL_MS = 250;
 
 export interface DashboardEventData {
+  interaction: InteractionRequest;
   snapshot: SessionSnapshot; reset: SessionSnapshot;
   history: { items: HistoryView[]; historyWatermark: number };
   text: { segmentId: string; kind: "assistant" | "reasoning"; turnId?: string; text: string; bytes: number; unavailable?: string };
@@ -141,6 +143,7 @@ export class SessionStreams {
     entry.timer.unref();
   }
   syncHistory(sessionId: string): void {
+    this.context.store!.recoverInteractions();
     this.flushText();
     const channel = this.channel(sessionId); const through = this.context.store!.historyWatermark(sessionId);
     while (channel.history < through) {
@@ -149,6 +152,13 @@ export class SessionStreams {
       channel.history = items.at(-1)!.sequence;
       for (const item of items) this.output.removeSegment(item.id);
       this.publish(sessionId, "history", { items, historyWatermark: channel.history });
+      // A foreign host's durable audit must reconcile question UI just like a local response.
+      for (const item of items) {
+        const requestId = item.interactionRequestId ?? item.interactionResponseId;
+        if (!requestId) continue;
+        const request = this.context.store!.getInteraction(sessionId, requestId);
+        if (request) this.publish(sessionId, "interaction", request, request.identity.operationId);
+      }
     }
   }
   observe(message: OperationEvent): void {

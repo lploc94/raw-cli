@@ -129,6 +129,8 @@ export function Chat({
   const [confirming, setConfirming] = useState<{ message: string; go: () => void }>();
   const savedAgent = state?.session.agentName;
   const panelActions: ActionHost = {
+    interactions: state?.interactions ?? [],
+    respond: (request, submission) => api(`/sessions/${id}/interactions/${encodeURIComponent(request.identity.requestId)}/responses`, "POST", submission),
     toolBlocked: busy ? "Wait for the current operation to finish" : agent && savedAgent && agent !== savedAgent ? `Send a message to switch to ${agent} first` : undefined,
     run: (item, action, request) => {
       const go = () => {
@@ -306,6 +308,8 @@ export function Chat({
   const context = metrics?.context;
   const milestone = state?.approvals.length
     ? "Waiting for approval"
+    : state?.interactions?.some(request => request.state === "pending")
+      ? "Waiting for your answer"
     : current?.state === "starting" || current?.state === "accepted" || pending
       ? "Preparing"
       : current?.state === "compacting"

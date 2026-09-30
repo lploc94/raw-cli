@@ -19,6 +19,9 @@ function attachmentView(block: UserBlock, index: number): HistoryAttachment {
   return { index, kind: "unknown", name: "attachment", mimeType: null, byteSize: null };
 }
 export interface HistoryView {
+  interactionRequestId?: string;
+  interactionResponseId?: string;
+  interactionViewInstanceId?: string;
   id: string;
   sequence: number;
   createdAt: number;
@@ -50,7 +53,12 @@ export function projectHistoryItem(item: HistoryItem): HistoryView {
     sequence: item.sequence, createdAt: item.createdAt, kind: item.kind, status: item.status,
     ...(typeof payload.turnId === "string" ? { turnId: payload.turnId } : {}),
     ...(typeof payload.operationId === "string" ? { operationId: payload.operationId } : {}) };
-  if (item.kind === "user") {
+  if (item.kind === "interaction_request") {
+    view.interactionRequestId = String(payload.requestId);
+    if (typeof payload.viewInstanceId === "string") view.interactionViewInstanceId = payload.viewInstanceId;
+  }
+  else if (item.kind === "interaction_response") view.interactionResponseId = String(payload.requestId);
+  else if (item.kind === "user") {
     if (Array.isArray(payload.input)) {
       view.text = (payload.input as UserBlock[]).flatMap((block) => block.type === "text" ? [block.text] : []).join("");
       const attachments = userAttachmentBlocks(payload.input).map(attachmentView);

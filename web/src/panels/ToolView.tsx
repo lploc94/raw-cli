@@ -1,3 +1,4 @@
+import { sidebarPresentation } from "./interaction-state.js";
 import { useEffect, useState, type ReactNode } from "react";
 import type { PanelStackItem, ToolViewSnapshot } from "../../../src/panels/stack.js";
 import type { PanelReceipt, ToolViewIdentity } from "../../../src/panels/contract.js";
@@ -12,10 +13,11 @@ export function ToolView({ item, onInsert, hideCompleted, onHideCompleted, actio
   item: PanelStackItem; onInsert: InsertRef; hideCompleted: boolean; onHideCompleted: (value: boolean) => void;
   actions?: ActionHost | undefined; children?: ReactNode;
 }) {
+  const displayed = sidebarPresentation(item, actions?.interactions ?? []);
   return <ActionScope value={actions && { item, host: actions }}>
     {item.stale && <p className="panel-banner" role="note">The tool that owns this panel is not selected by this agent.</p>}
     {children}
-    {item.document ? <Blocks document={item.document} onInsert={onInsert} hideCompleted={hideCompleted} onHideCompleted={onHideCompleted} /> : <p className="muted small">No data yet.</p>}
+    {displayed.document ? <Blocks document={displayed.document} onInsert={onInsert} hideCompleted={hideCompleted} onHideCompleted={onHideCompleted} /> : <p className="muted small">No data yet.</p>}
   </ActionScope>;
 }
 

@@ -232,3 +232,49 @@ test("step durations need both timestamps (zero counts) and relative times read 
   assert.equal(relativeTime(now - 3 * 3_600_000, now), "3h ago");
   assert.equal(relativeTime(now - 2 * 86_400_000, now), "2d ago");
 });
+
+test("durable question frames retain terminal states, ignore older revisions and reconcile from snapshots",async()=>{
+  const f=await dashboardFixture();
+  try{
+    const session=await f.json<SessionSummary>("/sessions","POST",{cwd:f.root,agent:"raw"});
+    const snapshot=await f.json<SessionSnapshot>(`/sessions/${session.id}`);
+    const envelope={id:"frame",instanceId:"host",sessionId:session.id,sequence:1};
+    let state=reduceEvent(undefined,{...envelope,type:"snapshot",data:snapshot})!;
+    const data:DashboardEventData["interaction"]={identity:{requestId:"r",sessionId:session.id,runId:"run",toolCallId:"call",owner:"local/custom",panelId:"input"},
+      declaration:item("local/custom#input").declaration,document:{blocks:[]},formBlockId:"form",form:{fields:[],maxResultBytes:8192},
+      state:"pending",revision:1,createdAt:1,deadline:999999};
+    state=reduceEvent(state,{...envelope,type:"interaction",data})!;
+    state=reduceEvent(state,{...envelope,type:"interaction",data:{...data,state:"answered",revision:2,canonicalResult:'{"status":"answered","answers":{}}'}})!;
+    state=reduceEvent(state,{...envelope,type:"interaction",data})!;
+    assert.equal(state.interactions?.[0]?.state,"answered");
+    state=reduceEvent(state,{...envelope,type:"reset",data:{...snapshot,interactions:[data]}})!;
+    assert.equal(state.interactions?.[0]?.state,"pending","the reconnect snapshot supplies host-authoritative waits");
+  }finally{await f.close();}
+});
+
+import { formRequest, sidebarPresentation } from "../web/src/panels/interaction-state.js";
+import type { InteractionRequest } from "../src/interactions/contract.js";
+test("sidebar follows a new request after snapshot binding while inline history keeps the exact request",()=>{
+  const panel=item("local/custom#input");
+  const first:InteractionRequest={identity:{requestId:"first",runId:"r",toolCallId:"c",owner:panel.owner,panelId:"input",viewInstanceId:"v"},
+    declaration:panel.declaration,document:{blocks:[]},formBlockId:"form",form:{fields:[],maxResultBytes:8192},state:"pending",revision:1,createdAt:10,deadline:100};
+  const answered:InteractionRequest={...first,state:"answered",revision:2,canonicalResult:'{"status":"answered","answers":{}}'};
+  const next:InteractionRequest={...first,identity:{...first.identity,requestId:"next"}};
+  assert.equal(formRequest({...panel,interaction:first},[answered,next],"form")?.identity.requestId,"next");
+  assert.equal(formRequest({...panel,instanceId:"v",interaction:first},[answered,next],"form")?.identity.requestId,"first");
+  const {canonicalResult: _result, ...withoutCanonical} = answered;
+  assert.equal(formRequest({...panel,instanceId:"v",interaction:answered},[withoutCanonical],"form")?.canonicalResult,answered.canonicalResult);
+});
+
+
+test("a durable sidebar question supplies render data without mutating ordinary panel state",()=>{
+  const panel=item("local/custom#input");
+  const request:InteractionRequest={identity:{requestId:"r",runId:"r",toolCallId:"c",owner:panel.owner,panelId:"input"},
+    declaration:panel.declaration,document:{blocks:[{id:"form",kind:"form",fields:[{id:"answer",label:"Answer",kind:"text"}]}]},
+    formBlockId:"form",form:{fields:[{id:"answer",label:"Answer",kind:"text"}],maxResultBytes:8192},state:"pending",revision:1,createdAt:10,deadline:100};
+  const displayed=sidebarPresentation(panel,[request]);
+  assert.deepEqual(displayed.document,request.document);assert.equal(displayed.interaction?.identity.requestId,"r");
+  assert.equal(panel.document,null);assert.equal(panel.interaction,undefined);
+  assert.deepEqual(sidebarPresentation(panel,[{...request,state:"answered",revision:2}]).document,request.document);
+  assert.equal(sidebarPresentation({...panel,declaration:{...panel.declaration,placement:"chat"}},[request]).document,null);
+});

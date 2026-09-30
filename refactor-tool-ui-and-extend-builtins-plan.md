@@ -250,7 +250,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: render persistent tool views in chat and sidebar`
 
 ## Phase 3: Add durable generic form requests and response actions
-Status: in_progress.
+Status: complete.
 ### Goal
 Any eligible local tool can request structured user input using the shared UI.
 ### Current behavior and gap
@@ -274,8 +274,8 @@ Two browsers submit simultaneously, invalid option IDs bypass browser validation
 ### Implementation obligations
 Persist pending/terminal records, exact accepted response result and response audit atomically; safely settle waiters once; implement one canonical byte-count/result helper and publish effective limits. Implement inline/sidebar form controls with accessible labels/errors, disabled terminal state and a link to pending questions. Keep form drafts across ordinary stream rerenders and validation errors; reload need not persist unsent drafts.
 ### Acceptance criteria
-- [ ] AC-5: Exactly one valid, fully representable submission settles a request; over-budget answers remain pending and retries/races never execute a second tool or second turn — service/API budget and idempotency tests.
-- [ ] AC-6: Pending questions survive browser reload, terminal questions survive host restart, and sidebar/chat share one Form renderer — browser and recovery tests.
+- [x] AC-5: Exactly one valid, fully representable submission settles a request; over-budget answers remain pending and retries/races never execute a second tool or second turn — service/API budget and idempotency tests.
+- [x] AC-6: Pending questions survive browser reload, terminal questions survive host restart, and sidebar/chat share one Form renderer — browser and recovery tests.
 ### Focused verification
 `node --import tsx --test tests/interactions.test.ts tests/dashboard-interactions.test.ts tests/dashboard-approval.test.ts tests/panels-actions.test.ts`
 `npm run test:web -- tests/dashboard-ui/interactions.spec.ts tests/dashboard-ui/approval.spec.ts`
@@ -288,6 +288,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: support durable form requests and response actions`
 
 ## Phase 4: Ship Ask and complete CLI, library and ACP interaction adapters
+Status: in_progress.
 ### Goal
 Make Ask usable through normal tool selection on every supported host, with explicit fallback when input is unavailable.
 ### Current behavior and gap
@@ -537,3 +538,7 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30: Final independent verification of current Phase 2 tree completed: `npm run check` 777/777, `npm run typecheck` passed, exact sessions gate 142/142, full targeted browser suite 66/66 and final inline rerun 3/3. `git diff --check` passed. AC-3/AC-4 behavior is verified; no review approval or phase completion is claimed. Worktree preserves the Phase 2 changes for the next authorized review invocation after the 401 routing issue is resolved.
 
 - 2026-09-30: User reauthenticated and explicitly authorized continuation. Phase 2 review session 004 round 1 identified three accepted in-scope defects: cancelled action commit, hidden no-update action receipt, and historical action availability. All fixed with regression coverage. Final typecheck passed; focused Node suites 88/88; sessions gate 142/142; browser suites 69/69 across Chromium/Firefox/WebKit; full `npm run check` 778/778; diff check passed. Round 2 raw verdict explicitly APPROVE, all three issues closed, independent history/action tests 21/21. Runner again could not parse verdict-only output, so raw approval is evidence rather than stale finalized metadata. Session finalized/stopped normally. AC-3/AC-4 and Phase 2 complete; moving directly to Phase 3.
+
+- 2026-09-30: Phase 2 committed as `ed1b8bb`; Phase 3 docs-first implementation is in progress. Generic service/store/API and shared Form controls cover budget-aware canonical results, owner fencing, atomic idempotent audit, deadlines/abort/recovery, cross-host streams and immutable question history. Review session 005 round 1 found three accepted defects (prototype-name drafts, old sidebar binding, in-memory session scope); round 2 verified them closed and found three further accepted defects (omitted prototype answers, foreign empty sidebar projection, late ACK state leakage). All six now have real regression coverage and repairs. Latest focused suites 57/57, exact dashboard gate 59/59, typecheck passed and browser suites 99/99 across all engines; full check previously 797/797 and final rerun is running. Round 3 verification pending; no Phase 3 completion/commit or later-phase implementation is claimed.
+
+- 2026-09-30: Phase 3 review session 005 round 3 raw verdict explicitly APPROVE: ISSUE-1–6 verified closed, no new defects, independent focused tests 34/34 and browser repair regressions 9/9. Verdict-only parser again retained stale REVISE metadata; raw approval is evidence. Session finalized/stopped normally. Final exact dashboard gate 59/59, focused suites 57/57, typecheck and diff check passed, full targeted browser suite 99/99, and final `npm run check` 798/798. One preceding full run missed a CLI PTY startup prompt under the 3-second test deadline; isolated unchanged test passed 1/1, then the full suite passed after review stopped. No assertions/timeouts changed. AC-5/AC-6 and Phase 3 complete; advance directly to Phase 4 after committing.

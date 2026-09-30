@@ -1,8 +1,10 @@
+import type { InteractionRequest } from "../interactions/contract.js";
 import type { PanelDeclaration, PanelDocument, PanelIcon, StoredPanel, StoredToolView } from "./contract.js";
 import type { KnownPanels } from "./declarations.js";
 
 /** One section of a session's panel stack: the shape shared by the HTTP API, snapshots and `getSessionPanels` (§13.1). */
 export interface PanelStackItem {
+  interaction?: InteractionRequest;
   /** Present for a historical inline snapshot; actions bind to that instance. */
   instanceId?: string;
   /** The full id, `<owner>#<panel id>`. */
@@ -34,12 +36,14 @@ export interface ToolViewSnapshot extends StoredToolView {
   presentation: { declaration: PanelDeclaration; stale: boolean };
 }
 
+export function presentDeclaration(stored: PanelDeclaration, owner: string, known: KnownPanels | undefined) {
+  const current = known?.declared.find(item => item.owner === owner && item.declaration.id === stored.id);
+  const stale = known !== undefined && !current && !known.implicitOwners.includes(owner);
+  const declaration = { ...stored, actions: (current?.declaration ?? stored).actions };
+  return { declaration: visibleActions(declaration, owner, known), stale };
+}
 export function presentToolView(view: StoredToolView, known: KnownPanels | undefined): ToolViewSnapshot {
-  const current = known?.declared.find(item => item.owner === view.owner && item.declaration.id === view.declaration.id);
-  const stale = known !== undefined && !current && !known.implicitOwners.includes(view.owner);
-  // Historical title and content stay fixed; only the available controls follow today's declaration.
-  const declaration = { ...view.declaration, actions: (current?.declaration ?? view.declaration).actions };
-  return { ...view, presentation: { declaration: visibleActions(declaration, view.owner, known), stale } };
+  return { ...view, presentation: presentDeclaration(view.declaration, view.owner, known) };
 }
 
 /**

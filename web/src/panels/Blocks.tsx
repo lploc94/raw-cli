@@ -1,3 +1,4 @@
+import { Form } from "./blocks/Form.js";
 import type { PanelBlock, PanelDocument } from "../../../src/panels/contract.js";
 import { Checklist } from "./blocks/Checklist.js";
 import { Files } from "./blocks/Files.js";
@@ -21,6 +22,7 @@ function Block({ block, onInsert, hideCompleted }: { block: PanelBlock; onInsert
     case "table": return <Table block={block.id} title={block.title ?? "Table"} columns={b.columns} rows={b.rows} onInsert={onInsert} />;
     case "markdown": return <PanelMarkdown text={b.text} />;
     case "timeline": return <Timeline events={b.events} max={b.max} />;
+    case "form": return <Form blockId={block.id} fields={b.fields} />;
     case "files": return <Files entries={b.entries} onInsert={onInsert} />;
     default: return <p className="panel-fallback" data-testid="panel-fallback">{block.fallback ?? "This block type is not supported by this dashboard."}</p>;
   }

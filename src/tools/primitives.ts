@@ -1,3 +1,4 @@
+import type { InteractionContext } from "../interactions/contract.js";
 import type { VariableContext } from "../vars/contract.js";
 import { open, mkdir, writeFile, readFile, appendFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -21,6 +22,7 @@ export interface ToolApprovalRequest {
 }
 
 export interface ToolContext {
+  interactions?: InteractionContext;
   effects?: Readonly<Record<string, unknown>>;
   vars?: VariableContext;
   cwd: string;

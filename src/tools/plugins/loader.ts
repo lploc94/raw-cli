@@ -150,6 +150,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),
           ...(context.panels ? { panels: context.panels } : {}), // onPanelUpdates stays host-only
           ...(context.effects ? { effects: context.effects } : {}),
+          ...(context.interactions ? { interactions: context.interactions } : {}),
           ...((item.id === "builtin/list_skills" || item.id === "builtin/load_skill") && options.skills
             ? { skills: options.skills } : {}),
         };

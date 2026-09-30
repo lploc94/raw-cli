@@ -1,3 +1,5 @@
+import type { InteractionRequest } from "../../../src/interactions/contract.js";
+import type { InteractionResponseAcknowledgement, InteractionResponseSubmission } from "../../../src/panels/contract.js";
 import { createContext, useContext, type ReactNode } from "react";
 import { DropdownMenu } from "radix-ui";
 import { MoreHorizontal } from "lucide-react";
@@ -7,6 +9,8 @@ import type { PanelStackItem } from "../../../src/panels/stack.js";
 
 /** What the chat page offers the panel stack for running actions (docs/panels-design.md §11). */
 export interface ActionHost {
+  interactions?: readonly InteractionRequest[];
+  respond?: (request: InteractionRequest, submission: InteractionResponseSubmission) => Promise<InteractionResponseAcknowledgement>;
   /** Why tool actions cannot run right now (busy, unsent agent switch), or undefined. Prompt actions ignore it. */
   toolBlocked: string | undefined;
   run: (item: PanelStackItem, action: PanelAction, request: ActionRequest) => void;
@@ -14,6 +18,8 @@ export interface ActionHost {
 interface Scope { item: PanelStackItem; host: ActionHost }
 const Context = createContext<Scope | undefined>(undefined);
 export const ActionScope = ({ value, children }: { value: Scope | undefined; children: ReactNode }) => <Context.Provider value={value}>{children}</Context.Provider>;
+
+export const useActionScope = () => useContext(Context);
 
 export interface Offered { action: PanelAction; request: ActionRequest; disabled: string | undefined; run: () => void }
 

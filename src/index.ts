@@ -95,3 +95,9 @@ export { parseToolManifest, compileToolSchema } from "./tools/plugins/manifest.j
 
 export { startDashboard } from "./dashboard/server.js";
 export type { DashboardOptions, DashboardServer, DashboardContext, DashboardRoute } from "./dashboard/server.js";
+
+export { InteractionService } from "./interactions/service.js";
+export { InteractionError } from "./interactions/contract.js";
+export type { InteractionContext, InteractionRequest, InteractionRequestInput, InteractionAdapter } from "./interactions/contract.js";
+export { canonicalInteractionResult, prepareForm, validateFormAnswers, FormValidationError } from "./panels/forms.js";
+export type { InteractionResult, PreparedForm } from "./panels/forms.js";

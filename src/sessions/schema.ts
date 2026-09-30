@@ -134,6 +134,22 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       snapshot_json TEXT NOT NULL,
       PRIMARY KEY (session_id, instance_id)
     )`);
+    database.exec(`CREATE TABLE IF NOT EXISTS session_interactions (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      request_id TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      panel_id TEXT NOT NULL,
+      placement TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      owner_token TEXT NOT NULL,
+      owner_generation INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      request_json TEXT NOT NULL,
+      response_key TEXT,
+      response_body TEXT,
+      PRIMARY KEY(session_id, request_id)
+    ); CREATE INDEX IF NOT EXISTS session_interactions_panel ON session_interactions(session_id, owner, panel_id, placement, created_at DESC);`);
     // Notes about panel actions the user ran; the next user message carries and clears them (docs/panels-design.md §10).
     database.exec(`CREATE TABLE IF NOT EXISTS session_pending_notes (
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
