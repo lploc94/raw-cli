@@ -260,6 +260,7 @@ export function Inspector({
           </Dialog.Description>
           <SidePanelStack
             {...stack}
+            commands={state?.commands ?? []}
             sessionId={id}
             details={<Details id={id} state={state} bootstrap={bootstrap} />}
           />

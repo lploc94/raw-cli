@@ -204,8 +204,7 @@ function ToolCard({
               </>
             ) : (
               <p className="muted">
-                Waiting for the result. Shell output appears when the tool
-                finishes.
+                Waiting for the result. Live shell output is available in Commands.
               </p>
             )}
           </Tabs.Content>

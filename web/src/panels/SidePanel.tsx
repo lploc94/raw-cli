@@ -1,4 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type PointerEvent, type ReactNode, type SetStateAction } from "react";
+import type { CommandRecord } from "../../../src/processes/presentation.js";
+import { Commands } from "./Commands.js";
+import { COMMANDS_ID } from "./commands-state.js";
 import type { PanelStackItem } from "../../../src/panels/stack.js";
 import { offeredActions, type ActionHost } from "./actions.js";
 import { ToolView } from "./ToolView.js";
@@ -11,6 +14,7 @@ import {
 import type { InsertRef } from "./status.js";
 
 export interface SidePanelProps {
+  commands?: readonly CommandRecord[];
   sessionId: string;
   agent: string | null;
   items: PanelStackItem[];
@@ -27,7 +31,7 @@ export interface SidePanelProps {
 }
 
 /** The stack of sections shown in the side panel (docs/panels-design.md §13.1). */
-export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, history, onInsert, actions, reveal, details }: SidePanelProps) {
+export function SidePanelStack({ commands = [], sessionId, agent, items, prefs, setPrefs, history, onInsert, actions, reveal, details }: SidePanelProps) {
   const box = useRef<HTMLDivElement>(null);
   const [boxHeight, setBoxHeight] = useState(0);
   const [showHidden, setShowHidden] = useState(false);
@@ -151,7 +155,7 @@ export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, histo
     const shown = order.filter((id) => !hiddenIds.has(id));
     const at = shown.indexOf(item.panel);
     const reorder = (direction: "up" | "down") => setPrefs((old) => setOrder(old, agent, move(currentOrder(items, old, agent), item.panel, direction, new Set(layout(items, old, agent).hidden.map((entry) => entry.panel)))));
-    const own = actions ? offeredActions(item, actions, "panel").map((entry) => ({ id: entry.action.id, label: entry.action.label, disabled: entry.disabled, run: entry.run })) : [];
+    const own = actions && item.panel !== COMMANDS_ID ? offeredActions(item, actions, "panel").map((entry) => ({ id: entry.action.id, label: entry.action.label, disabled: entry.disabled, run: entry.run })) : [];
     return {
       actions: own,
       up: index > 0 && at > 0 ? () => reorder("up") : undefined,
@@ -182,9 +186,9 @@ export function SidePanelStack({ sessionId, agent, items, prefs, setPrefs, histo
             drag={dragFor(item)}
             menu={menuFor(item)}
           >
-            <ToolView item={item} actions={actions} onInsert={onInsert} hideCompleted={prefs.hideCompleted} onHideCompleted={(value) => setPrefs((old) => setHideCompleted(old, value))}>
+            {item.panel === COMMANDS_ID ? <Commands items={commands} sessionId={sessionId} /> : <ToolView item={item} actions={actions} onInsert={onInsert} hideCompleted={prefs.hideCompleted} onHideCompleted={(value) => setPrefs((old) => setHideCompleted(old, value))}>
             {rejected && <p className="panel-banner error" role="note">Update rejected: {rejected}</p>}
-            </ToolView>
+            </ToolView>}
           </Section>
         );
       })}

@@ -156,3 +156,9 @@ the alias. Discard temporary imports/downloads when finished; stages expire afte
 
 Reproduce the package view with
 `node --import tsx tests/dashboard-ui/capture-management.ts --packages-only`.
+
+### Commands
+
+The sidebar's host-owned **Commands** section follows foreground Bash calls and background Process jobs across turns and reconnects. It shares section ordering, hiding, sizing and expansion preferences with tool panels, but is not owned or updated by a tool call. Running jobs appear first; finished jobs are grouped in a collapsed list. Each row shows command, working directory, elapsed time and exit outcome. Foreground calls never open the sidebar automatically; the first background update may follow the existing Follow/Never and narrow-screen preferences without moving focus.
+
+Open **Output** to read bounded, cursor-paginated terminal text. Truncated or dropped output is labeled; terminal control sequences are stripped. **Stop** on background jobs uses the dashboard's audited process control endpoint and existing policy/hooks/approval flow, even during an active model turn. It does not start another model turn. An approval request appears in the usual approval controls.

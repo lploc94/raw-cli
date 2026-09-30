@@ -364,7 +364,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: manage session background processes across turns`
 
 ## Phase 6: Integrate foreground and background activity in Commands
-Status: in_progress.
+Status: complete (unavailable browser matrix waived by user; system Chromium verified).
 ### Goal
 Provide one useful Commands section with current jobs, compact foreground results, output and Stop.
 ### Current behavior and gap
@@ -388,8 +388,8 @@ Process emits output after originating handler and runtime close; another tool c
 ### Implementation obligations
 Separate projection identity/authority from tool ownership; persist activity without routing background events through `PanelHost.begin`. Throttle updates, paginate logs, sanitize terminal control characters and preserve focus/accessibility.
 ### Acceptance criteria
-- [ ] AC-11: One Commands section follows both Bash and Process live across turns/reconnect — integration/browser tests.
-- [ ] AC-12: Stop works during an active turn and cannot bypass policy/approval or affect another session — API tests.
+- [x] AC-11: One Commands section follows both Bash and Process live across turns/reconnect — integration/browser tests.
+- [x] AC-12: Stop works during an active turn and cannot bypass policy/approval or affect another session — API tests.
 ### Focused verification
 `node --import tsx --test tests/dashboard-processes.test.ts tests/web-panel-state.test.ts tests/panels-surfaces.test.ts`
 `npm run test:web -- tests/dashboard-ui/processes.spec.ts tests/dashboard-ui/panels.spec.ts`
@@ -556,3 +556,7 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30: Phase 5 review session 007 round 2 verified ISSUE-1–5 resolved, independently passed typecheck, focused 38/38 and 50 additional host/store tests. New high ISSUE-6 ACCEPT: a persisted library agent could inject an in-memory or wrong-store supervisor, bypassing durable admission and foreign deletion fencing. Added red persisted-library regression, then validated supervisor store ID and canonical database path before Agent claims ownership. Memory agents still support in-memory supervision; separate connections to the same database pass. Test also proves no provider call/claim/spawn on rejection, successful saved-agent start on same DB, and foreign deletion/expiry retaining acknowledged work after agent close. Focused now 39/39 and typecheck green; final tools/package gates and mandatory round 3 review pending.
 
 - 2026-09-30: Phase 5 review session 007 round 3 raw verdict APPROVE: ISSUE-1–6 resolved, no remaining defects, independent focused 39/39/typecheck/diff checks passed. Session finalized APPROVE and stopped normally. Final local focused 39/39, typecheck, exact tools gate 9/9, package gate 4/4 (installed Process start/stop outside checkout), and host/store regression 64/64 passed. AC-9/AC-10 and Phase 5 complete; Phase 6 in progress. POSIX process tests executed on this macOS host; Windows unsupported branch is fixture-qualified, with cross-platform final evidence reserved for Phase 9.
+
+- 2026-09-30 (cloud continuation): User explicitly authorized phases 6–9 and, after the Playwright CDN returned HTTP 403 Domain forbidden (including an approved retry), instructed “không kiểm được thì không cần kiểm, cứ bỏ qua và tiếp tục”. This waives genuinely unavailable browser gates only: record them as skipped, not passed; continue feasible implementation reviews and checks. System Chromium at /usr/bin/chromium remains available and is tested separately with a temporary config. No Firefox/WebKit executable is installed. Baseline typecheck/build passed; the first Node run was 822/839 with 17 environment-related failures (TERM=dumb, umask 0077, unwritable npm cache). Subsequent checks use TERM=xterm-256color, umask 0022 and npm_config_cache=/tmp/raw-cli-npm-cache. Independent diagnosis confirmed package subset 20/20 and original PTY failures resolved. Phase 6 implementation/review is in progress; no new phase completion claimed.
+
+- 2026-09-30 (cloud Phase 6): Implemented durable host Commands projection, bounded foreground Bash activity/logs, background SSE snapshots and independently audited Process controls. Reads/Stop reuse selected canonical Process registry policy/hooks/approval without claiming model-turn ownership. Repeated Stop IDs replay receipts; authority is rechecked after approval. Independent implementation review round 1 REVISE identified five accepted issues (authority race, deleted-session cache persistence, row remount/focus loss, missing stream labels, terminal receipt retry); regression fixes verified and round 2 explicitly APPROVE. Final typecheck/build passed; focused Node 76/76, exact dashboard gate 59/59, system Chromium panels/processes 25/25 (including interrupted response retry), diff check passed. Browser override RAW_TEST_CHROMIUM_EXECUTABLE selects an explicitly supplied installed executable for UI and installed-package tests; default CI browser selection is unchanged. Firefox/WebKit and pinned Playwright browser downloads remain unavailable and skipped under the user exception, not passed. Phase 6 AC-11/12 complete under that exception; advancing to Phase 7 after cohesive local commit.

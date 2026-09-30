@@ -1,3 +1,4 @@
+import { Commands, type CommandRecord } from "./presentation.js";
 import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import type { ChildProcess } from "node:child_process";
@@ -14,6 +15,7 @@ interface Job {
 }
 /** Host-owned child handles, independent of an agent turn or its completed AbortSignal. */
 export class ProcessSupervisor {
+  readonly commands: Commands;
   private readonly token = `${process.pid}-${randomUUID()}`;
   private readonly generation = 1;
   private readonly jobs = new Map<string, Job>();
@@ -21,9 +23,13 @@ export class ProcessSupervisor {
   private readonly fences = new Set<string>();
   private closing = false;
   private failureCleanup?: Promise<void>;
-  constructor(private readonly options: { store?: SessionStore; platform?: NodeJS.Platform; now?: () => number; publish?: (record: ProcessRecord) => void; signalGroup?: typeof signalShellGroup } = {}) {
+  constructor(private readonly options: { store?: SessionStore; platform?: NodeJS.Platform; now?: () => number; publish?: (record: ProcessRecord) => void; publishCommands?: (sessionId: string, items: CommandRecord[]) => void; signalGroup?: typeof signalShellGroup } = {}) {
     if (options.store) this.storage = new ProcessStore(options.store, this.token, this.generation, options.now);
+    this.commands = new Commands({ ...(options.store ? {store: options.store} : {}), hostToken:this.token,
+      list: sid => this.list(sid), output:(sid,id,cursor,max)=>this.output(sid,id,cursor,max),
+      ...(options.publishCommands ? {publish:options.publishCommands} : {}) });
   }
+  get hostToken(): string { return this.token; }
   private now() { return (this.options.now ?? Date.now)(); }
   assertStoreBinding(store: SessionStore): void {
     if (!this.options.store || this.options.store.storeId !== store.storeId || realpathSync(this.options.store.path) !== realpathSync(store.path))
@@ -54,6 +60,7 @@ export class ProcessSupervisor {
       this.failureCleanup ??= Promise.resolve().then(() => this.close()).catch(() => { /* close() reports failure; durable ownership remains retained. */ });
       return failure;
     }
+    this.commands.publish(job.record.sessionId);
     try { this.options.publish?.(structuredClone(job.record)); } catch { /* Observers cannot change process ownership. */ }
   }
   private append(job: Job, channel: ProcessChunk["channel"], text: string): void {
@@ -184,6 +191,7 @@ export class ProcessSupervisor {
     try {
       for (const record of this.list(sessionId)) if (LIVE_PROCESS_STATES.includes(record.state)) await this.stop(sessionId, record.id);
       this.options.store.deleteSession(sessionId, { token: this.token, generation: this.generation });
+      this.commands.forgetSession(sessionId);
       for (const [id, job] of this.jobs) if (job.record.sessionId === sessionId) this.jobs.delete(id);
     } finally { this.storage?.unfence(sessionId); this.fences.delete(sessionId); }
   }
@@ -194,6 +202,7 @@ export class ProcessSupervisor {
       else if (job.persistenceError) { const failure = this.flush(job); if (failure) throw failure; }
     }));
     if (results.some(result => result.status === "rejected")) throw new ProcessError("process_cleanup_failed", "managed process cleanup did not finish; records retained");
+    this.commands.close();
     this.storage?.close();
   }
 }

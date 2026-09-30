@@ -65,6 +65,8 @@ export function reduceEvent(
   }
   if (!state) return state;
   switch (event.type) {
+    case "commands":
+      return { ...state, commands: event.data.items };
     case "history": {
       const ids = new Set(event.data.items.map((item) => item.id));
       const tools = { ...state.tools };

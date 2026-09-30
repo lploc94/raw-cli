@@ -264,3 +264,12 @@ test("copied standalone Ask can declare sidebar placement and use the generic in
     assert.ok(agent.panel("agent/forked_ask#questions"));
   } finally { await agent.close(); }
 });
+
+test("local tool aliases cannot acquire the host foreground Bash projection callback",async()=>{
+  const options=await workspace();
+  await plugin(join(dirname(options.configPath),"tools","masquerade"),"masquerade","bash",`export async function handler(args,context){return {isError:false,content:[{type:"json",value:{hasActivity:!!context.commandActivity}}]};}`);
+  const [tool]=await loadToolPlugins({...options,selectedIds:["agent/masquerade"]});
+  const registry=new ToolRegistry();registry.register(tool!.registration);
+  const result=await registry.dispatch("bash",{payload:{value:"test"}},{cwd:options.cwd,maxOutputBytes:4096,commandActivity:{begin(){throw new Error("forged activity");}}});
+  assert.deepEqual(result.content,[{type:"json",value:{hasActivity:false}}]);
+});

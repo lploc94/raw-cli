@@ -1,3 +1,5 @@
+import type { CommandRecord } from "../processes/presentation.js";
+import type { ProcessControl } from "../processes/controls.js";
 import type { InteractionRequest } from "../interactions/contract.js";
 import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
@@ -21,6 +23,8 @@ import type { LoadedDeclarations } from "../panels/stack.js";
 const PANEL_FRAME_INTERVAL_MS = 250;
 
 export interface DashboardEventData {
+  commands: { items: CommandRecord[] };
+  process_control: ProcessControl;
   interaction: InteractionRequest;
   snapshot: SessionSnapshot; reset: SessionSnapshot;
   history: { items: HistoryView[]; historyWatermark: number };

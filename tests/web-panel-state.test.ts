@@ -278,3 +278,32 @@ test("a durable sidebar question supplies render data without mutating ordinary 
   assert.deepEqual(sidebarPresentation(panel,[{...request,state:"answered",revision:2}]).document,request.document);
   assert.equal(sidebarPresentation({...panel,declaration:{...panel.declaration,placement:"chat"}},[request]).document,null);
 });
+
+test("host Commands has independent layout identity and terminal output is inert text", async () => {
+  const { commandsSection, COMMANDS_ID, terminalText } = await import("../web/src/panels/commands-state.js");
+  const host = commandsSection([]);
+  const tool = item("builtin/process#commands", 1);
+  assert.equal(host.panel, COMMANDS_ID);
+  assert.deepEqual(host.declaration.actions, []);
+  const prefs = setHidden(setOrder(emptyPrefs(), "raw", [tool.panel, host.panel]), "raw", host.panel, true);
+  assert.deepEqual(layout([host, tool], prefs, "raw").visible.map(entry => entry.panel), [tool.panel]);
+  assert.deepEqual(layout([host, tool], prefs, "raw").hidden.map(entry => entry.panel), [host.panel]);
+  assert.equal(terminalText("\u001b[31mred\u001b[0m\u001b]8;;https://invalid\u0007link\u001b]8;;\u0007\u0000\n"), "redlink\n");
+});
+
+test("command snapshots replace the host projection without mutating concurrent tool panels", async () => {
+  const f = await dashboardFixture();
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "raw" });
+    const snapshot = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
+    const envelope = { id: "command-frame", instanceId: "host", sessionId: session.id, sequence: 1 };
+    const before = reduceEvent(undefined, { ...envelope, type: "snapshot", data: snapshot })!;
+    const command = { id: "job", sessionId: session.id, kind: "background" as const, owner: "builtin/process" as const, command: "echo ok", cwd: f.root, state: "running" as const, createdAt: 1, updatedAt: 2, cursor: 3, droppedBytes: 0 };
+    const live = reduceEvent(before, { ...envelope, type: "commands", data: { items: [command] } })!;
+    assert.deepEqual(live.commands, [command]);
+    assert.equal(live.panels, before.panels);
+    const reset = reduceEvent(live, { ...envelope, type: "reset", data: { ...snapshot, commands: [{ ...command, state: "exited" as const, exitCode: 0 }] } })!;
+    assert.equal(reset.commands?.[0]?.state, "exited");
+    assert.equal(reset.commands?.length, 1);
+  } finally { await f.close(); }
+});

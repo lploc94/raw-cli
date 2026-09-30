@@ -98,6 +98,10 @@ async function runBash(options) {
   const append = (channel, chunk) => {
     observedBytes += chunk.length;
     const text = (channel === "stdout" ? outDecoder : errDecoder).write(chunk);
+    try {
+      options.onOutput?.(channel, text);
+    } catch {
+    }
     if (saturated) return;
     const prefix = utf8Prefix(text, options.maxOutputBytes - retainedBytes);
     retainedBytes += prefix.bytes;
@@ -136,6 +140,10 @@ async function runBash(options) {
   if (drainTimer) clearTimeout(drainTimer);
   for (const [channel, tail] of [["stdout", outDecoder.end()], ["stderr", errDecoder.end()]]) {
     if (!tail) continue;
+    try {
+      options.onOutput?.(channel, tail);
+    } catch {
+    }
     if (!saturated) {
       const prefix = utf8Prefix(tail, options.maxOutputBytes - retainedBytes);
       retainedBytes += prefix.bytes;
@@ -209,11 +217,17 @@ async function bashTool(args, context) {
       stopReason = "prior_var_error";
       continue;
     }
+    let activity;
+    try {
+      activity = context.commandActivity?.begin(command.command, context.cwd);
+    } catch {
+    }
     try {
       result = await runBash({
         command: command.command,
         cwd: context.cwd,
         maxOutputBytes: share,
+        ...activity ? { onOutput: activity.output } : {},
         ...bindings ? { env: { ...process.env, ...bindings } } : {},
         ...command.timeout_ms !== void 0 ? { timeoutMs: command.timeout_ms } : {},
         ...context.signal ? { signal: context.signal } : {},
@@ -221,6 +235,10 @@ async function bashTool(args, context) {
       });
     } catch (error) {
       result = errorResult("bash_error", error.message);
+    }
+    try {
+      activity?.finish(result);
+    } catch {
     }
     let stdout = result.content.flatMap((item) => item.type === "text" && item.channel === "stdout" ? [item.text] : []).join("");
     let stderr = result.content.flatMap((item) => item.type === "text" && item.channel === "stderr" ? [item.text] : []).join("");

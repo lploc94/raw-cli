@@ -4,6 +4,7 @@ import type { ToolResult } from "./types.js";
 import { errorResult, utf8Prefix } from "./results.js";
 
 export interface BashOptions {
+  onOutput?: (channel: "stdout" | "stderr", text: string) => void;
   env?: NodeJS.ProcessEnv;
   command: string;
   cwd: string;
@@ -68,6 +69,7 @@ export async function runBash(options: BashOptions): Promise<ToolResult> {
   const append = (channel: "stdout" | "stderr", chunk: Buffer) => {
     observedBytes += chunk.length;
     const text = (channel === "stdout" ? outDecoder : errDecoder).write(chunk);
+    try { options.onOutput?.(channel, text); } catch { /* observers never own execution */ }
     if (saturated) return;
     const prefix = utf8Prefix(text, options.maxOutputBytes - retainedBytes);
     retainedBytes += prefix.bytes;
@@ -96,6 +98,7 @@ export async function runBash(options: BashOptions): Promise<ToolResult> {
   if (drainTimer) clearTimeout(drainTimer);
   for (const [channel, tail] of [["stdout", outDecoder.end()], ["stderr", errDecoder.end()]] as const) {
     if (!tail) continue;
+    try { options.onOutput?.(channel, tail); } catch { /* observers never own execution */ }
     if (!saturated) {
       const prefix = utf8Prefix(tail, options.maxOutputBytes - retainedBytes);
       retainedBytes += prefix.bytes;

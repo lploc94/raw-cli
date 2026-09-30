@@ -3062,3 +3062,9 @@ summary::-webkit-details-marker {
 .interaction-receipt { margin: .5rem 0; }
 .interaction-receipt dl { flex-basis: 100%; margin: 0; }
 .interaction-receipt dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.commands-list { list-style: none; margin: 0; padding: 0; }
+.command-row { padding: 10px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.command-row code { display: block; }
+.command-row button { margin: 6px 6px 0 0; }
+.command-output pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; font-size: 12px; }

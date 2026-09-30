@@ -1,3 +1,6 @@
+import { ProcessControls } from "../processes/controls.js";
+import { ProcessError } from "../processes/contract.js";
+import { terminalText, type CommandRecord } from "../processes/presentation.js";
 import { ProcessSupervisor } from "../processes/supervisor.js";
 import { InteractionService } from "../interactions/service.js";
 import { InteractionError, type InteractionRequest } from "../interactions/contract.js";
@@ -34,7 +37,7 @@ export interface SessionSnapshot {
   metrics: SessionMetrics | null; metricsStale: boolean;
   context: { summary?: string; messageCount: number }; live: LiveSegment[]; approvals: Approval[];
   /** The session's saved agent and its committed panels; authoritative for the dashboard's panel state (§13.1). */
-  agent: string | null; panels: PanelStackItem[]; interactions?: InteractionRequest[];
+  agent: string | null; panels: PanelStackItem[]; commands?: CommandRecord[]; interactions?: InteractionRequest[];
 }
 export function workspacePath(value: unknown, base: string): string {
   const input = textField(value, "cwd", 4096);
@@ -60,11 +63,12 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   }];
   const output = new LiveOutput(join(dirname(store.path), "dashboard-live"));
   let streams!: SessionStreams;
-  const processes = new ProcessSupervisor({ store }); context.processes = processes;
+  const processes = new ProcessSupervisor({ store, publishCommands: (sessionId,items) => { if(streams) streams.publish(sessionId,"commands",{items}); } }); context.processes = processes;
   const interactions = new InteractionService({ store, available: true, publish: request => {
     if (streams) streams.publish(request.identity.sessionId!, "interaction", request, request.identity.operationId);
   } });
   const approvals = new Approvals((approval, status) => streams.publish(approval.sessionId, "approval", { ...approval, status }, approval.operationId));
+  const processControls = new ProcessControls({store,processes,configPath:context.configPath,env:context.env,approve:(control,timeout)=>approvals.forOperation(control,()=>timeout),publish:control=>{if(streams)streams.publish(control.sessionId,"process_control",control);} });
   const operations: SessionOperations = new SessionOperations({ store, interactions, processes, env: context.env, ...(attach ? { attach } : {}),
     approve: (operation) => approvals.forOperation(operation, () => operations.approvalTimeout(operation.id)) });
   context.operations = operations;
@@ -138,11 +142,12 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     return { session, history: { ...page, items: page.items.map(projectHistoryItem) }, historyWatermark,
       ownership: streams.ownership(id), operations: receipts, ...metrics(id), context: store.getContextSummary(id),
       live: output.list(new Set(receipts.filter((op) => !terminalOperationStates.has(op.state)).map((op) => op.id))), approvals: approvals.list(id),
-      agent: session.agentName ?? null, interactions: store.pendingInteractions(id),
+      agent: session.agentName ?? null, commands: processes.commands.list(id), interactions: store.pendingInteractions(id),
       panels: withInteractions(id, buildPanelStack(declarationsFor(session.agentName, loaded), store.listSessionPanels(id))) };
   };
   streams = new SessionStreams(context, output, snapshot, knownForSession);
   const unsubscribe = operations.subscribe((message) => streams.observe(message));
+  context.onClose(() => processControls.close());
   context.onClose(() => { unsubscribe(); interactions.close(); approvals.close(); streams.close(); output.close(); });
   return [async (request, response) => {
     const url = new URL(request.url!, "http://localhost"); const path = url.pathname; const method = request.method;
@@ -213,6 +218,32 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       const raw = url.searchParams.get("limit"); const limit = raw === null ? 20 : Number(raw);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new DashboardError(400, "invalid_limit", "limit must be 1 to 50");
       return reply({ items: await searchWorkspaceFiles(session.cwd, url.searchParams.get("q") ?? "", limit) });
+    }
+    const commandRoute = /^\/api\/sessions\/([^/]+)\/commands(?:\/([^/]+)(?:\/(output|stop|controls)(?:\/([^/]+))?)?)?$/.exec(path);
+    if(commandRoute) {
+      const sessionId=decodeURIComponent(commandRoute[1]!);requireSession(sessionId);
+      const id=commandRoute[2]===undefined?undefined:decodeURIComponent(commandRoute[2]);
+      try {
+        if(id===undefined&&method==="GET")return reply({items:processes.commands.list(sessionId)});
+        if(id&&commandRoute[3]==="output"&&method==="GET") {
+          const cursor=url.searchParams.has("cursor")?Number(url.searchParams.get("cursor")):0;
+          const maxBytes=url.searchParams.has("maxBytes")?Number(url.searchParams.get("maxBytes")):65536;
+          const row=processes.commands.list(sessionId).find(item=>item.id===id);
+          if(!row)throw new DashboardError(404,"process_not_found","command not found in this session");
+          if(row.kind==="foreground")return reply(processes.commands.output(sessionId,id,cursor,maxBytes));
+          const result=await processControls.read(sessionId,id,{action:"output",id,cursor,max_bytes:maxBytes});
+          if(result.isError)throw new DashboardError(result.code==="invalid_arguments"?400:403,result.code??"process_error",result.content.map(c=>c.type==="text"?c.text:"").join("\n"));
+          const block=result.content.find(c=>c.type==="json");
+          if(!block)throw new DashboardError(500,"process_error","process output unavailable");
+          const page=block.value as import("../processes/contract.js").ProcessOutput;
+          return reply({...page,chunks:page.chunks.map(chunk=>({...chunk,text:terminalText(chunk.text)}))});
+        }
+        if(id&&commandRoute[3]==="stop"&&method==="POST")return reply(processControls.submit(sessionId,id,textField((await context.readJson(request)).clientRequestId,"clientRequestId",128)),202);
+        if(id&&commandRoute[3]==="controls"&&commandRoute[4]&&method==="GET"){
+          const receipt=processControls.get(sessionId,id,decodeURIComponent(commandRoute[4]));
+          if(!receipt)throw new DashboardError(404,"not_found","Process control not found");return reply(receipt);
+        }
+      } catch(error){if(error instanceof ProcessError)throw new DashboardError(error.code==="process_not_found"?404:error.code==="invalid_arguments"?400:409,error.code,error.message);throw error;}
     }
     const interactionRoute = /^\/api\/sessions\/([^/]+)\/interactions\/([^/]+)(\/responses)?$/.exec(path);
     if (interactionRoute) {

@@ -75,7 +75,7 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await expect.poll(() => (stdout + stderr).match(/http:\/\/127\.0\.0\.1:\d+\/#token=[A-Za-z0-9_-]+/)?.[0], { timeout: 15_000 }).toBeTruthy();
     const launchUrl = (stdout + stderr).match(/http:\/\/127\.0\.0\.1:\d+\/#token=[A-Za-z0-9_-]+/)![0];
     const origin = new URL(launchUrl).origin;
-    browser = await chromium.launch(); const browserVersion = browser.version(); const page = await browser.newPage(); page.setDefaultTimeout(15_000);
+    browser = await chromium.launch(process.env.RAW_TEST_CHROMIUM_EXECUTABLE ? { executablePath: process.env.RAW_TEST_CHROMIUM_EXECUTABLE } : {}); const browserVersion = browser.version(); const page = await browser.newPage(); page.setDefaultTimeout(15_000);
     const assets = new Set<string>(), errors: string[] = [], external: string[] = [];
     await page.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin) return route.continue(); external.push(url.origin); return route.abort(); });
     page.on("response", response => { if (response.url().includes("/assets/")) { assert.ok(response.ok(), response.url()); assets.add(response.url()); } });

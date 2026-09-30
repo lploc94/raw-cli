@@ -1,3 +1,4 @@
+import type { CommandActivity } from "../processes/presentation.js";
 import type { ProcessContext } from "../processes/contract.js";
 import type { InteractionContext } from "../interactions/contract.js";
 import type { VariableContext } from "../vars/contract.js";
@@ -23,6 +24,7 @@ export interface ToolApprovalRequest {
 }
 
 export interface ToolContext {
+  commandActivity?: CommandActivity;
   interactions?: InteractionContext;
   processes?: ProcessContext;
   effects?: Readonly<Record<string, unknown>>;
@@ -302,8 +304,11 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
       rows[index] = { index, status: context.signal?.aborted ? "aborted" : "error", error: code };
       stopped = true; stopReason = "prior_var_error"; continue;
     }
+    let activity: ReturnType<CommandActivity["begin"]> | undefined;
+    try { activity = context.commandActivity?.begin(command.command, context.cwd); } catch { /* UI persistence cannot change Bash execution. */ }
     try {
       result = await runBash({ command: command.command, cwd: context.cwd, maxOutputBytes: share,
+        ...(activity ? { onOutput: activity.output } : {}),
         ...(bindings ? { env: { ...process.env, ...bindings } } : {}),
         ...(command.timeout_ms !== undefined ? { timeoutMs: command.timeout_ms } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
@@ -312,6 +317,7 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
     } catch (error) {
       result = errorResult("bash_error", (error as Error).message);
     }
+    try { activity?.finish(result); } catch { /* UI persistence cannot change the completed Bash outcome. */ }
     let stdout = result.content.flatMap((item) => item.type === "text" && item.channel === "stdout" ? [item.text] : []).join("");
     let stderr = result.content.flatMap((item) => item.type === "text" && item.channel === "stderr" ? [item.text] : []).join("");
     const status = result.code === "aborted" || context.signal?.aborted ? "aborted"

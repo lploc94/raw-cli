@@ -11,7 +11,7 @@ export interface Approval {
 export class Approvals {
   private readonly pending = new Map<string, { value: Approval; finish: (allow: boolean) => void }>();
   constructor(private readonly publish: (approval: Approval, status: "pending" | "allowed" | "denied" | "expired" | "cancelled") => void) {}
-  forOperation(operation: SessionOperation, timeout: () => number): NonNullable<ToolContext["approve"]> {
+  forOperation(operation: Pick<SessionOperation, "id" | "sessionId">, timeout: () => number): NonNullable<ToolContext["approve"]> {
     return ({ name, arguments: args, signal, toolCallId: callId, effects }) => {
       if (signal?.aborted || !callId) return false;
       return new Promise<boolean>((resolve) => {

@@ -627,7 +627,7 @@ export class AgentSession {
         ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
         signal: controller.signal,
         toolCallId: operationId,
-        ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
+        ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId), commandActivity: this.options.processes.commands.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
         interactions: this.interactionContext(operationId, info.owner, panelCall, controller.signal),
         panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => this.settleHandler(operationId, panelCall),
         ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) =>
@@ -931,7 +931,7 @@ export class AgentSession {
               ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
               signal: controller.signal,
               toolCallId: call.id,
-              ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
+              ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId), commandActivity: this.options.processes.commands.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
               interactions: this.interactionContext(call.id, panelInfo?.owner ?? call.name, panelCall, controller.signal),
               onHandlerSettled: () => this.settleHandler(call.id, panelCall),
               ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates) } : {}),

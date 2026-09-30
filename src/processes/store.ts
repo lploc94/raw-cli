@@ -17,6 +17,13 @@ export function recoverProcessHosts(database: DatabaseSync, now: number, alive =
     if (Number(host.alive) && alive(Number(host.pid))) continue;
     database.prepare("DELETE FROM session_process_fences WHERE host_token = ? AND host_generation = ?").run(String(host.token), Number(host.generation));
     database.prepare("UPDATE process_hosts SET alive = 0, updated_at = ? WHERE token = ? AND generation = ?").run(now, String(host.token), Number(host.generation));
+    for(const row of database.prepare("SELECT id,record_json FROM session_commands WHERE host_token=?").all(String(host.token))) {
+      const record=JSON.parse(String(row.record_json));
+      if(LIVE_PROCESS_STATES.includes(record.state)) {
+        Object.assign(record,{state:"lost",endedAt:now,updatedAt:now,error:"owning host is no longer alive"});
+        database.prepare("UPDATE session_commands SET record_json=? WHERE id=?").run(JSON.stringify(record),String(row.id));
+      }
+    }
     for (const row of database.prepare(`SELECT id, record_json FROM session_processes WHERE host_token = ? AND host_generation = ? AND state IN ${live}`).all(String(host.token), Number(host.generation))) {
       const record = JSON.parse(String(row.record_json)) as ProcessRecord;
       affectedSessions.add(record.sessionId);
