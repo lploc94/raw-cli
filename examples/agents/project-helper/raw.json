@@ -28,7 +28,8 @@
             "effect": "ask",
             "when": {
               "any": "commands[*].command",
-              "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)"
+              "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)",
+              "source": "arguments"
             }
           }
         ]

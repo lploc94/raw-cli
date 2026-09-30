@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "list_skills",
   "version": "1.0.0",
   "name": "list_skills",
@@ -10,5 +10,8 @@
     "required": [],
     "additionalProperties": false
   },
-  "entry": "./index.mjs"
+  "entry": "./index.mjs",
+  "condition_sources": [
+    "arguments"
+  ]
 }

@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "load_skill",
   "version": "1.0.0",
   "name": "load_skill",
@@ -7,10 +7,19 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "name": { "type": "string", "minLength": 1, "description": "Exact selected skill name returned by list_skills." }
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact selected skill name returned by list_skills."
+      }
     },
-    "required": ["name"],
+    "required": [
+      "name"
+    ],
     "additionalProperties": false
   },
-  "entry": "./index.mjs"
+  "entry": "./index.mjs",
+  "condition_sources": [
+    "arguments"
+  ]
 }

@@ -94,6 +94,12 @@ async function writeFileTool(args, context) {
 }
 
 // src/tools/bundled/write_file/index.ts
+import { resolve as resolve2 } from "path";
+function describeEffects(args, context) {
+  const operations = args.operations;
+  const paths = [...new Set(operations.map((operation) => resolve2(context.cwd, operation.path)))];
+  return { files: paths.map((path) => ({ path, operation: "write" })) };
+}
 function validateArgs(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";
   const args = value;
@@ -131,6 +137,7 @@ async function handler(args, context) {
   return writeFileTool(args, context);
 }
 export {
+  describeEffects,
   handler,
   validateArgs
 };

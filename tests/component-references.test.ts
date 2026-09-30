@@ -24,11 +24,11 @@ test("component resolution is data-only, scoped and independent of release label
   const make = async (version: string) => {
     const root = mkdtempSync(join(tmpdir(), "raw-component-"));
     mkdirSync(join(root, "tools", "search"), { recursive: true });
-    writeFileSync(join(root, "tools", "search", "tool.json"), JSON.stringify({ api_version: 1, id: "search",
+    writeFileSync(join(root, "tools", "search", "tool.json"), JSON.stringify({ api_version: 2, id: "search",
       version, name: "search", description: "Search", input_schema: { type: "object" }, entry: "./index.mjs" }));
     writeFileSync(join(root, "tools", "search", "index.mjs"), 'throw new Error("tool imported during component resolution");');
     writeFileSync(join(root, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@example/kit", version,
-      description: "Kit", files: ["tools/search"], exports: { tools: { search: "tools/search" } }, requires: ["raw.tool-api/1"] }));
+      description: "Kit", files: ["tools/search"], exports: { tools: { search: "tools/search" } }, requires: ["raw.tool-api/2"] }));
     return loadPackageManifest(root);
   };
   const first = await make("1.0.0");
@@ -38,7 +38,7 @@ test("component resolution is data-only, scoped and independent of release label
   assert.equal(await fingerprintComponent(first, "tools", "search"), await fingerprintComponent(second, "tools", "search"));
   assert.throws(() => resolveComponent("#skills/missing", { self: first }), /skills\/missing/);
   assert.throws(() => resolveComponent("dep:geo#tools/search", { self: first }), /geo/);
-  assert.throws(() => resolveComponent("#tools/search", { self: first, hostCapabilities: new Set() }), /raw.tool-api\/1/);
+  assert.throws(() => resolveComponent("#tools/search", { self: first, hostCapabilities: new Set() }), /raw.tool-api\/2/);
 });
 
 test("dependency graph rejects cycles without importing components", () => {

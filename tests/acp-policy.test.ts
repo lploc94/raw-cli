@@ -6,7 +6,7 @@ import { createAcpServer } from "../src/acp/methods.js";
 import { loadConfig } from "../src/config.js";
 import { testConfig } from "./fixtures/config.js";
 
-function policyConfig(rules: Array<{ match: string; effect: string; when?: { any: string; regex: string } }>): string {
+function policyConfig(rules: Array<{ match: string; effect: string; when?: { source: "arguments" | "effects"; any: string; regex: string } }>): string {
   const path = testConfig("ollama");
   const document = JSON.parse(readFileSync(path, "utf8"));
   document.agents.fixture.tools = { ...document.agents.fixture.tools, rules };
@@ -113,7 +113,7 @@ test("ACP names with line breaks cannot bypass broad deny or ask rules", async (
 });
 
 test("ACP configure binds conditional policy to a later activated MCP tool", async () => {
-  const path = policyConfig([{ match: "mcp/browser/selected", effect: "ask", when: { any: "value", regex: "rm" } }]);
+  const path = policyConfig([{ match: "mcp/browser/selected", effect: "ask", when: { source: "arguments", any: "value", regex: "rm" } }]);
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
   let alias = "";
   let permissions = 0;
@@ -147,7 +147,7 @@ test("ACP configure binds conditional policy to a later activated MCP tool", asy
 });
 
 test("ACP reverse tool conditional ask inspects nested typed arguments", async () => {
-  const path = policyConfig([{ match: "acp:runner", effect: "ask", when: { any: "payload.command", regex: "rm" } }]);
+  const path = policyConfig([{ match: "acp:runner", effect: "ask", when: { source: "arguments", any: "payload.command", regex: "rm" } }]);
   const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });
   let alias = "";
   let permissions = 0;

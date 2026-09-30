@@ -353,8 +353,9 @@ export function parseToolPolicyRules(raw: unknown, where = "tools.rules"): ToolP
     if (rule.when !== undefined) {
       if (effect !== "ask") throw new Error(ruleWhere + " conditional effect must be ask");
       const predicate = object(rule.when, ruleWhere + ".when");
-      keys(predicate, ["any", "regex"], ruleWhere + ".when");
-      when = { any: string(predicate.any, ruleWhere + ".when.any"),
+      keys(predicate, ["source", "any", "regex"], ruleWhere + ".when");
+      when = { source: enumValue(predicate.source, new Set<"arguments" | "effects">(["arguments", "effects"]), ruleWhere + ".when.source"),
+        any: string(predicate.any, ruleWhere + ".when.any"),
         regex: string(predicate.regex, ruleWhere + ".when.regex") };
       compileWhen(when);
     }

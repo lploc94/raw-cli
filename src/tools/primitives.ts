@@ -11,21 +11,31 @@ import type { SelectedSkill } from "../skills/contract.js";
 import type { HookDispatchResult } from "../hooks/dispatcher.js";
 import type { HookEventName } from "../hooks/contract.js";
 
+export interface ToolApprovalRequest {
+  identity: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  effects?: Readonly<Record<string, unknown>>;
+  toolCallId?: string;
+  signal?: AbortSignal;
+}
+
 export interface ToolContext {
+  effects?: Readonly<Record<string, unknown>>;
   vars?: VariableContext;
   cwd: string;
   maxOutputBytes: number;
   autoApprove?: boolean;
-  approve?: (name: string, args: Record<string, unknown>, signal?: AbortSignal, toolCallId?: string) => boolean | Promise<boolean>;
+  approve?: (request: ToolApprovalRequest) => boolean | Promise<boolean>;
   toolCallId?: string;
   onStart?: (name: string, args: Record<string, unknown>) => void;
   onHook?: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>,
-    result?: ToolResult) => Promise<HookDispatchResult>;
+    result?: ToolResult, effects?: Record<string, unknown>) => Promise<HookDispatchResult>;
   whitelist?: readonly string[];
   signal?: AbortSignal;
   bashPath?: string;
   skills?: readonly SelectedSkill[];
-  /** raw.panel/1 streaming API for the calling tool (docs/panels-design.md §8.2). Forwarded to plugin handlers. */
+  /** raw.panel/2 streaming API for the calling tool (docs/panels-design.md §8.2). Forwarded to plugin handlers. */
   panels?: PanelContext;
   /** Host-only: receives the panel blocks `ToolRegistry.dispatch` removes from a handler result. Never forwarded to plugins. */
   /** Host-only: the handler has returned (or thrown); no further streaming updates are accepted. */

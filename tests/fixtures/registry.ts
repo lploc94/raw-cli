@@ -4,7 +4,7 @@ import writeManifest from "../../src/tools/bundled/write_file/tool.json" with { 
 import bashManifest from "../../src/tools/bundled/bash/tool.json" with { type: "json" };
 import imageManifest from "../../src/tools/bundled/view_image/tool.json" with { type: "json" };
 import { handler as read, validateArgs as validateRead } from "../../src/tools/bundled/read_file/index.js";
-import { handler as write, validateArgs as validateWrite } from "../../src/tools/bundled/write_file/index.js";
+import { handler as write, validateArgs as validateWrite, describeEffects as writeEffects } from "../../src/tools/bundled/write_file/index.js";
 import { handler as bash, validateArgs as validateBash } from "../../src/tools/bundled/bash/index.js";
 import { handler as image, validateArgs as validateImage } from "../../src/tools/bundled/view_image/index.js";
 
@@ -20,6 +20,8 @@ export function createTestToolRegistry(rules: readonly ToolPolicyRule[] = [], vi
   for (const [manifest, handler, validateArgs] of entries) registry.register({
     name: manifest.name, canonicalName: `builtin/${manifest.id}`,
     description: manifest.description, inputSchema: manifest.input_schema as ToolRegistration["inputSchema"],
+    ...(manifest.id === "write_file" ? { conditionSources: ["effects"], effectsSchema: writeManifest.effects_schema,
+      describeEffects: writeEffects } : { conditionSources: ["arguments"] }),
     handler, validateArgs,
   });
   return registry;

@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "read_var",
   "version": "1.0.0",
   "name": "read_var",
@@ -17,5 +17,8 @@
       "name"
     ]
   },
-  "entry": "./index.mjs"
+  "entry": "./index.mjs",
+  "condition_sources": [
+    "arguments"
+  ]
 }

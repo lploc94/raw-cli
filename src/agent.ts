@@ -167,6 +167,7 @@ export class AgentSession {
       ...(options.compact !== undefined ? { compact: { ...options.compact } } : {}),
     };
     this.schemaView = Object.freeze(this.options.registry.definitions(this.options.whitelist));
+    this.options.hooks?.validateTools(this.options.registry, this.schemaView.map(tool => tool.name));
     if (options.persistence) {
       const { store, sessionId, surface } = options.persistence;
       if (options.persistence.ownership === "host" && !options.persistence.owner) throw new Error("host ownership requires a claimed session owner");
@@ -321,6 +322,7 @@ export class AgentSession {
     const known = new Set(this.options.registry.definitions().map((item) => item.name));
     for (const name of whitelist ?? []) if (!known.has(name)) throw new Error(`unknown tool: ${name}`);
     const next = this.options.registry.definitions(whitelist);
+    this.options.hooks?.validateTools(this.options.registry, next.map(tool => tool.name));
     if (JSON.stringify(this.options.whitelist ?? null) === JSON.stringify(whitelist ?? null)
       && JSON.stringify(this.schemaView) === JSON.stringify(next)) return this.contextGenerationRevision;
     const nextKey = randomUUID();
@@ -589,8 +591,8 @@ export class AgentSession {
         signal: controller.signal,
         toolCallId: operationId,
         panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => panelCall.endWindow(),
-        ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult) =>
-          this.options.hooks!.run(event, { ...hookRequest(), tool: { identity, name, source: "user_action", arguments: args, ...(result ? { result } : {}) } },
+        ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) =>
+          this.options.hooks!.run(event, { ...hookRequest(), tool: { identity, name, source: "user_action", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
             { ...(event === "PreToolUse" ? { signal: controller.signal } : { deadline: Date.now() + 2000 }),
               onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
         onStart: () => { started = true; },
@@ -887,8 +889,8 @@ export class AgentSession {
               toolCallId: call.id,
               ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => panelCall.endWindow() } : {}),
               ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
-                name: string, args: Record<string, unknown>, result?: ToolResult) => this.options.hooks!.run(event,
-                { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(result ? { result } : {}) } },
+                name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) => this.options.hooks!.run(event,
+                { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
                 { ...(event === "PreToolUse" ? { signal: controller.signal } : {
                   deadline: controller.signal.aborted ? (terminalDeadline ??= Date.now() + 2000) : Date.now() + 2000 }),
                   onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),

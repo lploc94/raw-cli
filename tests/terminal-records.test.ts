@@ -74,7 +74,7 @@ test("display calls retain Bash commands and omit write payload values", () => {
   assert.deepEqual(malformed.arguments, { argument_keys: ["path", "content"] });
 });
 
-test("schema 5 rejects a prior schema without mutation", () => {
+test("schema 6 rejects a prior schema without mutation", () => {
   const database = new DatabaseSync(":memory:");
   try {
     database.exec("PRAGMA user_version = 4");
@@ -82,8 +82,8 @@ test("schema 5 rejects a prior schema without mutation", () => {
     assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 4);
     database.exec("PRAGMA user_version = 0");
     initializeSessionSchema(database);
-    assert.equal(SESSION_SCHEMA_VERSION, 5);
-    assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 5);
+    assert.equal(SESSION_SCHEMA_VERSION, 6);
+    assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, 6);
   } finally { database.close(); }
 });
 

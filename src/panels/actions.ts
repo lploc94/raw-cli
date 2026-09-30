@@ -73,6 +73,10 @@ export function resolveAction(declaration: PanelDeclaration, request: ActionRequ
     }
   }
   const values = { "panel.id": declaration.id, "block.id": target.block?.id, "item.id": target.item?.id, "item.label": target.item?.label };
+  if (action.kind === "response") {
+    if (target.block?.kind !== "form") throw new PanelActionError("a response action requires a form block");
+    return { action };
+  }
   if (action.kind === "tool") return { action, arguments: fill(action.arguments ?? {}, values) as Record<string, unknown> };
   return { action, text: fill(action.text ?? "", values) as string };
 }

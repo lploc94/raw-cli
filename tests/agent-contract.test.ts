@@ -40,11 +40,11 @@ test("legacy config and environment selectors fail", async () => {
   await assert.rejects(loadConfig({ home, env: {}, requireModel: true }), /default_profile|profiles/);
 });
 
-test("fresh session schema is v5 with agent_name and rejects v3", () => {
+test("fresh session schema is v6 with agent_name and rejects v3", () => {
   const database = new DatabaseSync(":memory:");
   try {
     initializeSessionSchema(database);
-    assert.equal(SESSION_SCHEMA_VERSION, 5);
+    assert.equal(SESSION_SCHEMA_VERSION, 6);
     const columns = database.prepare("PRAGMA table_info(sessions)").all().map((row) => row.name);
     assert.ok(columns.includes("agent_name"));
     assert.ok(!columns.includes("profile_name"));

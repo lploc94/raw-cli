@@ -101,6 +101,51 @@ function block(value: unknown, path: Path): PanelBlock {
   const kind = item.kind;
   const own = (extra: string[]) => keys(item, [...COMMON, ...extra], path);
   switch (kind) {
+    case "mermaid":
+      own(["source"]);
+      bytesText(item.source, [...path, "source"], 16 * 1024);
+      if (!item.source) invalid([...path, "source"], "must not be empty");
+      break;
+    case "form": {
+      own(["fields"]);
+      const ids = new Set<string>();
+      for (const [index, raw] of array(item.fields, [...path, "fields"], 8, 1).entries()) {
+        const at = [...path, "fields", index];
+        const field = object(raw, at);
+        const fieldId = id(field.id, ITEM_ID, [...at, "id"]);
+        if (ids.has(fieldId)) invalid([...at, "id"], "duplicate field id");
+        ids.add(fieldId);
+        text(field.label, [...at, "label"], 200, 1);
+        if (field.description !== undefined) text(field.description, [...at, "description"], 500);
+        if (field.required !== undefined && typeof field.required !== "boolean") invalid([...at, "required"], "must be boolean");
+        const fieldKind = oneOf(field.kind, ["text", "single_select", "multi_select"], [...at, "kind"]);
+        const base = ["id", "label", "description", "required", "kind"];
+        if (fieldKind === "text") {
+          keys(field, [...base, "multiline", "max_bytes"], at);
+          if (field.multiline !== undefined && typeof field.multiline !== "boolean") invalid([...at, "multiline"], "must be boolean");
+          if (field.max_bytes !== undefined && count(field.max_bytes, [...at, "max_bytes"], 1) > 8192) invalid([...at, "max_bytes"], "must be at most 8192");
+        } else {
+          keys(field, [...base, "options", ...(fieldKind === "multi_select" ? ["min_selected", "max_selected"] : [])], at);
+          const options = array(field.options, [...at, "options"], 32, 1);
+          const optionIds = new Set<string>();
+          for (const [index, raw] of options.entries()) {
+            const loc = [...at, "options", index];
+            const option = object(raw, loc);
+            keys(option, ["id", "label"], loc);
+            const optionId = id(option.id, ITEM_ID, [...loc, "id"]);
+            if (optionIds.has(optionId)) invalid([...loc, "id"], "duplicate option id");
+            optionIds.add(optionId);
+            text(option.label, [...loc, "label"], 200, 1);
+          }
+          if (fieldKind === "multi_select") {
+            const min = field.min_selected === undefined ? 0 : count(field.min_selected, [...at, "min_selected"]);
+            const max = field.max_selected === undefined ? options.length : count(field.max_selected, [...at, "max_selected"], 1);
+            if (min > max || max > options.length) invalid(at, "invalid selection limits");
+          }
+        }
+      }
+      break;
+    }
     case "checklist": {
       own(["items"]);
       checklist(item.items, [...path, "items"], 1, new Set(), { n: 0 });
@@ -344,11 +389,12 @@ function checkTemplates(value: unknown, path: Path): void {
 
 function action(value: unknown, path: Path): PanelAction {
   const item = object(value, path);
-  keys(item, ["id", "label", "scope", "blocks", "kind", "text", "send", "arguments", "primary", "confirm", "when"], path);
+  keys(item, ["id", "label", "scope", "blocks", "kind", "text", "send", "arguments", "response", "primary", "confirm", "when"], path);
   id(item.id, PANEL_ID, [...path, "id"]);
   text(item.label, [...path, "label"], 32, 1);
   const scope = oneOf(item.scope, ["panel", "block", "item"], [...path, "scope"]);
-  const kind = oneOf(item.kind, ["prompt", "tool"], [...path, "kind"]);
+  const kind = oneOf(item.kind, ["prompt", "tool", "response"], [...path, "kind"]);
+  if (kind !== "response" && item.response !== undefined) invalid([...path, "response"], "is only for response actions");
   if (item.blocks !== undefined) {
     if (scope === "panel") invalid([...path, "blocks"], "is not allowed for panel scope");
     for (const [index, entry] of array(item.blocks, [...path, "blocks"], PANEL_LIMITS.blocks, 1).entries()) id(entry, BLOCK_ID, [...path, "blocks", index]);
@@ -358,10 +404,14 @@ function action(value: unknown, path: Path): PanelAction {
     if (item.send !== undefined && typeof item.send !== "boolean") invalid([...path, "send"], "must be a boolean");
     if (item.arguments !== undefined) invalid([...path, "arguments"], "is only for tool actions");
     checkTemplates(item.text, [...path, "text"]);
-  } else {
+  } else if (kind === "tool") {
     object(item.arguments, [...path, "arguments"]);
     if (item.text !== undefined || item.send !== undefined) invalid(path, "text and send are only for prompt actions");
     checkTemplates(item.arguments, [...path, "arguments"]);
+  } else {
+    if (scope !== "block") invalid([...path, "scope"], "response actions require block scope");
+    oneOf(item.response, ["submit", "cancel"], [...path, "response"]);
+    if (item.arguments !== undefined || item.text !== undefined || item.send !== undefined || item.primary !== undefined || item.when !== undefined) invalid(path, "response actions do not accept execution arguments or item predicates");
   }
   if (item.primary !== undefined) {
     if (item.primary !== true) invalid([...path, "primary"], "must be true");
@@ -390,7 +440,7 @@ export function panelWarning(message: string): void {
 export function validateDeclaration(value: unknown, where: string, warn: (message: string) => void = panelWarning): PanelDeclaration {
   const at: Path = [where];
   const item = object(value, at);
-  keys(item, ["id", "title", "icon", "open", "context", "acp_plan", "actions"], at);
+  keys(item, ["id", "title", "icon", "placement", "open", "context", "acp_plan", "actions"], at);
   id(item.id, PANEL_ID, [...at, "id"]);
   text(item.title, [...at, "title"], 40, 1);
   let icon: PanelDeclaration["icon"] = "panel";
@@ -401,6 +451,7 @@ export function validateDeclaration(value: unknown, where: string, warn: (messag
   }
   const open = item.open === undefined ? "never" : oneOf(item.open, ["never", "first_update"], [...at, "open"]);
   const context = item.context === undefined ? "none" : oneOf(item.context, ["none", "summary"], [...at, "context"]);
+  const placement = item.placement === undefined ? "sidebar" : oneOf(item.placement, ["chat", "sidebar"], [...at, "placement"]);
   if (item.acp_plan !== undefined && typeof item.acp_plan !== "boolean") invalid([...at, "acp_plan"], "must be a boolean");
   const actions: PanelAction[] = [];
   const ids = new Set<string>();
@@ -411,5 +462,5 @@ export function validateDeclaration(value: unknown, where: string, warn: (messag
     actions.push(checked);
   }
   if (actions.filter((entry) => entry.primary).length > 1) invalid([...at, "actions"], "at most one primary action");
-  return { id: item.id as string, title: item.title as string, icon, open, context, acp_plan: item.acp_plan === true, actions };
+  return { id: item.id as string, title: item.title as string, icon, placement, open, context, acp_plan: item.acp_plan === true, actions };
 }

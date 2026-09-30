@@ -18,6 +18,34 @@ const configHome = mkdtempSync(join(tmpdir(), "raw-acp-test-config-"));
 process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-acp-test-state-"));
 const loadConfig = (options: Parameters<typeof loadConfigActual>[0]) => loadConfigActual({ ...options, home: configHome });
 
+test("ACP rejects an effects-free dynamic tool before registering or exposing it to an effects hook", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-acp-hook-source-"));
+  const configPath = join(root, "raw.json");
+  const folder = join(root, "hooks", "guard");
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, "hook.json"), JSON.stringify({ protocol_version: 2, name: "guard", command: "node",
+    args: ["./run.mjs"], events: [{ name: "PreToolUse", match: "acp:guarded", when: { source: "effects", any: "files[*].path", regex: ".*" } }] }));
+  await writeFile(join(folder, "run.mjs"), "process.stdin.resume();");
+  await writeFile(configPath, JSON.stringify({ default_agent: "a", models: { m: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
+    agents: { a: { model: "m", tools: { use: [] }, hooks: { use: ["agent/guard"] } } } }));
+  const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
+  const server = createAcpServer({ runtime, providerFactory: () => ({ modelConfig: runtime.modelConfig!,
+    generate: async () => ({ text: "done", toolCalls: [], finishReason: "stop" }) }) });
+  const connection = client({ name: "hook-source" }).connect(server.app);
+  try {
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
+      _meta: { raw: { toolRegister: true, toolCall: true, runtimeInfo: true } } });
+    const { sessionId } = await connection.agent.request("session/new", { cwd: root, mcpServers: [] });
+    for (let attempt = 0; attempt < 2; attempt++) await assert.rejects(connection.agent.request("_raw/tool/register", {
+      sessionId, name: "guarded", description: "guarded", inputSchema: { type: "object" },
+    }), /source effects is unavailable/);
+    const info = await connection.agent.request<{ tools: unknown[] }>("_raw/runtime/info", { sessionId });
+    assert.deepEqual(info.tools, []);
+    const valid = await connection.agent.request<{ alias: string }>("_raw/tool/register", { sessionId, name: "safe", description: "safe", inputSchema: { type: "object" } });
+    assert.ok(valid.alias);
+  } finally { connection.close(); await server.close(); }
+});
+
 test("runtime info exposes selected model/method/vision/MCP/policy without credentials", async () => {
   const root = await mkdtemp(join(tmpdir(), "raw-acp-runtime-"));
   const path = join(root, "config.json");
@@ -530,8 +558,8 @@ test("panels: reverse tool panel content needs the peer's panels capability and 
     const connection = peer.connect(server.app);
     try {
       const init = await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {},
-        _meta: { raw: { toolRegister: true, toolCall: true, ...(negotiate ? { panels: true } : {}) } } });
-      assert.equal((init._meta?.raw as { panels: boolean }).panels, true, "the agent advertises panels");
+        _meta: { raw: { toolRegister: true, toolCall: true, ...(negotiate ? { panelsV2: true } : {}) } } });
+      assert.equal((init._meta?.raw as { panelsV2: boolean }).panelsV2, true, "the agent advertises panels");
       const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
       const registration = await connection.agent.request<{ alias: string }>("_raw/tool/register", { sessionId, name: "todo_tool", description: "Todo",
         inputSchema: { type: "object" }, ...(declared ? { panels: [{ id: "todo", title: "Todo", icon: "list-checks" }] } : {}) });
@@ -553,7 +581,7 @@ test("panels: reverse tool panel content needs the peer's panels capability and 
   const peer = client({ name: "bad-panels" });
   const connection = peer.connect(server.app);
   try {
-    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, _meta: { raw: { toolRegister: true, toolCall: true, panels: true } } });
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, _meta: { raw: { toolRegister: true, toolCall: true, panelsV2: true } } });
     const { sessionId } = await connection.agent.request("session/new", { cwd: process.cwd(), mcpServers: [] });
     await assert.rejects(connection.agent.request("_raw/tool/register", { sessionId, name: "bad", description: "d", inputSchema: { type: "object" }, panels: [{ id: "BAD", title: "x" }] }),
       (error: { code: number }) => error.code === -32602);

@@ -17,7 +17,7 @@ function packageSource(root: string, version: string, value: string): string {
   mkdirSync(join(source, "agents"), { recursive: true }); mkdirSync(join(source, "tools", "echo"), { recursive: true });
   writeFileSync(join(source, "agents", "writer.json"), JSON.stringify({ system_prompt: "stable prompt",
     tools: { use: ["#tools/echo"] } }));
-  writeFileSync(join(source, "tools", "echo", "tool.json"), JSON.stringify({ api_version: 1, id: "echo",
+  writeFileSync(join(source, "tools", "echo", "tool.json"), JSON.stringify({ api_version: 2, id: "echo",
     version, name: "echo", description: "Echo", input_schema: { type: "object", properties: {},
       additionalProperties: false }, entry: "./index.mjs" }));
   writeFileSync(join(source, "tools", "echo", "index.mjs"),

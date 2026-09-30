@@ -119,17 +119,21 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
   }
   const result: ToolPlugin[] = [];
   for (const item of prepared) {
-    let entry: { handler?: unknown; validateArgs?: unknown };
+    let entry: { handler?: unknown; validateArgs?: unknown; describeEffects?: unknown };
     try { entry = await import(`${pathToFileURL(item.entryPath).href}?raw_source=${item.sourceDigest}`) as typeof entry; }
     catch { throw new Error(`selected tool entry failed to load: ${item.id}`); }
     if (typeof entry.handler !== "function" || (entry.validateArgs !== undefined && typeof entry.validateArgs !== "function")) {
       throw new Error(`invalid selected tool handler or validator: ${item.id}`);
     }
+    if (item.manifest.effects_schema && typeof entry.describeEffects !== "function") throw new Error(`missing effects descriptor: ${item.id}`);
     const semantic = entry.validateArgs as ((args: unknown) => unknown) | undefined;
     const registration: ToolRegistration = {
       name: options.packageTools?.[item.id]?.as ?? item.manifest.name,
       canonicalName: options.packageTools?.[item.id]?.canonicalIdentity ?? item.id,
       description: item.manifest.description, inputSchema: item.manifest.input_schema,
+      conditionSources: item.manifest.condition_sources ?? ["arguments"],
+      ...(item.manifest.effects_schema ? { effectsSchema: item.manifest.effects_schema,
+        describeEffects: entry.describeEffects as NonNullable<ToolRegistration["describeEffects"]> } : {}),
       ...(item.manifest.panels?.length ? { panels: item.manifest.panels } : {}),
       validateArgs(args) {
         let error: unknown;
@@ -145,6 +149,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
           ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),
           ...(context.panels ? { panels: context.panels } : {}), // onPanelUpdates stays host-only
+          ...(context.effects ? { effects: context.effects } : {}),
           ...((item.id === "builtin/list_skills" || item.id === "builtin/load_skill") && options.skills
             ? { skills: options.skills } : {}),
         };

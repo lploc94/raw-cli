@@ -47,7 +47,7 @@ This complete example exports a small agent, a reusable var and a notification h
     "properties": {"project_label": {"type": "string", "description": "Recipient project label"}},
     "required": ["project_label"]
   },
-  "requires": ["raw.agent/1", "raw.hook/1"],
+  "requires": ["raw.agent/1", "raw.hook/2"],
   "metadata": {"external_executables": ["node"]}
 }
 ```
@@ -82,7 +82,7 @@ The recipient input file for this example is `{"project_label":"My project"}`. T
 
 <!-- example:hook-manifest -->
 ```json
-{"name":"notice","events":[{"name":"UserPromptSubmit"}],"command":"node","args":["./index.mjs"],"timeout_ms":3000}
+{"protocol_version": 2, "name":"notice","events":[{"name":"UserPromptSubmit"}],"command":"node","args":["./index.mjs"],"timeout_ms":3000}
 ```
 
 <!-- example:hook-script -->

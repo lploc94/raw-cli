@@ -72,7 +72,7 @@ test("packed forks and copied agent execute outside the checkout with isolated s
     const bashFolder = await forkTool(packageRoot, localRoot, "bash", "fork_bash", "EDITED_BASH_DESCRIPTION");
     const unselected = join(localRoot, "unused");
     await mkdir(unselected);
-    await writeFile(join(unselected, "tool.json"), JSON.stringify({ api_version: 1, id: "unused", version: "1.0.0",
+    await writeFile(join(unselected, "tool.json"), JSON.stringify({ api_version: 2, id: "unused", version: "1.0.0",
       name: "unused", description: "unused", input_schema: { type: "object" }, entry: "./index.mjs" }));
     await writeFile(join(unselected, "index.mjs"), `import { writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(join(root, "unselected-imported"))}, "bad");
@@ -81,8 +81,7 @@ export async function handler() { return { content: [] }; }`);
     await writeFile(configPath, JSON.stringify({ default_agent: "forks", models: { fixture: {
       provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: provider.url,
     } }, agents: { forks: { model: "fixture", tools: { use: ["local/fork_write", "local/fork_bash"],
-      rules: [{ match: "local/fork_bash", effect: "ask", when: {
-        any: "commands[*].command", regex: "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)",
+      rules: [{ match: "local/fork_bash", effect: "ask", when: { source: "arguments", any: "commands[*].command", regex: "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)",
       } }],
     } } } }));
     const env = { ...process.env, OPENAI_API_KEY: "fixture", XDG_CONFIG_HOME: xdg, XDG_STATE_HOME: join(root, "state") };

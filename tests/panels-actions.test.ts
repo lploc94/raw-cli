@@ -188,7 +188,7 @@ test("hooks see source user_action for the action and model for the model's call
   try {
     const folder = join(dirname(f.configPath), "hooks", "spy"); mkdirSync(folder, { recursive: true });
     const log = join(f.root, "hook-log.jsonl");
-    writeFileSync(join(folder, "hook.json"), JSON.stringify({ name: "spy", command: "node", args: ["./spy.mjs"], events: [{ name: "PreToolUse" }, { name: "PostToolUse" }] }));
+    writeFileSync(join(folder, "hook.json"), JSON.stringify({ protocol_version: 2, name: "spy", command: "node", args: ["./spy.mjs"], events: [{ name: "PreToolUse" }, { name: "PostToolUse" }] }));
     writeFileSync(join(folder, "spy.mjs"), `import { appendFileSync } from "node:fs"; let d=""; process.stdin.on("data",(c)=>d+=c); process.stdin.on("end",()=>{ appendFileSync(${JSON.stringify(log)}, d.replace(/\\n/g,"")+"\\n"); process.stdout.write("{}"); });\n`);
     setConfig(f, (config) => { config.agents.raw.hooks = { use: ["agent/spy"] }; });
     const { operationId } = await (await act(f, session.id, { action: "complete", item: "a" })).json() as { operationId: string };
@@ -219,7 +219,7 @@ test("clientRequestId is idempotent: a replay returns the same operation and run
 function localTool(f: Fixture, id: string, updates: string) {
   const dir = join(dirname(f.configPath), "tools", id); mkdirSync(dir, { recursive: true });
   const panel = (name: string, title: string, actions: object[]) => ({ id: name, title, icon: "panel", open: "never", actions });
-  writeFileSync(join(dir, "tool.json"), JSON.stringify({ api_version: 1, id, version: "1.0.0", name: id, description: `Tool ${id}.`,
+  writeFileSync(join(dir, "tool.json"), JSON.stringify({ api_version: 2, id, version: "1.0.0", name: id, description: `Tool ${id}.`,
     input_schema: { type: "object", additionalProperties: false }, entry: "./index.mjs",
     panels: [panel("main", "Main", [{ id: "run", label: "Run", scope: "panel", kind: "tool", arguments: {} }]), panel("other", "Other", [])] }));
   writeFileSync(join(dir, "index.mjs"), `export async function handler(args, context) { ${updates} return { content: [{ type: "text", text: "ok" }] }; }`);

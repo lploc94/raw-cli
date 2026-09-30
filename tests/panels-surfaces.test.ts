@@ -148,7 +148,7 @@ async function acpScenario(options: { negotiate?: boolean; ask?: boolean; builti
     peer.onRequest("_raw/tool/call", (params: unknown) => params, () => { calls++; if (hang) return new Promise(() => {}); return { isError: false, content: [{ type: "panel", panel: "todo", op: "replace", document: documents[Math.min(version++, documents.length - 1)] }] }; });
     peer.onRequest("session/request_permission", () => ({ outcome: { outcome: "selected", optionId: permission } }));
     const connection = peer.connect(server.app);
-    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, _meta: { raw: { toolRegister: true, toolCall: true, ...(negotiate ? { panels: true } : {}) } } });
+    await connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {}, _meta: { raw: { toolRegister: true, toolCall: true, ...(negotiate ? { panelsV2: true } : {}) } } });
     return { server, connection, notes, close: async () => { connection.close(); await server.close(); } };
   };
   const register = async (peer: Awaited<ReturnType<typeof start>>, sessionId: string, actions: object[] = []) => {

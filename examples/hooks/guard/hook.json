@@ -6,12 +6,19 @@
       "match": "builtin/bash",
       "when": {
         "any": "commands[*].command",
-        "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)"
+        "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)",
+        "source": "arguments"
       }
     },
-    { "name": "PostToolUseFailure", "match": "builtin/bash" }
+    {
+      "name": "PostToolUseFailure",
+      "match": "builtin/bash"
+    }
   ],
   "command": "node",
-  "args": ["./index.mjs"],
-  "timeout_ms": 5000
+  "args": [
+    "./index.mjs"
+  ],
+  "timeout_ms": 5000,
+  "protocol_version": 2
 }

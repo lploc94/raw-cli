@@ -2,7 +2,7 @@ import { HookError, type HookEventName, type HookRequest, type SelectedHook } fr
 import { matchesHookSubscription } from "./manifest.js";
 import { runHook } from "./runner.js";
 import { bindWhenToSchema, compileWhen } from "../tools/policy.js";
-import type { ToolRegistry } from "../tools/registry.js";
+import type { ToolDefinition, ToolRegistry } from "../tools/registry.js";
 
 export interface HookReceipt {
   id: string;
@@ -18,14 +18,16 @@ export class HookDispatcher {
   constructor(readonly selected: readonly SelectedHook[], private readonly env?: NodeJS.ProcessEnv) {}
 
   validateTools(registry: ToolRegistry, visibleNames: readonly string[]): void {
+    for (const tool of registry.definitions(visibleNames)) this.validateTool(registry.canonicalIdentity(tool.name) ?? tool.name,
+      registry.inspectionDefinition(tool.name)!);
+  }
+
+  validateTool(identity: string, definition: ToolDefinition): void {
     for (const hook of this.selected) for (const subscription of hook.events) {
       if (!subscription.when) continue;
-      for (const tool of registry.definitions(visibleNames)) {
-        const identity = registry.canonicalIdentity(tool.name) ?? tool.name;
-        if (matchesHookSubscription({ name: subscription.name,
+      if (matchesHookSubscription({ name: subscription.name,
           ...(subscription.match ? { match: subscription.match } : {}) }, subscription.name, identity)) {
-          bindWhenToSchema(compileWhen(subscription.when), tool);
-        }
+        bindWhenToSchema(compileWhen(subscription.when), definition);
       }
     }
   }
@@ -34,14 +36,17 @@ export class HookDispatcher {
     options: { signal?: AbortSignal; deadline?: number; onReceipt?: (receipt: HookReceipt) => void } = {}): Promise<HookDispatchResult> {
     const gate = event === "UserPromptSubmit" || event === "PreToolUse";
     for (const hook of this.selected) {
-      if (!hook.events.some((item) => matchesHookSubscription(item, event, request.tool?.identity, request.tool?.arguments))) continue;
+      if (gate && hook.events.some(item => item.when?.source === "effects"
+        && matchesHookSubscription({ name: item.name, ...(item.match ? { match: item.match } : {}) }, event, request.tool?.identity))
+        && request.tool?.effects === undefined) return { blocked: "error", reason: `hook ${hook.id}: effects inspection unavailable` };
+      if (!hook.events.some((item) => matchesHookSubscription(item, event, request.tool?.identity, request.tool?.arguments, request.tool?.effects))) continue;
       if (options.signal?.aborted) return gate ? { blocked: "error", reason: "hook aborted" } : {};
       if (options.deadline !== undefined && Date.now() >= options.deadline) break;
       const started = performance.now();
       let receipt: HookReceipt;
       let denial: string | undefined;
       try {
-        const response = await runHook(hook, { protocol_version: 1, event, ...request }, {
+        const response = await runHook(hook, { protocol_version: 2, event, ...request }, {
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.deadline !== undefined ? { timeoutMs: Math.max(1, options.deadline - Date.now()) } : {}),
           ...(this.env ? { env: this.env } : {}),

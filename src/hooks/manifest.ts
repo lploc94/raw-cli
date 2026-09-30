@@ -1,5 +1,5 @@
 import { RE2JS } from "re2js";
-import { compileWhen, matchesWhen } from "../tools/policy.js";
+import { compileWhen, matchesWhen, type ConditionSource } from "../tools/policy.js";
 import { hookEvents, toolHookEvents, type HookEventName, type HookManifest, type HookSubscription } from "./contract.js";
 
 function object(value: unknown, where: string): Record<string, unknown> {
@@ -21,7 +21,8 @@ function glob(pattern: string): RE2JS {
 
 export function parseHookManifest(raw: unknown, id: string, expectedName: string): HookManifest {
   const value = object(raw, `hook ${id}`);
-  fields(value, ["name", "events", "command", "args", "timeout_ms"], `hook ${id}`);
+  fields(value, ["protocol_version", "name", "events", "command", "args", "timeout_ms"], `hook ${id}`);
+  if (value.protocol_version !== 2) throw new Error(`hook ${id} requires protocol_version 2`);
   const name = boundedString(value.name, `${id}.name`, 64);
   if (name !== expectedName || !/^[a-z][a-z0-9_-]*$/.test(name)) throw new Error(`invalid hook name: ${id}`);
   if (!Array.isArray(value.events) || !value.events.length || value.events.length > 32) throw new Error(`${id}.events must be a nonempty bounded array`);
@@ -37,8 +38,9 @@ export function parseHookManifest(raw: unknown, id: string, expectedName: string
     let when: HookSubscription["when"];
     if (item.when !== undefined) {
       const predicate = object(item.when, `${where}.when`);
-      fields(predicate, ["any", "regex"], `${where}.when`);
-      when = { any: boundedString(predicate.any, `${where}.when.any`),
+      fields(predicate, ["source", "any", "regex"], `${where}.when`);
+      when = { source: predicate.source as ConditionSource,
+        any: boundedString(predicate.any, `${where}.when.any`),
         regex: boundedString(predicate.regex, `${where}.when.regex`, 1024) };
       compileWhen(when);
     }
@@ -55,13 +57,13 @@ export function parseHookManifest(raw: unknown, id: string, expectedName: string
   if (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 30000) {
     throw new Error(`invalid hook timeout_ms: ${id}`);
   }
-  return { name, events, command, args: args as string[], timeoutMs: timeoutMs as number };
+  return { protocol_version: 2, name, events, command, args: args as string[], timeoutMs: timeoutMs as number };
 }
 
 export function matchesHookSubscription(subscription: HookSubscription, event: HookEventName,
-  identity?: string, args?: Record<string, unknown>): boolean {
+  identity?: string, args?: Record<string, unknown>, effects?: Record<string, unknown>): boolean {
   if (subscription.name !== event) return false;
   if (subscription.match && (identity === undefined || !glob(subscription.match).matches(identity))) return false;
-  if (subscription.when && (args === undefined || !matchesWhen(compileWhen(subscription.when), args))) return false;
+  if (subscription.when && (args === undefined || !matchesWhen(compileWhen(subscription.when), args, effects))) return false;
   return true;
 }

@@ -92,7 +92,7 @@ for (const legacyVersion of [2, 4, 999, "unversioned"] as const) {
     const options = { env };
     const first = openSessionStore(options);
     const second = openSessionStore(options);
-    const expected = join(root, "raw", "stores", "storage-v5", "sessions.sqlite");
+    const expected = join(root, "raw", "stores", "storage-v6", "sessions.sqlite");
     try {
       assert.equal(first.path, expected);
       assert.equal(second.path, expected);
@@ -111,7 +111,7 @@ for (const legacyVersion of [2, 4, 999, "unversioned"] as const) {
       assert.deepEqual(readFileSync(legacy), originalDb);
       assert.equal(readFileSync(payload, "utf8"), "legacy payload");
       assert.equal(statSync(expected).mode & 0o777, 0o600);
-      assert.equal(statSync(join(root, "raw", "stores", "storage-v5")).mode & 0o777, 0o700);
+      assert.equal(statSync(join(root, "raw", "stores", "storage-v6")).mode & 0o777, 0o700);
     } finally { first.close(); second.close(); }
     const third = openSessionStore(options);
     try { assert.equal(third.listSessions({ cwd: root }).items[0]?.title, "fresh"); }
@@ -178,7 +178,7 @@ test("a second opener winning the first-schema race does not break the first", (
   };
   try {
     initializeSessionSchema(first);
-    assert.equal(first.prepare("PRAGMA user_version").get()?.user_version, 5);
+    assert.equal(first.prepare("PRAGMA user_version").get()?.user_version, 6);
   } finally { first.close(); second.close(); }
 });
 

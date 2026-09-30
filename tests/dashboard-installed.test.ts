@@ -58,13 +58,13 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await mkdir(join(source, "agents"));
     await mkdir(join(source, "hooks"), { recursive: true });
     await cp(join(installed, "examples/hooks/guard"), join(source, "hooks", "notice"), { recursive: true });
-    await writeFile(join(source, "hooks/notice/hook.json"), JSON.stringify({ name: "notice", events: [{ name: "UserPromptSubmit" }], command: "node", args: ["./index.mjs"] }));
+    await writeFile(join(source, "hooks/notice/hook.json"), JSON.stringify({ protocol_version: 2, name: "notice", events: [{ name: "UserPromptSubmit" }], command: "node", args: ["./index.mjs"] }));
     await writeFile(join(source, "hooks/notice/index.mjs"), `import {appendFileSync} from 'node:fs'; import {join} from 'node:path';
       process.stdin.resume(); process.stdin.on('end', () => {appendFileSync(join(process.cwd(),'hook-effects.txt'),'notice\\n'); process.stdout.write(JSON.stringify({message:'Installed hook ran'}));});`);
     await writeFile(join(source, "agents/writer.json"), JSON.stringify({ system_prompt: "Installed package writer", tools: { use: ["#tools/echo"] }, hooks: { use: ["#hooks/notice"] } }));
     const manifest = JSON.parse(await readFile(join(source, "raw-package.json"), "utf8"));
     manifest.files.push("agents/writer.json", "hooks/notice"); manifest.exports.agents = { writer: "agents/writer.json" };
-    manifest.exports.hooks = { notice: "hooks/notice" }; manifest.requires.push("raw.hook/1");
+    manifest.exports.hooks = { notice: "hooks/notice" }; manifest.requires.push("raw.hook/2");
     await writeFile(join(source, "raw-package.json"), JSON.stringify(manifest));
     await writeFile(join(source, "tools/echo/helper.mjs"), 'export const value="v1";\n');
     await writeFile(join(source, "tools/echo/index.mjs"), `import {value} from './helper.mjs'; import {appendFileSync,existsSync} from 'node:fs'; import {join} from 'node:path';

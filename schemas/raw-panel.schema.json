@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw-cli.dev/schemas/raw-panel.schema.json",
-  "title": "raw.panel/1 update",
+  "title": "raw.panel/2 update",
   "description": "Shapes accepted by Raw for tool panel updates. Raw itself also enforces ID uniqueness, patch results, size and control-character rules (docs/panels-design.md is normative); unknown block kinds are accepted with only their common fields.",
   "oneOf": [
     {
@@ -669,6 +669,30 @@
           "then": {
             "$ref": "#/$defs/blockFiles"
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "form"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockForm"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "mermaid"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/blockMermaid"
+          }
         }
       ]
     },
@@ -995,6 +1019,223 @@
           "minimum": 0
         }
       }
+    },
+    "blockForm": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "form"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/itemId"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "const": "text"
+                  },
+                  "multiline": {
+                    "type": "boolean"
+                  },
+                  "max_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8192
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/itemId"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "const": "single_select"
+                  },
+                  "options": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/itemId"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "kind",
+                  "options"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/itemId"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "const": "multi_select"
+                  },
+                  "options": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/itemId"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "min_selected": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 32
+                  },
+                  "max_selected": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "kind",
+                  "options"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    "blockMermaid": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/blockId"
+        },
+        "kind": {
+          "const": "mermaid"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "fallback": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "source"
+      ],
+      "additionalProperties": false
     }
   }
 }

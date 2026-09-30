@@ -1,6 +1,6 @@
-/** raw.panel/1 data model. The normative reference is docs/panels-design.md. */
+/** raw.panel/2 data model. The normative reference is docs/panels-design.md. */
 
-export const PANEL_PROTOCOL = "raw.panel/1";
+export const PANEL_PROTOCOL = "raw.panel/2";
 
 export const PANEL_LIMITS = {
   panelsPerTool: 4,
@@ -48,6 +48,12 @@ export interface TableRow { id: string; status?: PanelItemStatus; cells: Record<
 export interface TimelineEvent { id: string; at: number; level: "info" | "success" | "warning" | "error"; label: string; detail?: string }
 export interface FileEntry { path: string; status?: "added" | "modified" | "deleted" | "referenced"; line?: number; label?: string }
 export interface KeyValueEntry { key: string; value: string; ref?: PanelRef }
+export interface FormOption { id: string; label: string }
+export type FormField = { id: string; label: string; description?: string; required?: boolean } & (
+  | { kind: "text"; multiline?: boolean; max_bytes?: number }
+  | { kind: "single_select"; options: FormOption[] }
+  | { kind: "multi_select"; options: FormOption[]; min_selected?: number; max_selected?: number }
+);
 
 interface BlockBase { id: string; title?: string; fallback?: string }
 export type PanelBlock =
@@ -59,6 +65,8 @@ export type PanelBlock =
   | (BlockBase & { kind: "markdown"; text: string })
   | (BlockBase & { kind: "timeline"; max?: number; events: TimelineEvent[] })
   | (BlockBase & { kind: "files"; entries: FileEntry[] })
+  | (BlockBase & { kind: "form"; fields: FormField[] })
+  | (BlockBase & { kind: "mermaid"; source: string })
   /** A kind this host does not know. Only the common fields are interpreted. */
   | (BlockBase & { kind: string; [field: string]: unknown });
 
@@ -83,18 +91,41 @@ export type PanelUpdate =
 
 export type PanelActionScope = "panel" | "block" | "item";
 export interface PanelAction {
-  id: string; label: string; scope: PanelActionScope; blocks?: string[]; kind: "prompt" | "tool";
+  id: string; label: string; scope: PanelActionScope; blocks?: string[]; kind: "prompt" | "tool" | "response";
+  response?: "submit" | "cancel";
   text?: string; send?: boolean; arguments?: Record<string, unknown>; primary?: boolean; confirm?: string;
   when?: { status: PanelItemStatus[] };
 }
 export interface PanelDeclaration {
+  placement?: "chat" | "sidebar";
   id: string; title: string; icon: PanelIcon; open: "never" | "first_update";
   context: "none" | "summary"; acp_plan: boolean; actions: PanelAction[];
 }
 
+/** Host-owned call identity. Library calls may have no durable session or operation. */
+export interface ToolCallUIIdentity {
+  sessionId?: string; operationId?: string; runId: string; toolCallId: string;
+  owner: string; panelId: string;
+}
+/** Opaque identity of a historical chat view; never a lookup of the latest sidebar panel. */
+export interface ToolViewIdentity extends ToolCallUIIdentity { instanceId: string }
+/** A request is bound to its originating call and, when inline, its view instance. */
+export interface InteractionRequestIdentity extends ToolCallUIIdentity { requestId: string; viewInstanceId?: string }
+export type InteractionState = "pending" | "answered" | "cancelled" | "expired" | "interrupted";
+export type FormAnswers = Record<string, string | string[]>;
+/** Transport input; the host resolves session/call/owner bindings from the stored request. */
+export type InteractionResponseSubmission = {
+  requestId: string; expectedRevision: number; idempotencyKey: string;
+} & ({ response: "submit"; answers: FormAnswers } | { response: "cancel" });
+export interface InteractionResponseAcknowledgement {
+  requestId: string; revision: number; state: Exclude<InteractionState, "pending">;
+  /** Exact accepted JSON tool result, if answered. */
+  canonicalResult?: string;
+}
+
 /** What a tool sees as `context.panels`. */
 export interface PanelContext {
-  readonly protocol: 1;
+  readonly protocol: 2;
   update(panel: string, update: PanelUpdateBody): Promise<{ revision: number }>;
   get(panel: string): { revision: number; document: PanelDocument } | undefined;
 }

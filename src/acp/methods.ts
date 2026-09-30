@@ -16,6 +16,7 @@ import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter, ResolvedModelConfig, UserBlock } from "../llm/types.js";
 import type { McpConnection, McpServerConfig } from "../tools/mcp-client.js";
 import type { ToolRegistry } from "../tools/registry.js";
+import type { HookDispatcher } from "../hooks/dispatcher.js";
 import { createRuntimeTools } from "../tools/plugins/runtime.js";
 import { capResult, errorResult } from "../tools/results.js";
 import { PANEL_LIMITS, type PanelDeclaration } from "../panels/contract.js";
@@ -36,6 +37,7 @@ interface SessionRecord {
   agent: AgentSession;
   registry: ToolRegistry;
   mcp: McpConnection;
+  hooks?: HookDispatcher;
   registered: Map<string, string>;
   loading: boolean;
 }
@@ -80,7 +82,7 @@ function promptBlocks(blocks: readonly ContentBlock[]): UserBlock[] {
   });
 }
 
-/** `allowPanels` is true only when the peer advertised `_meta.raw.panels`; otherwise a panel block is rejected like any unknown block. */
+/** `allowPanels` is true only when the peer advertised `_meta.raw.panelsV2`; otherwise a panel block is rejected like any unknown block. */
 function reverseResult(raw: unknown, maxOutputBytes: number, allowPanels: boolean): ToolHandlerResult {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return errorResult("unsupported_content", "invalid reverse tool result");
   const result = raw as Record<string, unknown>;
@@ -200,12 +202,12 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     if (event.type === "panel_update" && !event.live) {
       const panel = `${event.owner}#${event.panel}`;
       const declaration = session.agent.panel(panel)?.declaration;
-      if (declaration) messages.push(...panelNotifications(session.id, { panel, owner: event.owner, revision: event.revision, closed: event.closed, declaration, document: event.document }, peerRaw.panels === true));
+      if (declaration) messages.push(...panelNotifications(session.id, { panel, owner: event.owner, revision: event.revision, closed: event.closed, declaration, document: event.document }, peerRaw.panelsV2 === true));
     }
     return messages;
   };
   const sendCurrentPanels = async (sessionId: string, client: { notify: (method: any, params: any) => Promise<unknown> }) => {
-    for (const message of currentPanelNotifications(sessionId, store.listSessionPanels(sessionId), peerRaw.panels === true)) await client.notify(message.method, message.params);
+    for (const message of currentPanelNotifications(sessionId, store.listSessionPanels(sessionId), peerRaw.panelsV2 === true)) await client.notify(message.method, message.params);
   };
   const requireCapability = (flag: RawCapability) => {
     if (!peerRaw[flag]) throw rawError(rawErrors.capability, `raw ${flag} capability was not negotiated`);
@@ -279,10 +281,11 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
           maxSteps: options.runtime.maxSteps, maxOutputBytes: options.runtime.maxOutputBytes,
           requestTimeoutMs: options.runtime.requestTimeoutMs, autoApprove: options.runtime.autoApprove, compact: options.runtime.compact,
           persistence: { store, sessionId, surface: "acp", ...(claimed ? { owner: claimed } : {}) },
-          approve: async (name, args, signal, toolCallId) => {
+          approve: async ({ name, arguments: args, signal, toolCallId, effects }) => {
             if (!peer) throw rawError(rawErrors.upstream, "ACP client disconnected");
             const response = await withAbort(peer.request("session/request_permission", {
-              sessionId, toolCall: { toolCallId: toolCallId ?? randomUUID(), title: name, name, status: "pending", rawInput: args },
+              sessionId, toolCall: { toolCallId: toolCallId ?? randomUUID(), title: name, name, status: "pending", rawInput: args,
+                ...(effects ? { _meta: { raw: { effects } } } : {}) },
               options: [{ optionId: "allow", name: "Allow once", kind: "allow_once" },
                 { optionId: "deny", name: "Deny", kind: "reject_once" }],
             }, { ...(signal ? { cancellationSignal: signal } : {}) }), signal);
@@ -296,7 +299,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         }, startupController.signal);
         await Promise.all(hookNotifications);
         if (startupController.signal.aborted) { await agentSession.close(); throw rawError(rawErrors.cancelled, "connection closed"); }
-        sessions.set(sessionId, { id: sessionId, agent: agentSession, registry, mcp, registered: new Map(), loading });
+        sessions.set(sessionId, { id: sessionId, agent: agentSession, registry, mcp, registered: new Map(), loading,
+          ...(tools.hooks ? { hooks: tools.hooks } : {}) });
         return { sessionId };
       } catch (error) {
         await mcp?.close();
@@ -323,7 +327,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         sessionCapabilities: { list: {}, resume: {}, delete: {} } },
       authMethods: [],
       _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true,
-        toolCall: true, sessionCompact: true, toolCancel: true, panels: true } } };
+        toolCall: true, sessionCompact: true, toolCancel: true, panelsV2: true } } };
   });
   app.onRequest("session/new", ({ params }) => startSession(params.cwd, params.mcpServers));
   app.onRequest("session/list", ({ params }) => {
@@ -415,7 +419,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     const session = getSession(string(params.sessionId, "sessionId"));
     if (session.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");
     const tools = stringArray(params.tools, "tools");
-    try { session.mcp.activate(tools); return { contextRevision: session.agent.setToolView(tools), tools: session.agent.toolDefinitions.map((item) => item.name) }; }
+    try { session.hooks?.validateTools(session.registry, tools); session.mcp.activate(tools); return { contextRevision: session.agent.setToolView(tools), tools: session.agent.toolDefinitions.map((item) => item.name) }; }
     catch { throw rawError(rawErrors.tool, "unknown tool selection"); }
   });
   app.onRequest("_raw/tool/register", (params: unknown) => object(params, "tool registration"), ({ params }) => {
@@ -438,6 +442,10 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     const alias = reverseAlias(name, toolId);
     if (session.registry.definitions().some((item) => item.name === alias)) throw rawError(rawErrors.duplicate, "duplicate tool alias");
     const visible = session.agent.toolDefinitions.map((item) => item.name);
+    if (session.registry.policyEffect(`acp:${name}`) !== "deny") {
+      try { session.hooks?.validateTool(`acp:${name}`, { name: alias, description, inputSchema: schema }); }
+      catch (error) { throw rawError(rawErrors.tool, (error as Error).message); }
+    }
     session.registry.register({ name: alias, canonicalName: `acp:${name}`, description, inputSchema: schema, validateArgs: validate,
       ...(declared.length ? { panels: declared } : { implicitPanels: true }),
       handler: async (args, context) => {
@@ -457,20 +465,20 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
           const result = await withAbort(Promise.race([peer.request("_raw/tool/call", { sessionId: session.id, toolId, invocationId,
             arguments: args }, { cancellationSignal: requestController.signal }), expired]), context.signal);
           if (context.signal?.aborted) return errorResult("cancelled", "reverse tool call cancelled");
-          return reverseResult(result, context.maxOutputBytes, peerRaw.panels === true);
+          return reverseResult(result, context.maxOutputBytes, peerRaw.panelsV2 === true);
         } catch (error) {
           if (context.signal?.aborted) return errorResult("cancelled", "reverse tool call cancelled");
           if (requestController.signal.aborted || (error instanceof RequestError && error.code === rawErrors.timeout)) return errorResult("callback_timeout", "reverse tool call timed out");
           return errorResult("callback_error", "reverse tool call failed");
         } finally { if (timer) clearTimeout(timer); context.signal?.removeEventListener("abort", onAbort); }
       } });
-    session.registered.set(name, toolId);
     const permitted = session.registry.definitions().some((tool) => tool.name === alias);
     const contextRevision = permitted ? session.agent.setToolView([...visible, alias]) : session.agent.contextRevision;
+    session.registered.set(name, toolId);
     return { toolId, alias, contextRevision };
   });
   app.onRequest("_raw/panel/action", (params: unknown) => object(params, "panel action"), async ({ params, client }) => {
-    requireCapability("panels");
+    requireCapability("panelsV2");
     fields(params, ["sessionId", "panel", "action", "block", "item"], "panel action");
     const session = getSession(string(params.sessionId, "sessionId"));
     if (session.agent.state !== "idle") throw rawError(rawErrors.busy, "session is busy");

@@ -12,7 +12,7 @@ const complete = {
     tools: { search: "tools/search" }, vars: { location: "vars/location.json" },
     var_providers: { time: "var_providers/time.json" }, mcp: { search: "mcp/search.json" } },
   inputs: { type: "object", properties: { region: { type: "string", default: "Hanoi" } }, required: [] },
-  requires: ["raw.tool-api/1"], dependencies: {},
+  requires: ["raw.tool-api/2"], dependencies: {},
 };
 
 test("base export categories validate and release labels do not change component references", () => {
@@ -84,8 +84,8 @@ test("hook exports validate declared assets passively and reject escaping paths"
   const root = mkdtempSync(join(tmpdir(), "raw-package-hook-manifest-"));
   mkdirSync(join(root, "hooks", "guard"), { recursive: true });
   const manifest = { schema_version: 1, name: "@example/guard", version: "1.0.0",
-    description: "Guard", files: ["hooks/guard"], exports: { hooks: { guard: "hooks/guard" } }, requires: ["raw.hook/1"] };
-  const hook = { name: "guard", events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"] };
+    description: "Guard", files: ["hooks/guard"], exports: { hooks: { guard: "hooks/guard" } }, requires: ["raw.hook/2"] };
+  const hook = { protocol_version: 2, name: "guard", events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"] };
   writeFileSync(join(root, "raw-package.json"), JSON.stringify(manifest));
   writeFileSync(join(root, "hooks", "guard", "hook.json"), JSON.stringify(hook));
   writeFileSync(join(root, "hooks", "guard", "index.mjs"), "throw new Error('must not execute during inspection');");

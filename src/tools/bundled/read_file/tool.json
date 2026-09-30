@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "read_file",
   "version": "1.0.0",
   "name": "read_file",
@@ -52,5 +52,8 @@
     ],
     "additionalProperties": false
   },
-  "entry": "./index.mjs"
+  "entry": "./index.mjs",
+  "condition_sources": [
+    "arguments"
+  ]
 }

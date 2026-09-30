@@ -11,7 +11,7 @@ test("linked source changes only the next immutable snapshot and fork is indepen
   writeFileSync(configPath, "{}");
   const linked = join(root, "linked");
   mkdirSync(join(linked, "tools", "helper"), { recursive: true });
-  writeFileSync(join(linked, "tools", "helper", "tool.json"), JSON.stringify({ api_version: 1, id: "helper", version: "1.0.0",
+  writeFileSync(join(linked, "tools", "helper", "tool.json"), JSON.stringify({ api_version: 2, id: "helper", version: "1.0.0",
     name: "helper", description: "Helper", input_schema: { type: "object" }, entry: "./index.mjs" }));
   writeFileSync(join(linked, "tools", "helper", "index.mjs"), 'import { value } from "./helper.mjs"; export async function handler() { return value; }');
   const helper = join(linked, "tools", "helper", "helper.mjs");

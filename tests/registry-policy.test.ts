@@ -39,7 +39,7 @@ test("explicit ask cannot be bypassed by autoApprove and headless request fails 
   assert.equal(denied.code, "approval_denied");
   const calls: string[] = [];
   const allowed = await registry.dispatch("bash", { commands: [{ command: "printf yes" }] }, { ...ctx,
-    approve: async (name) => { calls.push(name); return true; } });
+    approve: async ({ name }) => { calls.push(name); return true; } });
   assert.equal(allowed.isError, false);
   assert.deepEqual(calls, ["bash"]);
 });
@@ -62,7 +62,7 @@ test("matching Bash command in a later batch slot asks once before any command r
   const cwd = mkdtempSync(join(tmpdir(), "raw-conditional-bash-"));
   const marker = join(cwd, "marker");
   const registry = createTestToolRegistry([{ match: "builtin/bash", effect: "ask",
-    when: { any: "commands[*].command", regex: rmPattern } }]);
+    when: { source: "arguments", any: "commands[*].command", regex: rmPattern } }]);
   const safe = await registry.dispatch("bash", { commands: [{ command: "printf ok" }] }, { ...ctx, cwd });
   assert.equal(safe.isError, false);
   const input = { commands: [{ command: "touch marker" }, { command: "rm -f marker" }] };
@@ -85,21 +85,21 @@ test("conditional ask binds a nested typed string path and ordered allow can ove
     inputSchema: { type: "object" as const, properties: { payload: { type: "object", properties: { text: { type: "string" } } } } },
     async handler() { calls++; return { isError: false, content: [{ type: "text" as const, text: "ok" }] }; } };
   const registry = createTestToolRegistry([{ match: "agent/typed", effect: "ask",
-    when: { any: "payload.text", regex: "delete" } }]);
+    when: { source: "arguments", any: "payload.text", regex: "delete" } }]);
   registry.register(registration);
   assert.equal((await registry.dispatch("typed", { payload: { text: "keep" } }, ctx)).isError, false);
   assert.equal((await registry.dispatch("typed", {}, ctx)).isError, false);
   assert.equal((await registry.dispatch("typed", { payload: { text: "delete" } }, ctx)).code, "approval_required");
   assert.equal(calls, 2);
   const override = createTestToolRegistry([{ match: "agent/typed", effect: "ask",
-    when: { any: "payload.text", regex: "delete" } }, { match: "agent/typed", effect: "allow" }]);
+    when: { source: "arguments", any: "payload.text", regex: "delete" } }, { match: "agent/typed", effect: "allow" }]);
   override.register(registration);
   assert.equal((await override.dispatch("typed", { payload: { text: "delete" } }, ctx)).isError, false);
   const invalid = createTestToolRegistry([{ match: "agent/typed", effect: "ask",
-    when: { any: "payload.missing", regex: "x" } }]);
+    when: { source: "arguments", any: "payload.missing", regex: "x" } }]);
   assert.throws(() => invalid.register(registration), /when\.any|schema/i);
   const referenced = createTestToolRegistry([{ match: "agent/referenced", effect: "ask",
-    when: { any: "rows[*].command", regex: "rm" } }]);
+    when: { source: "arguments", any: "rows[*].command", regex: "rm" } }]);
   referenced.register({ name: "referenced", canonicalName: "agent/referenced", description: "referenced",
     inputSchema: { type: "object", properties: { rows: { $ref: "#/$defs/rows" } },
       $defs: { rows: { type: "array", items: { type: "object", properties: { command: { type: "string" } } } } } },
@@ -109,11 +109,11 @@ test("conditional ask binds a nested typed string path and ordered allow can ove
 
 test("RE2 conditional pattern bounds hostile input and unconditional deny stays hidden", async () => {
   const registry = createTestToolRegistry([{ match: "builtin/bash", effect: "ask",
-    when: { any: "commands[*].command", regex: "(a+)+$" } }]);
+    when: { source: "arguments", any: "commands[*].command", regex: "(a+)+$" } }]);
   const result = await registry.dispatch("bash", { commands: [{ command: "printf " + "a".repeat(20_000) + "!" }] }, ctx);
   assert.equal(result.isError, false);
   const hidden = createTestToolRegistry([{ match: "builtin/bash", effect: "deny" }, { match: "builtin/bash", effect: "ask",
-    when: { any: "commands[*].command", regex: "rm" } }]);
+    when: { source: "arguments", any: "commands[*].command", regex: "rm" } }]);
   assert.ok(!hidden.definitions().some((tool) => tool.name === "bash"));
   assert.equal((await hidden.dispatch("bash", { commands: [{ command: "rm x" }] }, ctx)).code, "tool_denied");
 });

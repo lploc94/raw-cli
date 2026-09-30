@@ -22,7 +22,7 @@ async function send(page: Page, text: string) {
 function plugin(raw: { env: NodeJS.ProcessEnv }, folder: string, panels: object[], publish = "") {
   const dir = join(raw.env.XDG_CONFIG_HOME!, "raw", "tools", folder);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "tool.json"), JSON.stringify({ api_version: 1, id: folder, version: "1.0.0", name: folder, description: `Tool ${folder}.`,
+  writeFileSync(join(dir, "tool.json"), JSON.stringify({ api_version: 2, id: folder, version: "1.0.0", name: folder, description: `Tool ${folder}.`,
     input_schema: { type: "object", additionalProperties: false }, entry: "./index.mjs", panels }));
   writeFileSync(join(dir, "index.mjs"), `export async function handler(args, context) { ${publish} return { content: [{ type: "text", text: "ok" }] }; }`);
 }

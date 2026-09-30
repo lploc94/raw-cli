@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "todo",
   "version": "1.0.0",
   "name": "todo",
@@ -7,14 +7,23 @@
   "input_schema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["todos"],
+    "required": [
+      "todos"
+    ],
     "properties": {
       "mode": {
-        "enum": ["replace", "merge"],
+        "enum": [
+          "replace",
+          "merge"
+        ],
         "default": "replace",
         "description": "replace sets the whole list; merge updates or adds only the given items by id."
       },
-      "title": { "type": "string", "maxLength": 80, "description": "Optional list title, e.g. the task name." },
+      "title": {
+        "type": "string",
+        "maxLength": 80,
+        "description": "Optional list title, e.g. the task name."
+      },
       "todos": {
         "type": "array",
         "maxItems": 100,
@@ -27,15 +36,40 @@
               "pattern": "^[a-z0-9][a-z0-9_.-]{0,31}$",
               "description": "Stable item id. Omit when adding a new item in replace mode; required in merge mode."
             },
-            "content": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Imperative task text." },
-            "status": { "enum": ["pending", "in_progress", "done", "blocked", "skipped"] },
-            "parent": { "type": "string", "description": "Id of a top-level item this is a subtask of." },
-            "note": { "type": "string", "maxLength": 500 },
-            "remove": { "const": true, "description": "Merge mode only: delete this item and its subtasks." }
+            "content": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Imperative task text."
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "in_progress",
+                "done",
+                "blocked",
+                "skipped"
+              ]
+            },
+            "parent": {
+              "type": "string",
+              "description": "Id of a top-level item this is a subtask of."
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "remove": {
+              "const": true,
+              "description": "Merge mode only: delete this item and its subtasks."
+            }
           }
         }
       },
-      "clear": { "const": "done", "description": "Merge mode only: remove every done or skipped item. Their subtasks are always done or skipped too." }
+      "clear": {
+        "const": "done",
+        "description": "Merge mode only: remove every done or skipped item. Their subtasks are always done or skipped too."
+      }
     }
   },
   "entry": "./index.mjs",
@@ -49,29 +83,103 @@
       "acp_plan": true,
       "actions": [
         {
-          "id": "complete", "label": "Mark done", "scope": "item", "blocks": ["items"], "kind": "tool", "primary": true,
-          "arguments": { "mode": "merge", "todos": [{ "id": "{{item.id}}", "status": "done" }] },
-          "when": { "status": ["pending", "in_progress", "blocked"] }
+          "id": "complete",
+          "label": "Mark done",
+          "scope": "item",
+          "blocks": [
+            "items"
+          ],
+          "kind": "tool",
+          "primary": true,
+          "arguments": {
+            "mode": "merge",
+            "todos": [
+              {
+                "id": "{{item.id}}",
+                "status": "done"
+              }
+            ]
+          },
+          "when": {
+            "status": [
+              "pending",
+              "in_progress",
+              "blocked"
+            ]
+          }
         },
         {
-          "id": "reopen", "label": "Reopen", "scope": "item", "blocks": ["items"], "kind": "tool",
-          "arguments": { "mode": "merge", "todos": [{ "id": "{{item.id}}", "status": "pending" }] },
-          "when": { "status": ["done", "skipped"] }
+          "id": "reopen",
+          "label": "Reopen",
+          "scope": "item",
+          "blocks": [
+            "items"
+          ],
+          "kind": "tool",
+          "arguments": {
+            "mode": "merge",
+            "todos": [
+              {
+                "id": "{{item.id}}",
+                "status": "pending"
+              }
+            ]
+          },
+          "when": {
+            "status": [
+              "done",
+              "skipped"
+            ]
+          }
         },
         {
-          "id": "skip", "label": "Skip", "scope": "item", "blocks": ["items"], "kind": "tool",
-          "arguments": { "mode": "merge", "todos": [{ "id": "{{item.id}}", "status": "skipped" }] },
-          "when": { "status": ["pending", "in_progress", "blocked"] }
+          "id": "skip",
+          "label": "Skip",
+          "scope": "item",
+          "blocks": [
+            "items"
+          ],
+          "kind": "tool",
+          "arguments": {
+            "mode": "merge",
+            "todos": [
+              {
+                "id": "{{item.id}}",
+                "status": "skipped"
+              }
+            ]
+          },
+          "when": {
+            "status": [
+              "pending",
+              "in_progress",
+              "blocked"
+            ]
+          }
         },
         {
-          "id": "continue", "label": "Continue", "scope": "panel", "kind": "prompt", "send": false,
+          "id": "continue",
+          "label": "Continue",
+          "scope": "panel",
+          "kind": "prompt",
+          "send": false,
           "text": "Continue with the next pending todo item."
         },
         {
-          "id": "clear_done", "label": "Clear completed", "scope": "panel", "kind": "tool",
-          "arguments": { "mode": "merge", "todos": [], "clear": "done" }
+          "id": "clear_done",
+          "label": "Clear completed",
+          "scope": "panel",
+          "kind": "tool",
+          "arguments": {
+            "mode": "merge",
+            "todos": [],
+            "clear": "done"
+          }
         }
       ]
     }
+  ],
+  "condition_sources": [
+    "arguments"
   ]
 }

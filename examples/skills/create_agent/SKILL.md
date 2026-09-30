@@ -28,7 +28,7 @@ Copy examples/agents/project-helper/ for a forkable layout. This example selects
       "model": "local",
       "system_prompt_file": "prompt.md",
       "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"],
-        "rules": [{ "match": "builtin/bash", "effect": "ask", "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)" } }] },
+        "rules": [{ "match": "builtin/bash", "effect": "ask", "when": { "source": "arguments", "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)" } }] },
       "skills": { "use": ["builtin/configure_raw"] },
       "hooks": { "use": ["agent/guard"] },
       "max_steps": 25,

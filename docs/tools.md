@@ -18,7 +18,7 @@ Its `agent/` IDs resolve beside that copied config file.
 
 The eight shipped tools live in package-owned folders under
 `dist/tools/builtin/<name>/`. Each folder contains an editable `tool.json` and a
-standalone `index.mjs`. The manifest declares `api_version: 1`, `id`, `version`,
+standalone `index.mjs`. The manifest declares `api_version: 2`, `id`, `version`,
 `name`, `description`, `input_schema`, and `entry: "./index.mjs"`. The entry
 exports an async `handler(args, context)` and may export a synchronous
 `validateArgs(args)` that returns an error string or `undefined`. The host
@@ -92,7 +92,7 @@ Dispatch validates the tool name, schema, visibility and session whitelist befor
 
 ## Panels
 
-A tool may publish a live side panel (`raw.panel/1`, see [panels-design.md](panels-design.md)). Panel state never reaches the
+A tool may publish a live side panel (`raw.panel/2`, see [panels-design.md](panels-design.md)). Panel state never reaches the
 model except for one short confirmation line (and, for `context: "summary"` panels, a bounded reminder after a successful compaction), never counts against `maxOutputBytes`, and is stored with the tool result.
 
 Declare the panels a tool owns in its registration (`panels` in `tool.json`, the MCP server config or `_raw/tool/register`), then either:
@@ -123,7 +123,7 @@ An optional agent `tools.rules` array applies to built-ins, MCP tools and ACP-in
 
 `deny` removes the schema from the model and rejects direct dispatch. `ask` remains visible and requests permission once for each call through the CLI TTY or ACP `session/request_permission`; headless execution without an approval channel returns `approval_required`. `-y` never overrides an explicit `ask`. `allow` executes automatically. Policies are tool-name filters, not filesystem or process isolation: allowing `bash` grants the agent the user's full shell permissions even if `write_file` is denied.
 
-An `ask` rule may add `"when": {"any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)"}`. Raw checks each selected command string with an unanchored RE2JS match after validating the entire call. If any command matches, it asks once before running any command in the batch; other Bash calls run automatically. `when.any` follows dotted object fields and `[*]` array traversal to a string field, so the same form works for typed local, MCP, or ACP tools. Optional absent fields do not match. Conditional rules may only have effect `ask`. Rule order still matters: the last applicable allow/ask/deny wins, while an unconditional deny keeps the tool hidden until a later unconditional rule allows it. The regex sees command text, not shell semantics; use a broader pattern if your workflow needs broader review.
+An `ask` rule may add `"when": {"source": "arguments", "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)"}`. Raw checks each selected command string with an unanchored RE2JS match after validating the entire call. If any command matches, it asks once before running any command in the batch; other Bash calls run automatically. `when.any` follows dotted object fields and `[*]` array traversal to a string field, so the same form works for typed local, MCP, or ACP tools. Optional absent fields do not match. Conditional rules may only have effect `ask`. Rule order still matters: the last applicable allow/ask/deny wins, while an unconditional deny keeps the tool hidden until a later unconditional rule allows it. The regex sees command text, not shell semantics; use a broader pattern if your workflow needs broader review.
 
 The `bash` tool requires Bash on `PATH`, or an explicit `RAW_BASH_PATH`. Each invocation supervises one process group. Abort or deadline sends TERM to that group, then KILL if needed. Long-lived, deliberately detached jobs can escape the group and are outside this guarantee; use an MCP server designed for managed persistent processes when needed.
 
@@ -155,3 +155,5 @@ and plugins can still print it. This is not OS isolation. MCP does not acquire
 `env_refs` or variable interpolation automatically. See [variables](vars.md).
 
 Managed dashboard edits use [revision-checked configuration and owned component services](management.md). Viewing a catalog never imports tool code or starts providers/MCP; changes take effect on the next turn.
+
+The current development tool inspection contract uses explicit predicate sources and separate intended effects; see [tool-effects.md](tool-effects.md). Old tool/hook formats are not adapted.

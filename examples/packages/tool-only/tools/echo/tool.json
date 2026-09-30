@@ -1,14 +1,23 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "echo",
   "version": "1.0.0",
   "name": "package_echo",
   "description": "Echo text from a standalone package",
   "input_schema": {
     "type": "object",
-    "properties": { "text": { "type": "string" } },
-    "required": ["text"],
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
     "additionalProperties": false
   },
-  "entry": "./index.mjs"
+  "entry": "./index.mjs",
+  "condition_sources": [
+    "arguments"
+  ]
 }

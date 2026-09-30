@@ -25,14 +25,14 @@ async function fixture() {
   return { root, configPath, globalConfigRoot, writeConfig, makeHook };
 }
 
-const manifest = (name: string) => ({ name, events: [{ name: "PreToolUse", match: "builtin/bash",
-  when: { any: "commands[*].command", regex: "rm\\s" } }], command: "node", args: ["./run.mjs"] });
+const manifest = (name: string) => ({ protocol_version: 2, name, events: [{ name: "PreToolUse", match: "builtin/bash",
+  when: { source: "arguments", any: "commands[*].command", regex: "rm\\s" } }], command: "node", args: ["./run.mjs"] });
 
 test("agent config selects exact ordered hook IDs; unselected broken hook remains inert", async () => {
   const f = await fixture();
   await f.makeHook("agent", "guard", manifest("guard"));
-  await f.makeHook("local", "notify", { name: "notify", events: [{ name: "Stop" }], command: "node", args: ["./run.mjs"] });
-  await f.makeHook("agent", "broken", { name: "broken", events: [], command: "node" });
+  await f.makeHook("local", "notify", { protocol_version: 2, name: "notify", events: [{ name: "Stop" }], command: "node", args: ["./run.mjs"] });
+  await f.makeHook("agent", "broken", { protocol_version: 2, name: "broken", events: [], command: "node" });
   await f.writeConfig({ use: ["local/notify", "agent/guard"] });
   const config = await loadConfig({ configPath: f.configPath, requireModel: false,
     env: { XDG_CONFIG_HOME: join(f.root, "global") } });
@@ -54,7 +54,7 @@ test("hook selection and manifest reject duplicates, malformed event filter and 
   await assert.rejects(loadConfig({ configPath: f.configPath, requireModel: false }), /duplicate/i);
   await f.writeConfig({ use: ["agent/guard"] });
   const folder = join(f.root, "hooks", "guard");
-  await writeFile(join(folder, "hook.json"), JSON.stringify({ name: "guard", events: [{ name: "Stop", match: "*" }], command: "node" }));
+  await writeFile(join(folder, "hook.json"), JSON.stringify({ protocol_version: 2, name: "guard", events: [{ name: "Stop", match: "*" }], command: "node" }));
   await assert.rejects(loadSelectedHooks({ selectedIds: ["agent/guard"], configPath: f.configPath }), /match|tool event/i);
   await writeFile(join(folder, "hook.json"), JSON.stringify(manifest("guard")));
   await writeFile(join(f.root, "outside.mjs"), "process.stdout.write('{}')");
@@ -70,7 +70,7 @@ test("a loaded hook retains its script bytes until the next attachment", async (
   const load = () => loadSelectedHooks({ selectedIds: ["agent/guard"], configPath: f.configPath });
   const first = (await load())[0]!;
   await writeFile(join(folder, "run.mjs"), "process.stdin.resume(); process.stdin.on('end',()=>process.stdout.write(JSON.stringify({message:'second'})));\n");
-  const request = { protocol_version: 1 as const, event: "PreToolUse" as const, cwd: f.root,
+  const request = { protocol_version: 2 as const, event: "PreToolUse" as const, cwd: f.root,
     tool: { identity: "builtin/bash", name: "bash", arguments: { commands: [{ command: "rm old" }] } } };
   assert.equal((await runHook(first, request)).message, "first");
   assert.equal((await runHook((await load())[0]!, request)).message, "second");

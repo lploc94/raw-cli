@@ -199,7 +199,7 @@ export class PanelCall {
   }
 
   readonly context: PanelContext = {
-    protocol: 1,
+    protocol: 2,
     update: async (panel: string, body: PanelUpdateBody) => {
       if (this.closed) throw new PanelError("panel_closed_context", "context.panels.update was called after the handler settled");
       return this.run(panel, body);

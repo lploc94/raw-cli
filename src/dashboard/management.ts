@@ -169,7 +169,8 @@ export function createManagementRoutes(context: DashboardContext): DashboardRout
         if (!Array.isArray(body.rules)) throw new DashboardError(400, "invalid_input", "rules must be an array");
         const registry = new ToolRegistry(parseToolPolicyRules(body.rules));
         const exposed = registry.policyEffect(identity) !== "deny";
-        return send({ effect: exposed ? registry.policyEffect(identity, args) : "deny", exposed, level: "sample; no tool dispatch or schema binding" });
+        const effects = body.effects === undefined ? undefined : managementInput(body.effects, "effects");
+        return send({ effect: exposed ? registry.policyEffect(identity, args, effects) : "deny", exposed, level: "sample; no tool dispatch or schema binding" });
       }
       if (path === "/api/checks" && method === "POST") return send(await startCheck(await context.readJson(request)), 202);
       const check = /^\/api\/checks\/([^/]+)(\/cancel)?$/.exec(path);

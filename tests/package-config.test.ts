@@ -50,7 +50,7 @@ test("a direct agent selects an installed tool under an explicit visible alias a
   const root = mkdtempSync(join(tmpdir(), "raw-package-tool-"));
   const source = join(root, "source");
   const folder = join(source, "tools", "echo"); mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 1, id: "echo", version: "1.0.0",
+  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 2, id: "echo", version: "1.0.0",
     name: "echo", description: "Echo a word", input_schema: { type: "object",
       properties: { word: { type: "string" } }, required: ["word"], additionalProperties: false }, entry: "./index.mjs" }));
   writeFileSync(join(folder, "index.mjs"), "export async function handler(args){return {content:[{type:'text',text:args.word}]}}\n");
@@ -163,7 +163,7 @@ test("an agent resolves its exact dependency tool without a separate installed a
   const root = mkdtempSync(join(tmpdir(), "raw-package-dep-runtime-"));
   const child = join(root, "child"), folder = join(child, "tools", "echo");
   mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 1, id: "echo", version: "1.0.0",
+  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 2, id: "echo", version: "1.0.0",
     name: "echo", description: "Echo", input_schema: { type: "object", properties: {}, additionalProperties: false }, entry: "./index.mjs" }));
   writeFileSync(join(folder, "index.mjs"), "export async function handler(){return {content:[{type:'text',text:'from child'}]}}\n");
   writeFileSync(join(child, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@test/child", version: "1.0.0",
@@ -271,7 +271,7 @@ test("two packages with the same original tool and skill names coexist through e
   const make = (owner: string) => {
     const source = join(root, owner), tool = join(source, "tools", "echo"), skill = join(source, "skills", "review");
     mkdirSync(tool, { recursive: true }); mkdirSync(skill, { recursive: true });
-    writeFileSync(join(tool, "tool.json"), JSON.stringify({ api_version: 1, id: "echo", version: "1.0.0",
+    writeFileSync(join(tool, "tool.json"), JSON.stringify({ api_version: 2, id: "echo", version: "1.0.0",
       name: "echo", description: "Echo", input_schema: { type: "object", properties: {},
         additionalProperties: false }, entry: "./index.mjs" }));
     writeFileSync(join(tool, "index.mjs"), `export async function handler(){return {content:[{type:'text',text:'${owner}'}]}}\n`);

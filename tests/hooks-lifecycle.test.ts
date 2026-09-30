@@ -14,7 +14,7 @@ async function setup(script: string) {
   const scriptPath = join(cwd, "hook.mjs");
   const log = join(cwd, "events.jsonl");
   await writeFile(scriptPath, script);
-  const hook: SelectedHook = { id: "agent/watch", name: "watch", folder: cwd, command: process.execPath,
+  const hook: SelectedHook = { protocol_version: 2, id: "agent/watch", name: "watch", folder: cwd, command: process.execPath,
     args: [scriptPath, log], timeoutMs: 1000, events: ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
       "PostToolUseFailure", "Stop", "SessionEnd"].map(name => ({ name: name as SelectedHook["events"][number]["name"] })) };
   const registry = new ToolRegistry();
@@ -23,6 +23,21 @@ async function setup(script: string) {
     handler: async (args) => ({ isError: false, content: [{ type: "text", text: String(args.value) }] }) });
   return { cwd, hook, registry, log };
 }
+
+test("changing tool exposure binds hook conditions before publishing the new view", async () => {
+  const f = await setup("");
+  f.hook.events = [{ name: "PreToolUse", match: "acp:*", when: { source: "effects", any: "files[*].path", regex: ".*" } }];
+  const provider: ProviderAdapter = { modelConfig: { agentName: "raw", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+    generate: async () => ({ text: "done", finishReason: "stop", toolCalls: [] }) };
+  const agent = createAgent({ provider, registry: f.registry, cwd: f.cwd, whitelist: ["doit"], hooks: new HookDispatcher([f.hook]) });
+  f.registry.register({ name: "peer", canonicalName: "acp:write", description: "peer", inputSchema: { type: "object" },
+    handler: async () => ({ isError: false, content: [] }) });
+  assert.throws(() => agent.setToolView(["doit", "peer"]), /source effects is unavailable/);
+  assert.deepEqual(agent.toolDefinitions.map(tool => tool.name), ["doit"]);
+  const hook = await new HookDispatcher([f.hook]).run("PreToolUse", { cwd: f.cwd, agent_id: "raw", tool: { identity: "acp:write", name: "peer", arguments: {} } });
+  assert.equal(hook.blocked, "error");
+  await agent.close();
+});
 
 test("hook lifecycle receipts include successful empty-output hooks without changing model context", async () => {
   const f = await setup(`import { appendFileSync } from "node:fs";

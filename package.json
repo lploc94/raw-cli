@@ -40,7 +40,8 @@
     "docs/skills.md",
     "docs/management.md",
     "docs/sessions.md",
-    "docs/context.md"
+    "docs/context.md",
+    "docs/tool-effects.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",

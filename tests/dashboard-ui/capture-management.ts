@@ -14,7 +14,7 @@ const raw = await dashboardFixture({
         {
           match: "builtin/bash",
           effect: "ask",
-          when: { any: "commands[*].command", regex: "(^|[;& ]+)rm[ ]" },
+          when: { source: "arguments", any: "commands[*].command", regex: "(^|[;& ]+)rm[ ]" },
         },
       ],
     },

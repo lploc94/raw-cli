@@ -16,7 +16,7 @@ import { parseToolManifest } from "../src/tools/plugins/manifest.js";
 import type { ToolHandlerResult } from "../src/tools/types.js";
 import { createTestToolRegistry } from "./fixtures/registry.js";
 
-const base = { api_version: 1, id: "t", version: "1.0.0", name: "t", description: "d", input_schema: { type: "object" }, entry: "./index.mjs" };
+const base = { api_version: 2, id: "t", version: "1.0.0", name: "t", description: "d", input_schema: { type: "object" }, entry: "./index.mjs" };
 const decl = (id: string, extra: object = {}) => ({ id, title: id.toUpperCase(), icon: "list-checks", ...extra });
 
 test("manifest panels: valid, absent and every invalid shape", () => {
@@ -124,8 +124,8 @@ test("knownPanelDeclarations reads manifests in tools.use order without importin
   assert.equal(isStalePanel("acp:client#x", known), true, "an ACP owner not registered in this session is stale");
 });
 
-test("package export requires raw.panel/1 only when an exported tool or MCP server declares panels", async () => {
-  assert.ok(hostCapabilities.has("raw.panel/1"));
+test("package export requires raw.panel/2 only when an exported tool or MCP server declares panels", async () => {
+  assert.ok(hostCapabilities.has("raw.panel/2"));
   const make = async (panels: boolean) => {
     const root = mkdtempSync(join(tmpdir(), "raw-export-panels-"));
     mkdirSync(join(root, "tools", "helper"), { recursive: true });
@@ -138,8 +138,8 @@ test("package export requires raw.panel/1 only when an exported tool or MCP serv
     await exportAgentPackage({ configPath, agentName: "author", out, name: "@example/p", version: "1.0.0" });
     return (JSON.parse(readFileSync(join(out, "raw-package.json"), "utf8")) as { requires: string[] }).requires;
   };
-  assert.ok((await make(true)).includes("raw.panel/1"));
-  assert.ok(!(await make(false)).includes("raw.panel/1"));
+  assert.ok((await make(true)).includes("raw.panel/2"));
+  assert.ok(!(await make(false)).includes("raw.panel/2"));
 });
 
 test("package-provided MCP servers own panels under their package identity, like the MCP registration does", async () => {

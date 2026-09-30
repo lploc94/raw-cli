@@ -30,7 +30,7 @@ test("CLI exposes agent tools in declared order while unselected local and MCP s
     const mcpMarker = join(cwd, "unselected-mcp-started");
     const toolFolder = join(cwd, "tools", "unused");
     await mkdir(toolFolder, { recursive: true });
-    await writeFile(join(toolFolder, "tool.json"), JSON.stringify({ api_version: 1, id: "unused", version: "1.0.0",
+    await writeFile(join(toolFolder, "tool.json"), JSON.stringify({ api_version: 2, id: "unused", version: "1.0.0",
       name: "unused", description: "unused", input_schema: { type: "object" }, entry: "./index.mjs" }));
     await writeFile(join(toolFolder, "index.mjs"), `import { writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(marker)}, "imported");
@@ -100,7 +100,7 @@ test("conditional policy paths incompatible with a selected schema fail before i
   await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
     provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, agents: { p: {
       model: "m", tools: { use: ["builtin/bash"], rules: [{ match: "builtin/bash", effect: "ask",
-        when: { any: "commands[*].missing", regex: "rm" } }] },
+        when: { source: "arguments", any: "commands[*].missing", regex: "rm" } }] },
     } } }));
   const runtime = await loadConfig({ configPath, env: {} });
   await assert.rejects(createRuntimeTools({ runtime, cwd }), /when\.any path.*schema/);
@@ -113,7 +113,7 @@ test("CLI resume rotates generated cache hint after a code-only selected plugin 
     const configPath = join(cwd, "config.json");
     const folder = join(cwd, "tools", "custom");
     await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, "tool.json"), JSON.stringify({ api_version: 1, id: "custom", version: "1.0.0",
+    await writeFile(join(folder, "tool.json"), JSON.stringify({ api_version: 2, id: "custom", version: "1.0.0",
       name: "custom", description: "A stable schema", input_schema: { type: "object", properties: {} }, entry: "./index.mjs" }));
     const entry = (value: string) => `export async function handler() { return { isError: false, content: [{ type: "text", text: ${JSON.stringify(value)} }] }; }`;
     await writeFile(join(folder, "index.mjs"), entry("old"));

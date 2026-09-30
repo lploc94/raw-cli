@@ -127,7 +127,10 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     systemPrompt: runtime.systemPrompt });
   const createRuntimeAgent = (id: string) => createAgent({ ...runtimeAgentOptions(runtime, tools, provider, cwd),
     persistence: { store, sessionId: id, surface: "cli" },
-    ...(process.stdin.isTTY && lines ? { approve: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => askPermission(lines, name, args, signal, tools.registry.canonicalIdentity(name), currentRenderer) } : {}) });
+    ...(process.stdin.isTTY && lines ? { approve: ({ name, arguments: args, signal, identity, effects }: import("./tools/primitives.js").ToolApprovalRequest) => {
+      if (effects) process.stderr.write(`raw: intended effects ${JSON.stringify(effects)}\n`);
+      return askPermission(lines, name, args, signal, identity, currentRenderer);
+    } } : {}) });
   const hookEvent = (event: import("./agent.js").RunEvent) => {
     if (currentRenderer) currentRenderer.event(event);
     else if (event.type === "hook_event") process.stderr.write(`${safeTerminalText(`raw: hook ${event.id} ${event.event} ${event.outcome}${event.message ? ` · ${event.message}` : ""}`)}\n`);

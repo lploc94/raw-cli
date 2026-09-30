@@ -53,6 +53,7 @@ export function ApprovalActions({ approval }: { approval: Approval }) {
         code={JSON.stringify(approval.arguments, null, 2)}
         language="json"
       />
+      {approval.effects && <><p>Intended effects</p><CodeBlock code={JSON.stringify(approval.effects, null, 2)} language="json" /></>}
       <div className="actions">
         <button
           className="primary"

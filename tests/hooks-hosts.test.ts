@@ -21,7 +21,7 @@ test("dashboard operations persist successful hook receipts; config changes appl
   ] });
   try {
     const folder = join(dirname(f.configPath), "hooks", "audit"); mkdirSync(folder, { recursive: true });
-    writeFileSync(join(folder, "hook.json"), JSON.stringify({ name: "audit", command: "node",
+    writeFileSync(join(folder, "hook.json"), JSON.stringify({ protocol_version: 2, name: "audit", command: "node",
       args: ["./audit.mjs"], events: [{ name: "UserPromptSubmit" }, { name: "Stop" }] }));
     writeFileSync(join(folder, "audit.mjs"), "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('{}'));\n");
     (f.config.agents.raw as Record<string, unknown>).hooks = { use: ["agent/audit"] };
@@ -53,7 +53,7 @@ test("ACP session lifecycle and prompt emit selected hook receipts to the peer",
   const root = mkdtempSync(join(tmpdir(), "raw-hook-acp-"));
   const configPath = join(root, "raw.json"), folder = join(root, "hooks", "audit");
   mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "hook.json"), JSON.stringify({ name: "audit", command: "node", args: ["./audit.mjs"],
+  writeFileSync(join(folder, "hook.json"), JSON.stringify({ protocol_version: 2, name: "audit", command: "node", args: ["./audit.mjs"],
     events: ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"].map(name => ({ name })) }));
   writeFileSync(join(folder, "audit.mjs"), "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('{}'));\n");
   writeFileSync(configPath, JSON.stringify({ default_agent: "raw",

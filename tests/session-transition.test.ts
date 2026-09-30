@@ -70,7 +70,7 @@ test("a helper-only edit is executed on the next same-process attachment and the
   const id = store.createSession({ cwd: root, title: "helper" }).id;
   const folder = join(root, "tools", "helper");
   mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 1, id: "helper", version: "1.0.0",
+  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 2, id: "helper", version: "1.0.0",
     name: "helper", description: "Reads helper", input_schema: { type: "object" }, entry: "./index.mjs" }));
   writeFileSync(join(folder, "index.mjs"), `import { value } from "./value.mjs";
     export async function handler() { return { isError: false, content: [{ type: "text", text: value }] }; }`);

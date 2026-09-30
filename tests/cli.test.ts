@@ -234,7 +234,7 @@ test("conditional Bash ask leaves safe headless commands automatic and gates rm 
     const configPath = testConfig("openai", "fixture", fixture.url);
     const document = JSON.parse(await readFile(configPath, "utf8"));
     document.agents.fixture.tools.rules = [{ match: "builtin/bash", effect: "ask",
-      when: { any: "commands[*].command", regex: String.raw`(^|[;&|()\n])\s*(sudo\s+)?(/usr/bin/|/bin/)?rm(\s|$)` } }];
+      when: { source: "arguments", any: "commands[*].command", regex: String.raw`(^|[;&|()\n])\s*(sudo\s+)?(/usr/bin/|/bin/)?rm(\s|$)` } }];
     await writeFile(configPath, JSON.stringify(document));
     const env = { ...process.env, OPENAI_API_KEY: "key" };
     const safe = await raw(["--config", configPath, "-y", "safe"], { cwd: root, env });

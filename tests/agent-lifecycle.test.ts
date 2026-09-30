@@ -125,7 +125,7 @@ test("validation, unknown tool, denial and nonzero shell exit flow back without 
     { id: "denied", name: "write_file", arguments: { operations: [{ mode: "overwrite", path: "denied", content: "bad" }] } },
     { id: "nonzero", name: "bash", arguments: { commands: [{ command: "exit 7" }] } },
   ] } : { text: "handled", toolCalls: [], finishReason: "stop" });
-  const agent = createAgent({ ...options(cwd, provider), autoApprove: false, approve: (name: string) => name !== "write_file" });
+  const agent = createAgent({ ...options(cwd, provider), autoApprove: false, approve: ({ name }) => name !== "write_file" });
   const starts: string[] = [];
   const result = await agent.run("errors", (event) => { if (event.type === "tool_start") starts.push(event.name); });
   assert.equal(result.status, "completed");
@@ -220,7 +220,7 @@ test("event mutations cannot change authorized arguments, tool history or usage"
   const provider = fake(async () => ++requests === 1
     ? { text: "", finishReason: "tool_calls", toolCalls: [{ id: "c", name: "record", arguments: { value: "approved" } }], usage: { input: 1 } }
     : { text: "done", toolCalls: [], finishReason: "stop" });
-  const agent = createAgent({ ...options(cwd, provider), registry, autoApprove: false, approve: (_name, args) => { approved = args.value; return true; } });
+  const agent = createAgent({ ...options(cwd, provider), registry, autoApprove: false, approve: ({ arguments: args }) => { approved = args.value; return true; } });
   const result = await agent.run("task", (event) => {
     if (event.type === "tool_start") event.arguments.value = "changed";
     if (event.type === "tool_result" && event.result.content[0]?.type === "text") event.result.content[0].text = "corrupted";

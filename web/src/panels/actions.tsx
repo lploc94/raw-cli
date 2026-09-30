@@ -21,6 +21,8 @@ export interface Offered { action: PanelAction; request: ActionRequest; disabled
 export function offeredActions(panel: PanelStackItem, host: ActionHost, scope: PanelActionScope, block?: string, item?: { id: string; status?: PanelItemStatus | undefined }): Offered[] {
   const offered: Offered[] = [];
   for (const action of panel.declaration.actions) {
+    // Response controls are offered by the interaction adapter once a request exists.
+    if (action.kind === "response") continue;
     if (action.scope !== scope) continue;
     const request: ActionRequest = { action: action.id, ...(block !== undefined && scope !== "panel" ? { block } : {}), ...(item && scope === "item" ? { item: item.id } : {}) };
     try { resolveAction(panel.declaration, request, panel.document); } catch { continue; }

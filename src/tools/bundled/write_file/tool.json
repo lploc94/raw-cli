@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "write_file",
   "version": "1.0.0",
   "name": "write_file",
@@ -69,5 +69,43 @@
     ],
     "additionalProperties": false
   },
-  "entry": "./index.mjs"
+  "entry": "./index.mjs",
+  "condition_sources": [
+    "effects"
+  ],
+  "effects_schema": {
+    "type": "object",
+    "properties": {
+      "files": {
+        "type": "array",
+        "maxItems": 128,
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "write",
+                "delete",
+                "rename_source",
+                "rename_destination"
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "operation"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "files"
+    ],
+    "additionalProperties": false
+  }
 }

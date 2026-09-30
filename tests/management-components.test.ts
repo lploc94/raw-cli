@@ -13,7 +13,7 @@ function fixture() {
   const manager = new ComponentManager({ configPath, env: { XDG_CONFIG_HOME: join(root, "global"), XDG_DATA_HOME: join(root, "data") } });
   return { root, configPath, manager, cleanup() { rmSync(root, { recursive: true, force: true }); } };
 }
-const tool = (id: string) => JSON.stringify({ api_version: 1, id, version: "1.0.0", name: id, description: "A fixture tool",
+const tool = (id: string) => JSON.stringify({ api_version: 2, id, version: "1.0.0", name: id, description: "A fixture tool",
   input_schema: { type: "object", properties: { value: { type: "string" } }, additionalProperties: false }, entry: "./index.mjs" });
 
 test("hook folders stay passive in catalog and honor edit revisions and selection usage", async () => {
@@ -23,7 +23,7 @@ test("hook folders stay passive in catalog and honor edit revisions and selectio
       agents: { raw: { model: "m", tools: { use: [] } } } }));
     const marker = join(f.root, "EXECUTED");
     const hook = await f.manager.create("hooks", "local/guard", {
-      "hook.json": JSON.stringify({ name: "guard", events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"], timeout_ms: 1000 }),
+      "hook.json": JSON.stringify({ protocol_version: 2, name: "guard", events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"], timeout_ms: 1000 }),
       "index.mjs": `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'bad');`,
     });
     assert.equal(hook.validation, "valid");

@@ -226,7 +226,7 @@ test("create_hook and configure_raw examples select and run a matching gate", as
     assert.deepEqual(runtime.hookIds, ["agent/guard"]);
     const hooks = await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath,
       globalConfigRoot: runtime.globalConfigRoot, packageHooks: runtime.packageHooks });
-    const decision = await runHook(hooks[0]!, { protocol_version: 1, event: "PreToolUse", cwd: root,
+    const decision = await runHook(hooks[0]!, { protocol_version: 2, event: "PreToolUse", cwd: root,
       tool: { identity: "builtin/bash", name: "bash", arguments: { commands: [{ command: "rm old" }] } } });
     assert.equal(decision.decision, "deny");
   } finally { rmSync(root, { recursive: true, force: true }); }

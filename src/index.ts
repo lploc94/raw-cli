@@ -47,7 +47,8 @@ export type { AddPackageAgentOptions } from "./packages/cli.js";
 export type { ToolManifest, ToolPlugin } from "./tools/plugins/contract.js";
 export { viewImageTool, MAX_IMAGE_BYTES } from "./tools/image.js";
 export type { ToolDefinition, ToolRegistration, ToolPolicyRule } from "./tools/registry.js";
-export type { ToolContext } from "./tools/primitives.js";
+export type { ToolContext, ToolApprovalRequest } from "./tools/primitives.js";
+export type { ConditionSource, ToolPolicyWhen } from "./tools/policy.js";
 export { connectMcpServers, mcpResultToToolResult } from "./tools/mcp-client.js";
 export type { McpServerConfig, ConnectMcpOptions, McpConnection, McpToolInfo } from "./tools/mcp-client.js";
 export { AgentSession, createAgent } from "./agent.js";
@@ -66,6 +67,8 @@ export { openSessionStore, sessionStorePath, SessionStore } from "./sessions/sto
 export type { CreateSessionOptions, HistoryItem, Page, SessionStoreOptions, SessionSummary } from "./sessions/store.js";
 export { listSessions, getSessionHistory, getSessionPanels, resumeSession, deleteSession } from "./sessions/api.js";
 export type { PanelContext, PanelDeclaration, PanelDocument, PanelReceipt, PanelUpdate, StoredPanel } from "./panels/contract.js";
+export type { ToolCallUIIdentity, ToolViewIdentity, InteractionRequestIdentity, InteractionState, FormAnswers,
+  InteractionResponseSubmission, InteractionResponseAcknowledgement } from "./panels/contract.js";
 export { PanelError } from "./panels/contract.js";
 export type { SessionPageOptions, SessionHistoryOptions, SessionIdOptions, ResumeSessionOptions, ResumedSession } from "./sessions/api.js";
 

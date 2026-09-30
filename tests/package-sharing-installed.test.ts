@@ -85,7 +85,7 @@ test("packed recipient installs mixed and standalone packages without author sou
       assert.equal(first.stdout, "first-answer\n");
       const id = first.stderr.match(/raw --resume ([0-9a-f-]+) "query"/)?.[1]; assert.ok(id);
       assert.deepEqual(await readFile(legacy), oldBytes);
-      const active = join(legacyDir, "stores", "storage-v5", "sessions.sqlite");
+      const active = join(legacyDir, "stores", "storage-v6", "sessions.sqlite");
       const firstKey = cacheKey(active, id);
       assert.match(JSON.stringify(provider.requests[0]?.body), /mixed-kit Raw example/);
       assert.match(JSON.stringify(provider.requests[1]?.body), /mixed-v1: one/);

@@ -8,6 +8,7 @@ import { inspectPackage, type PackageReport } from "./inspect.js";
 import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePackageDefinitions,
   resolvePackageSelections } from "./resolve-agent.js";
 import { resolveInstalledPackage } from "./store.js";
+import { bundledToolsRoot } from "../tools/plugins/loader.js";
 export { inspectPackage } from "./inspect.js";
 
 export interface ExportAgentOptions {
@@ -134,10 +135,18 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const selection = names(tools.use, "agent tools.use");
   const emittedTools: Record<string, string> = {};
   let usesPanels = false;
+  let usesEffects = false;
   for (let index = 0; index < selection.length; index++) {
     const id = selection[index]!;
     const match = /^(agent|local)\/([a-z][a-z0-9_-]*)$/.exec(id);
     const asset = resolved.tools[id];
+    if (id.startsWith("builtin/")) {
+      const builtin = /^builtin\/([a-z][a-z0-9_-]*)$/.exec(id);
+      if (!builtin) throw new Error(`invalid builtin selection: ${id}`);
+      const declared = JSON.parse(await readFile(join(bundledToolsRoot(), builtin[1]!, "tool.json"), "utf8")) as { panels?: unknown; effects_schema?: unknown };
+      if (Array.isArray(declared.panels) && declared.panels.length) usesPanels = true;
+      if (declared.effects_schema !== undefined) usesEffects = true;
+    }
     if (!match && !asset) continue;
     const folder = asset?.name ?? match![2]!;
     if (emittedTools[folder]) throw new Error(`duplicate exported tool path: ${folder}`);
@@ -146,8 +155,9 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
     const path = `tools/${folder}`;
     await copyOwnedTree(sourceRoot, join(out, path));
     try {
-      const declared = (JSON.parse(await readFile(join(sourceRoot, "tool.json"), "utf8")) as { panels?: unknown }).panels;
-      if (Array.isArray(declared) && declared.length) usesPanels = true;
+      const declared = JSON.parse(await readFile(join(sourceRoot, "tool.json"), "utf8")) as { panels?: unknown; effects_schema?: unknown };
+      if (Array.isArray(declared.panels) && declared.panels.length) usesPanels = true;
+      if (declared.effects_schema !== undefined) usesEffects = true;
     } catch { /* an unreadable manifest is reported by inspectPackage */ }
     emittedTools[folder] = path;
     files.push(path);
@@ -283,8 +293,8 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   const manifest: RawPackageManifest = { schema_version: 1, name: options.name, version: options.version,
     description: `Exported agent ${options.agentName}`, files, exports: exported,
     ...(inputRequired.length ? { inputs: { type: "object", properties: inputProperties, required: inputRequired } } : {}),
-    requires: ["raw.agent/1", "raw.tool-api/1", "raw.skill/1", ...(Object.keys(emittedHooks).length ? ["raw.hook/1"] : []),
-      ...(usesPanels ? ["raw.panel/1"] : [])],
+    requires: ["raw.agent/1", "raw.tool-api/2", "raw.skill/1", ...(Object.keys(emittedHooks).length ? ["raw.hook/2"] : []),
+      ...(usesPanels ? ["raw.panel/2"] : []), ...(usesEffects ? ["raw.tool-effects/1"] : [])],
     ...(prerequisites.size ? { metadata: { external_executables: [...prerequisites].sort() } } : {}) };
   await writeFile(join(out, "raw-package.json"), JSON.stringify(manifest, null, 2) + "\n");
   const report = await inspectPackage(out);

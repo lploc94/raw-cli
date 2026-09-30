@@ -15,10 +15,20 @@
       {
         "match": "builtin/bash",
         "effect": "ask",
-        "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)" }
+        "when": {
+          "any": "commands[*].command",
+          "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)",
+          "source": "arguments"
+        }
       }
     ]
   },
-  "skills": { "use": ["#skills/repo-review"] },
-  "vars": ["#vars/host_label"]
+  "skills": {
+    "use": [
+      "#skills/repo-review"
+    ]
+  },
+  "vars": [
+    "#vars/host_label"
+  ]
 }

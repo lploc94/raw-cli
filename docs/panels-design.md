@@ -1,4 +1,4 @@
-# Tool panels design (`raw.panel/1`)
+# Tool panels design (`raw.panel/2`)
 
 Design and contract for **tool panels**: live, structured state that a tool publishes and every Raw surface can show. The dashboard shows it in the right-hand side panel, the CLI prints it as text, and ACP clients receive it as a plan or an extension update. A tool author who follows this document gets a working panel on every surface without writing UI code.
 
@@ -105,11 +105,11 @@ ACP _raw/tool/call response {type:"panel"} ────────────�
 
 ## 5. Declaration (`tool.json`)
 
-`tool.json` gains one optional field, `panels`. Manifests without it are unchanged. `api_version` stays `1`.
+`tool.json` gains one optional field, `panels`. Manifests without it are unchanged. `api_version` is `2`.
 
 ```jsonc
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "todo",
   "version": "1.0.0",
   "name": "todo",
@@ -313,7 +313,7 @@ For artifacts and files touched.
 - **Fields.** `status` is `added` | `modified` | `deleted` | `referenced`. At most 200 entries.
 - **Dashboard.** A list of shortened paths with a status letter (A, M, D, R). Clicking an entry inserts `@path` (§6).
 
-Diffs are shown as a `markdown` block with a fenced `diff` code block. There is no separate diff widget in `raw.panel/1`.
+Diffs are shown as a `markdown` block with a fenced `diff` code block. There is no separate diff widget in `raw.panel/2`.
 
 ## 8. Publishing updates
 
@@ -354,7 +354,7 @@ Panel data is removed from a result at exactly one place per dispatch path. That
 
 ### 8.2 Streaming API (local plugin tools)
 
-`ToolContext` gains an optional `panels`. It is present only when the host supports `raw.panel/1`, so tools feature-detect it:
+`ToolContext` gains an optional `panels`. It is present only when the host supports `raw.panel/2`, so tools feature-detect it:
 
 ```ts
 interface PanelContext {
@@ -377,7 +377,7 @@ An MCP `CallToolResult` may carry updates in `_meta["raw/panel"]`, either as one
 
 ### 8.4 ACP-registered client tools
 
-A `_raw/tool/call` response may include `{type:"panel", …}` items in `content`, but only when the client advertised `_meta.raw.panels: true` at initialization. Without that flag, panel items are rejected as unknown content, as they are today.
+A `_raw/tool/call` response may include `{type:"panel", …}` items in `content`, but only when the client advertised `_meta.raw.panelsV2: true` at initialization. Without that flag, panel items are rejected as unknown content, as they are today.
 
 ### 8.5 Host-originated updates
 
@@ -603,8 +603,8 @@ These routes use the existing `DashboardError` shapes and the same origin and to
 ### 13.3 ACP
 
 - **Standard plan.** When a panel is declared with `acp_plan: true`, each committed update sends a standard `session/update` with `sessionUpdate: "plan"`. The entries come from the first `checklist` block, flattened depth-first: `content` is the label, `priority` defaults to `medium`, and `status` is mapped per §6.
-- **Extension notification.** When the client advertised `_meta.raw.panels: true`, every committed update is also sent as the `_raw/panel/update` notification, with `{ sessionId, panel, owner, revision, closed, declaration, document }`.
-- **Capability.** Raw advertises `panels: true` in its own `_meta.raw`.
+- **Extension notification.** When the client advertised `_meta.raw.panelsV2: true`, every committed update is also sent as the `_raw/panel/update` notification, with `{ sessionId, panel, owner, revision, closed, declaration, document }`.
+- **Capability.** Raw advertises `panelsV2: true` in its own `_meta.raw`.
 - **`_raw/panel/action`.** The client sends `{ sessionId, panel, action, block?, item? }` and gets `{ operationId }`, with the same rules as §11. The extension error codes apply: `-32002` busy, `-32004` denied.
 - **Replay.** `session/load` replays each `panel_receipt` as an `agent_thought_chunk` text line in its history position, the same way hook receipts are replayed. After the whole history, it sends each open panel's **current** state once: the `plan` update and, when negotiated, `_raw/panel/update`. Historical panel states are not reconstructed, because only the latest document is stored (D1). `session/resume` sends the current state once, with no replay.
 
@@ -659,13 +659,15 @@ An error never fails the tool call. The rules:
 - **Sizes and rates** are bounded (§14) before any storage or broadcast.
 - **Isolation.** Panel content is session data under the same private store and dashboard token as the rest of the session.
 
-## 17. Versioning and compatibility
+## 17. Current development contract
 
-- **Protocol ID.** The protocol is `raw.panel/1`. A package whose tools declare panels lists `raw.panel/1` in its required capabilities, the same way `raw.hook/1` is listed. Installing it into an older Raw fails at install time with an explicit message.
-- **Additive, compatible changes.** New block kinds, new optional block or item fields, new icons and new patch ops. A host that meets an **unknown block kind** renders its `fallback` text, or `Unsupported block "<kind>"` when there is none. The rest of the document stays valid. Unknown **fields** inside a known block are rejected, so typos surface.
-- **Breaking changes** need `raw.panel/2`. Tools select the protocol by feature detection (`context.panels.protocol === 1`) and through package capabilities.
-- **`tool.json`** keeps `api_version: 1`. An older Raw rejects a manifest that has `panels` with `invalid tool manifest`, which is the existing strict behavior. The package capability check makes this failure early and clear.
-- **Clients.** An old dashboard bundle ignores `panel` stream events, because unknown event types are ignored. Standard ACP clients see only `plan`.
+Raw supports one current contract: `raw.panel/2`, `raw.tool-api/2` and `raw.hook/2`. All first-party producers, schemas and examples are updated directly. There is no v1 parser, compatibility adapter or migration. Obsolete formats are rejected; older state is not modified automatically.
+
+An unknown visual block kind renders its fallback text within the current protocol. A peer without `panelsV2` receives standard ACP plans/text rather than the extension. Known block fields remain strict so typos fail validation.
+
+Placement, form/response actions and Mermaid source are part of the current block contract. See [tool-effects.md](tool-effects.md) for separate intended effects, source-aware predicates and the current approval/hook interface. Panel UI data remains host-only.
+
+Host-owned envelopes identify call-scoped views and interaction requests. `ToolViewIdentity` contains an opaque instance ID, run ID, call ID, owner and declaration ID, plus session/operation IDs for durable calls. Sidebar identity remains `<owner>#<panel>`; historical chat references use their instance ID. `InteractionRequestIdentity` adds a request ID and optional chat view instance. `InteractionResponseSubmission` carries request ID, expected revision, idempotency key and either form answers or cancellation. Ownership is resolved from the stored request rather than accepted from the client. Terminal acknowledgements contain request ID, revision, state and the exact canonical result when answered. These envelopes are separate from tool-authored panel documents.
 
 ## 18. Reference tool: `builtin/todo`
 
@@ -836,14 +838,14 @@ Standard ACP clients get todo progress natively through `plan`. Richer panels ne
 - **Tabs for panels.** Only one panel is visible at a time, tabs overflow with many tools, and progress needs a separate header chip whose target shifts between panels.
 - **Showing a panel only after its first update.** The layout changes as tools run, and the user cannot see what the agent can track.
 - **Split views that show two panels side by side.** The side panel is too narrow; stacked sections already show several panels at once.
-- **Images in panels.** Payload lifecycle and size questions have no use case in `raw.panel/1`. `view_image` and the tool result already carry images.
+- **Images in panels.** Payload lifecycle and size questions have no use case in `raw.panel/2`. `view_image` and the tool result already carry images.
 
 ## 22. Implementation outline and verification map
 
 The outline is for a later `loop-plan`. Each phase is one commit, and every phase keeps all existing gates green.
 
 1. **Core.** Types, `schemas/raw-panel.schema.json`, validator, patch engine, `PanelHost`, `session_panels`, `panel_receipt`, result-block stripping and model confirmation lines, and `context.panels`.
-2. **Declarations.** The `panels` manifest field, config `panels` on MCP server entries (with `tool`), package capability `raw.panel/1`, MCP `_meta["raw/panel"]`, ACP registration `panels`, the stale derivation, and computing known declarations per agent without importing handlers.
+2. **Declarations.** The `panels` manifest field, config `panels` on MCP server entries (with `tool`), package capability `raw.panel/2`, MCP `_meta["raw/panel"]`, ACP registration `panels`, the stale derivation, and computing known declarations per agent without importing handlers.
 3. **`builtin/todo`.** Manifest, handler and validator, `examples/tools/todo`, and `tools.md`.
 4. **Dashboard read path.** The side-panel section stack (declared panels always present, default and user order, hide, expand state, divider height), all eight widgets, receipts, the SSE `panel` event and snapshot, the open preference, the unseen dot, and axe checks.
 5. **Actions.** The `panel_action` operation, the HTTP route, approval and hooks with `source`, the model note, and the dashboard action UI.
@@ -864,3 +866,7 @@ The outline is for a later `loop-plan`. Each phase is one commit, and every phas
 | D10 | An invalid update leaves the tool result successful with a rejection line, and an unknown kind renders its fallback. A snapshot with a lower revision replaces the shown state. |
 | D11 | The starter config is unchanged. `builtin/todo` loads only when selected. |
 | D12 | An ACP test client receives `plan` with mapped statuses, and receives `_raw/panel/update` only after negotiation. |
+
+### Shared placements and new blocks
+
+A declaration accepts `placement: "chat" | "sidebar"` (default sidebar). Form blocks contain 1–8 uniquely identified fields (`text`, `single_select`, `multi_select`), required flags and bounded text/options. Select options have unique IDs; text is at most 8 KiB before effective answer-budget limits. Response actions require block scope and `response: "submit" | "cancel"`, with no tool arguments or item-status predicates. Mermaid blocks contain nonempty source of at most 16 KiB. Runtime byte, identity and selection-limit validation supplements the JSON schema.

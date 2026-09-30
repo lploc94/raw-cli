@@ -10,7 +10,7 @@ Read `references/packages.md` for sharing and `references/dashboard.md` for brow
 
 ## Choose the task and contract
 
-For how-to, explain; for implementation, establish agent/inputs/output/side effects; for failure, start from the exact error.
+Establish agent/inputs/output/side effects; diagnose failures from the exact error.
 
 Define inputs/results/limits/failures in English. Preflight does not make I/O transactional: document partial execution and cwd/path semantics. Reuse suitable existing tools.
 
@@ -22,7 +22,7 @@ Define inputs/results/limits/failures in English. Preflight does not make I/O tr
 
 `--config` changes the agent root, not the global root. Folder/manifest `id` matches `[a-z][a-z0-9_-]*`; model-visible `name` matches `[A-Za-z_][A-Za-z0-9_-]{0,63}` and must be unique among selected tools. `version` is a three-component numeric string.
 
-`tool.json` has exactly seven fields: number `api_version:1`, `id`, `version`, `name`, nonempty `description`, object `input_schema`, and `entry:"./index.mjs"`. Schema defaults to draft 2020-12; draft-07 is allowed via `$schema`. Remote `$ref` and `$async` are unsupported. Use an object schema with explicit properties, required fields and `additionalProperties:false`. Selected manifests/schemas are validated before any selected handler import; unselected code is not imported. Symlinks cannot escape the selected root/folder.
+`tool.json` requires `api_version:2`, `id`, `version`, `name`, nonempty `description`, object `input_schema`, and `entry:"./index.mjs"`. Optional `condition_sources`, `effects_schema` and `panels` declare inspection and UI capabilities. Schema defaults to draft 2020-12; `$schema` can select draft-07. Remote `$ref` and `$async` are unsupported. Use explicit properties, required fields and `additionalProperties:false`. Manifests/schemas are validated before handler imports; unselected code stays inert. Symlinks cannot escape their root/folder.
 
 `index.mjs` exports async `handler(args, context)` and may export synchronous `validateArgs(args)`, returning an error string or `undefined`. Semantic preflight runs before approval and execution. `context.cwd` resolves paths; `context.signal` communicates abort. Return `{content:[...], isError?:boolean, code?:string}`; content may be `{type:"text",text}`, `{type:"json",value}` or a supported typed image. A JSON value must be serializable. Keep imports free of side effects. The handler runs with Raw's OS permissions; cwd and approval rules are not filesystem isolation.
 
@@ -33,7 +33,7 @@ For `local/append_notes`, create `tool.json` in the global `tools/append_notes/`
 <!-- example:manifest -->
 ```json
 {
-  "api_version": 1,
+  "api_version": 2,
   "id": "append_notes",
   "version": "1.0.0",
   "name": "append_notes",
@@ -87,7 +87,7 @@ Append the exact ID to `agents.<name>.tools.use`, preserving existing entries an
 { "tools": { "use": ["builtin/read_file", "local/append_notes", "builtin/bash"] } }
 ```
 
-Use `agent/append_notes` instead when the folder is config-adjacent. Preserve other config fields.
+Use `agent/append_notes` for a config-adjacent folder.
 
 ## Implement and verify
 

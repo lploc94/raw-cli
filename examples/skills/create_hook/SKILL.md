@@ -1,12 +1,12 @@
 ---
 name: create-hook
-description: "Use when creating, editing, testing, selecting or sharing a Raw agent hook for session, turn or tool events. Covers raw.hook/1, gating, notifications, dashboard editing and packages."
+description: "Use when creating, editing, testing, selecting or sharing a Raw agent hook for session, turn or tool events. Covers raw.hook/2, gating, notifications, dashboard editing and packages."
 ---
 # Create a Raw hook
 
 A hook is a folder containing `hook.json` and an executable script. It belongs to one selected agent, not to every Raw session. Hooks run with the user's OS permissions. Create one only when the user wants an event-triggered action; tool policy rules remain the right place for simple allow/ask/deny matching.
 
-Read `references/packages.md` for sharing and `references/dashboard.md` for browser editing, using `read_file` when relevant. The installed `docs/hooks.md` is the full protocol reference. Do not claim that `raw.hook/1` implements another product's hook protocol.
+Read `references/packages.md` for sharing and `references/dashboard.md` for browser editing, using `read_file` when relevant. The installed `docs/hooks.md` is the full protocol reference. Do not claim that `raw.hook/2` implements another product's hook protocol.
 
 ## Choose placement and event
 
@@ -20,10 +20,10 @@ Events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostTo
 
 <!-- example:manifest -->
 ```json
-{"name":"guard","events":[{"name":"PreToolUse","match":"builtin/bash","when":{"any":"commands[*].command","regex":"(^|[;&|()\\n])\\s*rm(\\s|$)"}},{"name":"PostToolUseFailure","match":"builtin/bash"}],"command":"node","args":["./index.mjs"],"timeout_ms":5000}
+{"protocol_version": 2, "name":"guard","events":[{"name":"PreToolUse","match":"builtin/bash","when":{"source": "arguments", "any":"commands[*].command","regex":"(^|[;&|()\\n])\\s*rm(\\s|$)"}},{"name":"PostToolUseFailure","match":"builtin/bash"}],"command":"node","args":["./index.mjs"],"timeout_ms":5000}
 ```
 
-Raw sends one UTF-8 JSON object on stdin with `protocol_version:1`, `event`, `cwd`, optional agent/session/turn IDs and event payload. A tool event has `tool.identity`, `tool.name`, `tool.arguments`, and a post-event may have `tool.result`. Respond with empty stdout or one JSON object. Exit 0 plus `{"decision":"continue"}` continues; `{"decision":"deny","reason":"..."}` or exit 2 denies a gate. A short `message` appears in host output. Malformed output, timeout, nonzero exit, spawn failure or overflow blocks a gate and warns on a notification. A continue decision cannot override `tools.rules` ask/deny. Raw records a bounded receipt; it does not log raw stdin/stdout by default. Selected folders are snapshotted (at most 256 regular files and 16 MiB total; links are rejected).
+Raw sends one UTF-8 JSON object on stdin with `protocol_version:2`, `event`, `cwd`, optional agent/session/turn IDs and event payload. A tool event has `tool.identity`, `tool.name`, `tool.arguments`, and a post-event may have `tool.result`. Respond with empty stdout or one JSON object. Exit 0 plus `{"decision":"continue"}` continues; `{"decision":"deny","reason":"..."}` or exit 2 denies a gate. A short `message` appears in host output. Malformed output, timeout, nonzero exit, spawn failure or overflow blocks a gate and warns on a notification. A continue decision cannot override `tools.rules` ask/deny. Raw records a bounded receipt; it does not log raw stdin/stdout by default. Selected folders are snapshotted (at most 256 regular files and 16 MiB total; links are rejected).
 
 <!-- example:script -->
 ```js

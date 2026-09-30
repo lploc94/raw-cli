@@ -20,7 +20,7 @@ test("exported agent hook runs after pack/install without the author source", as
   const model = { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" };
   await writeFile(configPath, JSON.stringify({ default_agent: "writer", models: { local: model },
     agents: { writer: { model: "local", tools: { use: [] }, hooks: { use: ["agent/audit"] } } } }));
-  await writeFile(join(author, "hooks", "audit", "hook.json"), JSON.stringify({ name: "audit", command: "node",
+  await writeFile(join(author, "hooks", "audit", "hook.json"), JSON.stringify({ protocol_version: 2, name: "audit", command: "node",
     args: ["./audit.mjs"], events: [{ name: "UserPromptSubmit" }] }));
   await writeFile(join(author, "hooks", "audit", "audit.mjs"),
     "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ message: 'installed hook ran' })));\n");
@@ -39,7 +39,7 @@ test("exported agent hook runs after pack/install without the author source", as
   assert.deepEqual(runtime.hookIds, ["pkg/kit/hooks/audit"]);
   const hooks = await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath: recipientConfig,
     globalConfigRoot: runtime.globalConfigRoot, packageHooks: runtime.packageHooks });
-  const result = await runHook(hooks[0]!, { protocol_version: 1, event: "UserPromptSubmit", cwd: recipient, input: "hello" });
+  const result = await runHook(hooks[0]!, { protocol_version: 2, event: "UserPromptSubmit", cwd: recipient, input: "hello" });
   assert.equal(result.message, "installed hook ran");
   assert.match(await readFile(join(packageRoot, "agents", "writer.json"), "utf8"), /#hooks\/audit/);
 });

@@ -50,7 +50,7 @@ test("Bash binds literal env per command, leaves args intact, and validates the 
   } finally { await tools.mcp.close(); }
 });
 test("conditional Bash asks only for matching commands and denial never executes", async () => {
-  const f = await fixture([{ match: "builtin/bash", effect: "ask", when: { any: "commands[*].command", regex: "rm" } }]);
+  const f = await fixture([{ match: "builtin/bash", effect: "ask", when: { source: "arguments", any: "commands[*].command", regex: "rm" } }]);
   const tools = await f.load(); let asks = 0;
   try {
     const context = { ...ctx(f.dir), approve: () => { asks++; return false; } };
@@ -61,7 +61,7 @@ test("conditional Bash asks only for matching commands and denial never executes
 });
 test("custom plugins receive scoped vars service, not just builtin handlers", async () => {
   const f = await fixture([], ["agent/custom"]); const folder = join(f.dir, "tools", "custom"); mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 1, id: "custom", version: "1.0.0", name: "custom", description: "custom", entry: "./index.mjs", input_schema: { type: "object", properties: {}, additionalProperties: false } }));
+  writeFileSync(join(folder, "tool.json"), JSON.stringify({ api_version: 2, id: "custom", version: "1.0.0", name: "custom", description: "custom", entry: "./index.mjs", input_schema: { type: "object", properties: {}, additionalProperties: false } }));
   writeFileSync(join(folder, "index.mjs"), 'export async function handler(args,context){const env=await context.vars.resolveEnv({X:"token"},{signal:context.signal});return {content:[{type:"json",value:{present:env.X.length>0,names:context.vars.list().map(v=>v.name)}}]}}');
   const tools = await f.load();
   try { const result = await tools.registry.dispatch("custom", {}, ctx(f.dir)); assert.doesNotMatch(JSON.stringify(result), /literal;/); assert.match(JSON.stringify(result), /present.*true/); }

@@ -7,6 +7,7 @@ export const toolHookEvents = new Set<HookEventName>(["PreToolUse", "PostToolUse
 
 export interface HookSubscription { name: HookEventName; match?: string; when?: ToolPolicyWhen }
 export interface HookManifest {
+  protocol_version: 2;
   name: string;
   events: readonly HookSubscription[];
   command: string;
@@ -16,7 +17,7 @@ export interface HookManifest {
 export interface SelectedHook extends HookManifest { id: string; folder: string }
 
 export interface HookRequest {
-  protocol_version: 1;
+  protocol_version: 2;
   event: HookEventName;
   cwd: string;
   agent_id?: string;
@@ -25,7 +26,7 @@ export interface HookRequest {
   source?: "create" | "resume";
   input?: unknown;
   /** `source` is `user_action` when the user ran a panel action (docs/panels-design.md §11); a missing value means `model`. */
-  tool?: { identity: string; name: string; source?: "model" | "user_action"; arguments: Record<string, unknown>; result?: unknown };
+  tool?: { identity: string; name: string; source?: "model" | "user_action"; arguments: Record<string, unknown>; effects?: Record<string, unknown>; result?: unknown };
   run?: unknown;
 }
 export interface HookExecution { decision: "continue" | "deny"; reason?: string; message?: string; durationMs: number }

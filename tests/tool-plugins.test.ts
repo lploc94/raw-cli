@@ -21,7 +21,7 @@ async function workspace() {
 
 async function plugin(folder: string, id: string, name = id, source?: string, manifestPatch: Record<string, unknown> = {}) {
   await mkdir(folder, { recursive: true });
-  const manifest = { api_version: 1, id, version: "1.0.0", name,
+  const manifest = { api_version: 2, id, version: "1.0.0", name,
     description: `Fixture ${name}`, input_schema: nestedSchema, entry: "./index.mjs", ...manifestPatch };
   await writeFile(join(folder, "tool.json"), JSON.stringify(manifest));
   await writeFile(join(folder, "index.mjs"), source ?? `export async function handler(args) {

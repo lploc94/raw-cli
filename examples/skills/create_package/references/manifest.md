@@ -24,12 +24,12 @@ Names/paths are case-sensitive in the contract. Use lowercase portable names and
 | `agents` | JSON file with Raw agent settings, without a publisher `model` alias; use either `system_prompt` or owned `system_prompt_file` |
 | `tools` | Directory with `tool.json`, `index.mjs` and owned helpers/resources; same current tool API |
 | `skills` | Directory with `SKILL.md`, YAML `name`/`description` and optional resources; name matches its portable folder |
-| `hooks` | Directory with `hook.json` and owned command/argument assets; declare `raw.hook/1` in `requires` |
+| `hooks` | Directory with `hook.json` and owned command/argument assets; declare `raw.hook/2` in `requires` |
 | `vars` | JSON file containing one Raw var definition (`description`, `access`, `source`, optional type/settings) |
 | `var_providers` | JSON file containing one executable provider definition; include its script as an owned file |
 | `mcp` | JSON file containing one Raw MCP server definition; include owned stdio scripts |
 
-The installed examples demonstrate `raw.agent/1`, `raw.tool-api/1`, `raw.skill/1`, `raw.hook/1`, `raw.var-provider/1` and `raw.mcp/1`. A builtin selection relies on the recipient Raw installation; it does not copy builtin implementation bytes into the package.
+The installed examples demonstrate `raw.agent/1`, `raw.tool-api/2`, `raw.skill/1`, `raw.hook/2`, `raw.var-provider/1` and `raw.mcp/1`. A builtin selection relies on the recipient Raw installation; it does not copy builtin implementation bytes into the package.
 
 ## References and policy
 

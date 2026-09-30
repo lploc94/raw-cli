@@ -97,7 +97,7 @@ test("MCP stdio process arguments preserve empty and whitespace strings", async 
 test("conditional policy validates RE2 syntax, path grammar and ask-only effect at config load", async () => {
   const rule = (when: unknown, effect = "ask") => config({ default_agent: "p", models: { local: model },
     agents: { p: { model: "local", tools: { use: ["builtin/bash"], rules: [{ match: "builtin/bash", effect, when }] } } } });
-  await assert.rejects(loadConfig({ configPath: rule({ any: "commands[*].command", regex: "(?=rm)" }), env: {} }), /regex|RE2|unsupported/i);
-  await assert.rejects(loadConfig({ configPath: rule({ any: "commands[0].command", regex: "rm" }), env: {} }), /when\.any|path/i);
-  await assert.rejects(loadConfig({ configPath: rule({ any: "commands[*].command", regex: "rm" }, "deny"), env: {} }), /conditional|ask/i);
+  await assert.rejects(loadConfig({ configPath: rule({ source: "arguments", any: "commands[*].command", regex: "(?=rm)" }), env: {} }), /regex|RE2|unsupported/i);
+  await assert.rejects(loadConfig({ configPath: rule({ source: "arguments", any: "commands[0].command", regex: "rm" }), env: {} }), /when\.any|path/i);
+  await assert.rejects(loadConfig({ configPath: rule({ source: "arguments", any: "commands[*].command", regex: "rm" }, "deny"), env: {} }), /conditional|ask/i);
 });

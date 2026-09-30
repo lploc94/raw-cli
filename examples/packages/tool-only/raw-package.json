@@ -5,5 +5,5 @@
   "description": "A standalone tool package for direct agents",
   "files": ["tools/echo"],
   "exports": { "tools": { "echo": "tools/echo" } },
-  "requires": ["raw.tool-api/1"]
+  "requires": ["raw.tool-api/2"]
 }

@@ -5,6 +5,19 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { exportAgentPackage, inspectPackage } from "../src/packages/export.js";
 
+test("export requirements include selected builtin effects and panels without copying tools", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-export-builtins-"));
+  const configPath = join(root, "raw.json");
+  writeFileSync(configPath, JSON.stringify({ default_agent: "a", models: { m: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
+    agents: { a: { model: "m", tools: { use: ["builtin/write_file", "builtin/todo"] } } } }));
+  const out = join(root, "export");
+  const result = await exportAgentPackage({ configPath, agentName: "a", out, name: "@example/builtins", version: "1.0.0" });
+  assert.ok(result.report.requires.includes("raw.tool-effects/1"));
+  assert.ok(result.report.requires.includes("raw.panel/2"));
+  assert.equal(existsSync(join(out, "tools")), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(out, "agents", "a.json"), "utf8")).tools.use, ["builtin/write_file", "builtin/todo"]);
+});
+
 test("mixed agent export copies declared owned assets without credentials, runtime readings or execution", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-export-author-"));
   const configPath = join(root, "raw.json");
@@ -12,7 +25,7 @@ test("mixed agent export copies declared owned assets without credentials, runti
   const skill = join(root, "skills", "review");
   mkdirSync(tool, { recursive: true }); mkdirSync(join(skill, "references"), { recursive: true });
   writeFileSync(join(root, "prompt.md"), "You are a reviewer.\n");
-  writeFileSync(join(tool, "tool.json"), JSON.stringify({ api_version: 1, id: "helper", version: "1.0.0",
+  writeFileSync(join(tool, "tool.json"), JSON.stringify({ api_version: 2, id: "helper", version: "1.0.0",
     name: "helper", description: "Helper", input_schema: { type: "object" }, entry: "./index.mjs" }));
   writeFileSync(join(tool, "index.mjs"), 'import "./linked.mjs"; export async function handler() { return {content: []}; }');
   writeFileSync(join(tool, "helper.mjs"), 'throw new Error("export executed tool");');

@@ -9,7 +9,7 @@ test("conditional Bash approval gates only matching arguments and first answer w
   const call = (id: string, command: string) => ({ frames: [openAiFrame({ tool_calls: [{ index: 0, id, type: "function",
     function: { name: "bash", arguments: JSON.stringify({ commands: [{ command }] }) } }] }, "tool_calls"), openAiDone] });
   const f = await dashboardFixture({ agent: { tools: { use: ["builtin/bash"], rules: [
-    { match: "builtin/bash", effect: "ask", when: { any: "commands[*].command", regex: "^rm\\b" } },
+    { match: "builtin/bash", effect: "ask", when: { source: "arguments", any: "commands[*].command", regex: "^rm\\b" } },
   ] } }, responses: [call("safe", "printf safe"), call("gate", "rm not-present"), { frames: [openAiFrame({ content: "denied safely" }, "stop"), openAiDone] }] });
   try {
     const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root });

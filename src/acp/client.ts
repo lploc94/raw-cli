@@ -73,7 +73,7 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
   try {
     const initialize = connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {}, _meta: { raw: { runtimeInfo: true, sessionConfigure: true, toolRegister: true,
-        toolCall: true, toolCancel: true, sessionCompact: true, panels: true } } });
+        toolCall: true, toolCancel: true, sessionCompact: true, panelsV2: true } } });
     initializeResult = await (spawnFailure ? Promise.race([initialize, spawnFailure]) : initialize);
   } catch (error) {
     connection.close();

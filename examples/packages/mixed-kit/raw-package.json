@@ -22,6 +22,6 @@
     "var_providers": { "host_label": "var_providers/host_label.json" },
     "mcp": { "search": "mcp/search.json" }
   },
-  "requires": ["raw.agent/1", "raw.tool-api/1", "raw.skill/1", "raw.var-provider/1", "raw.mcp/1"],
+  "requires": ["raw.agent/1", "raw.tool-api/2", "raw.skill/1", "raw.var-provider/1", "raw.mcp/1"],
   "metadata": { "external_executables": ["node"] }
 }

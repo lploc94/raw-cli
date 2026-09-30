@@ -1,5 +1,12 @@
 import { writeFileTool, type ToolContext } from "../../primitives.js";
 import type { ToolResult } from "../../types.js";
+import { resolve } from "node:path";
+
+export function describeEffects(args: Record<string, unknown>, context: { cwd: string }): Record<string, unknown> {
+  const operations = args.operations as Array<{ path: string }>;
+  const paths = [...new Set(operations.map((operation) => resolve(context.cwd, operation.path)))];
+  return { files: paths.map((path) => ({ path, operation: "write" })) };
+}
 
 export function validateArgs(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "arguments must be an object";

@@ -9,10 +9,10 @@ import type { SelectedHook } from "../src/hooks/contract.js";
 async function fixture(source: string, timeoutMs = 1500): Promise<SelectedHook> {
   const folder = await mkdtemp(join(tmpdir(), "raw-hook-runner-"));
   await writeFile(join(folder, "run.mjs"), source);
-  return { id: "agent/check", name: "check", folder, command: process.execPath,
+  return { protocol_version: 2, id: "agent/check", name: "check", folder, command: process.execPath,
     args: [join(folder, "run.mjs")], timeoutMs, events: [{ name: "PreToolUse" }] };
 }
-const request = { protocol_version: 1 as const, event: "PreToolUse" as const, cwd: process.cwd(),
+const request = { protocol_version: 2 as const, event: "PreToolUse" as const, cwd: process.cwd(),
   tool: { identity: "builtin/bash", name: "bash", arguments: { commands: [{ command: "rm x" }] } } };
 
 test("hook runner accepts empty success and structured denial, with exit 2 taking precedence", async () => {

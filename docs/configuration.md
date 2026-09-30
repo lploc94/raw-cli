@@ -12,9 +12,9 @@ The optional root `ui` object configures terminal presentation independently of 
 
 The canonical global file alone may set `"sessions": {"retention_days": 7}`. The value must be a positive integer and defaults to 7. An alternate `--config` file may select a model/agent, but a `sessions` block there is rejected so it cannot change the shared session database's expiry policy. Retention is measured from the last committed conversation activity, with expiry at the exact cutoff; reading, listing, and heartbeats do not renew it. Expired sessions become unavailable immediately, then idle maintenance permanently deletes their history, active model context, and referenced payloads after any live writer releases its claim. CLI session commands perform a bounded cleanup pass after their work; a long-lived ACP server checks periodically while idle. Disk reclamation and WAL checkpointing happen only when useful and no writer is active. `raw sessions stats` reports actual database, WAL, and payload space, plus the largest sessions.
 
-The session store normally lives at `$XDG_STATE_HOME/raw/sessions.sqlite`, or `~/.local/state/raw/sessions.sqlite` when that variable is unset. If the normal path contains an unsupported older format, Raw preserves that database and uses `raw/stores/storage-v5/sessions.sqlite` below the same state root. The active store's payload files live beside its database. Its directories and database are private to the OS user. Back up the entire state directory, including both databases and their payload files, before the retention cutoff if saved history must survive local disk loss. There is no automatic export or pin exemption; cleanup is permanent for the active store. There is no migration for unreleased session formats.
+The session store normally lives at `$XDG_STATE_HOME/raw/sessions.sqlite`, or `~/.local/state/raw/sessions.sqlite` when that variable is unset. If the normal path contains an unsupported older format, Raw preserves that database and uses `raw/stores/storage-v6/sessions.sqlite` below the same state root. The active store's payload files live beside its database. Its directories and database are private to the OS user. Back up the entire state directory, including both databases and their payload files, before the retention cutoff if saved history must survive local disk loss. There is no automatic export or pin exemption; cleanup is permanent for the active store. There is no migration for unreleased session formats.
 
-The current unreleased session schema is version 5. Terminal themes and UI settings are not stored as model identity; a user can change them between runs without rewriting a session. Raw does not migrate old test sessions automatically.
+The current unreleased session schema is version 6. Terminal themes and UI settings are not stored as model identity; a user can change them between runs without rewriting a session. Raw does not migrate old test sessions automatically.
 
 The unreleased schema is breaking. It has no old flat-agent parser or migration aliases. The root has models, agents and optional default_agent. A model key is a local alias; model_id is the exact value sent upstream. An agent names one model alias and supplies run settings.
 
@@ -105,7 +105,7 @@ rule asks for matching `rm` command strings; other Bash calls run directly.
         "use": ["builtin/read_file", "builtin/bash", "local/my_tool", "agent/project_note", "mcp/search/web_search", "builtin/list_skills", "builtin/load_skill"],
         "rules": [{
           "match": "builtin/bash", "effect": "ask",
-          "when": { "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)" }
+          "when": { "source": "arguments", "any": "commands[*].command", "regex": "(^|[;&|()\\n])\\s*(sudo\\s+)?(/usr/bin/|/bin/)?rm(\\s|$)" }
         }]
       },
       "skills": { "use": ["agent/project"] }
@@ -137,3 +137,5 @@ A direct agent can select an installed tool or skill by `pkg/ALIAS/tools/EXPORT`
 Root `vars.NAME`, `var_providers.NAME` and `mcp.servers.NAME` may be `{"from":"pkg/ALIAS/KIND/EXPORT","inputs":{...}}`. These names remain local aliases. Package agent definitions can use `#kind/export` for their own components and `dep:alias#kind/export` for an exact bundled dependency. A package update changes the next runtime attach, including `--resume`; unchanged later turns keep the new baseline. [Packages](packages.md) has the manifest, input and lifecycle contract.
 
 Managed dashboard edits use [revision-checked configuration and owned component services](management.md). Viewing a catalog never imports tool code or starts providers/MCP; changes take effect on the next turn.
+
+The current development tool inspection contract uses explicit predicate sources and separate intended effects; see [tool-effects.md](tool-effects.md). Old tool/hook formats are not adapted.
