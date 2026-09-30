@@ -112,6 +112,12 @@ function renderBlock(block: PanelBlock): string[] {
       break;
     }
     case "markdown": lines.push((block as Extract<PanelBlock, { kind: "markdown" }>).text); break;
+    case "mermaid": {
+      const diagram = block as Extract<PanelBlock, { kind: "mermaid" }>;
+      if (diagram.fallback) lines.push(diagram.fallback);
+      lines.push("```mermaid", diagram.source, "```");
+      break;
+    }
     case "timeline":
       for (const event of [...(block as Extract<PanelBlock, { kind: "timeline" }>).events].reverse()) {
         lines.push(`[${event.level}] ${event.label}${event.detail ? ` — ${event.detail}` : ""}`);

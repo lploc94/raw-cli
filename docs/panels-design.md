@@ -288,6 +288,14 @@ For ordered phases or a pipeline.
 - **Rendering.** The dashboard's existing sanitizing markdown renderer, the same one used for assistant messages. Raw HTML is shown as text.
 - **Links.** Only `http:` and `https:` links are allowed. They open in a new tab with `rel="noopener noreferrer"`. Images are shown as their alt text and never fetched.
 
+### Mermaid diagrams
+
+```json
+{ "id": "flow", "kind": "mermaid", "source": "flowchart LR\nA-->B", "title": "Flow", "fallback": "A leads to B" }
+```
+
+The source is at most 16 KiB UTF-8. Both placements and completed Markdown Mermaid fences use one lazy renderer, with source/copy controls and readable failure fallback. CLI and ACP include title, fallback and source. No diagram callback, arbitrary HTML or external resource is allowed. See [diagrams.md](diagrams.md) for syntax restrictions, complexity limits, sanitizer and CSP behavior.
+
 ### 7.7 `timeline`
 
 For events, logs and history of a run.

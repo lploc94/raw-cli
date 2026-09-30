@@ -1,8 +1,10 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { common, createLowlight } from "lowlight";
-import { isValidElement, type ReactNode } from "react";
+import { createContext, isValidElement, useContext, type ReactNode } from "react";
 import { CopyButton } from "./ui.js";
+import { MermaidDiagram } from "./diagrams/MermaidDiagram.js";
+import { isClosedMermaidFence } from "./diagrams/policy.js";
 
 const highlighter = createLowlight(common);
 interface Node {
@@ -49,53 +51,56 @@ export function CodeBlock({
     </div>
   );
 }
+const MarkdownSource = createContext("");
+// Keep component identities stable across stream/metrics updates: inline component
+// functions would remount diagrams and lose source-toggle state on every render.
+const components: Components = {
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+  img: ({ alt }) => (
+    <span className="muted">
+      [Image: {alt || "remote image not loaded"}]
+    </span>
+  ),
+  pre: function MarkdownPre({ children: content, node }) {
+    const markdown = useContext(MarkdownSource);
+    if (
+      isValidElement<{ children?: ReactNode; className?: string }>(
+        content,
+      )
+    ) {
+      const code = String(content.props.children ?? "").replace(/\n$/, "");
+      const language = /language-([\w+-]+)/.exec(content.props.className ?? "")?.[1] ?? "text";
+      if (language.toLowerCase() === "mermaid" && isClosedMermaidFence(markdown, node?.position?.start.offset, node?.position?.end.offset)) {
+        return <MermaidDiagram source={code} />;
+      }
+      return (
+        <CodeBlock
+          code={code}
+          language={language}
+        />
+      );
+    }
+    return <pre tabIndex={0}>{content}</pre>;
+  },
+  table: ({ children }) => (
+    <div className="table-scroll" tabIndex={0}>
+      <table>{children}</table>
+    </div>
+  ),
+};
+
 export function Markdown({ children }: { children: string }) {
   return (
     <div className="markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        components={{
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
-          ),
-          img: ({ alt }) => (
-            <span className="muted">
-              [Image: {alt || "remote image not loaded"}]
-            </span>
-          ),
-          pre: ({ children }) => {
-            if (
-              isValidElement<{ children?: ReactNode; className?: string }>(
-                children,
-              )
-            )
-              return (
-                <CodeBlock
-                  code={String(children.props.children ?? "").replace(
-                    /\n$/,
-                    "",
-                  )}
-                  language={
-                    /language-([\w+-]+)/.exec(
-                      children.props.className ?? "",
-                    )?.[1] ?? "text"
-                  }
-                />
-              );
-            return <pre tabIndex={0}>{children}</pre>;
-          },
-          table: ({ children }) => (
-            <div className="table-scroll" tabIndex={0}>
-              <table>{children}</table>
-            </div>
-          ),
-        }}
-      >
-        {children}
-      </ReactMarkdown>
+      <MarkdownSource.Provider value={children}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
+          {children}
+        </ReactMarkdown>
+      </MarkdownSource.Provider>
     </div>
   );
 }

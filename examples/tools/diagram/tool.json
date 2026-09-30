@@ -1,0 +1,19 @@
+{
+  "api_version": 2,
+  "id": "diagram",
+  "version": "1.0.0",
+  "name": "diagram",
+  "description": "Publish a Mermaid diagram to the session sidebar. Source remains readable if the browser cannot render it.",
+  "entry": "./index.mjs",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "source": { "type": "string", "minLength": 1, "maxLength": 16384 },
+      "title": { "type": "string", "maxLength": 80 },
+      "fallback": { "type": "string", "maxLength": 500 }
+    },
+    "required": ["source"],
+    "additionalProperties": false
+  },
+  "panels": [{ "id": "diagram", "title": "Diagram", "placement": "sidebar", "icon": "list-checks", "open": "first_update" }]
+}

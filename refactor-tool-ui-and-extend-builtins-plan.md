@@ -441,6 +441,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: add patch editing and file change panels to write_file`
 
 ## Phase 8: Render Mermaid through the shared UI
+Status: complete (unavailable browser matrix waived by user; system Chromium verified).
 ### Goal
 Make diagrams usable in chat and sidebar with readable fallback and one rendering implementation.
 ### Current behavior and gap
@@ -464,8 +465,8 @@ Verify actual diagram SVG appears, not merely a source string or screenshot stub
 ### Implementation obligations
 Pin dependency and lazy-load browser bundle; bound rendering input/edge complexity; reuse production sanitizer or introduce a maintained sanitizer dependency with tests. Do not weaken CSP to make diagrams pass. Provide copy/source controls and sensible overflow in narrow sections.
 ### Acceptance criteria
-- [ ] AC-15: Flowchart and sequence diagrams render through both placements and Markdown; syntax failure shows source — browser tests.
-- [ ] AC-16: Malicious/oversized fixtures cannot execute script, fetch resources or crash chat; CLI/ACP remain readable — browser and surface tests.
+- [x] AC-15: Flowchart and sequence diagrams render through both placements and Markdown; syntax failure shows source — browser tests.
+- [x] AC-16: Malicious/oversized fixtures cannot execute script, fetch resources or crash chat; CLI/ACP remain readable — browser and surface tests.
 ### Focused verification
 `node --import tsx --test tests/mermaid-block.test.ts tests/panels-surfaces.test.ts`
 `npm run test:web -- tests/dashboard-ui/mermaid.spec.ts tests/dashboard-ui/accessibility.spec.ts`
@@ -478,6 +479,7 @@ Implementation review is required; verdict must be APPROVE.
 `feat: render Mermaid diagrams in chat and tool views`
 
 ## Phase 9: Qualify the integrated workflow and document the shipped contract
+Status: incomplete — stopped at user request before integration qualification. README/evidence drafts retained; workflow drafts remain outside the checkout and are not shipped.
 ### Goal
 Prove the features work together on installed artifacts and leave an accurate operational handoff.
 ### Current behavior and gap
@@ -563,3 +565,7 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-09-30 (cloud Phase 6): Implemented durable host Commands projection, bounded foreground Bash activity/logs, background SSE snapshots and independently audited Process controls. Reads/Stop reuse selected canonical Process registry policy/hooks/approval without claiming model-turn ownership. Repeated Stop IDs replay receipts; authority is rechecked after approval. Independent implementation review round 1 REVISE identified five accepted issues (authority race, deleted-session cache persistence, row remount/focus loss, missing stream labels, terminal receipt retry); regression fixes verified and round 2 explicitly APPROVE. Final typecheck/build passed; focused Node 76/76, exact dashboard gate 59/59, system Chromium panels/processes 25/25 (including interrupted response retry), diff check passed. Browser override RAW_TEST_CHROMIUM_EXECUTABLE selects an explicitly supplied installed executable for UI and installed-package tests; default CI browser selection is unchanged. Firefox/WebKit and pinned Playwright browser downloads remain unavailable and skipped under the user exception, not passed. Phase 6 AC-11/12 complete under that exception; advancing to Phase 7 after cohesive local commit.
 
 - 2026-09-30 (cloud Phase 7): Added strict shared patch parser/effects targets, whole-patch staging and rechecks, add/update/delete/rename with BOM/newline/permission preservation, symlink rejection, no-clobber destinations and truthful partial I/O outcomes. Files changed retains only successful writes, bounded diffs/omitted history, and trusted builtin completion accounting across cancellation. Read-only inspection/effects use actual cwd; syntax-only validation does not invent root aliases. Independent review APPROVE after documented 64 MiB aggregate staging, 200k lines/file and 8M matching-work limits were added with no-mutation tests. Typecheck/build passed; focused Node 60/60; exact tools gate 9/9; installed package gate 4/4 including installed patch/effects/Files, standalone fork fixture passed; system Chromium Files changed 3/3; diff check passed. Initial schema oneOf failed Ajv strictRequired and was corrected with branch-local properties; the intentional write_file schema contract hash was updated after reviewing the changed schema. No assertions were weakened. Phase 7 AC-13/14 complete under the previously approved unavailable-browser exception.
+
+- 2026-09-30 (cloud Phase 8): Shared lazy Mermaid renderer, strict preflight, DOMPurify SVG allowlist, unchanged CSP, source/copy/fallback, closed streaming fences, text fallback and local sidebar example implemented. Independent review APPROVE, including re-review of the stable Markdown component fix after browser testing exposed source-toggle reset on parent updates. Final build/typecheck passed; Mermaid unit 6/6, combined source/surface suite 17/17 before the final UI-only identity fix, final system Chromium Mermaid/accessibility 9/9. Direct production sanitizer and actual-renderer hostile cases verify no script/resource requests, including same-origin probes. AC-15/16 complete under the approved unavailable-browser exception. Build retains a large-chunk warning.
+
+- 2026-09-30 (user stop): User explicitly instructed “commit và stop task đi”. All active delegated workers were interrupted; no further implementation or phase-9 execution. README reconciled to the eleven registered builtins and current docs/evidence retained in the local commit. Phase 9 and overall completion remain unchecked: final aggregate check, full Chromium regression, final installed-package/overhead qualification and phase-9 implementation review were not run. Firefox/WebKit remain skipped under the earlier exception. No push, PR, merge or deployment.
