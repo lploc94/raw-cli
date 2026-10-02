@@ -2120,6 +2120,41 @@ summary::-webkit-details-marker {
 .component-detail .segmented {
   margin-bottom: var(--space-3);
 }
+.data-row.definition-row {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 0.8fr) auto;
+}
+.definition-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.definition-name-cell .muted {
+  font-size: 13px;
+}
+.metadata.definition-badges {
+  gap: var(--space-1);
+  align-items: center;
+}
+.definition-usage {
+  font-size: 13px;
+}
+.definitions-page .data-table + .card {
+  margin-top: var(--space-5);
+}
+.tab-badge {
+  margin-left: var(--space-2);
+}
+.check-fields {
+  align-items: flex-end;
+}
+.check-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
 .detail-header {
   margin-bottom: var(--space-4);
 }
@@ -2191,6 +2226,23 @@ summary::-webkit-details-marker {
   .component-row .component-row-usage {
     display: none;
   }
+  .data-row.definition-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name actions" "badges actions";
+    row-gap: var(--space-1);
+  }
+  .definition-row .definition-name-cell {
+    grid-area: name;
+  }
+  .definition-row .definition-badges {
+    grid-area: badges;
+  }
+  .definition-row .definition-usage {
+    display: none;
+  }
+  .definition-row .actions {
+    grid-area: actions;
+  }
   .agent-row .actions {
     grid-area: actions;
   }
@@ -2233,7 +2285,8 @@ summary::-webkit-details-marker {
   min-width: min(200px, 100%);
   margin: 0;
 }
-.source-preview {
+.source-preview,
+.code-sample {
   max-height: 400px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

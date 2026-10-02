@@ -161,6 +161,7 @@ test("variable definitions save through JSON and explicit Read uses the selected
   ).toBeVisible();
   await page.getByRole("link", { name: "Library", exact: true }).click();
   await page.getByRole("link", { name: "Vars", exact: true }).click();
+  await page.getByRole("tab", { name: "Check" }).click();
   await page.getByLabel("Variable name").fill("greeting");
   await page.getByRole("button", { name: "Read", exact: true }).click();
   await expect(page.locator(".source-preview")).toContainText(
@@ -256,6 +257,7 @@ test("MCP definitions discover explicitly and select exact original names", asyn
     page.getByRole("status").filter({ hasText: "Saved" }),
   ).toBeVisible();
   expect(existsSync(sentinel)).toBe(false);
+  await page.getByRole("tab", { name: "Check" }).click();
   await page.getByLabel("MCP server name").fill("probe");
   await page.getByRole("button", { name: "Discover", exact: true }).click();
   await page.getByRole("checkbox", { name: /echo_text/ }).check();

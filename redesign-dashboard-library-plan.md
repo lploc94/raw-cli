@@ -541,11 +541,11 @@ Existing `management.spec.ts` vars/MCP flows stay green, with a minimal tab-clic
 Page restructure only. Check polling and APIs are unchanged.
 
 ### Acceptance criteria
-- [ ] AC-1: Rows render the summaries for vars, providers and MCP. Proven by `library.spec.ts`.
-- [ ] AC-2: Row Check/Discover prefills and focuses without running. Proven by `library.spec.ts`.
-- [ ] AC-3: One status and one error surface on the Check tab. Proven by `library.spec.ts`.
-- [ ] AC-4: The Definitions save bar works, with no disclosures. Proven by `library.spec.ts`.
-- [ ] AC-5: The existing flows pass. Proven by `management.spec.ts`.
+- [x] AC-1: Rows render the summaries for vars, providers and MCP. Proven by `library.spec.ts`.
+- [x] AC-2: Row Check/Discover prefills and focuses without running. Proven by `library.spec.ts`.
+- [x] AC-3: One status and one error surface on the Check tab. Proven by `library.spec.ts`.
+- [x] AC-4: The Definitions save bar works, with no disclosures. Proven by `library.spec.ts`.
+- [x] AC-5: The existing flows pass. Proven by `management.spec.ts`.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/library.spec.ts tests/dashboard-ui/management.spec.ts --project=chromium`
@@ -766,3 +766,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-03: Phase 2 complete. Codex impl review APPROVE (2 rounds: direct-load not-found fixed by serving the entry for any `/library/<segment>`). Also fixed the server page allowlist, which omitted `hooks`, so reloading `/library/hooks` returned a 404. Gates: typecheck pass, chromium 194+ passed, diff --check clean.
 - 2026-10-03: Phase 3 complete. Codex impl review APPROVE (2 rounds: a cached-list refresh error is now surfaced once, with a test). Gates: typecheck pass, chromium all passed, diff --check clean.
 - 2026-10-03: Phase 4 complete. Codex impl review APPROVE (2 rounds). Fixed: the undo history of a fresh editor per file (red/green verified); usage verified by a direct GET, not cached data; config load errors reported. Gates: typecheck pass, chromium 210 passed, diff --check clean.
+- 2026-10-03: Phase 5 complete. Codex impl review APPROVE (2 rounds). Fixed: providers are shown without vars; the save bar is scoped to the Definitions tab, which shows an Unsaved badge; focus requests stay pending while a check runs. Gates: typecheck pass, chromium 217 passed, diff --check clean.

@@ -324,3 +324,143 @@ test.describe("component detail data integrity", () => {
     await expect(page.getByText("No agents yet")).toHaveCount(0);
   });
 });
+
+const withDefinitions = (raw: { configPath: string }) => {
+  const config = saved(raw);
+  config.var_providers = { cmd: { command: process.execPath, args: ["-e", "process.stdin.once('data',()=>console.log(JSON.stringify({value:'x'})))"] } };
+  config.vars = {
+    lit: { description: "A greeting", type: "string", access: "read", source: { kind: "literal", value: "Hello from vars" } },
+    envy: { description: "Token", access: "use", source: { kind: "env", name: "SOME_TOKEN" } },
+    prov: { description: "Provided", access: "read", source: { kind: "provider", name: "cmd" } },
+  };
+  config.mcp = { servers: {
+    local: { transport: "stdio", command: "node", args: ["server.mjs"] },
+    remote: { transport: "streamable-http", url: "https://example.invalid/mcp" },
+  } };
+  config.agents.raw.vars = ["lit"];
+  config.agents.raw.tools = { use: ["mcp/remote/search"] };
+  writeFileSync(raw.configPath, JSON.stringify(config));
+};
+const definitionRow = (page: Page, list: string, name: string) =>
+  page.getByRole("list", { name: list }).getByRole("listitem").filter({ has: page.locator(".definition-name", { hasText: new RegExp(`^${name}$`) }) });
+
+test.describe("vars and MCP", () => {
+  test("variable rows summarize source, access, type and usage, with providers listed", async ({ page, raw }) => {
+    withDefinitions(raw);
+    await openPath(page, raw.server.launchUrl, "/library/vars");
+    const lit = definitionRow(page, "Variables", "lit");
+    await expect(lit).toContainText("A greeting");
+    await expect(lit.locator(".badge").filter({ hasText: /^literal$/ })).toBeVisible();
+    await expect(lit.locator(".badge").filter({ hasText: /^read$/ })).toBeVisible();
+    await expect(lit).toContainText("string");
+    await expect(lit).toContainText("Used by 1");
+    const envy = definitionRow(page, "Variables", "envy");
+    await expect(envy.locator(".badge").filter({ hasText: /^env$/ })).toBeVisible();
+    await expect(envy.locator(".badge").filter({ hasText: /^use only$/ })).toBeVisible();
+    await expect(envy).toContainText("Not selected");
+    await expect(definitionRow(page, "Providers", "cmd")).toContainText("Used by 1 var");
+    await expect(page.locator("details")).toHaveCount(0);
+  });
+
+  test("a row Check opens the Check tab ready to run, without running it", async ({ page, raw }) => {
+    withDefinitions(raw);
+    const checks: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/api/checks")) checks.push(request.url());
+    });
+    await openPath(page, raw.server.launchUrl, "/library/vars");
+    await definitionRow(page, "Variables", "lit").getByRole("button", { name: "Check lit" }).click();
+    await expect(page.getByRole("tab", { name: "Check" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByLabel("Variable name")).toHaveValue("lit");
+    await expect(page.getByRole("button", { name: "Read", exact: true })).toBeFocused();
+    expect(checks).toEqual([]);
+    await page.getByRole("button", { name: "Read", exact: true }).click();
+    const panel = page.getByRole("tabpanel", { name: "Check" });
+    await expect(panel.locator(".source-preview")).toContainText("Hello from vars");
+    await expect(panel.getByRole("status")).toHaveCount(1);
+    await expect(panel.getByRole("status")).toContainText("Check completed");
+  });
+
+  test("MCP rows show transport and usage without exposing locators", async ({ page, raw }) => {
+    withDefinitions(raw);
+    await openPath(page, raw.server.launchUrl, "/library/mcp");
+    const remote = definitionRow(page, "MCP servers", "remote");
+    await expect(remote.locator(".badge").filter({ hasText: /^HTTP$/ })).toBeVisible();
+    await expect(remote).toContainText("Used by 1");
+    await expect(definitionRow(page, "MCP servers", "local").locator(".badge").filter({ hasText: /^stdio$/ })).toBeVisible();
+    await expect(page.getByRole("tabpanel", { name: "Overview" })).not.toContainText("example.invalid");
+    await definitionRow(page, "MCP servers", "local").getByRole("button", { name: "Discover local" }).click();
+    await expect(page.getByLabel("MCP server name")).toHaveValue("local");
+    await expect(page.getByRole("button", { name: "Discover", exact: true })).toBeFocused();
+  });
+
+  test("an empty page offers Edit definitions, and the save bar persists edits", async ({ page, raw }) => {
+    await openPath(page, raw.server.launchUrl, "/library/vars");
+    await expect(page.getByRole("heading", { name: "No variables yet" })).toBeVisible();
+    await page.getByRole("button", { name: "Edit definitions" }).click();
+    await expect(page.getByRole("tab", { name: "Definitions" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".sticky-savebar")).toHaveCount(0);
+    await page.getByRole("textbox", { name: "Definitions JSON", exact: true }).fill(JSON.stringify({
+      vars: { greeting: { description: "Greeting", access: "read", source: { kind: "literal", value: "Hi" } } }, var_providers: {},
+    }));
+    await expect(page.locator(".sticky-savebar")).toContainText("Unsaved changes");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+    expect(saved(raw).vars.greeting.description).toBe("Greeting");
+    await page.getByRole("tab", { name: "Overview" }).click();
+    await expect(definitionRow(page, "Variables", "greeting")).toContainText("Greeting");
+  });
+
+  test("providers stay listed when no variables exist", async ({ page, raw }) => {
+    const config = saved(raw);
+    config.var_providers = { cmd: { command: "node", args: [] } };
+    writeFileSync(raw.configPath, JSON.stringify(config));
+    await openPath(page, raw.server.launchUrl, "/library/vars");
+    await expect(definitionRow(page, "Providers", "cmd")).toContainText("No vars");
+    await expect(page.getByRole("list", { name: "Variables" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Edit definitions" })).toHaveCount(1);
+  });
+
+  test("the definitions save bar stays on its tab, so Check keeps one status and one error", async ({ page, raw }) => {
+    withDefinitions(raw);
+    await openPath(page, raw.server.launchUrl, "/library/vars");
+    await page.getByRole("tab", { name: "Definitions" }).click();
+    const editor = page.getByRole("textbox", { name: "Definitions JSON", exact: true });
+    await expect(editor).toContainText("A greeting");
+    await editor.fill(JSON.stringify({ vars: { lit: { description: "Changed", access: "read", source: { kind: "literal", value: "Hi" } } }, var_providers: {} }));
+    await page.getByRole("tab", { name: "Check" }).click();
+    await expect(page.getByRole("tab", { name: /Definitions/ })).toContainText("Unsaved");
+    await expect(page.locator(".sticky-savebar")).toHaveCount(0);
+    await expect(page.locator('[role="status"]')).toHaveCount(0);
+    await page.getByRole("tab", { name: /Definitions/ }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+    await page.getByRole("tab", { name: "Check" }).click();
+    await page.getByLabel("Variable name").fill("lit");
+    await page.getByRole("button", { name: "Read", exact: true }).click();
+    await expect(page.locator(".source-preview")).toContainText("Hi");
+    await expect(page.locator('[role="status"]')).toHaveCount(1);
+    await expect(page.locator('[role="alert"]')).toHaveCount(0);
+  });
+
+  test("a row action during a running check focuses Read once the check finishes", async ({ page, raw }) => {
+    withDefinitions(raw);
+    let finish = false;
+    const row = { id: "held", kind: "var", name: "lit", agent: "raw", startedAt: new Date().toISOString() };
+    await page.route("**/api/checks", (route) => route.fulfill({ json: { ...row, state: "running" } }));
+    await page.route("**/api/checks/held", (route) =>
+      route.fulfill({ json: finish ? { ...row, state: "completed", finishedAt: new Date().toISOString(), result: { value: "Hi" } } : { ...row, state: "running" } }),
+    );
+    await openPath(page, raw.server.launchUrl, "/library/vars");
+    await definitionRow(page, "Variables", "lit").getByRole("button", { name: "Check lit" }).click();
+    await page.getByRole("button", { name: "Read", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Cancel check" })).toBeVisible();
+    await page.getByRole("tab", { name: "Overview" }).click();
+    await definitionRow(page, "Variables", "envy").getByRole("button", { name: "Check envy" }).click();
+    await expect(page.getByLabel("Variable name")).toHaveValue("envy");
+    await expect(page.getByRole("button", { name: "Read", exact: true })).toBeDisabled();
+    finish = true;
+    await expect(page.getByRole("button", { name: "Read", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Read", exact: true })).toBeFocused();
+  });
+});
