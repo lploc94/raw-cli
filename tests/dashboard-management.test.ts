@@ -75,6 +75,47 @@ test("config view summarizes each agent without prompts, including object-key na
   } finally { await f.close(); }
 });
 
+test("config view summarizes vars, providers and MCP servers without values or locators", async () => {
+  const f = await dashboardFixture();
+  try {
+    const data: any = structuredClone(f.config);
+    data.var_providers = { cmd: { command: "/opt/secret-bin", args: ["--secret-arg"] } };
+    data.vars = {
+      lit: { description: "Literal", type: "string", access: "read", source: { kind: "literal", value: "SECRET_LITERAL" } },
+      envy: { description: "Env", access: "use", source: { kind: "env", name: "SECRET_ENV_NAME" } },
+      filed: { description: "File", access: "read", source: { kind: "file", path: "secret-dir/value.txt" } },
+      prov: { description: "Provider", access: "read", source: { kind: "provider", name: "cmd" } },
+    };
+    data.mcp = { servers: {
+      local: { transport: "stdio", command: "secret-cmd", args: ["--secret-mcp-arg"], env: { TOKEN: "secret-mcp-env" } },
+      http: { transport: "streamable-http", url: "https://secret.example/mcp", headers: { Authorization: "secret-header" } },
+    } };
+    data.agents.raw.vars = ["lit", "prov"];
+    data.agents.raw.tools = { use: ["builtin/read_file", "mcp/http/search"] };
+    data.agents.second = { model: "fixture", vars: ["prov"], tools: { use: ["mcp/http/fetch", "mcp/local/x"] } };
+    writeFileSync(f.configPath, JSON.stringify(data).replace('"second":', '"__proto__":{"model":"fixture","vars":["envy"],"tools":{"use":[]}},"second":'));
+    let view = await f.json<any>("/config");
+    assert.equal(view.valid, true, view.diagnostic);
+    assert.deepEqual(view.varSummaries, {
+      lit: { description: "Literal", access: "read", source: "literal", type: "string", usedBy: ["raw"] },
+      envy: { description: "Env", access: "use", source: "env", usedBy: ["__proto__"] },
+      filed: { description: "File", access: "read", source: "file", usedBy: [] },
+      prov: { description: "Provider", access: "read", source: "provider", provider: "cmd", usedBy: ["raw", "second"] },
+    });
+    assert.deepEqual(view.providerSummaries, { cmd: { usedBy: ["prov"] } });
+    assert.deepEqual(view.mcpSummaries, {
+      local: { transport: "stdio", usedBy: ["second"] },
+      http: { transport: "streamable-http", usedBy: ["raw", "second"] },
+    });
+    const text = JSON.stringify(view);
+    for (const secret of ["SECRET_LITERAL", "SECRET_ENV_NAME", "secret-dir", "/opt/secret-bin", "--secret-arg", "secret-cmd",
+      "--secret-mcp-arg", "secret-mcp-env", "secret.example", "secret-header"]) assert.equal(text.includes(secret), false, secret);
+    writeFileSync(f.configPath, "{broken");
+    view = await f.json<any>("/config");
+    assert.deepEqual([view.varSummaries, view.providerSummaries, view.mcpSummaries], [{}, {}, {}]);
+  } finally { await f.close(); }
+});
+
 test("a prompt patch that removes one source and sets the other keeps the new source", async () => {
   const f = await dashboardFixture();
   try {

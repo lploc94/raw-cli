@@ -14,6 +14,7 @@ export interface ConfigView {
   path: string; canonicalPath: string; canonical: boolean; revision: string; exists: boolean; valid: boolean; diagnostic?: string;
   defaultAgent?: string; agents: string[]; models: string[]; vars: string[]; providers: string[]; mcp: string[];
   sessions?: unknown; agentSummaries: Record<string, AgentSummary>;
+  varSummaries: Record<string, VarSummary>; providerSummaries: Record<string, ProviderSummary>; mcpSummaries: Record<string, McpSummary>;
 }
 export interface AgentSummary { model?: string; from?: string; tools: number; skills: number; hooks: number; rules: number }
 const count = (value: unknown) => Array.isArray(value) ? value.length : 0;
@@ -25,6 +26,40 @@ function agentSummaries(agents: Record<string, unknown>): Record<string, AgentSu
       tools: count(tools.use), skills: count(record(agent.skills).use), hooks: count(record(agent.hooks).use), rules: count(tools.rules) };
   }
   return summaries;
+}
+// Safe projections only: never values, env names, paths, commands, args, URLs, headers or env.
+export interface VarSummary {
+  description?: string; access?: "read" | "use"; source?: "literal" | "env" | "file" | "provider"; type?: string; provider?: string; usedBy: string[];
+}
+export interface ProviderSummary { usedBy: string[] }
+export interface McpSummary { transport?: "stdio" | "streamable-http"; usedBy: string[] }
+const oneOf = <T extends string>(value: unknown, choices: readonly T[]): T | undefined =>
+  choices.includes(value as T) ? value as T : undefined;
+function definitionSummaries(data: Record<string, unknown> | undefined) {
+  const agents = Object.entries(record(data?.agents)).map(([name, entry]) => [name, record(entry)] as const);
+  const vars: Record<string, VarSummary> = Object.create(null), providers: Record<string, ProviderSummary> = Object.create(null),
+    mcp: Record<string, McpSummary> = Object.create(null);
+  for (const id of Object.keys(record(data?.var_providers))) providers[id] = { usedBy: [] };
+  for (const [name, entry] of Object.entries(record(data?.vars))) {
+    const v = record(entry), source = record(v.source), kind = oneOf(source.kind, ["literal", "env", "file", "provider"] as const);
+    const access = oneOf(v.access, ["read", "use"] as const);
+    vars[name] = { ...(typeof v.description === "string" ? { description: v.description } : {}), ...(access ? { access } : {}),
+      ...(kind ? { source: kind } : {}), ...(typeof v.type === "string" ? { type: v.type } : {}),
+      ...(kind === "provider" && typeof source.name === "string" ? { provider: source.name } : {}),
+      usedBy: agents.filter(([, agent]) => Array.isArray(agent.vars) && agent.vars.includes(name)).map(([agent]) => agent) };
+    if (kind === "provider" && typeof source.name === "string" && Object.hasOwn(providers, source.name)) providers[source.name]!.usedBy.push(name);
+  }
+  for (const [name, entry] of Object.entries(record(record(data?.mcp).servers))) {
+    const transport = oneOf(record(entry).transport, ["stdio", "streamable-http"] as const);
+    mcp[name] = { ...(transport ? { transport } : {}), usedBy: agents.filter(([, agent]) => {
+      const use = record(agent.tools).use;
+      return Array.isArray(use) && use.some((item) => {
+        const ref = typeof item === "string" ? item : record(item).ref;
+        return typeof ref === "string" && ref.startsWith(`mcp/${name}/`);
+      });
+    }).map(([agent]) => agent) };
+  }
+  return { varSummaries: vars, providerSummaries: providers, mcpSummaries: mcp };
 }
 export interface CheckView {
   id: string; kind: "var" | "mcp"; name: string; agent: string; state: "running" | "completed" | "error" | "cancelled";
@@ -51,7 +86,8 @@ export function createManagementRoutes(context: DashboardContext): DashboardRout
     ...(typeof config.data?.default_agent === "string" ? { defaultAgent: config.data.default_agent } : {}),
     agents: Object.keys(record(config.data?.agents)), models: Object.keys(record(config.data?.models)), vars: Object.keys(record(config.data?.vars)),
     providers: Object.keys(record(config.data?.var_providers)), mcp: Object.keys(record(record(config.data?.mcp).servers)),
-    ...(config.data?.sessions === undefined ? {} : { sessions: config.data.sessions }), agentSummaries: agentSummaries(record(config.data?.agents)) });
+    ...(config.data?.sessions === undefined ? {} : { sessions: config.data.sessions }), agentSummaries: agentSummaries(record(config.data?.agents)),
+    ...definitionSummaries(config.data) });
   let preparingChecks = 0;
   const checks = new Map<string, { row: CheckView; controller: AbortController; done: Promise<void> }>();
   const sweep = () => {
