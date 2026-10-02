@@ -729,10 +729,10 @@ Phases 1–6.
 CSS breakpoints, capture script, docs, evidence.
 
 ### Acceptance criteria
-- [ ] AC-1: No overflow at 390px and actions visible on all Library pages. Proven by `library.spec.ts`.
-- [ ] AC-2: Axe passes light/dark on all Library pages and tabs, on 3 browsers. Proven by `accessibility.spec.ts`.
-- [ ] AC-3: Screenshots regenerated and docs updated. Proven by inspection.
-- [ ] AC-4: `npm run test:web` passes 3 browsers; `npm run check` passes except the baseline PTY tests; recorded in evidence. Proven by the evidence doc.
+- [x] AC-1: No overflow at 390px and actions visible on all Library pages. Proven by `library.spec.ts`.
+- [x] AC-2: Axe passes light/dark on all Library pages and tabs, on 3 browsers. Proven by `accessibility.spec.ts`.
+- [x] AC-3: Screenshots regenerated and docs updated. Proven by inspection.
+- [x] AC-4: `npm run test:web` passes 3 browsers; `npm run check` passes except the baseline PTY tests; recorded in evidence. Proven by the evidence doc.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/library.spec.ts tests/dashboard-ui/accessibility.spec.ts --project=chromium && node --import tsx tests/dashboard-ui/capture-management.ts`
@@ -768,3 +768,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-03: Phase 4 complete. Codex impl review APPROVE (2 rounds). Fixed: the undo history of a fresh editor per file (red/green verified); usage verified by a direct GET, not cached data; config load errors reported. Gates: typecheck pass, chromium 210 passed, diff --check clean.
 - 2026-10-03: Phase 5 complete. Codex impl review APPROVE (2 rounds). Fixed: providers are shown without vars; the save bar is scoped to the Definitions tab, which shows an Unsaved badge; focus requests stay pending while a check runs. Gates: typecheck pass, chromium 217 passed, diff --check clean.
 - 2026-10-03: Phase 6 complete. Codex impl review APPROVE (3 rounds). Fixed: bind defaults when the config arrives late; serialized artifact discards; an explicit Keep unselected survives a config reload (red/green verified). Gates: typecheck pass, chromium 226 passed, diff --check clean.
+- 2026-10-03: Phase 7 complete. Codex impl review APPROVE (2 rounds). Fixed: narrow checks now assert actions on skill Preview, hook Overview and dirty vars/MCP Definitions; axe scans wait for each surface's data and editors. Also migrated `tests/dashboard-installed.test.ts` to the Phase 6 Import dialog and ⋯ menu (found by `npm run check`). Gates: typecheck pass, test:web 684/684 on 3 browsers, check 884/887 (3 baseline PTY failures), diff --check clean.

@@ -1,5 +1,6 @@
 import { chromium } from "@playwright/test";
 import { dashboardFixture } from "../fixtures/dashboard.js";
+import { openPath, seedLibrary } from "./library-seed.js";
 const raw = await dashboardFixture({
   agent: {
     tools: {
@@ -54,19 +55,35 @@ try {
       path: `docs/dashboard/agent-${theme}-desktop.png`,
     });
   }
-  await page.getByRole("link", { name: "Library", exact: true }).click();
-  await page
-    .getByRole("link", { name: "builtin/read_file", exact: true })
-    .click();
-  await page
-    .getByRole("textbox", { name: "Source tool.json", exact: true })
-    .waitFor();
-  if (!process.argv.includes("--packages-only")) await page.screenshot({ path: "docs/dashboard/tool-dark-desktop.png" });
-  await page.getByRole("link", { name: "Packages", exact: true }).click();
+  // Library: seeded after the Agents shots, since the seed changes the raw agent's selection.
+  await seedLibrary(raw);
+  const shoot = async (path: string, ready: () => Promise<unknown>, files: Record<string, string>) => {
+    await openPath(page, raw.server.launchUrl, path);
+    await ready();
+    for (const [theme, file] of Object.entries(files)) {
+      await page.evaluate((theme) => (document.documentElement.dataset.theme = theme), theme);
+      await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+      if (!process.argv.includes("--packages-only")) await page.screenshot({ path: `docs/dashboard/${file}` });
+    }
+  };
+  await shoot("/library/tools", () => page.getByRole("list", { name: "Tools catalog" }).waitFor(), {
+    light: "library-tools-light-desktop.png",
+    dark: "library-tools-dark-desktop.png",
+  });
+  await shoot("/library/tools/local%2Fprobe", () => page.getByRole("list", { name: "Agents using this component" }).waitFor(), {
+    dark: "tool-dark-desktop.png",
+  });
+  await shoot("/library/vars", () => page.getByRole("list", { name: "Variables" }).waitFor(), { dark: "vars-dark-desktop.png" });
+  await openPath(page, raw.server.launchUrl, "/library/packages");
+  await page.evaluate(() => (document.documentElement.dataset.theme = "dark"));
+  await page.getByRole("button", { name: "Import package" }).click();
   await page.getByLabel("Local package path").fill(`${process.cwd()}/examples/packages/mixed-kit`);
   await page.getByRole("button", { name: "Inspect path", exact: true }).click();
   await page.getByRole("heading", { name: "Review package", exact: true }).waitFor();
   await page.screenshot({ path: "docs/dashboard/package-dark-desktop.png" });
+  await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("dialog").waitFor({ state: "detached" });
+  if (!process.argv.includes("--packages-only")) await page.screenshot({ path: "docs/dashboard/packages-dark-desktop.png" });
 } finally {
   await browser.close();
   await raw.close();

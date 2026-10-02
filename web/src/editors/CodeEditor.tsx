@@ -43,6 +43,8 @@ export default function CodeEditor({
             role: "textbox",
             "aria-multiline": "true",
             "aria-readonly": String(readOnly),
+            // Keeps long and read-only sources reachable from the keyboard so their scroll region is usable.
+            tabindex: "0",
           }),
           readonly.current.of([
             EditorState.readOnly.of(readOnly),

@@ -2045,6 +2045,9 @@ summary::-webkit-details-marker {
   border: 1px dashed var(--border);
   border-radius: 10px;
 }
+.card-footer a {
+  text-decoration: underline;
+}
 .card-footer.actions {
   align-items: flex-end;
 }
@@ -2310,6 +2313,9 @@ summary::-webkit-details-marker {
   }
   .agent-row .actions button:not(.icon-button) {
     padding: 7px 10px;
+  }
+  .used-by-list li {
+    flex-wrap: wrap;
   }
 }
 .actions > .field {

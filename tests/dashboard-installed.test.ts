@@ -92,7 +92,7 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await page.getByRole("button", { name: "Save", exact: true }).click(); await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
     assert.ok([...assets].some(url => /CodeEditor.*\.js/.test(url)), "lazy editor assets must be loaded from installed package");
     await page.getByRole("link", { name: "Library", exact: true }).click(); await page.getByRole("link", { name: "Packages", exact: true }).click();
-    await page.getByLabel("Local package path").fill(source); await page.getByRole("button", { name: "Inspect path", exact: true }).click();
+    await page.getByRole("button", { name: "Import package" }).first().click(); await page.getByLabel("Local package path").fill(source); await page.getByRole("button", { name: "Inspect path", exact: true }).click();
     await page.getByLabel("Install alias").fill("kit"); await page.getByRole("button", { name: "Install", exact: true }).click();
     await expect(page.getByRole("status").filter({ hasText: "Installed kit" })).toBeVisible();
     await page.getByRole("link", { name: "kit", exact: true }).click(); await page.getByRole("button", { name: "Use agent", exact: true }).click();
@@ -109,7 +109,7 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     await page.getByRole("button", { name: "Side panel", exact: true }).click(); await page.getByRole("button", { name: "Details", exact: true }).click(); await expect(page.getByText(/16,384/).first()).toBeVisible(); await page.keyboard.press("Escape");
     await page.getByRole("link", { name: "Library", exact: true }).click(); await page.getByRole("link", { name: "Packages", exact: true }).click(); await page.getByRole("link", { name: "kit", exact: true }).click();
     await writeFile(join(source, "tools/echo/helper.mjs"), 'export const value="v2";\n');
-    await page.getByRole("button", { name: "Update package", exact: true }).click(); await page.getByLabel("Local package path").fill(source); await page.getByRole("button", { name: "Inspect path", exact: true }).click();
+    await page.getByRole("button", { name: "Actions for kit" }).click(); await page.getByRole("menuitem", { name: "Update package", exact: true }).click(); await page.getByLabel("Local package path").fill(source); await page.getByRole("button", { name: "Inspect path", exact: true }).click();
     await page.getByRole("button", { name: "Update kit", exact: true }).click(); await expect(page.getByRole("status").filter({ hasText: "Updated kit" })).toBeVisible();
     await rm(author, { recursive: true });
     await page.goto(`${origin}/chat/${id}`); await page.getByRole("textbox", { name: "Message", exact: true }).fill("After package update"); await page.getByRole("button", { name: "Send", exact: true }).click();

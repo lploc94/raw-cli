@@ -1,11 +1,9 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.js";
+import { openPath, packageSource, seedLibrary } from "./library-seed.js";
 
-/** Opens a dashboard path directly; the launch URL's query carries the session token. */
-export const openPath = (page: Page, launchUrl: string, path: string) =>
-  page.goto(launchUrl.replace(/\/?(\?|#|$)/, `${path}$1`));
 
 test.describe("library navigation", () => {
   test("the sidebar marks the current library section on list and detail routes", async ({ page, raw }) => {
@@ -465,18 +463,6 @@ test.describe("vars and MCP", () => {
   });
 });
 
-function packageSource(root: string, folderName = "shared-kit") {
-  const folder = join(root, folderName);
-  cpSync(join(process.cwd(), "examples/packages/tool-only"), folder, { recursive: true });
-  mkdirSync(join(folder, "agents"));
-  writeFileSync(join(folder, "agents/writer.json"), JSON.stringify({ system_prompt: { $input: "prompt" }, tools: { use: [] } }));
-  const manifest = JSON.parse(readFileSync(join(folder, "raw-package.json"), "utf8"));
-  manifest.files.push("agents/writer.json");
-  manifest.exports.agents = { writer: "agents/writer.json" };
-  manifest.inputs = { type: "object", properties: { prompt: { type: "string" } }, required: ["prompt"] };
-  writeFileSync(join(folder, "raw-package.json"), JSON.stringify(manifest));
-  return folder;
-}
 type Raw = { root: string; json: <T>(path: string, method?: string, body?: unknown) => Promise<T> };
 const install = async (raw: Raw, alias: string, action: "install" | "link" = "install", folderName?: string) => {
   const stage = await raw.json<{ id: string }>("/packages/inspect", "POST", { path: packageSource(raw.root, folderName ?? `${alias}-kit`) });
@@ -627,5 +613,70 @@ test.describe("packages", () => {
     await reloaded;
     await page.waitForTimeout(200);
     await expect(dialog.getByLabel("Recipient agent")).toHaveValue("");
+  });
+});
+
+test.describe("narrow screens", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  const fits = async (page: Page, surface: string) =>
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), surface).toBe(true);
+  const tab = (page: Page, list: string, name: string) => page.getByRole("tablist", { name: list }).getByRole("tab", { name });
+
+  test("every Library surface fits and keeps its actions on screen", async ({ page, raw }) => {
+    test.slow();
+    await seedLibrary(raw);
+    for (const [kind, label] of [["tools", "tool"], ["skills", "skill"], ["hooks", "hook"]]) {
+      await openPath(page, raw.server.launchUrl, `/library/${kind}`);
+      await expect(page.getByRole("list", { name: /catalog/ })).toBeVisible();
+      await fits(page, `${kind} list`);
+      await expect(page.getByRole("button", { name: `Create ${label}` })).toBeInViewport();
+    }
+    await openPath(page, raw.server.launchUrl, "/library/tools/local%2Fprobe");
+    await expect(page.getByRole("list", { name: "Agents using this component" })).toBeVisible();
+    await fits(page, "tool overview");
+    await expect(page.getByRole("button", { name: "Actions for local/probe" })).toBeInViewport();
+    await tab(page, "Component sections", "Source").click();
+    await page.getByRole("textbox", { name: "Source tool.json", exact: true }).click();
+    await page.keyboard.type(" ");
+    await expect(page.locator(".sticky-savebar")).toBeInViewport();
+    await fits(page, "tool source with save bar");
+    await page.getByRole("button", { name: "Discard" }).click();
+    await openPath(page, raw.server.launchUrl, "/library/skills/local%2Fguide");
+    await tab(page, "Component sections", "Source").click();
+    await page.getByRole("radiogroup", { name: "Markdown view" }).getByRole("radio", { name: "Preview" }).click();
+    await expect(page.locator(".markdown-preview")).toBeVisible();
+    await fits(page, "skill preview");
+    await expect(page.getByRole("button", { name: "Actions for local/guide" })).toBeInViewport();
+    await openPath(page, raw.server.launchUrl, "/library/hooks/local%2Fguard");
+    await expect(page.getByRole("table", { name: "Hook events" })).toBeVisible();
+    await fits(page, "hook events");
+    await expect(page.getByRole("button", { name: "Actions for local/guard" })).toBeInViewport();
+    for (const kind of ["vars", "mcp"]) {
+      await openPath(page, raw.server.launchUrl, `/library/${kind}`);
+      await expect(page.getByRole("button", { name: "Edit definitions" })).toBeInViewport();
+      for (const name of ["Overview", "Definitions", "Check"]) {
+        await tab(page, "Definition sections", name).click();
+        await expect(page.getByRole("tabpanel", { name })).toBeVisible();
+        await fits(page, `${kind} ${name}`);
+        if (name === "Definitions") {
+          await page.getByRole("textbox", { name: "Definitions JSON", exact: true }).click();
+          await page.keyboard.type(" ");
+          await expect(page.getByRole("button", { name: "Save", exact: true })).toBeInViewport({ ratio: 1 });
+          await expect(page.getByRole("button", { name: "Discard", exact: true })).toBeInViewport({ ratio: 1 });
+          await fits(page, `${kind} Definitions with save bar`);
+          await page.getByRole("button", { name: "Discard", exact: true }).click();
+        }
+      }
+      await expect(page.getByRole("button", { name: kind === "vars" ? "Read" : "Discover", exact: true })).toBeInViewport();
+    }
+    await openPath(page, raw.server.launchUrl, "/library/packages");
+    await expect(page.getByRole("list", { name: "Installed packages" })).toBeVisible();
+    await fits(page, "packages list");
+    await expect(page.getByRole("button", { name: "Import package" })).toBeInViewport();
+    await page.getByRole("link", { name: "shared", exact: true }).click();
+    await expect(page.getByRole("heading", { level: 2, name: "Exports" })).toBeVisible();
+    await fits(page, "package detail");
+    await expect(page.getByRole("button", { name: "Use agent" })).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Actions for shared" })).toBeInViewport();
   });
 });

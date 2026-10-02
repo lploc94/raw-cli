@@ -116,12 +116,38 @@ editor is split into tabs:
 
 Switching tabs keeps the draft and never asks to leave the page.
 
-Library shows component provenance, usages and static validation. Fork a builtin
-or immutable package into a local component before editing it. Each source file
-has its own Save and revision. Creating/forking leaves the component unselected;
-attach it to an agent explicitly. Linked package files are their authored source.
+Library groups tools, skills and hooks, vars, MCP servers and packages. Each
+tools, skills or hooks list shows every component with its source (Builtin, Local,
+Agent, Package or Linked), Read-only and Invalid badges, and how many agents use
+it. Search filters by id, name and description. **Create** starts from a shipped
+example (or a hook template) and leaves the component unselected.
+
+A component opens with a breadcrumb, its badges and actions. Read-only components
+offer **Fork to local** as the main action; the ⋯ menu holds Fork, Add text file
+and Delete component (owned components only). Actions wait while a file has
+unsaved changes.
+
+- **Overview**: the description and static validation (never executed), hook
+  events as a table (event, tool, condition) with the command and timeout, and
+  **Used by**, which lists every agent with Attach or Detach. Package-bound agents
+  are listed without controls; edit their complete selection in the agent's JSON.
+  If an agent still uses the component through another reference to the same
+  folder (for example `agent/shared` for `local/shared`), Detach says so instead
+  of reporting success.
+- **Source**: pick a file and edit it. Each file has its own revision and a save
+  bar at the bottom. Markdown files switch between Source and Preview. Linked
+  package files are their authored source.
+
 A tool's manifest name controls its model-facing name; package selections also
 support the existing `{ref, as, inputs}` binding. No new alias syntax is added.
+
+**Vars** and **MCP** pages have three tabs. **Overview** lists each definition
+with safe facts only: a var's source kind, read or use-only access, type and the
+agents that select it; providers with the vars that use them; an MCP server's
+transport and the agents that select its tools. Values, env names, paths,
+commands, URLs and headers are never shown. A row's **Check** or **Discover**
+opens the **Check** tab ready to run; it never starts a check by itself.
+**Definitions** edits the JSON block with a save bar and a visible schema example.
 
 Changes apply on the next turn, including in an existing session. Saving never
 cancels an active run. Unsaved editor state has Save/Discard controls and a
@@ -146,21 +172,32 @@ Agent and source editor examples (isolated fixture data):
 
 The [dark Agents list](dashboard/agents-list-dark-desktop.png) uses the same layout.
 
-![Read-only tool source with syntax highlighting](dashboard/tool-dark-desktop.png)
+![Tools list in light mode](dashboard/library-tools-light-desktop.png)
+![Tool overview with its agents](dashboard/tool-dark-desktop.png)
+![Vars overview with safe summaries](dashboard/vars-dark-desktop.png)
+
+The [dark Tools list](dashboard/library-tools-dark-desktop.png) uses the same layout.
 
 Reproduce these images after building with
 `node --import tsx tests/dashboard-ui/capture-management.ts`.
 
 ## Share portable packages
 
-Open **Library → Packages** to choose a `.rawpkg` file or inspect a local source
-path. Review exports, recipient inputs, required Raw capabilities and external
-executables before choosing an alias and Install. Inspect and install are passive;
-neither selects an agent nor changes `default_agent`.
+Open **Library → Packages** and choose **Import package** to inspect a local
+source path or upload a `.rawpkg` file. Review exports, recipient inputs, required
+Raw capabilities and external executables before choosing an alias and Install.
+Inspect and install are passive; neither selects an agent nor changes
+`default_agent`. The package list shows each alias with its version, Linked or
+Artifact source, a Needs attention badge when it cannot be read, and its usage.
+Temporary artifacts appear in their own card with their expiry time.
 
-Use agent creates a local binding with your own model and typed inputs. Add
-component selects a tool/skill on an existing direct agent or creates a named
-vars/provider/MCP binding. Configure MCP tool selections through explicit discovery.
+A package opens with a breadcrumb, badges and **Use agent**. Its ⋯ menu holds Add
+component, Update package, Fork package and Remove package. Cards show the
+overview (digest or authored path, usage), exports with the packaged files, and
+requirements. Use agent creates a local binding with your own model and typed
+inputs, then offers **Chat with** the new agent. Add component selects a
+tool/skill on an existing direct agent or creates a named vars/provider/MCP
+binding. Configure MCP tool selections through explicit discovery.
 Package-agent overrides stay complete replacements in the Agent JSON editor.
 
 Export agent produces a downloadable archive. By default, literal variable values
@@ -176,6 +213,7 @@ into an empty/new source directory, and Remove names any bindings that still use
 the alias. Discard temporary imports/downloads when finished; stages expire after
 30 minutes or when the dashboard stops.
 
+![Packages list with a temporary artifact](dashboard/packages-dark-desktop.png)
 ![Package inspection before installation](dashboard/package-dark-desktop.png)
 
 Reproduce the package view with

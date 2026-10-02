@@ -81,7 +81,7 @@ Validation failures return `422 invalid_input` and leave disk unchanged.
 | PATCH `/config` | `{revision, patch}`; top-level replacement, `null` removes a field; absent fields preserved |
 | GET `/agents/:name`, `/models/:name` | Explicit resource editor `{value, revision}`; model keys omitted, with credential presence/reference metadata |
 | POST `/agents`, `/models` | `{revision, action, name, value?, newName?, credential?}`; create/patch/duplicate/rename/delete/default (default only for agents) |
-| GET `/components/:kind` | Passive catalog (`tools` or `skills`), provenance, usages and per-row validation |
+| GET `/components/:kind` | Passive catalog (`tools`, `skills` or `hooks`), provenance, usages and per-row validation |
 | GET `/components/:kind/:id` | Component detail; ID URL-encoded as one segment |
 | POST `/components/:kind` | `{id, files}` to create, or `{id, cloneFrom}` to fork; no implicit selection |
 | GET/PUT `/components/:kind/:id/file?path=...` | Read `{source,revision}` or save `{source,revision}`; contained owned text file only |

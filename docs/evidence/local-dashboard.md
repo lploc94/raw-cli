@@ -275,3 +275,30 @@ Known limits:
 - List counts cover top-level selections only. Package-bound agents show their package reference instead.
 - Tabs are not addressable by URL.
 - Qualification covers this host, local mock providers and the recorded browser versions only.
+
+## Library tab redesign (2026-10-03)
+
+Scope: Library tools, skills, hooks, vars, MCP and packages per `redesign-dashboard-library-plan.md`. Lists use a catalog table with badges and search. Component and package pages have a breadcrumb header, a primary action and a ⋯ menu. Components have Overview/Source tabs, vars and MCP have Overview/Definitions/Check tabs, and packages are imported through a dialog. Each phase was committed separately after a Codex (`gpt-6-astra`) implementation review reached APPROVE.
+
+| Contract | Proof |
+| --- | --- |
+| `/config` `varSummaries`, `providerSummaries`, `mcpSummaries`: source kind, access, type, transport and agents only; no values, env names, paths, commands, URLs or headers | `tests/dashboard-management.test.ts` |
+| Library navigation, `/library/hooks` and unknown sections served and routed; shared ⋯ menu for agents, components and packages | `tests/dashboard-server.test.ts`, `tests/dashboard-ui/library.spec.ts` |
+| Catalog rows, badges, search and no-results, empty state, create dialog errors, refresh failure | `tests/dashboard-ui/library.spec.ts` |
+| Component header and actions, Overview/Source tabs, per-file draft and history, Markdown preview, hook events table, Used by attach/detach, package-bound agents, alias still in use, config failure | `tests/dashboard-ui/library.spec.ts`, `tests/dashboard-ui/management.spec.ts` |
+| Vars/MCP summaries, row Check/Discover prefill without running, save bar only on Definitions, single check status | `tests/dashboard-ui/library.spec.ts`, `tests/dashboard-ui/management.spec.ts` |
+| Import dialog, package list and artifacts card, discard waits for itself, detail header with Use agent and ⋯ menu, bind defaults and Keep unselected | `tests/dashboard-ui/packages.spec.ts`, `tests/dashboard-ui/library.spec.ts`, `tests/dashboard-installed.test.ts` |
+| Axe (WCAG 2.2 AA) on every Library page and tab in light and dark; no horizontal overflow and visible actions at 390px | `tests/dashboard-ui/accessibility.spec.ts`, `tests/dashboard-ui/library.spec.ts` on chromium, firefox and webkit |
+
+Gates on the Phase 7 working tree:
+- `npm run typecheck` passed.
+- `npm run test:web` passed 684/684 across chromium, firefox and webkit.
+- `npm run check` ran 887 tests and 884 passed. The 3 failures are the PTY REPL tests in `tests/cli.test.ts`, which also fail on the pre-change baseline on this host.
+- `git diff --check` was clean.
+
+Screenshots were regenerated with `node --import tsx tests/dashboard-ui/capture-management.ts`: `library-tools-{light,dark}-desktop.png`, `tool-dark-desktop.png`, `vars-dark-desktop.png`, `packages-dark-desktop.png` and `package-dark-desktop.png`.
+
+Known limits:
+- Tabs are not addressable by URL.
+- Summaries describe the saved config, not unsaved Definitions edits.
+- Qualification covers this host, local mock providers and the recorded browser versions only.

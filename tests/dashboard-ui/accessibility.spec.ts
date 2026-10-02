@@ -1,5 +1,7 @@
 import { AxeBuilder } from "@axe-core/playwright";
+import type { Locator } from "@playwright/test";
 import { test, expect, openChat } from "./fixtures.js";
+import { openPath, seedLibrary } from "./library-seed.js";
 
 test("keyboard navigation and light/dark narrow layouts keep controls reachable", async ({
   page,
@@ -161,4 +163,70 @@ test("the agents list and every agent section pass axe in light and dark", async
   await page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { name: "Overview" }).click();
   await page.getByLabel("System prompt", { exact: true }).fill("Unsaved");
   await scan();
+});
+
+test("every Library page and tab passes axe in light and dark", async ({ page, raw }) => {
+  test.slow();
+  await seedLibrary(raw);
+  const scan = async (surface: string) => {
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((value) => (document.documentElement.dataset.theme = value), theme);
+      // Route changes fade the main column in; measure contrast on the settled page.
+      await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+      expect(
+        (await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations,
+        `${surface} (${theme})`,
+      ).toEqual([]);
+    }
+  };
+  const open = async (path: string, ready: string) => {
+    await openPath(page, raw.server.launchUrl, path);
+    await page.getByRole("heading", { level: 1, name: ready, exact: true }).waitFor();
+  };
+  // Each tab is scanned once its data and editors have loaded, not just its heading.
+  const tabs = async (list: string, names: [string, () => Promise<void>][], surface: string) => {
+    for (const [name, ready] of names) {
+      await page.getByRole("tablist", { name: list }).getByRole("tab", { name }).click();
+      await ready();
+      await scan(`${surface} ${name}`);
+    }
+  };
+  const visible = (locator: Locator) => () => expect(locator).toBeVisible();
+  const usedBy = page.getByRole("list", { name: "Agents using this component" });
+  for (const [kind, title] of [["tools", "Tools"], ["skills", "Skills"], ["hooks", "Hooks"]] as const) {
+    await open(`/library/${kind}`, title);
+    await expect(page.getByRole("list", { name: `${title} catalog` })).toBeVisible();
+    await scan(`${kind} list`);
+  }
+  await open("/library/tools/local%2Fprobe", "local/probe");
+  await tabs("Component sections", [
+    ["Overview", visible(usedBy)],
+    ["Source", visible(page.getByRole("textbox", { name: "Source tool.json", exact: true }))],
+  ], "tool");
+  await open("/library/hooks/local%2Fguard", "local/guard");
+  await expect(page.getByRole("table", { name: "Hook events" })).toBeVisible();
+  await expect(usedBy).toBeVisible();
+  await scan("hook overview");
+  await open("/library/skills/local%2Fguide", "local/guide");
+  await page.getByRole("tablist", { name: "Component sections" }).getByRole("tab", { name: "Source" }).click();
+  await page.getByRole("radiogroup", { name: "Markdown view" }).getByRole("radio", { name: "Preview" }).click();
+  await expect(page.locator(".markdown-preview")).toBeVisible();
+  await scan("skill preview");
+  for (const [kind, title, list, check] of [
+    ["vars", "Vars & providers", "Variables", "Read"],
+    ["mcp", "MCP servers", "MCP servers", "Discover"],
+  ] as const) {
+    await open(`/library/${kind}`, title);
+    await tabs("Definition sections", [
+      ["Overview", visible(page.getByRole("list", { name: list, exact: true }))],
+      ["Definitions", visible(page.getByRole("textbox", { name: "Definitions JSON", exact: true }))],
+      ["Check", visible(page.getByRole("button", { name: check, exact: true }))],
+    ], kind);
+  }
+  await open("/library/packages", "Packages");
+  await expect(page.getByRole("list", { name: "Installed packages" })).toBeVisible();
+  await scan("packages list");
+  await open("/library/packages/shared", "shared");
+  await expect(page.getByRole("list", { name: "Packaged files" })).toBeVisible();
+  await scan("package detail");
 });
