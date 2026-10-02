@@ -22,6 +22,16 @@
   --warning: #8b5b03;
   --error: #b42b3f;
   --code: #f5f6f8;
+  --on-accent: #fff;
+  --accent-hover: #4033bd;
+  --on-error: #fff;
+  --error-hover: #912237;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
   --chat-size: 16px;
   --code-size: 14px;
   --context-width: 260px;
@@ -43,6 +53,10 @@
   --warning: #efc06b;
   --error: #ff8d9f;
   --code: #111319;
+  --on-accent: #17142b;
+  --accent-hover: #c4bcff;
+  --on-error: #2a0d13;
+  --error-hover: #ffa8b6;
 }
 
 /* Diagram geometry comes from Mermaid; presentation stays in host CSS under CSP. */
@@ -207,22 +221,24 @@ small,
   color: var(--error);
 }
 .primary {
-  background: #5144d8;
-  color: white;
-  border-color: #5144d8;
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
   font-weight: 600;
   min-height: 40px;
 }
 .primary:hover:not(:disabled) {
-  background: #4033bd;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 .danger {
-  background: #b12d42;
-  color: white;
-  border-color: #b12d42;
+  background: var(--error);
+  color: var(--on-error);
+  border-color: var(--error);
 }
 .danger:hover:not(:disabled) {
-  background: #912237;
+  background: var(--error-hover);
+  border-color: var(--error-hover);
 }
 .icon-button {
   min-width: 34px;
@@ -242,7 +258,6 @@ small,
   padding: 4px 6px;
   color: var(--muted);
 }
-.actions,
 .section-heading {
   display: flex;
   align-items: center;
@@ -586,6 +601,11 @@ small,
 .context-nav a[aria-current="page"] {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.context-empty {
+  margin: 0;
+  padding: 11px 10px;
+  font-size: 13px;
 }
 .resize-handle {
   width: 4px;
@@ -1762,6 +1782,171 @@ summary::-webkit-details-marker {
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0;
+}
+/* Shared resource-page primitives (Agents first; other management pages may adopt them). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.badge.accent {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.badge.success {
+  color: var(--success);
+  border-color: currentColor;
+}
+.badge.warning {
+  color: var(--warning);
+  border-color: currentColor;
+}
+.badge.error {
+  color: var(--error);
+  border-color: currentColor;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--canvas);
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+}
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.card-header h2,
+.management-page .card-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.card-header p {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.card-footer {
+  margin: var(--space-4) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 0 0 10px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.page-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--muted);
+  font-size: 13px;
+}
+.page-breadcrumb a {
+  color: var(--muted);
+}
+.page-breadcrumb a:hover {
+  color: var(--text);
+}
+.data-table {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.data-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.data-row:first-child {
+  border-top: 0;
+}
+.data-row:hover {
+  background: var(--panel);
+}
+.data-row .actions {
+  margin: 0;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.sticky-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--canvas);
+  box-shadow: 0 -4px 16px rgb(0 0 0 / 8%);
+}
+.sticky-savebar .savebar-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: auto;
+  color: var(--muted);
+}
+.sticky-savebar .savebar-state::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.segmented button {
+  min-height: 28px;
+  padding: 3px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.segmented button[aria-checked="true"] {
+  background: var(--canvas);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+}
+.tabs.page-tabs {
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
+}
+.tabs.page-tabs button {
+  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 12px;
 }
 .actions > .field {
   flex: 1;

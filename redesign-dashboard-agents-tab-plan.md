@@ -190,11 +190,11 @@ Comparing computed background to the resolved `--accent` in both themes rejects 
 CSS + one App.tsx attribute/empty line. No Agents.tsx restructuring.
 
 ### Acceptance criteria
-- [ ] AC-1: `.primary`/`.danger` contain no hex colors — `grep -nE '^\.(primary|danger)' -A4 web/src/styles.css` shows only `var(--…)`.
-- [ ] AC-2: Exactly one top-level `.actions` declaration block, and computed `margin`/`gap`/`flex-wrap` of `.actions` in the chat header, a Settings model page and the `DraftActions` conflict row are unchanged — the implementer measures these at baseline (before editing CSS) and hard-codes the measured values as assertions in `agents.spec.ts`, which must pass after the change — inspection + `agents.spec.ts`.
-- [ ] AC-3: Current agent highlighted via `aria-current` — `agents.spec.ts`.
-- [ ] AC-4: Primary button colors resolve from tokens in light and dark — `agents.spec.ts`.
-- [ ] AC-5: Existing management/settings/packages specs still pass — phase gate.
+- [x] AC-1: `.primary`/`.danger` contain no hex colors — `grep -nE '^\.(primary|danger)' -A4 web/src/styles.css` shows only `var(--…)`.
+- [x] AC-2: Exactly one top-level `.actions` declaration block, and computed `margin`/`gap`/`flex-wrap` of `.actions` in the chat header, a Settings model page and the `DraftActions` conflict row are unchanged — the implementer measures these at baseline (before editing CSS) and hard-codes the measured values as assertions in `agents.spec.ts`, which must pass after the change — inspection + `agents.spec.ts`.
+- [x] AC-3: Current agent highlighted via `aria-current` — `agents.spec.ts`.
+- [x] AC-4: Primary button colors resolve from tokens in light and dark — `agents.spec.ts`.
+- [x] AC-5: Existing management/settings/packages specs still pass — phase gate.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/agents.spec.ts --project=chromium`
@@ -476,3 +476,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-02: Plan drafted from code discovery; user decisions recorded in Target.
 - 2026-10-02: Codex plan review APPROVE after 2 rounds. Ready for `/loop-implement`.
 - 2026-10-02: Phase 1 complete — typecheck OK, `test:phase dashboard` 60/60, codex-impl-review APPROVE (1 round).
+- 2026-10-02: Phase 2 complete — baseline `.actions` measured `12px|12px|8px|wrap|flex|center`; typecheck OK; chromium Playwright 169/169; codex-impl-review APPROVE (2 rounds, fixed decoded-segment sidebar match).

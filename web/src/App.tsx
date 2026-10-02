@@ -66,6 +66,14 @@ const categories = [
 ];
 export function App() {
   const { path, navigate } = useRouter();
+  const currentAgent = (() => {
+    const segment = path.split("/")[1] === "agents" ? path.split("/")[2] : undefined;
+    try {
+      return segment ? decodeURIComponent(segment) : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
   const [preferences, setPreferences] = usePreferences();
   const {
     data: bootstrap,
@@ -387,10 +395,15 @@ export function App() {
         <nav aria-label="Agents" className="context-nav">
           <div className="group-label">Agents</div>
           {bootstrap?.config.agents.map((name) => (
-            <Link key={name} href={`/agents/${encodeURIComponent(name)}`}>
+            <Link
+              key={name}
+              href={`/agents/${encodeURIComponent(name)}`}
+              aria-current={currentAgent === name ? "page" : undefined}
+            >
               {name}
             </Link>
           ))}
+          {bootstrap && !bootstrap.config.agents.length && <p className="muted context-empty">No agents yet</p>}
         </nav>
       )}
       <div className="context-footer">
