@@ -391,11 +391,11 @@ Asserting on the saved config file (not only DOM) rejects cosmetic-only reorder;
 Components and CSS; no change to JSON semantics.
 
 ### Acceptance criteria
-- [ ] AC-1: Prompt source segmented control works and persists correct key — `agents.spec.ts`.
-- [ ] AC-2: Selection empty placeholder, reorder and remove persist correctly — `agents.spec.ts` + `management.spec.ts`.
-- [ ] AC-3: Policy Move down exists and persists; result badge reflects effect — `agents.spec.ts`.
-- [ ] AC-4: JSON tab shows editor without `<details>` — `agents.spec.ts`.
-- [ ] AC-5: Axe passes on `/agents` and `/agents/raw` (all tabs) — `accessibility.spec.ts` extended.
+- [x] AC-1: Prompt source segmented control works and persists correct key — `agents.spec.ts`.
+- [x] AC-2: Selection empty placeholder, reorder and remove persist correctly — `agents.spec.ts` + `management.spec.ts`.
+- [x] AC-3: Policy Move down exists and persists; result badge reflects effect — `agents.spec.ts`.
+- [x] AC-4: JSON tab shows editor without `<details>` — `agents.spec.ts`.
+- [x] AC-5: Axe passes on `/agents` and `/agents/raw` (all tabs) — `accessibility.spec.ts` extended.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/agents.spec.ts tests/dashboard-ui/management.spec.ts tests/dashboard-ui/accessibility.spec.ts --project=chromium`
@@ -479,3 +479,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-02: Phase 2 complete — baseline `.actions` measured `12px|12px|8px|wrap|flex|center`; typecheck OK; chromium Playwright 169/169; codex-impl-review APPROVE (2 rounds, fixed decoded-segment sidebar match).
 - 2026-10-02: Phase 3 complete — typecheck OK; chromium Playwright 176/176; codex-impl-review APPROVE (1 round). Detail page already uses the shared action menu/dialog; Create agent removed from detail header early.
 - 2026-10-02: Phase 4 complete — typecheck OK; chromium Playwright full suite green; codex-impl-review APPROVE (2 rounds: ⋯ trigger disabled while dirty/loading; save bar only after first load). Selection/PolicyEditor moved verbatim into `web/src/pages/agents/` here; JSON tab already uses a section instead of `<details>`.
+- 2026-10-02: Phase 5 complete — typecheck OK; chromium Playwright full suite green; `test:phase dashboard` 61/61; codex-impl-review APPROVE (2 rounds). In-target pre-existing bugs fixed and covered: `editAgent` patch with `{system_prompt: null, system_prompt_file}` wiped both prompt sources (`src/management/agents.ts`); policy rules created/recreated in the form lacked the required `when.source` (now `arguments`).

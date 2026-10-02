@@ -75,6 +75,22 @@ test("config view summarizes each agent without prompts, including object-key na
   } finally { await f.close(); }
 });
 
+test("a prompt patch that removes one source and sets the other keeps the new source", async () => {
+  const f = await dashboardFixture();
+  try {
+    let rev = (await f.json<any>("/config")).revision;
+    rev = (await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw", value: { system_prompt: null, system_prompt_file: "prompts/raw.md" } })).revision;
+    let agent = JSON.parse(readFileSync(f.configPath, "utf8")).agents.raw;
+    assert.equal(agent.system_prompt_file, "prompts/raw.md"); assert.equal(Object.hasOwn(agent, "system_prompt"), false);
+    rev = (await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw", value: { system_prompt_file: null, system_prompt: "Back to text" } })).revision;
+    agent = JSON.parse(readFileSync(f.configPath, "utf8")).agents.raw;
+    assert.equal(agent.system_prompt, "Back to text"); assert.equal(Object.hasOwn(agent, "system_prompt_file"), false);
+    await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw", value: { system_prompt_file: "other.md" } });
+    agent = JSON.parse(readFileSync(f.configPath, "utf8")).agents.raw;
+    assert.equal(agent.system_prompt_file, "other.md"); assert.equal(Object.hasOwn(agent, "system_prompt"), false);
+  } finally { await f.close(); }
+});
+
 test("passive components never import code, per-file conflicts and usages prevent loss", async () => {
   const f = await dashboardFixture(); const sentinel = join(f.root, "imported");
   try {

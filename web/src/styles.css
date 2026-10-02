@@ -1831,8 +1831,26 @@ summary::-webkit-details-marker {
 }
 .card-header h2,
 .management-page .card-header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: 0;
   font-size: 15px;
+}
+.card .field:last-child {
+  margin-bottom: 0;
+}
+.card .field {
+  max-width: none;
+}
+.card.notice {
+  border-left: 3px solid var(--accent);
+}
+.prompt-editor {
+  min-height: 240px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.6;
 }
 .card-header p {
   margin: var(--space-1) 0 0;
@@ -2098,17 +2116,64 @@ summary::-webkit-details-marker {
   color: var(--muted);
 }
 .selection-list {
-  list-style: decimal;
-  margin: 8px 0;
-  padding-left: 24px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 .selection-list li {
-  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border-top: 1px solid var(--border);
   overflow-wrap: anywhere;
 }
-.selection-list li .actions {
-  display: inline-flex;
-  margin-left: 12px;
+.selection-list li:first-child {
+  border-top: 0;
+}
+.selection-list li:hover {
+  background: var(--panel);
+}
+.selection-index {
+  min-width: 1.5em;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.selection-list code {
+  flex: 1;
+  min-width: 0;
+}
+.selection-controls {
+  display: flex;
+  gap: 2px;
+}
+.selection-empty {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+}
+.actions.selection-add {
+  align-items: flex-end;
+  flex-wrap: nowrap;
+  margin: var(--space-4) 0 0;
+}
+.selection-add .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+.selection-add button {
+  min-height: 40px;
+}
+.agent-detail .sticky-savebar {
+  max-width: 820px;
 }
 .selection-list code,
 .config-path {
@@ -2116,10 +2181,36 @@ summary::-webkit-details-marker {
 }
 .policy-row {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  margin: 12px 0;
+  border-radius: 8px;
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  margin: 0 0 var(--space-3);
   min-width: 0;
+}
+.policy-row legend {
+  padding: 0 var(--space-1);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.policy-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  column-gap: var(--space-3);
+}
+.policy-fields .field {
+  margin-bottom: var(--space-2);
+}
+.policy-row .actions {
+  margin: var(--space-1) 0 var(--space-2);
+}
+.policy-row .policy-remove {
+  margin-left: auto;
+}
+.policy-result {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
 }
 .check-row {
   display: flex;
@@ -2171,9 +2262,8 @@ summary::-webkit-details-marker {
   .editor-actions > span {
     flex-basis: 100%;
   }
-  .selection-list li .actions {
-    display: flex;
-    margin-left: 0;
+  .policy-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .package-report {

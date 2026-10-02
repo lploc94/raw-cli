@@ -72,8 +72,8 @@ export function AgentDetail({
   }
   const set = (fields: Record<string, unknown>) =>
     draft.setSource(pretty({ ...value, ...fields }));
-  const promptMode = value.system_prompt_file !== undefined ? "file" : "text";
-  const changePrompt = (mode: string, text: string) => {
+  const promptMode: "text" | "file" = value.system_prompt_file !== undefined ? "file" : "text";
+  const changePrompt = (mode: "text" | "file", text: string) => {
     const copy = { ...value };
     delete copy.system_prompt;
     delete copy.system_prompt_file;
@@ -167,24 +167,32 @@ export function AgentDetail({
           <fieldset disabled={draft.busy} className="detail-fields">
             <Tabs.Content {...panel("overview")}>
               {parseError ? (
-                <div className="notice">
+                <div className="card notice">
                   <p>Agent JSON has an error, so the form is unavailable until it parses again.</p>
                   <button onClick={() => setSection("json")}>Open Agent JSON</button>
                 </div>
               ) : (
                 <>
-                  <Field label="Model">
-                    <select
-                      value={String(value.model ?? "")}
-                      onChange={(e) => set({ model: e.target.value })}
-                    >
-                      {config.models.map((alias) => (
-                        <option key={alias}>{alias}</option>
-                      ))}
-                    </select>
-                  </Field>
+                  <section className="card">
+                    <div className="card-header">
+                      <div>
+                        <h2>Model</h2>
+                        <p>The configured model this agent calls.</p>
+                      </div>
+                    </div>
+                    <Field label="Model">
+                      <select
+                        value={String(value.model ?? "")}
+                        onChange={(e) => set({ model: e.target.value })}
+                      >
+                        {config.models.map((alias) => (
+                          <option key={alias}>{alias}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  </section>
                   {value.from ? (
-                    <div className="notice">
+                    <div className="card notice">
                       <p>
                         Package binding: {value.from}. Edit recipient inputs and complete
                         replacement overrides in Agent JSON. Omitted overrides inherit the
@@ -193,31 +201,37 @@ export function AgentDetail({
                       <button onClick={() => setSection("json")}>Open Agent JSON</button>
                     </div>
                   ) : (
-                    <>
-                      <Field label="Prompt source">
-                        <select
-                          value={promptMode}
-                          onChange={(e) => changePrompt(e.target.value, "")}
-                        >
-                          <option value="text">Literal text</option>
-                          <option value="file">Markdown file path</option>
-                        </select>
-                      </Field>
-                      <Field
-                        label={promptMode === "file" ? "System prompt file" : "System prompt"}
-                        hint={
-                          promptMode === "file"
-                            ? "Relative to this config file. Read when the next turn attaches."
-                            : "Sent as the system prompt on the next turn."
-                        }
-                      >
-                        <textarea
-                          rows={4}
-                          value={String(value.system_prompt_file ?? value.system_prompt ?? "")}
-                          onChange={(e) => changePrompt(promptMode, e.target.value)}
-                        />
-                      </Field>
-                    </>
+                    <section className="card">
+                      <div className="card-header">
+                        <div>
+                          <h2>Instructions</h2>
+                          <p>
+                            {promptMode === "file"
+                              ? "Relative to this config file. Read when the next turn attaches."
+                              : "Sent as the system prompt on the next turn."}
+                          </p>
+                        </div>
+                        <PromptSource mode={promptMode} onChange={(mode) => changePrompt(mode, "")} />
+                      </div>
+                      {promptMode === "file" ? (
+                        <Field label="System prompt file">
+                          <input
+                            value={String(value.system_prompt_file ?? "")}
+                            placeholder="prompts/agent.md"
+                            onChange={(e) => changePrompt("file", e.target.value)}
+                          />
+                        </Field>
+                      ) : (
+                        <Field label="System prompt">
+                          <textarea
+                            rows={12}
+                            className="prompt-editor"
+                            value={String(value.system_prompt ?? "")}
+                            onChange={(e) => changePrompt("text", e.target.value)}
+                          />
+                        </Field>
+                      )}
+                    </section>
                   )}
                 </>
               )}
@@ -306,6 +320,44 @@ export function AgentDetail({
           else if (done === "rename" || done === "duplicate") navigate(`/agents/${encodeURIComponent(newName)}`);
         }}
       />
+    </div>
+  );
+}
+
+/** Text | File switch; a radio group, so arrow keys move between the two choices. */
+function PromptSource({ mode, onChange }: { mode: "text" | "file"; onChange: (mode: "text" | "file") => void }) {
+  const options = [
+    { value: "text", label: "Text" },
+    { value: "file", label: "File" },
+  ] as const;
+  return (
+    <div
+      className="segmented"
+      role="radiogroup"
+      aria-label="Prompt source"
+      onKeyDown={(event) => {
+        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        const next = mode === "text" ? "file" : "text";
+        onChange(next);
+        event.currentTarget.querySelector<HTMLButtonElement>(`[data-value="${next}"]`)?.focus();
+      }}
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          data-value={option.value}
+          aria-checked={mode === option.value}
+          tabIndex={mode === option.value ? 0 : -1}
+          onClick={() => {
+            if (mode !== option.value) onChange(option.value);
+          }}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -133,3 +133,29 @@ test("comfortable and compact layouts pass contrast checks at desktop and tablet
       ).toEqual([]);
     }
 });
+
+test("the agents list and every agent section pass axe in light and dark", async ({ page, raw }) => {
+  test.slow();
+  await page.goto(raw.server.launchUrl);
+  await page.getByRole("link", { name: "Agents", exact: true }).click();
+  const scan = async () =>
+    expect(
+      (await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations,
+    ).toEqual([]);
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((value) => (document.documentElement.dataset.theme = value), theme);
+    await page.getByRole("list", { name: "Agent list" }).waitFor();
+    await scan();
+  }
+  await page.getByRole("navigation", { name: "Agents" }).getByRole("link", { name: "raw", exact: true }).click();
+  for (const section of ["Overview", "Capabilities", "Policy", "JSON"]) {
+    await page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { name: section }).click();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((value) => (document.documentElement.dataset.theme = value), theme);
+      await scan();
+    }
+  }
+  await page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { name: "Overview" }).click();
+  await page.getByLabel("System prompt", { exact: true }).fill("Unsaved");
+  await scan();
+});

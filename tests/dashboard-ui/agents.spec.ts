@@ -312,3 +312,118 @@ test.describe("agent detail shell", () => {
     await expect(page.getByText(/Package binding: pkg\/shared\//)).toBeVisible();
   });
 });
+
+test.describe("agent detail sections", () => {
+  test.use({ scenario: { agent: { tools: { use: ["builtin/read_file", "builtin/bash"] } } } });
+  const saved = (raw: { configPath: string }) => JSON.parse(readFileSync(raw.configPath, "utf8")).agents.raw;
+  const tab = (page: Page, name: string) =>
+    page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { name }).click();
+  const save = async (page: Page) => {
+    await page.locator(".sticky-savebar").getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+  };
+
+  test("the prompt source switch writes the matching field", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    const source = page.getByRole("radiogroup", { name: "Prompt source" });
+    await expect(source.getByRole("radio", { name: "Text" })).toHaveAttribute("aria-checked", "true");
+    await source.getByRole("radio", { name: "File" }).click();
+    await expect(source.getByRole("radio", { name: "File" })).toHaveAttribute("aria-checked", "true");
+    await page.getByLabel("System prompt file", { exact: true }).fill("prompts/raw.md");
+    await save(page);
+    expect(saved(raw).system_prompt_file).toBe("prompts/raw.md");
+    expect(saved(raw).system_prompt).toBeUndefined();
+  });
+
+  test("selections show an empty state, reorder and persist", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    await tab(page, "Capabilities");
+    await expect(page.getByText("No hooks selected", { exact: true })).toBeVisible();
+    await expect(page.getByText("No tools selected", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Move builtin/read_file down" }).click();
+    await page.getByRole("button", { name: "Remove builtin/bash" }).click();
+    await page.getByRole("button", { name: "Remove builtin/read_file" }).click();
+    await expect(page.getByText("No tools selected", { exact: true })).toBeVisible();
+    await page.getByLabel("Add tools", { exact: true }).selectOption("builtin/bash");
+    await page.getByLabel("Add tools", { exact: true }).locator("../..").getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByLabel("Add tools", { exact: true }).selectOption("builtin/read_file");
+    await page.getByLabel("Add tools", { exact: true }).locator("../..").getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByText("No tools selected", { exact: true })).toHaveCount(0);
+    await save(page);
+    expect(saved(raw).tools.use).toEqual(["builtin/bash", "builtin/read_file"]);
+  });
+
+  test("moving a tool down persists the new order", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    await tab(page, "Capabilities");
+    await page.getByRole("button", { name: "Move builtin/read_file down" }).click();
+    await save(page);
+    expect(saved(raw).tools.use).toEqual(["builtin/bash", "builtin/read_file"]);
+  });
+
+  test("selecting a skill still adds the skill tools", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    await tab(page, "Capabilities");
+    await page.getByLabel("Add skills", { exact: true }).selectOption("builtin/create_skill");
+    await page.getByLabel("Add skills", { exact: true }).locator("../..").getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByLabel("Selected tools")).toContainText("builtin/list_skills");
+    await save(page);
+    expect(saved(raw).tools.use).toEqual(["builtin/read_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"]);
+    expect(saved(raw).skills.use).toEqual(["builtin/create_skill"]);
+  });
+
+  test("policy rules move both ways and the sample result is a typed badge", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    await tab(page, "Policy");
+    const policy = page.getByRole("tabpanel", { name: "Policy" });
+    await expect(policy.locator('[role="status"]')).toHaveCount(0);
+    await policy.getByRole("button", { name: "Add rule" }).click();
+    await policy.getByRole("button", { name: "Add rule" }).click();
+    await policy.getByLabel("Rule 1 match").fill("builtin/read_file");
+    await policy.getByLabel("Rule 1 effect").selectOption("deny");
+    await expect(policy.getByRole("group", { name: "Rule 2" }).getByRole("button", { name: "Move down" })).toBeDisabled();
+    await policy.getByRole("group", { name: "Rule 1" }).getByRole("button", { name: "Move down" }).click();
+    await expect(policy.getByLabel("Rule 2 match")).toHaveValue("builtin/read_file");
+    await policy.getByRole("button", { name: "Test rules" }).click();
+    const result = policy.getByRole("status");
+    await expect(result).toContainText("ask");
+    await expect(result.locator(".badge")).toHaveClass(/\bwarning\b/);
+    await policy.getByLabel("Sample canonical tool identity").fill("builtin/read_file");
+    await policy.getByRole("button", { name: "Test rules" }).click();
+    await expect(result).toContainText("deny");
+    await expect(result.locator(".badge")).toHaveClass(/\berror\b/);
+    await save(page);
+    expect(saved(raw).tools.rules.map((rule: { match: string }) => rule.match)).toEqual(["builtin/bash", "builtin/read_file"]);
+  });
+
+  test("a removed condition can be recreated and still saves a valid rule", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    await tab(page, "Policy");
+    const policy = page.getByRole("tabpanel", { name: "Policy" });
+    await policy.getByRole("button", { name: "Add rule" }).click();
+    await policy.getByRole("button", { name: "Remove condition" }).click();
+    await policy.getByLabel("Rule 1 when.any").fill("commands[*].command");
+    await policy.getByLabel("Rule 1 regex").fill("^rm ");
+    await policy.getByLabel("Rule 1 effect").selectOption("allow");
+    await policy.getByLabel("Rule 1 effect").selectOption("ask");
+    await policy.getByLabel("Rule 1 regex").fill("^sudo ");
+    await policy.getByLabel("Rule 1 when.any").fill("commands[*].command");
+    await policy.getByRole("button", { name: "Test rules" }).click();
+    await expect(policy.getByRole("status").locator(".badge")).toBeVisible();
+    await save(page);
+    expect(saved(raw).tools.rules).toEqual([
+      { match: "builtin/bash", effect: "ask", when: { source: "arguments", regex: "^sudo ", any: "commands[*].command" } },
+    ]);
+  });
+
+  test("sections are cards and nothing hides behind a disclosure", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    for (const name of ["Overview", "Capabilities", "Policy", "JSON"]) {
+      await tab(page, name);
+      const panel = page.getByRole("tabpanel", { name });
+      await expect(panel.locator("details")).toHaveCount(0);
+      if (name !== "JSON") await expect(panel.locator(".card").first()).toBeVisible();
+    }
+    await expect(page.getByRole("textbox", { name: "Agent JSON" })).toBeVisible();
+  });
+});

@@ -37,8 +37,9 @@ export function editAgent(options: ConfigEditOptions, edit: ResourceEdit) {
     const current = record(agents[edit.name]);
     agents[edit.name] = patchRecord(current, edit.value);
     const patched = agents[edit.name] as Record<string, unknown>;
-    if (Object.hasOwn(edit.value, "system_prompt")) delete patched.system_prompt_file;
-    if (Object.hasOwn(edit.value, "system_prompt_file")) delete patched.system_prompt;
+    // Setting one prompt source drops the other; a null only removes its own key.
+    if (edit.value.system_prompt != null) delete patched.system_prompt_file;
+    if (edit.value.system_prompt_file != null) delete patched.system_prompt;
   });
 }
 export function patchRecord(current: Record<string, unknown>, fields: Record<string, unknown>): Record<string, unknown> {
