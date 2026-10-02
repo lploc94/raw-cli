@@ -51,6 +51,30 @@ test("resource edits support legal object-key names and enforce model/default de
   } finally { await f.close(); }
 });
 
+test("config view summarizes each agent without prompts, including object-key names and invalid configs", async () => {
+  const f = await dashboardFixture({
+    agent: { tools: { use: ["builtin/read_file", "builtin/bash", "builtin/list_skills", "builtin/load_skill"], rules: [{ match: "builtin/bash", effect: "deny" }] }, skills: { use: ["builtin/create_skill"] } },
+    extraAgents: { bare: { model: "fixture", system_prompt: "Secret bare prompt", tools: { use: [] } } },
+  });
+  try {
+    let view = await f.json<any>("/config");
+    assert.equal(view.valid, true, view.diagnostic);
+    assert.deepEqual(view.agentSummaries.raw, { model: "fixture", tools: 4, skills: 1, hooks: 0, rules: 1 });
+    assert.deepEqual(view.agentSummaries.bare, { model: "fixture", tools: 0, skills: 0, hooks: 0, rules: 0 });
+    assert.equal(JSON.stringify(view).includes("Original prompt"), false);
+    assert.equal(JSON.stringify(view).includes("Secret bare prompt"), false);
+    view = await f.json<any>("/agents", "POST", { revision: view.revision, action: "create", name: "__proto__", value: { model: "fixture", tools: { use: ["builtin/read_file"] } } });
+    assert.ok(Object.hasOwn(view.agentSummaries, "__proto__"));
+    assert.equal(view.agentSummaries["__proto__"].tools, 1);
+    view = await f.json<any>("/config");
+    assert.equal(view.agentSummaries["__proto__"].tools, 1);
+    writeFileSync(f.configPath, "{broken");
+    view = await f.json<any>("/config");
+    assert.equal(view.valid, false);
+    assert.deepEqual(view.agentSummaries, {});
+  } finally { await f.close(); }
+});
+
 test("passive components never import code, per-file conflicts and usages prevent loss", async () => {
   const f = await dashboardFixture(); const sentinel = join(f.root, "imported");
   try {

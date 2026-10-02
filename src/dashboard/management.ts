@@ -13,7 +13,18 @@ import type { DashboardContext, DashboardRoute } from "./server.js";
 export interface ConfigView {
   path: string; canonicalPath: string; canonical: boolean; revision: string; exists: boolean; valid: boolean; diagnostic?: string;
   defaultAgent?: string; agents: string[]; models: string[]; vars: string[]; providers: string[]; mcp: string[];
-  sessions?: unknown;
+  sessions?: unknown; agentSummaries: Record<string, AgentSummary>;
+}
+export interface AgentSummary { model?: string; from?: string; tools: number; skills: number; hooks: number; rules: number }
+const count = (value: unknown) => Array.isArray(value) ? value.length : 0;
+function agentSummaries(agents: Record<string, unknown>): Record<string, AgentSummary> {
+  const summaries: Record<string, AgentSummary> = Object.create(null);
+  for (const [name, entry] of Object.entries(agents)) {
+    const agent = record(entry), tools = record(agent.tools);
+    summaries[name] = { ...(typeof agent.model === "string" ? { model: agent.model } : {}), ...(typeof agent.from === "string" ? { from: agent.from } : {}),
+      tools: count(tools.use), skills: count(record(agent.skills).use), hooks: count(record(agent.hooks).use), rules: count(tools.rules) };
+  }
+  return summaries;
 }
 export interface CheckView {
   id: string; kind: "var" | "mcp"; name: string; agent: string; state: "running" | "completed" | "error" | "cancelled";
@@ -40,7 +51,7 @@ export function createManagementRoutes(context: DashboardContext): DashboardRout
     ...(typeof config.data?.default_agent === "string" ? { defaultAgent: config.data.default_agent } : {}),
     agents: Object.keys(record(config.data?.agents)), models: Object.keys(record(config.data?.models)), vars: Object.keys(record(config.data?.vars)),
     providers: Object.keys(record(config.data?.var_providers)), mcp: Object.keys(record(record(config.data?.mcp).servers)),
-    ...(config.data?.sessions === undefined ? {} : { sessions: config.data.sessions }) });
+    ...(config.data?.sessions === undefined ? {} : { sessions: config.data.sessions }), agentSummaries: agentSummaries(record(config.data?.agents)) });
   let preparingChecks = 0;
   const checks = new Map<string, { row: CheckView; controller: AbortController; done: Promise<void> }>();
   const sweep = () => {

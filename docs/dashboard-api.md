@@ -73,7 +73,7 @@ Validation failures return `422 invalid_input` and leave disk unchanged.
 
 | Method / path | Request and result |
 | --- | --- |
-| GET `/config` | Path, canonical flag, revision, existence/validity, default agent, resource names and safe model metadata; no literal credentials or variable readings |
+| GET `/config` | Path, canonical flag, revision, existence/validity, default agent, resource names and safe model metadata; no literal credentials or variable readings. `agentSummaries` maps each agent name to `{model?, from?, tools, skills, hooks, rules}`: the model alias, the package binding reference, and the lengths of the top-level `tools.use`, `skills.use`, `hooks.use` and `tools.rules` lists (0 when absent or not a list; package-bound selections under `overrides` are not counted). It is `{}` when the config is invalid and never contains prompts |
 | POST `/config/initialize` | Shared CLI starter; fails if the file already exists |
 | GET `/config/document` | Explicit advanced editor: full `{source, revision, path, canonical, exists, diagnostic?}` held only in editor memory |
 | PUT `/config/document` | `{revision, source}`; strict JSON, validated at the actual config path |

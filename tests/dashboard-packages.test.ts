@@ -168,7 +168,9 @@ test("removal and update see package references inside agent selection overrides
     let config = await f.json<any>("/config");
     await f.json("/packages/kit/agent", "POST", { revision: config.revision, name: "writer", exportName: "helper", model: "fixture", inputs: { prompt: "Prompt" } });
     config = await f.json<any>("/config");
-    await f.json("/agents", "POST", { revision: config.revision, action: "patch", name: "writer", value: { overrides: { tools: { use: [`pkg/extra/tools/${tool}`] }, skills: { use: [] } } } });
+    assert.match(config.agentSummaries.writer.from, /^pkg\/kit\//);
+    assert.equal(config.agentSummaries.writer.model, "fixture");
+    await f.json("/agents", "POST", { revision: config.revision, action: "patch", name: "writer", value: { overrides:{ tools: { use: [`pkg/extra/tools/${tool}`] }, skills: { use: [] } } } });
     const response = await f.api("/packages/extra", "DELETE"); assert.equal(response.status, 409);
     assert.match(JSON.stringify(await response.json()), /agents.writer.overrides.tools.use/);
     const replacement = join(f.root, "renamed-export"); cpSync(join(process.cwd(), "examples/packages/tool-only"), replacement, { recursive: true });
