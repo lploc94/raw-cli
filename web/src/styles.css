@@ -1985,6 +1985,10 @@ summary::-webkit-details-marker {
 .resource-header p {
   margin: 0;
 }
+.resource-header > .primary,
+.resource-header > .actions button {
+  white-space: nowrap;
+}
 .agent-row-name {
   display: flex;
   align-items: center;
@@ -2005,6 +2009,41 @@ summary::-webkit-details-marker {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
+}
+.data-row.component-row {
+  grid-template-columns: minmax(0, 2.4fr) minmax(0, 1.2fr) minmax(0, 0.8fr);
+}
+.component-row-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.component-row-name a {
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.component-row-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-size: 13px;
+}
+.metadata.component-row-badges {
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+.component-row-usage {
+  font-size: 13px;
+  text-align: right;
+}
+.catalog-no-results {
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
 }
 .detail-header {
   margin-bottom: var(--space-4);
@@ -2068,6 +2107,13 @@ summary::-webkit-details-marker {
     grid-area: model;
   }
   .agent-row .agent-row-counts {
+    display: none;
+  }
+  .data-row.component-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--space-2);
+  }
+  .component-row .component-row-usage {
     display: none;
   }
   .agent-row .actions {

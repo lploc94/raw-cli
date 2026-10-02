@@ -13,14 +13,15 @@ import {
   type DraftDocument,
 } from "../editors/shared.js";
 import { Markdown } from "../markdown.js";
+import { ComponentsList, type ComponentKind } from "./library/ComponentsList.js";
 export function ComponentsPage({
   kind,
   changed,
 }: {
-  kind: "tools" | "skills" | "hooks";
+  kind: ComponentKind;
   changed: () => Promise<void>;
 }) {
-  const { path, navigate } = useRouter();
+  const { path } = useRouter();
   const id = path.split("/")[3]
     ? decodeURIComponent(path.split("/")[3]!)
     : undefined;
@@ -29,156 +30,33 @@ export function ComponentsPage({
     error: listError,
     mutate: mutateItems,
   } = useComponents(kind);
-  const [filter, setFilter] = useState(""),
-    [error, setError] = useState("");
-  const [create, setCreate] = useState(false),
-    [folder, setFolder] = useState(""),
-    [template, setTemplate] = useState(
-      kind === "tools" ? "builtin/read_file" : kind === "skills" ? "builtin/create_skill" : "",
-    );
-  const items = loaded ?? [];
   const refresh = async () => {
     await mutateItems();
   };
   const gate = usePageGate({ ready: !!loaded, error: listError, onRetry: () => void refresh(), label: "Loading components" });
   if (gate) return gate;
+  if (!id)
+    return (
+      <ComponentsList
+        kind={kind}
+        items={loaded ?? []}
+        {...(listError ? { error: errorText(listError), onRetry: () => void refresh() } : {})}
+      />
+    );
   return (
     <div className="management-page">
       <span className="scope">Owned component files</span>
       <div className="section-heading">
-        <h1>{id ?? (kind === "tools" ? "Tools" : kind === "skills" ? "Skills" : "Hooks")}</h1>
-        <button
-          onClick={() => {
-            setCreate(true);
-            setFolder("");
-          }}
-        >
-          Create {kind === "tools" ? "tool" : kind === "skills" ? "skill" : "hook"}
-        </button>
+        <h1>{id}</h1>
       </div>
-      <ErrorMessage>{error || (listError ? errorText(listError) : "")}</ErrorMessage>
-      {id ? (
-        <ComponentDetail
-          key={id}
-          kind={kind}
-          id={id}
-          changed={changed}
-          refresh={refresh}
-        />
-      ) : (
-        <>
-          <p className="muted">
-            Static inspection only. Builtins and installed packages are
-            read-only; fork them to customize.
-          </p>
-          <Field label={`Search ${kind}`}>
-            <input
-              type="search"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-          </Field>
-          <div className="catalog" role="table" aria-label={`${kind} catalog`}>
-            <div role="row" className="catalog-row catalog-heading">
-              <span role="columnheader">Name</span>
-              <span role="columnheader">Source</span>
-              <span role="columnheader">Used by</span>
-              <span role="columnheader">Validation</span>
-            </div>
-            {items
-              .filter((item) =>
-                `${item.id} ${item.description}`
-                  .toLowerCase()
-                  .includes(filter.toLowerCase()),
-              )
-              .map((item) => (
-                <div role="row" className="catalog-row" key={item.id}>
-                  <span role="cell">
-                    <Link
-                      href={`/library/${kind}/${encodeURIComponent(item.id)}`}
-                    >
-                      {item.id}
-                    </Link>
-                    <small>{item.description.slice(0, 180)}</small>
-                  </span>
-                  <span role="cell">{item.source}</span>
-                  <span role="cell">
-                    {item.usageAvailable
-                      ? item.usedBy.join(", ") || "Not selected"
-                      : "Usage unavailable"}
-                  </span>
-                  <span role="cell">
-                    {item.validation === "valid"
-                      ? "Valid structure · not run"
-                      : "Invalid"}
-                  </span>
-                </div>
-              ))}
-          </div>
-          {!items.some((item) =>
-            `${item.id} ${item.description}`
-              .toLowerCase()
-              .includes(filter.toLowerCase()),
-          ) && (
-            <p>
-              No results.{" "}
-              <button onClick={() => setFilter("")}>Clear filters</button>
-            </p>
-          )}
-        </>
-      )}
-      <Modal
-        open={create}
-        onOpenChange={setCreate}
-        title={`Create ${kind === "tools" ? "tool" : kind === "skills" ? "skill" : "hook"}`}
-        description={kind === "hooks" ? "Create a hook manifest and script, then select it on an agent." : "Start from a shipped example. The new component stays unselected until you attach it."}
-      >
-        <ErrorMessage>{error}</ErrorMessage>
-        <Field label="Component folder">
-          <input
-            value={folder}
-            onChange={(e) => setFolder(e.target.value)}
-            placeholder="my_component"
-          />
-        </Field>
-        {kind !== "hooks" && <Field label="Example">
-          <select
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
-          >
-            {items
-              .filter((i) => i.source === "builtin")
-              .map((i) => (
-                <option key={i.id}>{i.id}</option>
-              ))}
-          </select>
-        </Field>}
-        <button
-          className="primary"
-          disabled={!folder || (kind !== "hooks" && !template)}
-          onClick={() => {
-            void api(`/components/${kind}`, "POST", kind === "hooks" ? {
-              id: `local/${folder}`,
-              files: {
-                "hook.json": JSON.stringify({ protocol_version: 2, name: folder, events: [{ name: "PreToolUse", match: "builtin/bash" }],
-                  command: "node", args: ["./index.mjs"], timeout_ms: 5000 }, null, 2) + "\n",
-                "index.mjs": "let input = '';\nprocess.stdin.on('data', chunk => input += chunk);\nprocess.stdin.on('end', () => {\n  const event = JSON.parse(input);\n  process.stdout.write(JSON.stringify({ decision: 'continue' }));\n});\n",
-              },
-            } : { id: `local/${folder}`, cloneFrom: template }).then(
-              () => {
-                setCreate(false);
-                setError("");
-                navigate(
-                  `/library/${kind}/${encodeURIComponent(`local/${folder}`)}`,
-                );
-              },
-              (cause) => setError(errorText(cause)),
-            );
-          }}
-        >
-          {kind === "hooks" ? "Create hook" : "Create from example"}
-        </button>
-      </Modal>
+      <ErrorMessage>{listError ? errorText(listError) : ""}</ErrorMessage>
+      <ComponentDetail
+        key={id}
+        kind={kind}
+        id={id}
+        changed={changed}
+        refresh={refresh}
+      />
     </div>
   );
 }

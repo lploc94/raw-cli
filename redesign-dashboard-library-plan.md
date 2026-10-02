@@ -338,10 +338,10 @@ Existing `management.spec.ts` create-hook/tool flows stay green.
 List and create dialog only; detail in Phase 4.
 
 ### Acceptance criteria
-- [ ] AC-1: Rows show badges and usage from `ComponentInfo`. Proven by `library.spec.ts`.
-- [ ] AC-2: The empty state and the no-results state are distinct. Proven by `library.spec.ts`.
-- [ ] AC-3: Single error surface on create. Proven by `library.spec.ts`.
-- [ ] AC-4: The existing create flows pass. Proven by `management.spec.ts`.
+- [x] AC-1: Rows show badges and usage from `ComponentInfo`. Proven by `library.spec.ts`.
+- [x] AC-2: The empty state and the no-results state are distinct. Proven by `library.spec.ts`.
+- [x] AC-3: Single error surface on create. Proven by `library.spec.ts`.
+- [x] AC-4: The existing create flows pass. Proven by `management.spec.ts`.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/library.spec.ts tests/dashboard-ui/management.spec.ts --project=chromium`
@@ -764,3 +764,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-03: Plan review APPROVE (2 rounds). All phases are pending.
 - 2026-10-03: Phase 1 complete. Codex impl review APPROVE (1 round). Gates: typecheck pass, test:phase dashboard 62/62 pass, diff --check clean.
 - 2026-10-03: Phase 2 complete. Codex impl review APPROVE (2 rounds: direct-load not-found fixed by serving the entry for any `/library/<segment>`). Also fixed the server page allowlist, which omitted `hooks`, so reloading `/library/hooks` returned a 404. Gates: typecheck pass, chromium 194+ passed, diff --check clean.
+- 2026-10-03: Phase 3 complete. Codex impl review APPROVE (2 rounds: a cached-list refresh error is now surfaced once, with a test). Gates: typecheck pass, chromium all passed, diff --check clean.
