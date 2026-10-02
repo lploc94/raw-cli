@@ -44,6 +44,7 @@ export function AgentActionsMenu({
           className="icon-button"
           aria-label={`Actions for ${name}`}
           title={disabledReason ?? "More actions"}
+          disabled={!!disabledReason}
         >
           <MoreHorizontal size={18} aria-hidden="true" />
         </button>

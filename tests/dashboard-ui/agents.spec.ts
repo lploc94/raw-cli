@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { expect, openChat, test } from "./fixtures.js";
 
@@ -190,5 +191,124 @@ test.describe("agents list", () => {
     // Count DOM alerts: the modal hides the page from the accessibility tree, not from view.
     await expect(page.locator('[role="alert"]')).toHaveCount(1);
     await expect(dialog).toBeVisible();
+  });
+});
+
+test.describe("agent detail shell", () => {
+  test("header shows breadcrumb, badges and actions, not Create agent", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    const header = page.locator(".detail-header");
+    await expect(header.getByRole("heading", { name: "raw", level: 1 })).toBeVisible();
+    await expect(header.getByText("fixture", { exact: true })).toBeVisible();
+    await expect(header.getByText("Default", { exact: true })).toBeVisible();
+    await expect(header.getByRole("button", { name: "New chat" })).toBeVisible();
+    await expect(header.getByRole("button", { name: "Actions for raw" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create agent" })).toHaveCount(0);
+    await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: "Agents" }).click();
+    await expect(page).toHaveURL(/\/agents$/);
+    await expect(page.getByRole("list", { name: "Agent list" })).toBeVisible();
+  });
+
+  test("the save bar appears only for unsaved work and actions wait for it", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    const bar = page.locator(".sticky-savebar");
+    await expect(page.getByLabel("System prompt", { exact: true })).toBeVisible();
+    await expect(bar).toHaveCount(0);
+    await page.getByLabel("System prompt", { exact: true }).fill("Changed");
+    await expect(bar).toContainText("Unsaved changes");
+    await expect(page.locator(".detail-header").getByRole("button", { name: "New chat" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Actions for raw" })).toBeDisabled();
+    await bar.getByRole("button", { name: "Discard" }).click();
+    await expect(bar).toHaveCount(0);
+    await expect(page.getByLabel("System prompt", { exact: true })).toHaveValue("Original prompt");
+    await page.getByLabel("System prompt", { exact: true }).fill("Saved prompt");
+    await bar.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+    expect(JSON.parse(readFileSync(raw.configPath, "utf8")).agents.raw.system_prompt).toBe("Saved prompt");
+  });
+
+  test("tabs switch sections without the leave guard and keep the draft", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    const tabs = page.getByRole("tablist", { name: "Agent sections" });
+    await expect(tabs.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    await page.getByLabel("System prompt", { exact: true }).fill("Draft across tabs");
+    await tabs.getByRole("tab", { name: "Capabilities" }).click();
+    await expect(page.getByLabel("Add tools", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("System prompt", { exact: true })).toBeHidden();
+    await tabs.getByRole("tab", { name: "Policy" }).click();
+    await tabs.getByRole("tab", { name: "JSON" }).click();
+    await expect(page.getByText("Draft across tabs").first()).toBeAttached();
+    await tabs.getByRole("tab", { name: "Overview" }).click();
+    await expect(page.getByRole("dialog", { name: "Unsaved changes" })).toHaveCount(0);
+    await expect(page.getByLabel("System prompt", { exact: true })).toHaveValue("Draft across tabs");
+    await expect(page.locator(".sticky-savebar")).toContainText("Unsaved changes");
+  });
+
+  test("malformed JSON hides the form until it parses again", async ({ page, raw }) => {
+    await openAgent(page, raw.server.launchUrl);
+    const tabs = page.getByRole("tablist", { name: "Agent sections" });
+    await tabs.getByRole("tab", { name: "JSON" }).click();
+    const editor = page.getByRole("textbox", { name: "Agent JSON" });
+    await editor.click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type(",");
+    await expect(page.locator(".error-banner").first()).toBeVisible();
+    await tabs.getByRole("tab", { name: "Overview" }).click();
+    await expect(page.getByLabel("System prompt", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Open Agent JSON" })).toBeVisible();
+    await page.getByRole("button", { name: "Open Agent JSON" }).click();
+    await editor.click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.press("Backspace");
+    await tabs.getByRole("tab", { name: "Overview" }).click();
+    await expect(page.getByLabel("System prompt", { exact: true })).toBeVisible();
+  });
+
+  test("a slow agent load shows a skeleton", async ({ page, raw }) => {
+    await page.route("**/api/agents/raw", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await route.continue();
+    });
+    await openAgents(page, raw.server.launchUrl);
+    await page.getByRole("navigation", { name: "Agents" }).getByRole("link", { name: "raw", exact: true }).click();
+    await expect(page.getByText("Loading agent", { exact: true })).toBeAttached();
+    await expect(page.getByLabel("System prompt", { exact: true })).toBeVisible();
+    await expect(page.getByText("Loading agent", { exact: true })).toHaveCount(0);
+  });
+
+  test("a failed agent load reports one error and no save bar", async ({ page, raw }) => {
+    await page.route("**/api/agents/raw", (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "internal", message: "Injected load failure" } }) }),
+    );
+    await openAgents(page, raw.server.launchUrl);
+    await page.getByRole("navigation", { name: "Agents" }).getByRole("link", { name: "raw", exact: true }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.locator('[role="alert"]')).toHaveCount(1);
+    await expect(page.locator(".sticky-savebar")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Actions for raw" })).toBeDisabled();
+  });
+
+  test("a package-bound agent opens on JSON without form-only sections", async ({ page, raw }) => {
+    const folder = join(raw.root, "shared-kit");
+    cpSync(join(process.cwd(), "examples/packages/tool-only"), folder, { recursive: true });
+    mkdirSync(join(folder, "agents"));
+    writeFileSync(join(folder, "agents/writer.json"), JSON.stringify({ system_prompt: { $input: "prompt" }, tools: { use: [] } }));
+    const manifest = JSON.parse(readFileSync(join(folder, "raw-package.json"), "utf8"));
+    manifest.files.push("agents/writer.json");
+    manifest.exports.agents = { writer: "agents/writer.json" };
+    manifest.inputs = { type: "object", properties: { prompt: { type: "string" } }, required: ["prompt"] };
+    writeFileSync(join(folder, "raw-package.json"), JSON.stringify(manifest));
+    const stage = await raw.json<{ id: string }>("/packages/inspect", "POST", { path: folder });
+    await raw.json("/packages/install", "POST", { stageId: stage.id, alias: "shared", action: "install" });
+    const config = await raw.json<{ revision: string }>("/config");
+    await raw.json("/packages/shared/agent", "POST", { revision: config.revision, name: "writer", exportName: "writer", model: "fixture", inputs: { prompt: "P" } });
+    await openAgent(page, raw.server.launchUrl, "writer");
+    const tabs = page.getByRole("tablist", { name: "Agent sections" });
+    await expect(tabs.getByRole("tab", { name: "JSON" })).toHaveAttribute("aria-selected", "true");
+    await expect(tabs.getByRole("tab", { name: "Capabilities" })).toHaveCount(0);
+    await expect(tabs.getByRole("tab", { name: "Policy" })).toHaveCount(0);
+    await expect(page.locator(".detail-header").getByText("Package", { exact: true })).toBeVisible();
+    await tabs.getByRole("tab", { name: "Overview" }).click();
+    await expect(page.getByText(/Package binding: pkg\/shared\//)).toBeVisible();
   });
 });

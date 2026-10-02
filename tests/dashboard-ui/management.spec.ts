@@ -18,6 +18,7 @@ test("create, edit and select a hook through Library and Agents", async ({ page,
   await expect(page.getByRole("status").filter({ hasText: "Attached" })).toBeVisible();
   await page.getByRole("link", { name: "Agents", exact: true }).click();
   await page.getByRole("link", { name: "raw", exact: true }).first().click();
+  await page.getByRole("tab", { name: "Capabilities" }).click();
   await expect(page.getByLabel("Selected hooks")).toContainText("local/guard");
 });
 
@@ -55,6 +56,7 @@ test("compose an agent, fork a skill, save ordered selections, and start real ch
   ).toBeVisible();
   await page.getByRole("link", { name: "Agents", exact: true }).click();
   await page.getByRole("link", { name: "writer", exact: true }).first().click();
+  await page.getByRole("tab", { name: "Capabilities" }).click();
   await expect(page.getByLabel("Selected skills")).toContainText(
     "local/writing_guide",
   );
@@ -146,6 +148,7 @@ test("variable definitions save through JSON and explicit Read uses the selected
   ).toBeVisible();
   await page.getByRole("link", { name: "Agents", exact: true }).click();
   await page.getByRole("link", { name: "raw", exact: true }).first().click();
+  await page.getByRole("tab", { name: "Capabilities" }).click();
   await page.getByLabel("Add vars", { exact: true }).selectOption("greeting");
   await page
     .getByLabel("Add vars", { exact: true })

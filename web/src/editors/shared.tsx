@@ -186,32 +186,60 @@ export function useDraft(
 }
 export function DraftActions({
   draft,
+  variant = "inline",
 }: {
   draft: ReturnType<typeof useDraft>;
+  /** `bar` docks the controls at the bottom and shows them only while there is something to act on or report. */
+  variant?: "inline" | "bar";
 }) {
+  const buttons = (
+    <>
+      <button disabled={!draft.dirty || draft.busy} onClick={draft.discard}>
+        Discard
+      </button>
+      <button
+        className="primary"
+        disabled={!draft.dirty || draft.busy}
+        onClick={() => {
+          void draft.save();
+        }}
+      >
+        {draft.busy ? "Saving…" : "Save"}
+      </button>
+    </>
+  );
+  const bar = draft.dirty || draft.busy || draft.conflict || !!draft.status || !!draft.error;
   return (
     <>
-      <div className="editor-actions">
-        <span className="muted">
-          {draft.dirty ? "Unsaved changes" : "Up to date"}
-        </span>
-        <button disabled={!draft.dirty || draft.busy} onClick={draft.discard}>
-          Discard
-        </button>
-        <button
-          className="primary"
-          disabled={!draft.dirty || draft.busy}
-          onClick={() => {
-            void draft.save();
-          }}
-        >
-          {draft.busy ? "Saving…" : "Save"}
-        </button>
-      </div>
-      <ErrorMessage>{draft.error}</ErrorMessage>
-      <p role="status" className="muted">
-        {draft.status}
-      </p>
+      {variant === "inline" ? (
+        <>
+          <div className="editor-actions">
+            <span className="muted">
+              {draft.dirty ? "Unsaved changes" : "Up to date"}
+            </span>
+            {buttons}
+          </div>
+          <ErrorMessage>{draft.error}</ErrorMessage>
+          <p role="status" className="muted">
+            {draft.status}
+          </p>
+        </>
+      ) : (
+        bar && (
+          <div className={`sticky-savebar ${draft.dirty ? "dirty" : ""}`}>
+            <div className="savebar-body">
+              <ErrorMessage>{draft.error}</ErrorMessage>
+              <span className="savebar-state">
+                {draft.dirty ? "Unsaved changes" : draft.error ? "Not saved" : "Up to date"}
+              </span>
+              <span role="status" className="muted">
+                {draft.status}
+              </span>
+            </div>
+            {buttons}
+          </div>
+        )
+      )}
       {draft.conflict && (
         <div className="actions">
           <button

@@ -327,12 +327,12 @@ Tab round-trip with draft retention rejects unmounting tab content; "no guard di
 Shell + relocation only; content components keep current markup until Phase 5.
 
 ### Acceptance criteria
-- [ ] AC-1: Header shows breadcrumb, name, badges, New chat, ⋯; no Create agent — `agents.spec.ts`.
-- [ ] AC-2: Tabs switch without guard and preserve draft — `agents.spec.ts`.
-- [ ] AC-3: Save bar only when needed; Settings editors unchanged — `agents.spec.ts` + `settings.spec.ts`.
-- [ ] AC-4: Loading skeleton before agent JSON arrives — `agents.spec.ts`.
-- [ ] AC-5: Package-bound agents open on JSON tab; typed malformed JSON shows the parse error and hides the form until fixed — `agents.spec.ts`.
-- [ ] AC-6: Every existing spec that touches agent detail controls opens the owning tab first and passes (incl. `management.spec.ts:147-154` vars) — phase gate.
+- [x] AC-1: Header shows breadcrumb, name, badges, New chat, ⋯; no Create agent — `agents.spec.ts`.
+- [x] AC-2: Tabs switch without guard and preserve draft — `agents.spec.ts`.
+- [x] AC-3: Save bar only when needed; Settings editors unchanged — `agents.spec.ts` + `settings.spec.ts`.
+- [x] AC-4: Loading skeleton before agent JSON arrives — `agents.spec.ts`.
+- [x] AC-5: Package-bound agents open on JSON tab; typed malformed JSON shows the parse error and hides the form until fixed — `agents.spec.ts`.
+- [x] AC-6: Every existing spec that touches agent detail controls opens the owning tab first and passes (incl. `management.spec.ts:147-154` vars) — phase gate.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/agents.spec.ts tests/dashboard-ui/management.spec.ts tests/dashboard-ui/settings.spec.ts --project=chromium`
@@ -478,3 +478,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-02: Phase 1 complete — typecheck OK, `test:phase dashboard` 60/60, codex-impl-review APPROVE (1 round).
 - 2026-10-02: Phase 2 complete — baseline `.actions` measured `12px|12px|8px|wrap|flex|center`; typecheck OK; chromium Playwright 169/169; codex-impl-review APPROVE (2 rounds, fixed decoded-segment sidebar match).
 - 2026-10-02: Phase 3 complete — typecheck OK; chromium Playwright 176/176; codex-impl-review APPROVE (1 round). Detail page already uses the shared action menu/dialog; Create agent removed from detail header early.
+- 2026-10-02: Phase 4 complete — typecheck OK; chromium Playwright full suite green; codex-impl-review APPROVE (2 rounds: ⋯ trigger disabled while dirty/loading; save bar only after first load). Selection/PolicyEditor moved verbatim into `web/src/pages/agents/` here; JSON tab already uses a section instead of `<details>`.
