@@ -453,11 +453,11 @@ Migrate `management.spec.ts`:
 Detail plus dialogs; list untouched except shared CSS.
 
 ### Acceptance criteria
-- [ ] AC-1: Header, badges and menu follow the contract. Proven by `library.spec.ts`.
-- [ ] AC-2: Per-agent Attach/Detach persists and reflects state. Package-bound agents get no controls. An alias-attached agent gets the warning instead of a false "Detached". Proven by `library.spec.ts`.
-- [ ] AC-3: The Source tab has the save bar, keeps the draft across tabs, and has the Markdown preview toggle. Proven by `library.spec.ts`.
-- [ ] AC-4: Hook events are readable with no raw JSON. Proven by `library.spec.ts`.
-- [ ] AC-5: The existing management flows pass after migration. Proven by `management.spec.ts`.
+- [x] AC-1: Header, badges and menu follow the contract. Proven by `library.spec.ts`.
+- [x] AC-2: Per-agent Attach/Detach persists and reflects state. Package-bound agents get no controls. An alias-attached agent gets the warning instead of a false "Detached". Proven by `library.spec.ts`.
+- [x] AC-3: The Source tab has the save bar, keeps the draft across tabs, and has the Markdown preview toggle. Proven by `library.spec.ts`.
+- [x] AC-4: Hook events are readable with no raw JSON. Proven by `library.spec.ts`.
+- [x] AC-5: The existing management flows pass after migration. Proven by `management.spec.ts`.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/library.spec.ts tests/dashboard-ui/management.spec.ts --project=chromium`
@@ -765,3 +765,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-03: Phase 1 complete. Codex impl review APPROVE (1 round). Gates: typecheck pass, test:phase dashboard 62/62 pass, diff --check clean.
 - 2026-10-03: Phase 2 complete. Codex impl review APPROVE (2 rounds: direct-load not-found fixed by serving the entry for any `/library/<segment>`). Also fixed the server page allowlist, which omitted `hooks`, so reloading `/library/hooks` returned a 404. Gates: typecheck pass, chromium 194+ passed, diff --check clean.
 - 2026-10-03: Phase 3 complete. Codex impl review APPROVE (2 rounds: a cached-list refresh error is now surfaced once, with a test). Gates: typecheck pass, chromium all passed, diff --check clean.
+- 2026-10-03: Phase 4 complete. Codex impl review APPROVE (2 rounds). Fixed: the undo history of a fresh editor per file (red/green verified); usage verified by a direct GET, not cached data; config load errors reported. Gates: typecheck pass, chromium 210 passed, diff --check clean.

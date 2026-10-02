@@ -183,6 +183,7 @@ test("tool source edits stay passive until an attached agent starts a turn", asy
   await expect(
     page.getByRole("heading", { name: "local/probe", exact: true }),
   ).toBeVisible();
+  await page.getByRole("tab", { name: "Source" }).click();
   await page
     .getByLabel("Source file", { exact: true })
     .selectOption("index.mjs");
@@ -196,6 +197,7 @@ test("tool source edits stay passive until an attached agent starts a turn", asy
     page.getByRole("status").filter({ hasText: "Saved" }),
   ).toBeVisible();
   expect(existsSync(sentinel)).toBe(false);
+  await page.getByRole("tab", { name: "Overview" }).click();
   await page.getByRole("button", { name: "Attach", exact: true }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Attached" }),
