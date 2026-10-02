@@ -1939,6 +1939,40 @@ summary::-webkit-details-marker {
   color: var(--text);
   box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
 }
+.resource-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.resource-header h1 {
+  margin: 0 0 var(--space-1);
+}
+.resource-header p {
+  margin: 0;
+}
+.agent-row-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.agent-row-name a {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-row-model,
+.agent-row-counts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
 .tabs.page-tabs {
   gap: var(--space-1);
   margin-bottom: var(--space-5);

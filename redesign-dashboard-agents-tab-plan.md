@@ -258,10 +258,10 @@ Counting alerts rejects keeping the shared error state; Default-badge absence on
 List + menu + dialog in production code; detail page may temporarily import `AgentActionDialog` but its layout redesign is Phase 4.
 
 ### Acceptance criteria
-- [ ] AC-1: Rows show model, counts and conditional badges — `agents.spec.ts`.
-- [ ] AC-2: Rename, Duplicate, Delete and Set default are each reachable from list ⋯ and each persists the expected config change — four `agents.spec.ts` tests.
-- [ ] AC-3: Single error surface (inside the dialog) for both create and lifecycle-action failures — two `agents.spec.ts` tests.
-- [ ] AC-4: Empty states use `Empty` — inspection + test with a config that has no agents if fixture supports it, else inspection.
+- [x] AC-1: Rows show model, counts and conditional badges — `agents.spec.ts`.
+- [x] AC-2: Rename, Duplicate, Delete and Set default are each reachable from list ⋯ and each persists the expected config change — four `agents.spec.ts` tests.
+- [x] AC-3: Single error surface (inside the dialog) for both create and lifecycle-action failures — two `agents.spec.ts` tests.
+- [x] AC-4: Empty states use `Empty` — inspection + test with a config that has no agents if fixture supports it, else inspection.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/agents.spec.ts tests/dashboard-ui/management.spec.ts tests/dashboard-ui/loading.spec.ts --project=chromium`
@@ -477,3 +477,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-02: Codex plan review APPROVE after 2 rounds. Ready for `/loop-implement`.
 - 2026-10-02: Phase 1 complete — typecheck OK, `test:phase dashboard` 60/60, codex-impl-review APPROVE (1 round).
 - 2026-10-02: Phase 2 complete — baseline `.actions` measured `12px|12px|8px|wrap|flex|center`; typecheck OK; chromium Playwright 169/169; codex-impl-review APPROVE (2 rounds, fixed decoded-segment sidebar match).
+- 2026-10-02: Phase 3 complete — typecheck OK; chromium Playwright 176/176; codex-impl-review APPROVE (1 round). Detail page already uses the shared action menu/dialog; Create agent removed from detail header early.

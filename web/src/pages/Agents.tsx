@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ConfigView } from "../../../src/dashboard/management.js";
 import { api, errorText } from "../api.js";
 import { useComponents, useConfig } from "../data/queries.js";
 import { usePageGate } from "../states.js";
-import { Link, useRouter } from "../router.js";
-import { ErrorMessage, Field, Modal } from "../ui.js";
+import { useRouter } from "../router.js";
+import { ErrorMessage, Field } from "../ui.js";
+import { AgentActionDialog, AgentActionsMenu, type AgentAction } from "./agents/AgentActions.js";
+import { AgentsList } from "./agents/AgentsList.js";
 import {
   DraftActions,
   object,
@@ -21,119 +23,27 @@ export function AgentsPage({
   changed: () => Promise<void>;
   createChat: (name?: string) => Promise<void>;
 }) {
-  const { path, navigate } = useRouter();
+  const { path } = useRouter();
   const name = path.split("/")[2]
     ? decodeURIComponent(path.split("/")[2]!)
     : undefined;
   const { data: config, error: configError } = useConfig();
-  const [error, setError] = useState("");
-  const [creating, setCreating] = useState(false),
-    [newName, setNewName] = useState(""),
-    [model, setModel] = useState("");
-  // `changed` revalidates the shared `/config`, so it doubles as the editors' refresh.
-  const refresh = changed;
-  useEffect(() => {
-    if (config) setModel((old) => old || config.models[0] || "");
-  }, [config]);
   const gate = usePageGate({ ready: !!config, error: configError, onRetry: () => void changed(), label: "Loading agents" });
-  if (gate) return gate;
+  if (gate || !config) return gate;
+  if (!name) return <AgentsList config={config} changed={changed} createChat={createChat} />;
   return (
     <div className="management-page">
-      <span className="scope">{name ? "This agent" : "Raw config"}</span>
+      <span className="scope">This agent</span>
       <div className="section-heading">
-        <h1>{name ?? "Agents"}</h1>
-        <button
-          onClick={() => {
-            setCreating(true);
-            setNewName("");
-          }}
-        >
-          Create agent
-        </button>
+        <h1>{name}</h1>
       </div>
-      <ErrorMessage>{error || (configError ? errorText(configError) : "")}</ErrorMessage>
-      {name ? (
-        <AgentEditor
-          key={name}
-          name={name}
-          config={config}
-          changed={refresh}
-          createChat={createChat}
-        />
-      ) : (
-        <>
-          <p className="muted">
-            Compose tools, skills and rules around a model. Changes apply to the
-            next turn.
-          </p>
-          {!config?.agents.length && (
-            <p>
-              No agents yet. Configure a model in{" "}
-              <Link href="/settings/models">Settings</Link>, then create an
-              agent.
-            </p>
-          )}
-          <div className="resource-list">
-            {config?.agents.map((agent) => (
-              <div key={agent} className="resource-row">
-                <Link href={`/agents/${encodeURIComponent(agent)}`}>
-                  {agent}
-                </Link>
-                <span className="muted">
-                  {config.defaultAgent === agent ? "Default" : ""}
-                </span>
-                <button
-                  onClick={() => {
-                    void createChat(agent);
-                  }}
-                >
-                  New chat
-                </button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      <Modal
-        open={creating}
-        onOpenChange={setCreating}
-        title="Create agent"
-        description="A new agent uses a model from this config. It stays independent of the default agent."
-      >
-        <ErrorMessage>{error}</ErrorMessage>
-        <Field label="Agent name">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} />
-        </Field>
-        <Field label="Model">
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {config?.models.map((alias) => (
-              <option key={alias}>{alias}</option>
-            ))}
-          </select>
-        </Field>
-        <button
-          className="primary"
-          disabled={!newName.trim() || !model}
-          onClick={() => {
-            void api<ConfigView>("/agents", "POST", {
-              revision: config?.revision,
-              action: "create",
-              name: newName,
-              value: { model, tools: { use: [] } },
-            }).then(
-              async () => {
-                await refresh();
-                setCreating(false);
-                setError("");
-                navigate(`/agents/${encodeURIComponent(newName)}`);
-              },
-              (cause) => setError(errorText(cause)),
-            );
-          }}
-        >
-          Create
-        </button>
-      </Modal>
+      <AgentEditor
+        key={name}
+        name={name}
+        config={config}
+        changed={changed}
+        createChat={createChat}
+      />
     </div>
   );
 }
@@ -144,7 +54,7 @@ function AgentEditor({
   createChat,
 }: {
   name: string;
-  config: ConfigView | undefined;
+  config: ConfigView;
   changed: () => Promise<void>;
   createChat: (name?: string) => Promise<void>;
 }) {
@@ -158,9 +68,7 @@ function AgentEditor({
     hooks: hookList.data ?? [],
   };
   const catalogError = toolList.error ?? skillList.error ?? hookList.error;
-  const [action, setAction] = useState(""),
-    [newName, setNewName] = useState(""),
-    [error, setError] = useState("");
+  const [action, setAction] = useState<AgentAction>();
   const draft = useDraft(
     `agent:${name}`,
     async () => {
@@ -212,29 +120,10 @@ function AgentEditor({
     }
     draft.setSource(pretty(next));
   };
-  const runAction = async () => {
-    try {
-      const current = await api<ConfigView>("/config");
-      await api("/agents", "POST", {
-        revision: current.revision,
-        action,
-        name,
-        newName,
-      });
-      setAction("");
-      await changed();
-      if (action === "delete") navigate("/agents");
-      else if (action === "rename" || action === "duplicate")
-        navigate(`/agents/${encodeURIComponent(newName)}`);
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  };
   return (
     <>
       <DraftActions draft={draft} />
-      <ErrorMessage>{error}</ErrorMessage>
-      {!error && !!catalogError && (
+      {!!catalogError && (
         <ErrorMessage>
           Could not load the tool, skill and hook lists. {errorText(catalogError)}{" "}
           <button
@@ -254,21 +143,12 @@ function AgentEditor({
         >
           New chat
         </button>
-        {["default", "duplicate", "rename", "delete"].map((item) => (
-          <button
-            key={item}
-            disabled={draft.dirty || !draft.base}
-            onClick={() => {
-              setError("");
-              setAction(item);
-              setNewName(`${name}_copy`);
-            }}
-          >
-            {item === "default"
-              ? "Set as default"
-              : item[0]!.toUpperCase() + item.slice(1)}
-          </button>
-        ))}
+        <AgentActionsMenu
+          name={name}
+          isDefault={config.defaultAgent === name}
+          {...(draft.dirty || !draft.base ? { disabledReason: "Save or discard changes first" } : {})}
+          onSelect={setAction}
+        />
       </div>
       {draft.base && !parseError && (
         <fieldset disabled={draft.busy} className="editor-fields">
@@ -366,37 +246,18 @@ function AgentEditor({
           readOnly={draft.busy}
         />
       </details>
-      <Modal
-        open={!!action}
-        onOpenChange={(open) => {
-          if (!open) setAction("");
+      <AgentActionDialog
+        action={action}
+        name={name}
+        agents={config.agents}
+        onClose={() => setAction(undefined)}
+        changed={changed}
+        onDone={(done, newName) => {
+          setAction(undefined);
+          if (done === "delete") navigate("/agents");
+          else if (done === "rename" || done === "duplicate") navigate(`/agents/${encodeURIComponent(newName)}`);
         }}
-        title={`${action === "default" ? "Set default" : action[0]?.toUpperCase() + action.slice(1)} agent`}
-      >
-        <ErrorMessage>{error}</ErrorMessage>
-        {["rename", "duplicate"].includes(action) ? (
-          <Field label="New agent name">
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-            />
-          </Field>
-        ) : (
-          <p>
-            {action === "delete"
-              ? `Remove ${name} from this config? Its sessions remain available.`
-              : `Use ${name} for new sessions without an explicit agent?`}
-          </p>
-        )}
-        <button
-          className="primary"
-          onClick={() => {
-            void runAction();
-          }}
-        >
-          Confirm
-        </button>
-      </Modal>
+      />
     </>
   );
 }
