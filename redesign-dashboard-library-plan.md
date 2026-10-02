@@ -256,9 +256,9 @@ The detail-route assertion rejects exact-path matching.
 Component plus routing; no page redesign.
 
 ### Acceptance criteria
-- [ ] AC-1: `ActionMenu` is used by `AgentActionsMenu`, and `agents.spec.ts` stays green. Proven by the phase gate.
-- [ ] AC-2: The Library nav current state is correct on list and detail routes. Proven by `library.spec.ts`.
-- [ ] AC-3: Unknown section shows not-found. Proven by `library.spec.ts`.
+- [x] AC-1: `ActionMenu` is used by `AgentActionsMenu`, and `agents.spec.ts` stays green. Proven by the phase gate.
+- [x] AC-2: The Library nav current state is correct on list and detail routes. Proven by `library.spec.ts`.
+- [x] AC-3: Unknown section shows not-found. Proven by `library.spec.ts`.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/library.spec.ts tests/dashboard-ui/agents.spec.ts --project=chromium`
@@ -763,3 +763,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-03: Plan drafted. User decisions are recorded in Target.
 - 2026-10-03: Plan review APPROVE (2 rounds). All phases are pending.
 - 2026-10-03: Phase 1 complete. Codex impl review APPROVE (1 round). Gates: typecheck pass, test:phase dashboard 62/62 pass, diff --check clean.
+- 2026-10-03: Phase 2 complete. Codex impl review APPROVE (2 rounds: direct-load not-found fixed by serving the entry for any `/library/<segment>`). Also fixed the server page allowlist, which omitted `hooks`, so reloading `/library/hooks` returned a 404. Gates: typecheck pass, chromium 194+ passed, diff --check clean.

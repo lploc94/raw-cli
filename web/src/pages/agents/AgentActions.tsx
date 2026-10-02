@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from "react";
-import { DropdownMenu } from "radix-ui";
-import { Copy, MoreHorizontal, Pencil, Star, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Copy, Pencil, Star, Trash2 } from "lucide-react";
 import type { ConfigView } from "../../../../src/dashboard/management.js";
 import { api, errorText } from "../../api.js";
 import { ErrorMessage, Field, Modal } from "../../ui.js";
+import { ActionMenu } from "../../ui/ActionMenu.js";
 
 export type AgentAction = "default" | "duplicate" | "rename" | "delete";
 
@@ -14,7 +14,7 @@ const copy: Record<AgentAction, { title: string; confirm: string }> = {
   delete: { title: "Delete agent", confirm: "Delete agent" },
 };
 
-/** The ⋯ menu for one agent; same menu pattern as the chat header. */
+/** The ⋯ menu for one agent. */
 export function AgentActionsMenu({
   name,
   isDefault,
@@ -27,38 +27,18 @@ export function AgentActionsMenu({
   disabledReason?: string;
   onSelect: (action: AgentAction) => void;
 }) {
-  const item = (action: AgentAction, icon: ReactNode, label: string, danger = false) => (
-    <DropdownMenu.Item
-      className={`workspace-menu-item ${danger ? "danger-item" : ""}`}
-      disabled={!!disabledReason}
-      onSelect={() => onSelect(action)}
-    >
-      {icon}
-      {label}
-    </DropdownMenu.Item>
-  );
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button
-          className="icon-button"
-          aria-label={`Actions for ${name}`}
-          title={disabledReason ?? "More actions"}
-          disabled={!!disabledReason}
-        >
-          <MoreHorizontal size={18} aria-hidden="true" />
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content className="workspace-menu" align="end" sideOffset={6} collisionPadding={8}>
-          {!isDefault && item("default", <Star size={15} aria-hidden="true" />, "Set as default")}
-          {item("duplicate", <Copy size={15} aria-hidden="true" />, "Duplicate")}
-          {item("rename", <Pencil size={15} aria-hidden="true" />, "Rename")}
-          <DropdownMenu.Separator className="workspace-menu-separator" />
-          {item("delete", <Trash2 size={15} aria-hidden="true" />, "Delete", true)}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    <ActionMenu<AgentAction>
+      label={`Actions for ${name}`}
+      {...(disabledReason ? { disabledReason } : {})}
+      onSelect={onSelect}
+      items={[
+        { id: "default", label: "Set as default", icon: <Star size={15} aria-hidden="true" />, hidden: isDefault },
+        { id: "duplicate", label: "Duplicate", icon: <Copy size={15} aria-hidden="true" /> },
+        { id: "rename", label: "Rename", icon: <Pencil size={15} aria-hidden="true" /> },
+        { id: "delete", label: "Delete", icon: <Trash2 size={15} aria-hidden="true" />, danger: true },
+      ]}
+    />
   );
 }
 

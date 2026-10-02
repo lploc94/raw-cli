@@ -64,6 +64,8 @@ const categories = [
   "sessions",
   "diagnostics",
 ];
+const librarySections = ["tools", "skills", "hooks", "vars", "mcp", "packages"];
+
 export function App() {
   const { path, navigate } = useRouter();
   const currentAgent = (() => {
@@ -102,6 +104,7 @@ export function App() {
   const [activityOpen, setActivityOpen] = useState(false);
   const drafts = useRef(new Map<string, string>());
   const page = path.split("/")[1] || "chat";
+  const librarySection = page === "library" ? path.split("/")[2] || "tools" : undefined;
   const main = useRef<HTMLElement>(null);
   const shownPage = useRef<string | undefined>(undefined);
   // Route transition: the DOM swaps synchronously (so clicks never hit stale UI) and the new
@@ -385,8 +388,12 @@ export function App() {
       ) : page === "library" ? (
         <nav aria-label="Library categories" className="context-nav">
           <div className="group-label">Library</div>
-          {["tools", "skills", "hooks", "vars", "mcp", "packages"].map((name) => (
-            <Link key={name} href={`/library/${name}`}>
+          {librarySections.map((name) => (
+            <Link
+              key={name}
+              href={`/library/${name}`}
+              aria-current={librarySection === name ? "page" : undefined}
+            >
               {name === "mcp" ? "MCP" : name[0]!.toUpperCase() + name.slice(1)}
             </Link>
           ))}
@@ -612,20 +619,14 @@ export function App() {
                 changed={refreshBootstrap}
                 createChat={create}
               />
-            ) : page === "library" &&
-              ["tools", "skills", "hooks"].includes(path.split("/")[2] ?? "tools") ? (
-              <ComponentsPage
-                key={path}
-                kind={path.split("/")[2] === "skills" ? "skills" : path.split("/")[2] === "hooks" ? "hooks" : "tools"}
-                changed={refreshBootstrap}
-              />
-            ) : page === "library" &&
-              ["vars", "mcp"].includes(path.split("/")[2] ?? "") ? (
-              <DefinitionsPage
-                key={path}
-                kind={path.split("/")[2] === "mcp" ? "mcp" : "vars"}
-                changed={refreshBootstrap}
-              />
+            ) : librarySection === "tools" || librarySection === "skills" || librarySection === "hooks" ? (
+              <ComponentsPage key={path} kind={librarySection} changed={refreshBootstrap} />
+            ) : librarySection === "vars" || librarySection === "mcp" ? (
+              <DefinitionsPage key={path} kind={librarySection} changed={refreshBootstrap} />
+            ) : librarySection && librarySection !== "packages" ? (
+              <Empty title="Library section not found" action={<Link href="/library/tools">Open Tools</Link>}>
+                There is no Library section named “{librarySection}”.
+              </Empty>
             ) : (
               <PackagesPage
                 key={path}

@@ -19,6 +19,7 @@ export interface DashboardBootstrap {
 export function isDashboardPage(path: string): boolean {
   return path === "/" || /^\/chat(?:\/[^/]+)?\/?$/.test(path)
     || /^\/agents(?:\/[^/]+)?\/?$/.test(path)
-    || /^\/library(?:\/(?:tools|skills|vars|mcp|packages)(?:\/[^/]+)?)?\/?$/.test(path)
+    // Any section name: the app itself reports unknown Library sections.
+    || /^\/library(?:\/[^/]+(?:\/[^/]+)?)?\/?$/.test(path)
     || /^\/settings(?:\/(?:general|models(?:\/[^/]+)?|appearance|chat|sessions|diagnostics))?\/?$/.test(path);
 }
