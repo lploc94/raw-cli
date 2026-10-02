@@ -20,14 +20,29 @@ const raw = await dashboardFixture({
     },
     skills: { use: ["builtin/create_skill"] },
   },
+  extraAgents: {
+    reviewer: { model: "fixture", system_prompt: "Review changes carefully.", tools: { use: ["builtin/read_file"] } },
+  },
 });
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1000 },
   });
+  // Screenshots should not catch the route ease-in mid-animation.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(raw.server.launchUrl);
   await page.getByRole("link", { name: "Agents", exact: true }).click();
+  await page.getByRole("list", { name: "Agent list" }).waitFor();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    if (!process.argv.includes("--packages-only")) await page.screenshot({
+      path: `docs/dashboard/agents-list-${theme}-desktop.png`,
+    });
+  }
   await page.getByRole("link", { name: "raw", exact: true }).first().click();
   await page.getByLabel("System prompt", { exact: true }).waitFor();
   for (const theme of ["light", "dark"]) {

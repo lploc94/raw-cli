@@ -248,3 +248,30 @@ Scope: workspace list metadata, the read-only folder browser, and the switcher U
 | Installed tarball carries the UI | `npm run test:package` |
 
 Screenshots were regenerated with `node --import tsx tests/dashboard-ui/capture.ts` (`workspace-dark-switcher.png`, `workspace-dark-browser.png`). Known limits: the folder browser lists what the dashboard's user account can read and is capped at 500 entries per folder; pins and removals belong to one browser profile; the selected workspace still resets to the launch directory on reload; qualification covers this host, local mock providers and the recorded browser versions only.
+
+## Agents tab redesign (2026-10-03)
+
+Scope: the Agents list and agent editor per `redesign-dashboard-agents-tab-plan.md`. The list now has summaries and a ⋯ menu. The editor has a breadcrumb header, Overview/Capabilities/Policy/JSON tabs, a sticky save bar and card layout. Shared button tokens were corrected for dark mode. Each phase was committed separately after a Codex (`gpt-6-astra`) implementation review reached APPROVE.
+
+| Contract | Proof |
+| --- | --- |
+| `/config` `agentSummaries`: model, package binding and selection counts; `__proto__` names; `{}` for invalid config; no prompt text | `tests/dashboard-management.test.ts`, `tests/dashboard-packages.test.ts` |
+| A prompt patch that removes one source and sets the other keeps the new source (previously both were dropped) | `tests/dashboard-management.test.ts` |
+| Token-driven `.primary` in light and dark; unchanged `.actions` spacing on chat, Settings and conflict review (baseline measured before the CSS change); current agent marked in the sidebar for any URL encoding | `tests/dashboard-ui/agents.spec.ts` |
+| List rows, Rename/Duplicate/Set default/Delete from the ⋯ menu, name validation, one error surface inside dialogs | `tests/dashboard-ui/agents.spec.ts` |
+| Detail header, actions wait for unsaved work, save bar only when needed, tabs keep the draft without the leave guard, parse errors, package-bound agents, loading skeleton and load failure | `tests/dashboard-ui/agents.spec.ts`, `tests/dashboard-ui/management.spec.ts` |
+| Text/File prompt switch, selection empty states and reorder persisted, skill tools added automatically, policy Move up/down, typed sample result, recreated conditions keep the required `when.source` | `tests/dashboard-ui/agents.spec.ts` |
+| Axe (WCAG 2.2 AA) on the list and every tab in light and dark; no horizontal overflow at 390px | `tests/dashboard-ui/accessibility.spec.ts`, `tests/dashboard-ui/agents.spec.ts` on chromium, firefox and webkit |
+
+Gates on the final commit:
+- `npm run typecheck` passed.
+- `npm run test:web` passed 576/576 across chromium, firefox and webkit.
+- `npm run check` ran 886 tests and 883 passed. The 3 failures are the PTY REPL tests in `tests/cli.test.ts`, which also fail on the pre-change baseline `ee3a7dc` on this host.
+- `git diff --check` was clean.
+
+Screenshots were regenerated with `node --import tsx tests/dashboard-ui/capture-management.ts`: `agents-list-{light,dark}-desktop.png` and `agent-{light,dark}-desktop.png`.
+
+Known limits:
+- List counts cover top-level selections only. Package-bound agents show their package reference instead.
+- Tabs are not addressable by URL.
+- Qualification covers this host, local mock providers and the recorded browser versions only.

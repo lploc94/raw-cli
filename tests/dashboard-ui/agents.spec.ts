@@ -427,3 +427,28 @@ test.describe("agent detail sections", () => {
     await expect(page.getByRole("textbox", { name: "Agent JSON" })).toBeVisible();
   });
 });
+
+test.describe("narrow screens", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  const fits = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+
+  test("the list and every section fit without horizontal scrolling", async ({ page, raw }) => {
+    await page.goto(raw.server.launchUrl.replace(/\/?(\?|#|$)/, "/agents$1"));
+    const list = page.getByRole("list", { name: "Agent list" });
+    await expect(list).toBeVisible();
+    expect(await fits(page)).toBe(true);
+    await expect(list.getByRole("button", { name: "New chat" })).toBeInViewport();
+    await expect(list.getByRole("button", { name: "Actions for raw" })).toBeInViewport();
+    await list.getByRole("link", { name: "raw", exact: true }).click();
+    const header = page.locator(".detail-header");
+    await expect(header.getByRole("button", { name: "New chat" })).toBeInViewport();
+    await expect(header.getByRole("button", { name: "Actions for raw" })).toBeInViewport();
+    const tabs = page.getByRole("tablist", { name: "Agent sections" });
+    const tops = await tabs.getByRole("tab").evaluateAll((items) => items.map((item) => item.getBoundingClientRect().top));
+    expect(new Set(tops).size).toBe(1);
+    for (const name of ["Overview", "Capabilities", "Policy", "JSON"]) {
+      await tabs.getByRole("tab", { name }).click();
+      expect(await fits(page)).toBe(true);
+    }
+  });
+});

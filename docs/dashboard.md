@@ -91,10 +91,30 @@ screen-reader verdict. This is separate from the automated browser suite.
 
 Agents may select ordered hooks. Use the Hooks component view to create or edit `hook.json` and scripts, then add a hook ID in the agent editor. The catalog shows event filters and validation without executing the hook. Package exports can carry selected hooks to another installation; see [hooks](hooks.md) and [packages](packages.md).
 
-Agents selects a model, a literal or file prompt, and ordered tools, skills and
-vars. JSON views expose all existing request/cache/compact/policy fields and
-package overrides. Skill selections require the list/load skill tools. Policy
-samples evaluate the actual ordered rules without running the sample command.
+The Agents list shows each agent's model, how many tools and skills it selects
+(or the package it is bound to) and which one is the default. Each row has New
+chat and a ⋯ menu with Set as default, Duplicate, Rename and Delete. Every action
+confirms in a dialog that also shows its errors; Delete keeps the agent's
+sessions.
+
+Opening an agent shows a breadcrumb back to the list, the agent's model and
+Default/Package badges, New chat and the same ⋯ menu. While there are unsaved
+changes these actions wait, and a bar at the bottom offers Discard and Save. The
+editor is split into tabs:
+
+- **Overview**: the model and the instructions. Text sends a literal system
+  prompt; File reads a Markdown file relative to the config.
+- **Capabilities**: ordered Tools, Skills, Hooks and Variables. Reorder or
+  remove an entry in place, add one from the catalog. Selecting a skill also adds
+  the list/load skill tools it needs.
+- **Policy**: ordered rules (the last match wins; only ask rules take a
+  `when.any` + RE2 condition) and a sample test that evaluates the rules without
+  running the sample command.
+- **JSON**: every agent field, including request/cache/compact/limits and
+  package overrides. A package-bound agent, or JSON that does not parse, opens
+  here; the form returns once the JSON parses.
+
+Switching tabs keeps the draft and never asks to leave the page.
 
 Library shows component provenance, usages and static validation. Fork a builtin
 or immutable package into a local component before editing it. Each source file
@@ -120,8 +140,12 @@ Library or saving a definition does not execute a provider or connect to MCP.
 
 Agent and source editor examples (isolated fixture data):
 
+![Agents list in light mode](dashboard/agents-list-light-desktop.png)
 ![Agent editor in dark mode](dashboard/agent-dark-desktop.png)
 ![Agent editor in light mode](dashboard/agent-light-desktop.png)
+
+The [dark Agents list](dashboard/agents-list-dark-desktop.png) uses the same layout.
+
 ![Read-only tool source with syntax highlighting](dashboard/tool-dark-desktop.png)
 
 Reproduce these images after building with

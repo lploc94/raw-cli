@@ -447,10 +447,10 @@ Overflow measurement rejects hiding elements with `display:none` blanket rules o
 CSS breakpoints, capture script, docs, evidence.
 
 ### Acceptance criteria
-- [ ] AC-1: No horizontal overflow at 390px; New chat and ⋯ visible — `agents.spec.ts`.
-- [ ] AC-2: Screenshots regenerated for list and detail, light/dark — inspection of `docs/dashboard/`.
-- [ ] AC-3: `docs/dashboard.md` matches new UI — inspection.
-- [ ] AC-4: Full 3-browser `npm run test:web` and `npm run check` pass, recorded in evidence — evidence doc.
+- [x] AC-1: No horizontal overflow at 390px; New chat and ⋯ visible — `agents.spec.ts`.
+- [x] AC-2: Screenshots regenerated for list and detail, light/dark — inspection of `docs/dashboard/`.
+- [x] AC-3: `docs/dashboard.md` matches new UI — inspection.
+- [x] AC-4: Full 3-browser `npm run test:web` and `npm run check` pass, recorded in evidence — evidence doc.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/agents.spec.ts --project=chromium && node --import tsx tests/dashboard-ui/capture-management.ts`
@@ -480,3 +480,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-02: Phase 3 complete — typecheck OK; chromium Playwright 176/176; codex-impl-review APPROVE (1 round). Detail page already uses the shared action menu/dialog; Create agent removed from detail header early.
 - 2026-10-02: Phase 4 complete — typecheck OK; chromium Playwright full suite green; codex-impl-review APPROVE (2 rounds: ⋯ trigger disabled while dirty/loading; save bar only after first load). Selection/PolicyEditor moved verbatim into `web/src/pages/agents/` here; JSON tab already uses a section instead of `<details>`.
 - 2026-10-02: Phase 5 complete — typecheck OK; chromium Playwright full suite green; `test:phase dashboard` 61/61; codex-impl-review APPROVE (2 rounds). In-target pre-existing bugs fixed and covered: `editAgent` patch with `{system_prompt: null, system_prompt_file}` wiped both prompt sources (`src/management/agents.ts`); policy rules created/recreated in the form lacked the required `when.source` (now `arguments`).
+- 2026-10-03: Phase 6 complete — `npm run test:web` 576/576 (3 browsers); `npm run check` 883/886, the 3 PTY REPL failures in `tests/cli.test.ts` reproduce identically on baseline `ee3a7dc` (environmental); codex-impl-review APPROVE (1 round). Axe scan waits for the route ease-in animation (firefox/webkit measured faded colors mid-fade).

@@ -2055,6 +2055,58 @@ summary::-webkit-details-marker {
   min-height: 40px;
   padding: 8px 12px;
 }
+@media (max-width: 899px) {
+  .data-row.agent-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name actions" "model actions";
+    row-gap: var(--space-1);
+  }
+  .agent-row .agent-row-name {
+    grid-area: name;
+  }
+  .agent-row .agent-row-model {
+    grid-area: model;
+  }
+  .agent-row .agent-row-counts {
+    display: none;
+  }
+  .agent-row .actions {
+    grid-area: actions;
+  }
+  .resource-header .primary,
+  .detail-title .actions button {
+    white-space: nowrap;
+  }
+  .detail-title {
+    flex-wrap: wrap;
+  }
+  .tabs.page-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs.page-tabs button {
+    flex: none;
+  }
+}
+@media (max-width: 599px) {
+  .resource-header {
+    flex-wrap: wrap;
+  }
+  .card {
+    padding: var(--space-4);
+  }
+  .card-footer {
+    margin: var(--space-4) calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+    padding: var(--space-3) var(--space-4);
+  }
+  .card-header {
+    flex-wrap: wrap;
+  }
+  .agent-row .actions button:not(.icon-button) {
+    padding: 7px 10px;
+  }
+}
 .actions > .field {
   flex: 1;
   min-width: min(200px, 100%);

@@ -138,10 +138,13 @@ test("the agents list and every agent section pass axe in light and dark", async
   test.slow();
   await page.goto(raw.server.launchUrl);
   await page.getByRole("link", { name: "Agents", exact: true }).click();
-  const scan = async () =>
+  const scan = async () => {
+    // Route changes fade the main column in; measure contrast on the settled page.
+    await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
     expect(
       (await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze()).violations,
     ).toEqual([]);
+  };
   for (const theme of ["light", "dark"]) {
     await page.evaluate((value) => (document.documentElement.dataset.theme = value), theme);
     await page.getByRole("list", { name: "Agent list" }).waitFor();
