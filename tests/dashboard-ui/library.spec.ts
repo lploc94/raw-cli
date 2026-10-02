@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.js";
@@ -462,5 +462,170 @@ test.describe("vars and MCP", () => {
     finish = true;
     await expect(page.getByRole("button", { name: "Read", exact: true })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Read", exact: true })).toBeFocused();
+  });
+});
+
+function packageSource(root: string, folderName = "shared-kit") {
+  const folder = join(root, folderName);
+  cpSync(join(process.cwd(), "examples/packages/tool-only"), folder, { recursive: true });
+  mkdirSync(join(folder, "agents"));
+  writeFileSync(join(folder, "agents/writer.json"), JSON.stringify({ system_prompt: { $input: "prompt" }, tools: { use: [] } }));
+  const manifest = JSON.parse(readFileSync(join(folder, "raw-package.json"), "utf8"));
+  manifest.files.push("agents/writer.json");
+  manifest.exports.agents = { writer: "agents/writer.json" };
+  manifest.inputs = { type: "object", properties: { prompt: { type: "string" } }, required: ["prompt"] };
+  writeFileSync(join(folder, "raw-package.json"), JSON.stringify(manifest));
+  return folder;
+}
+type Raw = { root: string; json: <T>(path: string, method?: string, body?: unknown) => Promise<T> };
+const install = async (raw: Raw, alias: string, action: "install" | "link" = "install", folderName?: string) => {
+  const stage = await raw.json<{ id: string }>("/packages/inspect", "POST", { path: packageSource(raw.root, folderName ?? `${alias}-kit`) });
+  await raw.json("/packages/install", "POST", { stageId: stage.id, alias, action });
+};
+const packageRow = (page: Page, alias: string) =>
+  page.getByRole("list", { name: "Installed packages" }).getByRole("listitem").filter({ has: page.getByRole("link", { name: alias, exact: true }) });
+
+test.describe("packages", () => {
+  test("an empty list offers Import package", async ({ page, raw }) => {
+    await openPath(page, raw.server.launchUrl, "/library/packages");
+    await expect(page.getByRole("heading", { name: "No packages yet" })).toBeVisible();
+    await page.getByRole("button", { name: "Import package" }).first().click();
+    await expect(page.getByRole("dialog", { name: "Import package" }).getByLabel("Local package path")).toBeVisible();
+  });
+
+  test("rows show version, source kind, attention and usage", async ({ page, raw }) => {
+    await install(raw, "shared");
+    await install(raw, "authored", "link");
+    rmSync(join(raw.root, "authored-kit"), { recursive: true });
+    await openPath(page, raw.server.launchUrl, "/library/packages");
+    const shared = packageRow(page, "shared");
+    await expect(shared.locator(".badge").filter({ hasText: /^1\.0\.0$|^v?\d/ })).toBeVisible();
+    await expect(shared.locator(".badge").filter({ hasText: "Artifact" })).toBeVisible();
+    await expect(shared.locator(".badge").filter({ hasText: "Needs attention" })).toHaveCount(0);
+    await expect(shared).toContainText("Not used");
+    const authored = packageRow(page, "authored");
+    await expect(authored.locator(".badge").filter({ hasText: "Linked" })).toBeVisible();
+    await expect(authored.locator(".badge.warning").filter({ hasText: "Needs attention" })).toBeVisible();
+    await page.getByLabel("Search packages").fill("zzz");
+    await expect(page.getByText("No packages match “zzz”.")).toBeVisible();
+    await page.getByRole("button", { name: "Clear search" }).click();
+    await expect(packageRow(page, "shared")).toBeVisible();
+  });
+
+  test("temporary artifacts show when they expire", async ({ page, raw }) => {
+    const stage = await raw.json<{ expiresAt: string }>("/packages/inspect", "POST", { path: packageSource(raw.root) });
+    await openPath(page, raw.server.launchUrl, "/library/packages");
+    const expected = await page.evaluate(
+      (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      stage.expiresAt,
+    );
+    const card = page.locator(".card").filter({ has: page.getByRole("heading", { name: "Temporary artifacts" }) });
+    await expect(card).toContainText(`Expires ${expected}`);
+    await card.getByRole("button", { name: "Review" }).click();
+    const dialog = page.getByRole("dialog", { name: "Review package" });
+    await expect(dialog.getByText("Recipient input schema")).toBeVisible();
+    await expect(page.locator("details")).toHaveCount(0);
+  });
+
+  test("an unknown alias reports that the package was not found", async ({ page, raw }) => {
+    await openPath(page, raw.server.launchUrl, "/library/packages/nope");
+    await expect(page.getByRole("heading", { name: "Package not found" })).toBeVisible();
+    await page.getByRole("main").getByRole("link", { name: "Open Packages" }).click();
+    await expect(page).toHaveURL(/\/library\/packages$/);
+  });
+
+  test("detail has a header, Use agent, a menu, cards and no disclosures", async ({ page, raw }) => {
+    await install(raw, "shared");
+    await openPath(page, raw.server.launchUrl, "/library/packages/shared");
+    const header = page.locator(".detail-header");
+    await expect(header.getByRole("heading", { level: 1, name: "shared" })).toBeVisible();
+    await expect(header.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: "Packages" })).toBeVisible();
+    await expect(header.locator(".badge").filter({ hasText: "Artifact" })).toBeVisible();
+    await expect(header.getByRole("button", { name: "Use agent" })).toHaveClass(/primary/);
+    await header.getByRole("button", { name: "Actions for shared" }).click();
+    for (const item of ["Add component", "Update package", "Fork package", "Remove package"])
+      await expect(page.getByRole("menuitem", { name: item })).toBeVisible();
+    await page.keyboard.press("Escape");
+    for (const title of ["Overview", "Exports", "Requirements"])
+      await expect(page.getByRole("heading", { level: 2, name: title, exact: true })).toBeVisible();
+    await expect(page.getByRole("list", { name: "Packaged files" })).toBeVisible();
+    await expect(page.locator("details")).toHaveCount(0);
+  });
+
+  test("a failed removal shows one error, inside a destructive dialog", async ({ page, raw }) => {
+    await install(raw, "shared");
+    const config = await raw.json<{ revision: string }>("/config");
+    await raw.json("/packages/shared/agent", "POST", { revision: config.revision, exportName: "writer", inputs: { prompt: "x" }, name: "writer", model: "fixture" });
+    await openPath(page, raw.server.launchUrl, "/library/packages/shared");
+    await page.getByRole("button", { name: "Actions for shared" }).click();
+    await page.getByRole("menuitem", { name: "Remove package" }).click();
+    const dialog = page.getByRole("dialog", { name: "Remove package" });
+    const confirm = dialog.getByRole("button", { name: "Remove alias" });
+    await expect(confirm).toHaveClass(/danger/);
+    await confirm.click();
+    await expect(dialog.getByRole("alert")).toContainText("agents.writer");
+    // Count DOM alerts: the modal hides the page from the accessibility tree, not from view.
+    await expect(page.locator('[role="alert"]')).toHaveCount(1);
+  });
+
+  test("binding defaults fill in when the config arrives after the dialog opens", async ({ page, raw }) => {
+    await install(raw, "shared");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/config", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await openPath(page, raw.server.launchUrl, "/library/packages/shared");
+    await page.getByRole("button", { name: "Use agent" }).click();
+    const dialog = page.getByRole("dialog", { name: "Use agent" });
+    await expect(dialog.getByLabel("Recipient model")).toHaveValue("");
+    release();
+    await expect(dialog.getByLabel("Recipient model")).toHaveValue("fixture");
+    await dialog.getByLabel("Local agent name").fill("writer");
+    await dialog.getByLabel("Input prompt", { exact: true }).fill("Prompt");
+    await dialog.getByRole("button", { name: "Create agent binding" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Agent writer created" })).toBeVisible();
+  });
+
+  test("discarding an artifact holds every artifact action until it finishes", async ({ page, raw }) => {
+    for (const name of ["one-kit", "two-kit"]) await raw.json("/packages/inspect", "POST", { path: packageSource(raw.root, name) });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/packages/stages/*", async (route) => {
+      if (route.request().method() === "DELETE") await held;
+      await route.continue();
+    });
+    await openPath(page, raw.server.launchUrl, "/library/packages");
+    const card = page.getByRole("list", { name: "Temporary artifacts" });
+    await expect(card.getByRole("listitem")).toHaveCount(2);
+    await card.getByRole("button", { name: "Discard artifact" }).first().click();
+    for (const button of await card.getByRole("button").all()) await expect(button).toBeDisabled();
+    release();
+    await expect(card.getByRole("listitem")).toHaveCount(1);
+    await expect(card.getByRole("button", { name: "Discard artifact" })).toBeEnabled();
+  });
+
+  test("reloading the config keeps an explicit Keep unselected recipient", async ({ page, raw }) => {
+    const stage = await raw.json<{ id: string }>("/packages/inspect", "POST", { path: join(process.cwd(), "examples/packages/mixed-kit") });
+    await raw.json("/packages/install", "POST", { stageId: stage.id, alias: "mixed", action: "install" });
+    await openPath(page, raw.server.launchUrl, "/library/packages/mixed");
+    await page.getByRole("button", { name: "Actions for mixed" }).click();
+    await page.getByRole("menuitem", { name: "Add component" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add component" });
+    await dialog.getByLabel("Component kind").selectOption("vars");
+    await expect(dialog.getByLabel("Recipient agent")).toHaveValue("raw");
+    await dialog.getByLabel("Recipient agent").selectOption("");
+    // An external edit makes the save conflict, which offers to reload the config.
+    const config = saved(raw);
+    config.agents.raw.system_prompt = "Edited elsewhere";
+    writeFileSync(raw.configPath, JSON.stringify(config));
+    await dialog.getByRole("button", { name: "Save component binding" }).click();
+    await expect(dialog.getByRole("alert")).toBeVisible();
+    const reloaded = page.waitForResponse((response) => response.url().endsWith("/api/config"));
+    await dialog.getByRole("button", { name: "Reload config, keep form" }).click();
+    await reloaded;
+    await page.waitForTimeout(200);
+    await expect(dialog.getByLabel("Recipient agent")).toHaveValue("");
   });
 });

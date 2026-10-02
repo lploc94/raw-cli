@@ -647,11 +647,11 @@ Migrate `packages.spec.ts`:
 UI restructure only; package APIs are unchanged.
 
 ### Acceptance criteria
-- [ ] AC-1: The list, rows, empty/no-results and artifacts card follow the contract. Proven by `library.spec.ts`.
-- [ ] AC-2: The Import dialog and replacement mode work. Proven by `packages.spec.ts`.
-- [ ] AC-3: Detail header, menu and cards follow the contract, and an unknown alias shows not-found. Proven by `library.spec.ts`.
-- [ ] AC-4: Dialog-scoped errors, a danger Remove, and no disclosures. Proven by `library.spec.ts` and `packages.spec.ts`.
-- [ ] AC-5: `packages.spec.ts` passes after migration. Proven by the phase gate.
+- [x] AC-1: The list, rows, empty/no-results and artifacts card follow the contract. Proven by `library.spec.ts`.
+- [x] AC-2: The Import dialog and replacement mode work. Proven by `packages.spec.ts`.
+- [x] AC-3: Detail header, menu and cards follow the contract, and an unknown alias shows not-found. Proven by `library.spec.ts`.
+- [x] AC-4: Dialog-scoped errors, a danger Remove, and no disclosures. Proven by `library.spec.ts` and `packages.spec.ts`.
+- [x] AC-5: `packages.spec.ts` passes after migration. Proven by the phase gate.
 
 ### Focused verification
 `npm run build && npx playwright test tests/dashboard-ui/library.spec.ts tests/dashboard-ui/packages.spec.ts --project=chromium`
@@ -767,3 +767,4 @@ Implementation review is required; verdict must be APPROVE.
 - 2026-10-03: Phase 3 complete. Codex impl review APPROVE (2 rounds: a cached-list refresh error is now surfaced once, with a test). Gates: typecheck pass, chromium all passed, diff --check clean.
 - 2026-10-03: Phase 4 complete. Codex impl review APPROVE (2 rounds). Fixed: the undo history of a fresh editor per file (red/green verified); usage verified by a direct GET, not cached data; config load errors reported. Gates: typecheck pass, chromium 210 passed, diff --check clean.
 - 2026-10-03: Phase 5 complete. Codex impl review APPROVE (2 rounds). Fixed: providers are shown without vars; the save bar is scoped to the Definitions tab, which shows an Unsaved badge; focus requests stay pending while a check runs. Gates: typecheck pass, chromium 217 passed, diff --check clean.
+- 2026-10-03: Phase 6 complete. Codex impl review APPROVE (3 rounds). Fixed: bind defaults when the config arrives late; serialized artifact discards; an explicit Keep unselected survives a config reload (red/green verified). Gates: typecheck pass, chromium 226 passed, diff --check clean.

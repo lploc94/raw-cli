@@ -42,6 +42,7 @@ test("inspect, install, bind typed inputs, chat, export and download through rea
   await page.goto(raw.server.launchUrl);
   await page.getByRole("link", { name: "Library", exact: true }).click();
   await page.getByRole("link", { name: "Packages", exact: true }).click();
+  await page.getByRole("button", { name: "Import package" }).first().click();
   await page.getByLabel("Local package path").fill(folder);
   await page.getByRole("button", { name: "Inspect path", exact: true }).click();
   await expect(
@@ -99,6 +100,7 @@ test("inspect, install, bind typed inputs, chat, export and download through rea
   const path = await archive.path();
   expect(path).toBeTruthy();
   await page.getByRole("button", { name: "Close dialog", exact: true }).click();
+  await page.getByRole("button", { name: "Import package" }).first().click();
   await page.getByLabel("Upload package archive").setInputFiles(path!);
   await expect(
     page.getByRole("heading", { name: "Review package", exact: true }),
@@ -121,6 +123,7 @@ test("package update failures and removal dependents stay actionable in their di
   await page.goto(raw.server.launchUrl);
   await page.getByRole("link", { name: "Library", exact: true }).click();
   await page.getByRole("link", { name: "Packages", exact: true }).click();
+  await page.getByRole("button", { name: "Import package" }).first().click();
   await page.getByLabel("Local package path").fill(folder);
   await page.getByRole("button", { name: "Inspect path", exact: true }).click();
   await page.getByLabel("Install alias").fill("shared");
@@ -135,8 +138,9 @@ test("package update failures and removal dependents stay actionable in their di
   await expect(
     page.getByRole("status").filter({ hasText: "Agent writer created" }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Actions for shared" }).click();
   await page
-    .getByRole("button", { name: "Remove package", exact: true })
+    .getByRole("menuitem", { name: "Remove package", exact: true })
     .click();
   await page.getByRole("button", { name: "Remove alias", exact: true }).click();
   await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
@@ -148,8 +152,9 @@ test("package update failures and removal dependents stay actionable in their di
   );
   delete manifest.exports.agents;
   writeFileSync(join(folder, "raw-package.json"), JSON.stringify(manifest));
+  await page.getByRole("button", { name: "Actions for shared" }).click();
   await page
-    .getByRole("button", { name: "Update package", exact: true })
+    .getByRole("menuitem", { name: "Update package", exact: true })
     .click();
   await page.getByLabel("Local package path").fill(folder);
   await page.getByRole("button", { name: "Inspect path", exact: true }).click();
