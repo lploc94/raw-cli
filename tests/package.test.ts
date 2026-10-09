@@ -170,7 +170,7 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
   await writeFile(join(duplicateRoot, "SKILL.md"), "---\nname: configure-raw\ndescription: Duplicate\n---\nduplicate");
   assert.match((await builtinProbe(["builtin/configure_raw", "local/configure-raw"])).stderr, /duplicate skill name/);
   const env = { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), OPENAI_API_KEY: "key" };
-  assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
+  assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), JSON.parse(await readFile(join(repo, "package.json"), "utf8")).version);
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
 
   assert.equal(await readFile(join(consumer, "node_modules/@tlelabs/raw/docs/vars.md"), "utf8"), await readFile(join(repo, "docs/vars.md"), "utf8"));

@@ -24,6 +24,7 @@ import { capResult, errorResult } from "../tools/results.js";
 import { PANEL_LIMITS, type PanelDeclaration } from "../panels/contract.js";
 import { validateDeclaration } from "../panels/validate.js";
 import type { ToolHandlerContent, ToolHandlerResult } from "../tools/types.js";
+import { VERSION } from "../version.js";
 import { fields, object, rawCapabilities, rawError, rawErrors, string, stringArray, withAbort,
   type RawCapabilities, type RawCapability } from "./rpc.js";
 
@@ -329,7 +330,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
   app.onRequest("initialize", ({ params }) => {
     peerRaw = rawCapabilities(params._meta);
     initialized = true;
-    return { protocolVersion: PROTOCOL_VERSION, agentInfo: { name: "raw-cli", version: "0.1.0" },
+    return { protocolVersion: PROTOCOL_VERSION, agentInfo: { name: "raw-cli", version: VERSION },
       agentCapabilities: { mcpCapabilities: { http: true, sse: true }, loadSession: true,
         sessionCapabilities: { list: {}, resume: {}, delete: {} } },
       authMethods: [],

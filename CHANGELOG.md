@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-09
+
+- The dashboard favicon is now the Raw "r." mark.
+- `raw --version`, the ACP `agentInfo` and the MCP client identity read the
+  version from `package.json` instead of a hardcoded string.
+- Releases are published to npm from GitHub Actions with provenance.
+
 ## [0.1.0] - 2026-10-09
 
 First public release.
@@ -17,5 +24,6 @@ First public release.
 - Portable `.rawpkg` packages for sharing agents, tools and skills.
 - Runtime variables from config, environment, files or executable providers.
 
-[Unreleased]: https://github.com/lploc94/raw-cli/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/lploc94/raw-cli/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/lploc94/raw-cli/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lploc94/raw-cli/releases/tag/v0.1.0

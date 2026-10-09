@@ -7,8 +7,9 @@ import { parseUiDocument, resolveUiOptions, terminalCapabilities } from "../src/
 import { openSessionStore } from "../src/sessions/store.js";
 import { runSessionMaintenance } from "../src/sessions/maintenance.js";
 import { runPackageCli } from "../src/packages/cli.js";
+import { VERSION } from "../src/version.js";
 
-const version = "0.1.0";
+const version = VERSION;
 class InputError extends Error {}
 
 function input<T>(read: () => T): T {

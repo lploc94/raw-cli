@@ -12,6 +12,7 @@ import { capResult, errorResult } from "./results.js";
 import { PANEL_LIMITS, type PanelDeclaration } from "../panels/contract.js";
 import { validateDeclaration } from "../panels/validate.js";
 import type { ToolHandlerContent, ToolHandlerResult } from "./types.js";
+import { VERSION } from "../version.js";
 
 const MAX_MCP_BYTES = 16 * 1024 * 1024;
 
@@ -296,7 +297,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
   try {
     for (const [name, spec] of specs) {
       if (options.signal?.aborted) throw new Error("MCP startup aborted");
-      const client = new Client({ name: "raw-cli", version: "0.1.0" }, { capabilities: {} });
+      const client = new Client({ name: "raw-cli", version: VERSION }, { capabilities: {} });
       owners.push(client);
       const transport = "command" in spec
         ? new StdioClientTransport({ command: spec.command, args: [...(spec.args ?? [])],

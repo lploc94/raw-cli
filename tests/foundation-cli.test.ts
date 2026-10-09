@@ -21,7 +21,7 @@ test("T-01d: help/version do not need config or provider credentials", () => {
   assert.match(help.stdout, /raw/);
   const version = cli(["--version"], home);
   assert.equal(version.status, 0, version.stderr);
-  assert.match(version.stdout, /0\.1\.0/);
+  assert.equal(version.stdout.trim(), JSON.parse(readFileSync("package.json", "utf8")).version);
 });
 
 test("T-01d: config init creates a setup-capable raw agent, refuses overwrite, list is sanitized", () => {
