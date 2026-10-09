@@ -30,12 +30,12 @@ jobs:
       - name: Publish to npm
         run: |
           version="${GITHUB_REF_NAME#v}"
-          if npm view "raw-cli@${version}" version >/dev/null 2>&1; then
-            echo "raw-cli@${version} is already on npm; skipping publish"
+          if npm view "@tlelabs/raw@${version}" version >/dev/null 2>&1; then
+            echo "@tlelabs/raw@${version} is already on npm; skipping publish"
           else
-            npm publish "raw-cli-${version}.tgz" --access public
+            npm publish "tlelabs-raw-${version}.tgz" --access public
           fi
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" raw-cli-*.tgz --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" tlelabs-raw-*.tgz --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

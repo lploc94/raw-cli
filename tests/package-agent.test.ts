@@ -64,7 +64,7 @@ test("packed forks and copied agent execute outside the checkout with isolated s
       "--no-audit", "--no-fund", archive], { cwd: consumer, encoding: "utf8" });
     assert.equal(install.status, 0, install.stderr);
     const bin = join(consumer, "node_modules", ".bin", "raw");
-    const packageRoot = join(consumer, "node_modules", "raw-cli");
+    const packageRoot = join(consumer, "node_modules", "@tlelabs", "raw");
     const xdg = join(root, "xdg");
     const localRoot = join(xdg, "raw", "tools");
     await mkdir(localRoot, { recursive: true });

@@ -1,5 +1,7 @@
 # raw-cli
 
+[![npm](https://img.shields.io/npm/v/@tlelabs/raw)](https://www.npmjs.com/package/@tlelabs/raw) [![CI](https://github.com/lploc94/raw-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/lploc94/raw-cli/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 `raw` is a local coding agent for models with limited context. Each agent selects ordered tools, skills and hooks, and can supply a system prompt. Raw ships eleven tools as editable plugins: `read_file`, `write_file`, `bash`, `view_image`, `list_skills`, `load_skill`, `list_vars`, `read_var`, `todo`, `ask_user`, and `process`. Todo, Ask, and Process are selected explicitly; they are not added to the starter tool selection. Tools, skills and hooks can also live in the user's config directory or beside a selected agent config. Selected MCP tools remain available. Standard Agent Client Protocol (ACP) lets an IDE or parent agent run sessions.
 
 ## Install and run
@@ -7,19 +9,11 @@
 Requires Node.js 22.13+ and Bash for the `bash` tool. Documentation: [raw.tlelabs.com](https://raw.tlelabs.com).
 
 ```sh
-# Try it without installing (builds from the default branch)
-npx github:lploc94/raw-cli --help
-
-# Install globally from GitHub (pin a release tag for reproducible installs)
-npm install -g github:lploc94/raw-cli#v0.1.0
-
-# Or install the prebuilt tarball attached to a GitHub release
-npm install -g https://github.com/lploc94/raw-cli/releases/download/v0.1.0/raw-cli-0.1.0.tgz
-
+npm install -g @tlelabs/raw
 raw config init
 ```
 
-Installing from a Git ref runs the `prepare` build, so the first install downloads build tooling and takes longer than the release tarball. The package is not yet on the npm registry. To work from a checkout instead, run `npm ci` (which also builds) and `npm install -g .`.
+Run it once without installing with `npx @tlelabs/raw --help`. To install the latest commit from GitHub instead, use `npm install -g github:lploc94/raw-cli`; installing from a Git ref runs the `prepare` build, so it downloads build tooling and takes longer. Each [GitHub release](https://github.com/lploc94/raw-cli/releases) also attaches the packed tarball. To work from a checkout, run `npm ci` (which also builds) and `npm install -g .`.
 
 `config init` creates `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) once with setup-capable agent `raw`; edit the local model ID or add your hosted model. `raw "query"` uses the configured `default_agent`, which may name a different agent in an existing config. `--config PATH` selects another strict JSON config file.
 

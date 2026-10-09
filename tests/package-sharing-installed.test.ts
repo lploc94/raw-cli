@@ -35,9 +35,9 @@ test("packed recipient installs mixed and standalone packages without author sou
       "--no-audit", "--no-fund", tarball], { cwd: consumer, encoding: "utf8" });
     assert.equal(install.status, 0, install.stderr);
     const bin = join(consumer, "node_modules", ".bin", "raw");
-    const examples = join(consumer, "node_modules", "raw-cli", "examples", "packages");
-    assert.ok((await stat(join(consumer, "node_modules", "raw-cli", "docs", "packages.md"))).isFile());
-    assert.ok((await stat(join(consumer, "node_modules", "raw-cli", "schemas", "raw-package.schema.json"))).isFile());
+    const examples = join(consumer, "node_modules", "@tlelabs", "raw", "examples", "packages");
+    assert.ok((await stat(join(consumer, "node_modules", "@tlelabs", "raw", "docs", "packages.md"))).isFile());
+    assert.ok((await stat(join(consumer, "node_modules", "@tlelabs", "raw", "schemas", "raw-package.schema.json"))).isFile());
     for (const name of ["mixed-kit", "tool-only", "skill-only"]) {
       assert.ok((await stat(join(examples, name, "raw-package.json"))).isFile());
     }
@@ -152,7 +152,7 @@ test("packed recipient installs mixed and standalone packages without author sou
         skills: { use: [{ ref: "pkg/solo-skill/skills/repo-review", as: "solo_review" }] } };
       await writeFile(configPath, JSON.stringify(local));
       const standaloneSdk = await run(process.execPath, ["--input-type=module", "--eval", `
-import { loadConfig, createRuntimeTools } from "raw-cli";
+import { loadConfig, createRuntimeTools } from "@tlelabs/raw";
 const config = await loadConfig({ configPath: ${JSON.stringify(configPath)}, flags: { agent: "direct" }, requireModel: false });
 const tools = await createRuntimeTools({ runtime: config, cwd: ${JSON.stringify(recipient)} });
 try {
@@ -173,7 +173,7 @@ try {
         "--model", "local", "--config", configPath], recipient, env);
       assert.equal(linkedAgent.code, 0, linkedAgent.stderr);
       const linkedSdk = await run(process.execPath, ["--input-type=module", "--eval", `
-import { loadConfig, createRuntimeTools } from "raw-cli";
+import { loadConfig, createRuntimeTools } from "@tlelabs/raw";
 const config = await loadConfig({ configPath: ${JSON.stringify(configPath)}, flags: { agent: "dev" }, requireModel: false });
 if (!config.systemPrompt.includes("Forked recipient prompt")) throw new Error("forked prompt not loaded");
 const tools = await createRuntimeTools({ runtime: config, cwd: ${JSON.stringify(recipient)} });
@@ -187,7 +187,7 @@ process.stdout.write("link-ok\\n");
 import { installPackage, updatePackage, removePackage, linkPackage, forkPackage,
   listInstalledPackages, resolveInstalledPackage, resolveInstalledDependency,
   addPackageAgent, loadVariableConfigAsync, exportAgentPackage, packPackage,
-  type AddPackageAgentOptions, type PackageStoreOptions, type RawPackageManifest } from "raw-cli";
+  type AddPackageAgentOptions, type PackageStoreOptions, type RawPackageManifest } from "@tlelabs/raw";
 const store: PackageStoreOptions = { configPath: "config.json" };
 const binding: AddPackageAgentOptions = { configPath: "config.json", name: "writer",
   from: "pkg/kit/agents/writer", model: "local", inputs: {} };

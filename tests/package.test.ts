@@ -36,19 +36,19 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   const bin = join(consumer, "node_modules", ".bin", "raw");
   await access(bin);
   for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo", "ask_user", "process"]) {
-    const example = join(consumer, "node_modules", "raw-cli", "examples", "tools", name);
+    const example = join(consumer, "node_modules", "@tlelabs", "raw", "examples", "tools", name);
     await access(join(example, "tool.json"));
     await access(join(example, "index.mjs"));
   }
-  await access(join(consumer, "node_modules", "raw-cli", "examples", "agents", "project-helper", "raw.json"));
-  assert.equal(await readFile(join(consumer, "node_modules", "raw-cli", "docs", "skill-authoring.md"), "utf8"),
+  await access(join(consumer, "node_modules", "@tlelabs", "raw", "examples", "agents", "project-helper", "raw.json"));
+  assert.equal(await readFile(join(consumer, "node_modules", "@tlelabs", "raw", "docs", "skill-authoring.md"), "utf8"),
     await readFile(join(repo, "docs", "skill-authoring.md"), "utf8"));
-  assert.equal(await readFile(join(consumer, "node_modules", "raw-cli", "docs", "terminal-output.md"), "utf8"),
+  assert.equal(await readFile(join(consumer, "node_modules", "@tlelabs", "raw", "docs", "terminal-output.md"), "utf8"),
     await readFile(join(repo, "docs", "terminal-output.md"), "utf8"));
   const skillIds = ["configure_raw", "create_skill", "create_tool", "create_hook", "create_agent", "add_mcp", "create_package"];
-  const packagedSkill = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", "configure_raw");
+  const packagedSkill = join(consumer, "node_modules", "@tlelabs", "raw", "dist", "skills", "builtin", "configure_raw");
   for (const id of skillIds) {
-    const folder = join(consumer, "node_modules", "raw-cli", "dist", "skills", "builtin", id);
+    const folder = join(consumer, "node_modules", "@tlelabs", "raw", "dist", "skills", "builtin", id);
     const body = await readFile(join(folder, "SKILL.md"), "utf8");
     const skill = parseSkillMarkdown(body, id);
     assert.equal(skill.name, id.replaceAll("_", "-"));
@@ -56,17 +56,17 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     assert.ok(skill.markdown.trim());
     assert.ok(Buffer.byteLength(skill.markdown) <= 8192);
     assert.equal(body, await readFile(join(repo, "src", "skills", "bundled", id, "SKILL.md"), "utf8"));
-    assert.equal(body, await readFile(join(consumer, "node_modules", "raw-cli", "examples", "skills", id, "SKILL.md"), "utf8"));
+    assert.equal(body, await readFile(join(consumer, "node_modules", "@tlelabs", "raw", "examples", "skills", id, "SKILL.md"), "utf8"));
   }
   for (const name of ["manifest.md", "packages.md"]) {
     const reference = await readFile(join(repo, "src", "skills", "bundled", "create_package", "references", name), "utf8");
     for (const base of ["dist/skills/builtin", "examples/skills"]) {
-      assert.equal(await readFile(join(consumer, "node_modules", "raw-cli", base, "create_package", "references", name), "utf8"), reference);
+      assert.equal(await readFile(join(consumer, "node_modules", "@tlelabs", "raw", base, "create_package", "references", name), "utf8"), reference);
     }
   }
   const skillBody = await readFile(join(packagedSkill, "SKILL.md"), "utf8");
   for (const name of ["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo", "ask_user", "process"]) {
-    const folder = join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", name);
+    const folder = join(consumer, "node_modules", "@tlelabs", "raw", "dist", "tools", "builtin", name);
     const manifest = JSON.parse(await readFile(join(folder, "tool.json"), "utf8")) as { id: string; entry: string; input_schema: { type: string } };
     assert.equal(manifest.id, name);
     assert.equal(manifest.entry, "./index.mjs");
@@ -75,7 +75,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   }
   const standalone = await run(process.execPath, ["--input-type=module", "--eval", `
 import { pathToFileURL } from "node:url";
-const module = await import(pathToFileURL(${JSON.stringify(join(consumer, "node_modules", "raw-cli", "dist", "tools", "builtin", "write_file", "index.mjs"))}).href);
+const module = await import(pathToFileURL(${JSON.stringify(join(consumer, "node_modules", "@tlelabs", "raw", "dist", "tools", "builtin", "write_file", "index.mjs"))}).href);
 if (typeof module.handler !== "function" || typeof module.validateArgs !== "function") throw new Error("missing plugin exports");
 const { readFile } = await import("node:fs/promises");
 const { resolve } = await import("node:path");
@@ -97,13 +97,13 @@ if (!/operations\\[1\\].*invalid line range/.test(invalid)) throw new Error("mis
 `], consumer, { ...process.env });
   assert.equal(standalone.code, 0, standalone.stderr);
   const installedLoader = await run(process.execPath, ["--input-type=module", "--eval", `
-import { loadToolPlugins } from "raw-cli";
+import { loadToolPlugins } from "@tlelabs/raw";
 const tools = await loadToolPlugins({ selectedIds: ["builtin/read_file"], configPath: "ignored.json" });
 if (tools.length !== 1 || tools[0].registration.name !== "read_file") throw new Error("installed bundled root failed");
 `], consumer, { ...process.env });
   assert.equal(installedLoader.code, 0, installedLoader.stderr);
   const installedAsk = await run(process.execPath, ["--input-type=module", "--eval", `
-import { loadToolPlugins, ToolRegistry, ProcessSupervisor } from "raw-cli";
+import { loadToolPlugins, ToolRegistry, ProcessSupervisor } from "@tlelabs/raw";
 const registry = new ToolRegistry();
 for (const item of await loadToolPlugins({ selectedIds: ["builtin/ask_user"], configPath: "ignored.json" })) registry.register(item.registration);
 const result = await registry.dispatch("ask_user", { questions: [{id:"q",label:"Q",kind:"text"}] }, { cwd: process.cwd(), maxOutputBytes: 8192, interactions: { request: async input => {
@@ -111,7 +111,7 @@ const result = await registry.dispatch("ask_user", { questions: [{id:"q",label:"
   return {status:"answered",answers:{q:"installed 雪"}};
 } } });
 if (result.isError || result.content[0].value.answers.q !== "installed 雪") throw new Error(JSON.stringify(result));
-const standalone = await import("./node_modules/raw-cli/examples/tools/ask_user/index.mjs");
+const standalone = await import("./node_modules/@tlelabs/raw/examples/tools/ask_user/index.mjs");
 const forked = await standalone.handler({questions:[{id:"fork",label:"Fork",kind:"text"}]}, {interactions:{request:async () => ({status:"cancelled"})}});
 if (forked.code !== "interaction_cancelled") throw new Error("standalone fork failed");
 const processes = new ProcessSupervisor();
@@ -127,10 +127,10 @@ try {
   assert.equal(installedAsk.code, 0, installedAsk.stderr);
   const installedDiagram = await run(process.execPath, ["--input-type=module", "--eval", `
 import { cp, mkdir, readFile } from "node:fs/promises";
-import { loadToolPlugins, ToolRegistry } from "raw-cli";
+import { loadToolPlugins, ToolRegistry } from "@tlelabs/raw";
 const folder = process.env.XDG_CONFIG_HOME + "/raw/tools/diagram";
 await mkdir(folder, {recursive:true});
-await cp("./node_modules/raw-cli/examples/tools/diagram", folder, {recursive:true});
+await cp("./node_modules/@tlelabs/raw/examples/tools/diagram", folder, {recursive:true});
 const registry = new ToolRegistry();
 for (const item of await loadToolPlugins({selectedIds:["local/diagram"],configPath:"ignored.json"})) registry.register(item.registration);
 let document;
@@ -138,18 +138,18 @@ const result = await registry.dispatch("diagram", {title:"Installed",source:"flo
  cwd:process.cwd(),maxOutputBytes:8192,panels:{protocol:2,get:()=>undefined,update:async(_id,update)=>{document=update.document;return {revision:1};}}});
 if(result.isError || document?.blocks[0].kind!=="mermaid" || document.blocks[0].source!=="flowchart LR\\nA-->B") throw new Error(JSON.stringify(result));
 for(const name of ["diagrams","processes","tool-effects","panels-design"]) {
- if(!(await readFile("./node_modules/raw-cli/docs/"+name+".md","utf8")).trim()) throw new Error("missing docs: "+name);
+ if(!(await readFile("./node_modules/@tlelabs/raw/docs/"+name+".md","utf8")).trim()) throw new Error("missing docs: "+name);
 }
 `], consumer, { ...process.env, XDG_CONFIG_HOME: join(root, "diagram-config") });
   assert.equal(installedDiagram.code, 0, installedDiagram.stderr);
   const installedSkillLoader = await run(process.execPath, ["--input-type=module", "--eval", `
-import { loadSelectedSkills } from "raw-cli";
+import { loadSelectedSkills } from "@tlelabs/raw";
 const selected = await loadSelectedSkills({ selectedIds: ["builtin/configure_raw", "builtin/create_skill", "builtin/create_tool", "builtin/create_hook", "builtin/create_agent", "builtin/add_mcp", "builtin/create_package"], configPath: "ignored.json", maxOutputBytes: 8192 });
 if (selected.length !== 7 || selected[0].name !== "configure-raw" || !selected[0].markdown.includes("default_agent") || selected[6].name !== "create-package") throw new Error("installed skill root failed");
 `], consumer, { ...process.env, XDG_CONFIG_HOME: join(root, "other-config") });
   assert.equal(installedSkillLoader.code, 0, installedSkillLoader.stderr);
   const builtinProbe = async (ids: string[], xdg = join(root, "other-config")) => run(process.execPath,
-    ["--input-type=module", "--eval", `import { loadSelectedSkills } from "raw-cli";
+    ["--input-type=module", "--eval", `import { loadSelectedSkills } from "@tlelabs/raw";
 try { await loadSelectedSkills({ selectedIds: ${JSON.stringify(ids)}, configPath: "ignored.json", maxOutputBytes: 8192 }); }
 catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], consumer,
     { ...process.env, XDG_CONFIG_HOME: xdg });
@@ -173,9 +173,9 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
   assert.equal((await run(bin, ["--version"], consumer, env)).stdout.trim(), "0.1.0");
   assert.match((await run(bin, ["--help"], consumer, env)).stdout, /Usage: raw/);
 
-  assert.equal(await readFile(join(consumer, "node_modules/raw-cli/docs/vars.md"), "utf8"), await readFile(join(repo, "docs/vars.md"), "utf8"));
+  assert.equal(await readFile(join(consumer, "node_modules/@tlelabs/raw/docs/vars.md"), "utf8"), await readFile(join(repo, "docs/vars.md"), "utf8"));
   const providerExample = join(root, "relocated-provider");
-  await cp(join(consumer, "node_modules/raw-cli/examples/providers/host-info"), providerExample, { recursive: true });
+  await cp(join(consumer, "node_modules/@tlelabs/raw/examples/providers/host-info"), providerExample, { recursive: true });
   const varsPath = join(providerExample, "raw.json");
   const varsEnv = { ...env, RAW_EXAMPLE_TOKEN: "installed-use-value-7321", XDG_STATE_HOME: join(root, "vars-state") };
   const listedVars = await run(bin, ["--config", varsPath, "vars", "list"], consumer, varsEnv);
@@ -346,7 +346,7 @@ catch (error) { process.stderr.write(String(error)); process.exitCode = 2; }`], 
     assert.equal(stats.code, 0, stats.stderr);
     assert.ok((JSON.parse(stats.stdout) as { databaseBytes: number }).databaseBytes > 0);
 
-    const parentScript = `import { createAcpClient, BUILTIN_TOOL_DEFINITIONS } from "raw-cli";
+    const parentScript = `import { createAcpClient, BUILTIN_TOOL_DEFINITIONS } from "@tlelabs/raw";
 const options = { command: ${JSON.stringify(bin)}, args: ${JSON.stringify(["--acp", "--stdio", ...args])} };
 let id;
 const first = await createAcpClient(options);
@@ -372,7 +372,7 @@ process.stdout.write("installed-parent-ok\\n");`;
     assert.match(JSON.stringify(fixture.requests[8]?.body), /ACP installed/);
     assert.match(JSON.stringify(fixture.requests[9]?.body), /ACP resumed/);
 
-    await writeFile(join(consumer, "consumer.ts"), 'import { ToolRegistry, listSessions, getSessionHistory, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod, type SessionHistoryOptions, type VariableContext, createVariableResolver, loadVariableConfig } from "raw-cli";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst history: SessionHistoryOptions | undefined = undefined;\nconst names: string[] = new ToolRegistry().definitions().map(tool => tool.name);\nconst vars: VariableContext | undefined = undefined; void vars; void createVariableResolver; void loadVariableConfig; void options; void compact; void input; void method; void history; void names; void listSessions; void getSessionHistory;\n');
+    await writeFile(join(consumer, "consumer.ts"), 'import { ToolRegistry, listSessions, getSessionHistory, type AgentOptions, type CompactSettings, type UserInput, type ApiMethod, type SessionHistoryOptions, type VariableContext, createVariableResolver, loadVariableConfig } from "@tlelabs/raw";\nconst options: AgentOptions | undefined = undefined;\nconst compact: CompactSettings = { keepRecentTurns: 2, maxOutputTokens: 512 };\nconst input: UserInput = "hello";\nconst method: ApiMethod = "openai-responses";\nconst history: SessionHistoryOptions | undefined = undefined;\nconst names: string[] = new ToolRegistry().definitions().map(tool => tool.name);\nconst vars: VariableContext | undefined = undefined; void vars; void createVariableResolver; void loadVariableConfig; void options; void compact; void input; void method; void history; void names; void listSessions; void getSessionHistory;\n');
     const tsc = spawnSync(process.execPath, [join(repo, "node_modules/typescript/bin/tsc"), "--noEmit", "--strict", "--skipLibCheck",
       "--target", "esnext", "--module", "nodenext", "--moduleResolution", "nodenext",
       "--typeRoots", join(repo, "node_modules/@types"), "consumer.ts"], { cwd: consumer, encoding: "utf8" });

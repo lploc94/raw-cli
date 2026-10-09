@@ -102,7 +102,8 @@ function snapshot(root, base = root) {
 function prepareCase(root, runtimePackage, skillsRoot) {
   const home = join(root, "home"), cwd = join(root, "work"), bin = join(root, "bin");
   for (const dir of [home, cwd, bin, join(home, "tmp"), join(cwd, "node_modules")]) mkdirSync(dir, { recursive: true });
-  symlinkSync(runtimePackage, join(cwd, "node_modules", "raw-cli"), "dir");
+  mkdirSync(join(cwd, "node_modules", "@tlelabs"), { recursive: true });
+  symlinkSync(runtimePackage, join(cwd, "node_modules", "@tlelabs", "raw"), "dir");
   const quote = s => "'" + s.replaceAll("'", "'\\''") + "'";
   writeFileSync(join(bin, "raw"), `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(runtimePackage, "dist/raw.js"))} "$@"\n`, { mode: 0o700 });
   const env = cleanEnvironment({ home, bin }), configPath = join(env.XDG_CONFIG_HOME, "raw/config.json");

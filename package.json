@@ -1,5 +1,5 @@
 {
-  "name": "raw-cli",
+  "name": "@tlelabs/raw",
   "version": "0.1.0",
   "description": "A local coding agent for models with limited context: composable tools, skills, hooks and agents, with a terminal REPL, browser dashboard and ACP.",
   "keywords": [
