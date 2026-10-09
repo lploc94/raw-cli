@@ -127,8 +127,9 @@ that guarantee. This is not a background job API.
 
 `list_vars({})` returns `{vars:[{name,description,type,access}]}` only and never
 runs a provider. `read_var({name})` returns `{name,value,observed_at,cached}`.
-An oversized result returns an output-budget error instead of a partial value.
-The selected catalog must fit max_output_bytes when list_vars is selected.
+Both return whole results regardless of the agent's max_output_bytes; only a
+result over the 1 MiB safety bound returns an output-budget error instead of a
+partial value.
 
 Bash uses references per command, retaining its existing batch shape:
 

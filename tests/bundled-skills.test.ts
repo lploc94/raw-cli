@@ -45,7 +45,7 @@ test("installed configure_raw skill is selected only and returned by linked tool
   } finally { await tools.mcp.close(); }
 });
 
-test("unselected builtin skill is inert and oversized selection fails before inference", async () => {
+test("unselected builtin skill is inert and a small max_output_bytes still loads the whole selected skill", async () => {
   const empty = config([]);
   const runtime = await loadConfig({ configPath: empty.configPath, env: {}, requireModel: true });
   const tools = await createRuntimeTools({ runtime, cwd: empty.root });
@@ -55,7 +55,12 @@ test("unselected builtin skill is inert and oversized selection fails before inf
   } finally { await tools.mcp.close(); }
   const capped = config(["builtin/configure_raw"], 64);
   const selected = await loadConfig({ configPath: capped.configPath, env: {}, requireModel: true });
-  await assert.rejects(createRuntimeTools({ runtime: selected, cwd: capped.root }), /max_output_bytes/);
+  const cappedTools = await createRuntimeTools({ runtime: selected, cwd: capped.root });
+  try {
+    const result = await cappedTools.registry.dispatch("load_skill", { name: "configure-raw" }, { cwd: capped.root, maxOutputBytes: 64, autoApprove: true });
+    assert.equal(result.isError, false);
+    assert.equal((result.content[0] as { text: string }).text, cappedTools.skills[0]!.markdown);
+  } finally { await cappedTools.mcp.close(); }
 });
 
 test("the seven setup skills have distinct catalog entries and complete linked bodies", async () => {
@@ -79,7 +84,6 @@ test("the seven setup skills have distinct catalog entries and complete linked b
       const reference = readFileSync(join("dist", "skills", "builtin", id, "references", "dashboard.md"), "utf8");
       assert.match(reference, /dashboard|Library|Agents/);
       assert.equal(reference, readFileSync(join("examples", "skills", id, "references", "dashboard.md"), "utf8"));
-      assert.ok(Buffer.byteLength(markdown) <= 8192, `${id} exceeds the default cap`);
       assert.match(markdown, /```json\n[\s\S]*?\n```/);
     }
   } finally { await tools.mcp.close(); }

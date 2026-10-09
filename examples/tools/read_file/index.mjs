@@ -11,6 +11,7 @@ import { dirname, join, parse, relative, resolve, sep } from "path";
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 
 // src/tools/results.ts
+var HOST_CONTENT_BYTES = 1024 * 1024;
 function errorResult(code, message) {
   return { isError: true, code, content: [{ type: "text", text: message }] };
 }

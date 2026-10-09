@@ -32,7 +32,7 @@ Keep instructions task-specific: a release-notes skill should not inherit Raw co
 
 ## Raw skill contract
 
-Each skill folder contains UTF-8 `SKILL.md` with YAML frontmatter. Required `name` and `description` are the only catalog authority. Optional `scripts/`, `references/` and `assets/` stay with the folder; their contents are not loaded automatically. `load_skill` returns the Markdown body after frontmatter in one linked result; keep that body within the target agent's `max_output_bytes` (8192 bytes by default). Catalog descriptions must collectively fit that cap too.
+Each skill folder contains UTF-8 `SKILL.md` with YAML frontmatter. Required `name` and `description` are the only catalog authority. Optional `scripts/`, `references/` and `assets/` stay with the folder; their contents are not loaded automatically. `load_skill` returns the whole Markdown body after frontmatter in one linked result, independent of the agent's `max_output_bytes`; a body over 1 MiB is skipped. Keep it focused: every byte enters the model's context.
 
 | Root | Location and use |
 | --- | --- |
@@ -94,7 +94,7 @@ Nonempty `skills.use` requires both skill tools. Do not change `default_agent` j
 
 1. Establish the actual config/agent and chosen root. Check existing selected names, create `SKILL.md` and any supporting files, and make the smallest registration edit with a backup of existing config. Keep config mode 0600.
 2. Run `raw --config /work/helper/raw.json config list` (or `raw config list` for canonical config). This checks config, not skill files.
-3. Verify loading without another model call when the `@tlelabs/raw` library is available: `loadConfig({configPath, requireModel:false})`, then `loadSelectedSkills({selectedIds: runtime.skillIds, configPath, maxOutputBytes: runtime.maxOutputBytes})`. Or use the configured agent's `list_skills` and `load_skill({name:"release-notes"})` in a suitable run. Confirm the selected name and body, not just a successful config parse.
+3. Verify loading without another model call when the `@tlelabs/raw` library is available: `loadConfig({configPath, requireModel:false})`, then `loadSelectedSkills({selectedIds: runtime.skillIds, configPath})`. Or use the configured agent's `list_skills` and `load_skill({name:"release-notes"})` in a suitable run. Confirm the selected name and body, not just a successful config parse.
 4. Assess content using a normal task, a boundary case and a near miss. For the example: draft from a known range with verifiable citations; handle an empty range; do ordinary code review without treating it as release-note generation. Review outputs and tool traces for incorrect advice or missing steps. Extra model work is diagnostic.
 5. Improve instructions around evidenced errors. Compare versions on the same inputs/model when useful; record which version produced the result. A mock list/load test proves wiring, not writing quality, and no model test guarantees every future action.
 

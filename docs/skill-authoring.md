@@ -42,7 +42,7 @@ skills/my-skill/
 
 For sharing, place the skill directory in a package's declared `files` and `exports.skills`, validate the source with `raw package validate DIR`, then pack it with `raw package pack DIR --out FILE.rawpkg`. A recipient installs the artifact under an alias and selects `pkg/ALIAS/skills/EXPORT`, optionally using `{"ref":"...","as":"visible-name"}` when another selected skill already uses the same name. The folder/frontmatter name remains the underlying skill identity; the local `as` name is what `load_skill` receives. Editing a linked source takes effect on the next runtime snapshot. An existing session resumes with the current selection and appends a reload notice if earlier skill information became stale; adding a skill does not prepend its Markdown to the cached request prefix.
 
-Raw exposes names/descriptions only after `list_skills`; `load_skill` returns the body after frontmatter at the conversation tail. The loader validates that body against `max_output_bytes` (default **8192 bytes**, not tokens). The catalog must also fit. No arbitrary minimum word/byte count establishes quality.
+Raw exposes names/descriptions only after `list_skills`; `load_skill` returns the body after frontmatter at the conversation tail. The body and catalog arrive whole regardless of the agent's `max_output_bytes`; only a body over 1 MiB is skipped, with a startup warning. No arbitrary minimum word/byte count establishes quality.
 
 Keep the seven shipped bodies self-contained within that cap. The copy script preserves entire skill folders, including references, scripts and assets. A `load_skill` result contains the body, not automatic resource contents; mention relative resources in instructions and use the agent's file tools to read them when needed. Do not rely on a source checkout or undeclared files for portable packages.
 
@@ -126,7 +126,7 @@ Use deterministic tests for schemas, manifests, artifact behavior and packaging.
 forking builtins/immutable exports, and editing `SKILL.md` or contained text
 resources. Each file saves independently with a revision check. Attach the saved
 skill to a direct agent explicitly; package-agent selection overrides are complete
-replacements in Agent JSON. Keep the body within that agent's `max_output_bytes`.
+replacements in Agent JSON.
 
 Browsing a catalog or Markdown preview is static inspection. Verification still
 requires selecting/listing/loading the skill through its ordinary tools when the

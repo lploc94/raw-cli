@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from "path";
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 
 // src/tools/results.ts
+var HOST_CONTENT_BYTES = 1024 * 1024;
 function utf8Prefix(value, limit) {
   let text = "";
   let bytes = 0;

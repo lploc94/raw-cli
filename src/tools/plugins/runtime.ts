@@ -38,6 +38,8 @@ export interface RuntimeTools {
   skills: readonly SelectedSkill[];
   toolSourceDigest: string;
   hooks?: HookDispatcher;
+  /** Selected skills, MCP servers or MCP tools that were unusable and skipped at startup. */
+  warnings: readonly string[];
 }
 
 export async function createRuntimeTools(options: {
@@ -53,17 +55,11 @@ export async function createRuntimeTools(options: {
     throw new Error("builtin/view_image requires a vision model");
   }
   const localIds = runtime.toolIds.filter((id) => !id.startsWith("mcp/"));
+  const warnings: string[] = [];
   const skills = await loadSelectedSkills({ selectedIds: runtime.skillIds, configPath: runtime.configPath,
-    maxOutputBytes: runtime.maxOutputBytes, cwd, globalConfigRoot: runtime.globalConfigRoot,
-    packageSkills: runtime.packageSkills });
-  if (runtime.toolIds.includes("builtin/list_skills")
-    && Buffer.byteLength(JSON.stringify({ skills: skills.map(({ name, description }) => ({ name, description })) })) > runtime.maxOutputBytes) {
-    throw new Error("selected skill catalog exceeds max_output_bytes");
-  }
+    cwd, globalConfigRoot: runtime.globalConfigRoot, packageSkills: runtime.packageSkills,
+    onSkip: (message) => warnings.push(message) });
   const vars = createVariableResolver({ config: runtime.variableConfig, ...(options.env ? { env: options.env } : {}) });
-  if (runtime.toolIds.includes("builtin/list_vars") && Buffer.byteLength(JSON.stringify({ vars: vars.list() })) > runtime.maxOutputBytes) {
-    throw new Error("selected variable catalog exceeds max_output_bytes");
-  }
   const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills, vars,
     globalConfigRoot: runtime.globalConfigRoot, packageTools: runtime.packageTools });
   const selectedHooks = await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath: runtime.configPath,
@@ -82,29 +78,35 @@ export async function createRuntimeTools(options: {
     if (id.startsWith("mcp/") && !Object.hasOwn(specs, id.split("/")[1]!)) throw new Error(`unknown MCP server: ${id.split("/")[1]}`);
   }
   const mcp = await connectMcpServers({ servers: specs, registry, cwd, timeoutMs: runtime.requestTimeoutMs,
-    canonicalIdentities: runtime.packageMcpIdentities,
+    canonicalIdentities: runtime.packageMcpIdentities, onSkip: (message) => warnings.push(message),
     ...(signal ? { signal } : {}) });
   try {
+    const hooks = selectedHooks.length ? new HookDispatcher(selectedHooks, options.env) : undefined;
     const names: string[] = [];
+    const kept: string[] = [];
     for (const id of runtime.toolIds) {
       if (id.startsWith("mcp/")) {
         const [, server, originalName] = id.split("/");
         const item = mcp.catalog.find((tool) => tool.server === server && tool.originalName === originalName);
-        if (!item) throw new Error(`unknown MCP tool: ${id}`);
+        // connectMcpServers already reported why an unavailable selected tool was not registered.
+        if (!item || !registry.inspectionDefinition(item.alias)) continue;
+        try { hooks?.validateTools(registry, [item.alias]); }
+        catch (error) { warnings.push(`${(error as Error).message}; skipped ${id}`); continue; }
         names.push(item.alias);
       } else {
-        names.push(plugins.find((plugin) => plugin.id === id)!.registration.name);
+        const name = plugins.find((plugin) => plugin.id === id)!.registration.name;
+        hooks?.validateTools(registry, [name]);
+        names.push(name);
       }
+      kept.push(id);
     }
     if (new Set(names).size !== names.length) throw new Error("duplicate model-visible tool name");
-    const sources = await Promise.all(runtime.toolIds.map(async (id) =>
+    const sources = await Promise.all(kept.map(async (id) =>
       id.startsWith("mcp/") ? { id, source: await mcpSource(runtime, id.split("/")[1]!) }
         : { id: runtime.packageTools[id]?.canonicalIdentity ?? id,
           source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }));
     const toolSourceDigest = createHash("sha256").update(JSON.stringify(sources)).digest("hex");
-    const hooks = selectedHooks.length ? new HookDispatcher(selectedHooks, options.env) : undefined;
-    hooks?.validateTools(registry, names);
     return { vars, registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest,
-      ...(hooks ? { hooks } : {}) };
+      ...(hooks ? { hooks } : {}), warnings: Object.freeze(warnings) };
   } catch (error) { await mcp.close(); throw error; }
 }

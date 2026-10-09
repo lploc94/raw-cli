@@ -38,7 +38,6 @@ test("seven shipped setup skills link complete package guidance and examples val
   for (const id of ["configure_raw", "create_skill", "create_tool", "create_hook", "create_agent", "add_mcp", "create_package"]) {
     const source = body(id);
     const parsed = parseSkillMarkdown(source, id);
-    assert.ok(Buffer.byteLength(parsed.markdown) <= 8192, `${id} exceeds load cap`);
     assert.match(parsed.markdown, /references\/packages\.md/);
     const reference = join("src", "skills", "bundled", id, "references", "packages.md");
     assert.match(readFileSync(reference, "utf8"), /raw package/);

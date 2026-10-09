@@ -18,9 +18,10 @@ async function fixture() {
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: Use ${name}\n---\n${body}`);
   };
-  const config = async (skills: string[], tools = ["builtin/list_skills", "builtin/load_skill"], extra: Record<string, unknown> = {}) => {
+  const config = async (skills: string[], tools = ["builtin/list_skills", "builtin/load_skill"], extra: Record<string, unknown> = {},
+    rootExtra: Record<string, unknown> = {}) => {
     await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
-      provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
+      provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } }, ...rootExtra,
     agents: { p: { model: "m", tools: { use: tools }, skills: { use: skills }, ...extra } } }));
     return loadConfig({ configPath, env: {}, requireModel: true });
   };
@@ -66,16 +67,37 @@ test("skills require both explicit tools, and selected-only discovery validates 
   await assert.rejects(createRuntimeTools({ runtime: await config(["agent/one"]), cwd: root }), /escapes folder/);
   await unlink(join(root, "skills", "one", "SKILL.md"));
   await writeFile(join(root, "skills", "one", "SKILL.md"), "---\nname: one\ndescription: One\n---\ninside");
-  await assert.rejects(createRuntimeTools({ runtime: await config(["agent/one"], undefined,
-    { max_output_bytes: 20 }), cwd: root }), /catalog exceeds max_output_bytes/);
   const empty = await createRuntimeTools({ runtime: await config([], []), cwd: root });
   try { assert.deepEqual(empty.selectedNames, []); }
   finally { await empty.mcp.close(); }
-  await writeFile(configPath, JSON.stringify({ default_agent: "p", models: { m: {
-    provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
-  agents: { p: { model: "m", tools: { use: ["builtin/list_skills", "builtin/load_skill"] },
-    skills: { use: ["agent/one"] }, max_output_bytes: 4 } } }));
-  await assert.rejects(createRuntimeTools({ runtime: await loadConfig({ configPath, env: {} }), cwd: root }), /max_output_bytes/);
+});
+
+test("skills and var catalogs load whole regardless of max_output_bytes; only a 1 MiB skill is skipped", async () => {
+  const { root, skill, config } = await fixture();
+  const long = "x".repeat(20_000);
+  await skill("one", "one", long);
+  await skill("huge", "huge", "y".repeat(1024 * 1024 + 1));
+  const tools = await createRuntimeTools({ runtime: await config(["agent/one", "agent/huge"],
+    ["builtin/list_skills", "builtin/load_skill", "builtin/list_vars", "builtin/read_var", "builtin/read_file"],
+    { max_output_bytes: 4, vars: ["note"] },
+    { vars: { note: { description: "A long note", access: "read", source: { kind: "literal", value: long } } } }), cwd: root });
+  try {
+    assert.match(tools.warnings.join("\n"), /selected skill exceeds 1 MiB: agent\/huge; skipped/);
+    const context = { cwd: root, maxOutputBytes: 4, autoApprove: true };
+    const listed = await tools.registry.dispatch("list_skills", {}, context);
+    assert.deepEqual(listed.content, [{ type: "json", value: { skills: [{ name: "one", description: "Use one" }] } }]);
+    const loaded = await tools.registry.dispatch("load_skill", { name: "one" }, context);
+    assert.equal(loaded.isError, false);
+    assert.deepEqual(loaded.content, [{ type: "text", text: long }]);
+    const vars = await tools.registry.dispatch("list_vars", {}, context);
+    assert.equal(vars.isError, false);
+    assert.match(JSON.stringify(vars.content), /"note"/);
+    const note = await tools.registry.dispatch("read_var", { name: "note" }, context);
+    assert.equal(note.isError, false);
+    assert.match(JSON.stringify(note.content), new RegExp(long));
+    const read = await tools.registry.dispatch("read_file", { files: [{ path: "raw.json" }] }, context);
+    assert.ok(Buffer.byteLength(JSON.stringify(read.content)) <= 64, "ordinary tools keep max_output_bytes");
+  } finally { await tools.mcp.close(); }
 });
 
 test("denied, cancelled and unknown loads never reveal selected Markdown", async () => {

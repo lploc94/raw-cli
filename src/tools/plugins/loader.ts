@@ -7,11 +7,14 @@ import { pathToFileURL } from "node:url";
 import { packageRoot } from "../../package-root.js";
 import type { ToolContext } from "../primitives.js";
 import type { ToolRegistration } from "../registry.js";
+import { HOST_CONTENT_BYTES } from "../results.js";
 import type { ToolManifest, ToolPlugin } from "./contract.js";
 import type { SelectedSkill } from "../../skills/contract.js";
 import { selectedToolSnapshot } from "./snapshot.js";
 import type { PackageAsset } from "../../packages/resolve-agent.js";
 
+// Built-ins returning host-owned content (selected skills, configured vars) whole rather than within max_output_bytes.
+const hostContentTools = new Set(["builtin/list_skills", "builtin/load_skill", "builtin/list_vars", "builtin/read_var"]);
 const bundledNames = new Set(["read_file", "write_file", "bash", "view_image", "list_skills", "load_skill", "list_vars", "read_var", "todo", "ask_user", "process"]);
 
 export interface LoadToolPluginsOptions {
@@ -135,6 +138,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
       ...(item.manifest.effects_schema ? { effectsSchema: item.manifest.effects_schema,
         describeEffects: entry.describeEffects as NonNullable<ToolRegistration["describeEffects"]> } : {}),
       ...(item.manifest.panels?.length ? { panels: item.manifest.panels } : {}),
+      ...(!options.packageTools?.[item.id] && hostContentTools.has(item.id) ? { outputLimit: HOST_CONTENT_BYTES } : {}),
       validateArgs(args) {
         let error: unknown;
         try { error = semantic?.(args); } catch { return "semantic validator failed"; }

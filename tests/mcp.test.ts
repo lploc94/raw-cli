@@ -8,6 +8,7 @@ import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
 import { connectMcpServers } from "../src/tools/mcp-client.js";
 import { loadConfig } from "../src/config.js";
+import { createRuntimeTools } from "../src/tools/plugins/runtime.js";
 import { createTestToolRegistry } from "./fixtures/registry.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { startMcpHttp } from "./fixtures/mcp-http.js";
@@ -339,4 +340,48 @@ test("panels: MCP _meta[raw/panel] reaches the registry as a panel block and con
     const alias = second.catalog.find((item) => item.originalName === "selected")!.alias;
     assert.equal(plain.panelDeclarations(alias)?.implicit, true, "no config panels means an implicit declaration");
   } finally { await second.close(); }
+});
+
+test("degraded startup skips unavailable servers and selected tools while the rest stay usable", async () => {
+  const http = await startMcpHttp("streamable-http", "rejecting", "echo-initialize");
+  const warnings: string[] = [];
+  const connection = await connectMcpServers({ servers: {
+    a_good: { ...stdio("good"), tools: ["selected", "missing"] },
+    b_async: { ...stdio("async"), env: { MCP_LABEL: "async", MCP_COUNT: "2", MCP_MODE: "async-schema" } },
+    c_http: { url: http.url, transport: "streamable-http", tools: ["selected"] },
+    z_crash: { ...stdio("crash"), env: { MCP_LABEL: "crash", MCP_COUNT: "2", MCP_MODE: "crash" } },
+  }, cwd: process.cwd(), timeoutMs: 3000, onSkip: (message) => warnings.push(message) });
+  try {
+    assert.deepEqual(connection.exposed.map((item) => item.server), ["a_good"]);
+    assert.deepEqual(warnings.length, 4);
+    assert.match(warnings.join("\n"), /unknown MCP tool missing selected from a_good; skipped/);
+    assert.match(warnings.join("\n"), /unsupported async MCP tool schema for b_async\/selected; skipped/);
+    assert.match(warnings.join("\n"), /MCP server c_http connection failed; skipped its tools/);
+    assert.match(warnings.join("\n"), /MCP server z_crash connection failed; skipped its tools/);
+    const result = await connection.registry.dispatch(connection.exposed[0]!.alias, { value: "ok" },
+      { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });
+    assert.match(JSON.stringify(result), /good:selected:ok/);
+  } finally { await connection.close(); await http.close(); }
+});
+
+test("createRuntimeTools drops unavailable MCP selections with warnings instead of failing startup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-mcp-degrade-"));
+  const configPath = join(root, "config.json");
+  const stdioSpec = (label: string, mode?: string) => ({ transport: "stdio", command: process.execPath,
+    args: ["--import", "tsx", join(process.cwd(), "tests/fixtures/mcp-stdio.ts")],
+    env: { MCP_LABEL: label, MCP_COUNT: "2", ...(mode ? { MCP_MODE: mode } : {}) } });
+  await writeFile(configPath, JSON.stringify({ default_agent: "a",
+    models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
+    agents: { a: { model: "local", tools: { use: ["builtin/read_file", "mcp/good/missing", "mcp/good/selected", "mcp/down/selected"] } } },
+    mcp: { servers: { good: stdioSpec("good"), down: stdioSpec("down", "crash") } },
+  }));
+  const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
+  const tools = await createRuntimeTools({ runtime, cwd: process.cwd() });
+  try {
+    assert.equal(tools.selectedNames.length, 2);
+    assert.equal(tools.selectedNames[0], "read_file");
+    assert.equal(tools.selectedNames[1], tools.mcp.exposed[0]!.alias);
+    assert.match(tools.warnings.join("\n"), /unknown MCP tool missing selected from good; skipped/);
+    assert.match(tools.warnings.join("\n"), /MCP server down connection failed; skipped its tools/);
+  } finally { await tools.mcp.close(); }
 });

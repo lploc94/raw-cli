@@ -45,7 +45,7 @@ test("linked variable tools expose metadata only and enforce read/use without sc
     const hidden = await tools.registry.dispatch("read_var", { name: "token" }, ctx(f.dir));
     assert.equal(hidden.code, "var_read_denied"); assert.doesNotMatch(JSON.stringify(hidden), /literal;/);
     const small = await tools.registry.dispatch("read_var", { name: "flag" }, { ...ctx(f.dir), maxOutputBytes: 1 });
-    assert.equal(small.isError, true);
+    assert.equal((small.content[0] as { value: { value: unknown } }).value.value, false);
   } finally { await tools.mcp.close(); }
 });
 test("Bash binds literal env per command, leaves args intact, and validates the entire batch first", async () => {
@@ -84,9 +84,11 @@ test("custom plugins receive scoped vars service, not just builtin handlers", as
   finally { await tools.mcp.close(); }
 });
 
-test("standalone handlers fail clearly without host vars and oversized catalogs fail before resolution", async () => {
+test("standalone handlers fail clearly without host vars and a tiny output cap still starts with the whole catalog", async () => {
   const f = await fixture();
-  await assert.rejects(createRuntimeTools({ runtime: { ...f.runtime, maxOutputBytes: 1 }, cwd: f.dir }), /catalog/);
+  const tiny = await createRuntimeTools({ runtime: { ...f.runtime, maxOutputBytes: 1 }, cwd: f.dir });
+  try { assert.equal((await tiny.registry.dispatch("list_vars", {}, { ...ctx(f.dir), maxOutputBytes: 1 })).isError, false); }
+  finally { await tiny.mcp.close(); }
   const { handler } = await import("../src/tools/bundled/read_var/index.js");
   assert.equal((await handler({ name: "token" }, ctx(f.dir))).code, "vars_unavailable");
 });

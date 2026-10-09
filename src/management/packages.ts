@@ -7,6 +7,7 @@ import { record } from "./agents.js";
 import { mutateConfig, type ConfigEditOptions } from "./config.js";
 import { ComponentManager } from "./components.js";
 import { ManagementError } from "./files.js";
+import { HOST_CONTENT_BYTES } from "../tools/results.js";
 
 export interface AttachPackageComponent { from: string; agent?: string; name?: string; inputs?: Record<string, unknown>; as?: string }
 export async function attachPackageComponent(options: ConfigEditOptions & { configPath: string }, edit: AttachPackageComponent) {
@@ -26,7 +27,7 @@ export async function attachPackageComponent(options: ConfigEditOptions & { conf
       }
       const info = await new ComponentManager(options).inspect(ref.kind, edit.from);
       if (info.validation !== "valid") throw new ManagementError("invalid_input", info.diagnostic ?? "invalid component");
-      if (ref.kind === "skills" && (info.bodyBytes ?? 0) > Number(selected.max_output_bytes ?? 8192)) throw new ManagementError("invalid_input", "skill body exceeds the agent's max_output_bytes");
+      if (ref.kind === "skills" && (info.bodyBytes ?? 0) > HOST_CONTENT_BYTES) throw new ManagementError("invalid_input", "skill body exceeds 1 MiB");
       const block = record(selected[ref.kind]), use = Array.isArray(block.use) ? [...block.use] : [];
       if (use.some(v => (typeof v === "string" ? v : record(v).ref) === edit.from)) throw new ManagementError("conflict", "component already selected; edit its binding in Agent JSON");
       use.push(ref.kind !== "hooks" && (edit.as || Object.keys(edit.inputs ?? {}).length)

@@ -95,7 +95,7 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       if (runtime.modelConfig) controls = requestControls(runtime.modelConfig.provider, runtime.modelConfig.method, runtime.modelConfig.request);
       for (const skillId of runtime.skillIds) {
         try { // one broken skill must not hide the others
-          const [skill] = await loadSelectedSkills({ selectedIds: [skillId], configPath: runtime.configPath, maxOutputBytes: runtime.maxOutputBytes,
+          const [skill] = await loadSelectedSkills({ selectedIds: [skillId], configPath: runtime.configPath,
             env: context.env, cwd: context.cwd, globalConfigRoot: runtime.globalConfigRoot, packageSkills: runtime.packageSkills });
           if (skill) skills.push({ name: skill.name, description: skill.description });
         } catch { /* skipped */ }

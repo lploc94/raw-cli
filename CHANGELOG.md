@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- A selected MCP server that cannot start, a selected tool the server no
+  longer lists, or a selected tool with an unusable schema is skipped with a
+  stderr warning instead of blocking the whole session.
+- Skill bodies, the skill catalog and `list_vars`/`read_var` results are no
+  longer limited by `max_output_bytes`: they arrive whole, bounded only by a
+  1 MiB safety limit. A selected skill over 1 MiB is skipped with a warning
+  instead of failing startup, and the dashboard no longer refuses to attach a
+  skill larger than the agent's output cap.
+
 ## [0.1.1] - 2026-10-09
 
 - The dashboard favicon is now the Raw "r." mark.

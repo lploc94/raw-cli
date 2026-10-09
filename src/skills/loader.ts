@@ -5,11 +5,15 @@ import { packageRoot } from "../package-root.js";
 import type { SelectedSkill } from "./contract.js";
 import { parseSkillMarkdown } from "./frontmatter.js";
 import type { PackageAsset } from "../packages/resolve-agent.js";
+import { HOST_CONTENT_BYTES } from "../tools/results.js";
 
 export interface LoadSelectedSkillsOptions {
   selectedIds: readonly string[];
   configPath: string;
-  maxOutputBytes: number;
+  /** @deprecated Ignored: skill bodies load whole, bounded only by a 1 MiB safety limit. */
+  maxOutputBytes?: number;
+  /** When set, a skill over the safety limit is skipped and reported here instead of failing. */
+  onSkip?: (message: string) => void;
   env?: NodeJS.ProcessEnv;
   home?: string;
   cwd?: string;
@@ -23,7 +27,6 @@ function inside(root: string, path: string): boolean {
 }
 
 export async function loadSelectedSkills(options: LoadSelectedSkillsOptions): Promise<readonly SelectedSkill[]> {
-  if (!Number.isSafeInteger(options.maxOutputBytes) || options.maxOutputBytes < 1) throw new Error("invalid skill output cap");
   if (options.selectedIds.length === 0) return Object.freeze([]);
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
@@ -60,11 +63,14 @@ export async function loadSelectedSkills(options: LoadSelectedSkillsOptions): Pr
     const visibleName = direct?.as ?? skill.name;
     if (seenNames.has(visibleName)) throw new Error(`duplicate skill name: ${visibleName}`);
     seenNames.add(visibleName);
-    if (Buffer.byteLength(skill.markdown) > options.maxOutputBytes) throw new Error(`selected skill exceeds max_output_bytes: ${id}`);
+    if (Buffer.byteLength(skill.markdown) > HOST_CONTENT_BYTES) {
+      const message = `selected skill exceeds 1 MiB: ${id}`;
+      if (!options.onSkip) throw new Error(message);
+      options.onSkip(`${message}; skipped`);
+      continue;
+    }
     skills.push(Object.freeze({ id: direct ? `${direct.canonicalIdentity}:${visibleName}` : id,
       ...skill, name: visibleName }));
   }
-  const catalog = { skills: skills.map(({ name, description }) => ({ name, description })) };
-  if (Buffer.byteLength(JSON.stringify(catalog)) > options.maxOutputBytes) throw new Error("selected skill catalog exceeds max_output_bytes");
   return Object.freeze(skills);
 }

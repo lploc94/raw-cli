@@ -111,6 +111,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   let sessionResumable = true;
   const caps = terminalCapabilities(Boolean(process.stderr.isTTY), process.env, runtime.ui);
   const stdoutCaps = terminalCapabilities(Boolean(process.stdout.isTTY), process.env, runtime.ui);
+  for (const warning of tools.warnings) {
+    process.stderr.write(`${paint("warning", icon("attention", runtime.ui, caps), runtime.ui, caps)} ${safeTerminalText(warning)}\n`);
+  }
   const formatFooter = (result: RunResult, renderer: TerminalRenderer, id: string, resumable: boolean, repl = false) => {
     const window = runtime.modelConfig!.contextWindow;
     const reserve = runtime.modelConfig!.request?.maxOutputTokens ?? runtime.modelConfig!.maxOutputTokens ?? 1024;

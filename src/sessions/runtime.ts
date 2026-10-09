@@ -23,6 +23,7 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
   const modelConfig = applyRequestOverride(runtime.modelConfig!, options.request ?? {});
   const provider = createProvider(modelConfig);
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
+  for (const warning of tools.warnings) process.stderr.write(`raw: ${warning}\n`);
   try {
     if (signal.aborted) throw new Error("startup aborted");
     const compactOptions = { keepRecentTurns: runtime.compact.keepRecentTurns, maxOutputTokens: runtime.compact.maxOutputTokens,

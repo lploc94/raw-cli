@@ -255,6 +255,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
           discoverableMcp: sessionMcpServers(mcpServers, configuredMcp, options.runtime.availableMcpServers) });
         registry = tools.registry;
         mcp = tools.mcp;
+        for (const warning of tools.warnings) process.stderr.write(`raw: ${warning}\n`);
         if (startupController.signal.aborted) throw rawError(rawErrors.cancelled, "connection closed");
         let selectedNames: readonly string[] = tools.selectedNames;
         let explicitToolView = false;

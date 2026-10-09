@@ -1,6 +1,9 @@
 import type { ToolContent, ToolHandlerContent, ToolHandlerResult, ToolResult } from "./types.js";
 import { MAX_IMAGE_BYTES } from "./types.js";
 
+/** Safety bound for host-owned content (selected skills, var catalogs) returned whole instead of within max_output_bytes. */
+export const HOST_CONTENT_BYTES = 1024 * 1024;
+
 export function utf8Prefix(value: string, limit: number): { text: string; bytes: number; truncated: boolean } {
   let text = "";
   let bytes = 0;

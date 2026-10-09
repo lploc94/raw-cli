@@ -39,7 +39,7 @@ For example, select `mcp/search/web_search` only if that is a real listed name. 
 1. Obtain server-specific command/arguments or URL, check executable/dependency availability, and discover the actual tools. Verify the tool's input schema before choosing test arguments.
 2. Back up the config, add one server definition, and append only requested `mcp/<server>/<original-name>` IDs to `agents.<name>.tools.use`. Keep config mode 0600. Follow the canonical/portable path actually in use.
 3. Run `raw config list` or `raw --config PATH config list`. This checks structure and selected IDs' syntax; it does not prove handshake, original tool existence or successful execution.
-4. If the installed `@tlelabs/raw` library is importable, call `loadConfig({configPath,requireModel:false})`, then `createRuntimeTools({runtime,cwd})`. `tools.mcp.catalog` contains discovered tools; `tools.mcp.exposed` contains selected ones. Find the selected server/original name there, dispatch its `alias` through `tools.registry.dispatch(alias,args,{cwd,maxOutputBytes:8192})`, inspect the real result, and close `tools.mcp` in `finally`. This does not require a model request. Otherwise run a harmless task with the configured agent when model access is available. Report inability to verify rather than equating config parsing with a live pass.
+4. If the installed `@tlelabs/raw` library is importable, call `loadConfig({configPath,requireModel:false})`, then `createRuntimeTools({runtime,cwd})`. `tools.mcp.catalog` contains discovered tools; `tools.mcp.exposed` contains selected ones; `tools.warnings` must be empty. Find the selected server/original name there, dispatch its `alias` through `tools.registry.dispatch(alias,args,{cwd,maxOutputBytes:8192})`, inspect the real result, and close `tools.mcp` in `finally`. This does not require a model request. Otherwise run a harmless task with the configured agent when model access is available. Report inability to verify rather than equating config parsing with a live pass.
 5. Use a harmless server-specific call. Do not perform writes, purchases or other unrelated side effects just to test the connection. Unselecting the server's tool IDs should leave the definition inert on the next startup.
 6. Add a requested policy under this agent's `tools.rules`, matching canonical `mcp/server/tool`, not the alias. Effects are allow/ask/deny, last matching rule wins, unmatched calls run. Only ask permits `when` on a schema-bound string path and an RE2 regex. Verify policy with harmless arguments; headless ask without approval fails closed. Policy does not sandbox the server.
 
@@ -84,11 +84,11 @@ With this fixture, verify a real `echo_text` call with `{"text":"hello"}` return
 ## Diagnose and report
 
 - Spawn/handshake failure: check command/PATH, cwd, script arguments, stdout protocol and timeout.
-- Unknown tool/server: check server key and actual original names, including paginated `tools/list`; do not guess from an alias.
+- Unknown tool/server: check server key and actual original names, including paginated `tools/list`; do not guess from an alias. Raw skips an unavailable selected server or tool with a stderr warning (`unknown MCP tool NAME selected from SERVER; skipped`) and still starts; a server upgrade can rename or drop tools, so replace stale IDs with current names.
 - Unsupported selected schema: identify the actual schema error; an unselected unsupported tool is inert.
 - Authentication failure: check the server's real credential mechanism and literal headers/environment, not model-provider credentials.
 - Image content failure: native images need a capable model/adapter; text-only agents can use OCR tools returning text.
 
-Raw validates selected schemas/arguments and closes connections. Selected changes may rotate the generated key once; unselected edits stay inert. Valid changes resume on the same ID. Missing historical aliases leave saved ACP views, while invalid current selections fail. Report checks and prerequisites.
+Raw validates selected schemas/arguments and closes connections. Selected changes may rotate the generated key once; unselected edits stay inert. Valid changes resume on the same ID. Missing historical aliases leave saved ACP views, while unavailable current selections are skipped with a warning. Report checks and prerequisites.
 
 Raw vars do not interpolate MCP env/headers or tool arguments. Use a server's inherited environment/auth mechanism, or a local tool consuming context.vars. Executable var_providers use a separate one-request JSON protocol, not MCP.

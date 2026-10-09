@@ -33,6 +33,8 @@ export interface ToolRegistration extends ToolDefinition {
   panels?: readonly PanelDeclaration[];
   /** MCP and ACP tools may also write panels they never declared (docs/panels-design.md §5). */
   implicitPanels?: boolean;
+  /** Output bound for host-owned content that must arrive whole; raises, never lowers, the call's max_output_bytes. */
+  outputLimit?: number;
 }
 
 export interface ToolPolicyRule { readonly match: string; readonly effect: "allow" | "ask" | "deny"; readonly when?: ToolPolicyWhen }
@@ -146,8 +148,9 @@ export class ToolRegistry {
   }
 
   async dispatch(name: string, args: unknown, context: ToolContext): Promise<ToolResult> {
-    const finish = (result: ToolResult) => capResult(result, context.maxOutputBytes);
     const tool = this.tools.get(name);
+    const maxOutputBytes = Math.max(context.maxOutputBytes, tool?.outputLimit ?? 0);
+    const finish = (result: ToolResult) => capResult(result, maxOutputBytes);
     if (!tool || (context.whitelist !== undefined && !context.whitelist.includes(name))) return finish(errorResult("tool_not_exposed", `tool unavailable: ${name}`));
     const visibility = this.effect(tool);
     if (visibility === "deny") return finish(errorResult("tool_denied", `tool denied: ${tool.canonicalName ?? name}`));
@@ -212,7 +215,7 @@ export class ToolRegistry {
       context.onStart?.(name, args as Record<string, unknown>);
       if (context.signal?.aborted) return finish(errorResult("aborted", "tool call aborted"));
       invoked = true;
-      result = await tool.handler(args as Record<string, unknown>, { ...context, ...(effects ? { effects } : {}) });
+      result = await tool.handler(args as Record<string, unknown>, { ...context, maxOutputBytes, ...(effects ? { effects } : {}) });
     } catch (error) {
       result = errorResult("tool_error", `${name} failed: ${(error as Error).message}`);
     }

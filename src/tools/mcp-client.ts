@@ -66,6 +66,8 @@ export interface ConnectMcpOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   canonicalIdentities?: Readonly<Record<string, string>>;
+  /** When set, an unavailable server or unusable selected tool is skipped and reported here instead of failing startup. */
+  onSkip?: (message: string) => void;
 }
 
 export interface McpToolInfo {
@@ -316,31 +318,47 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
             fetch: boundedFetch });
       ownTransportClose(transport as unknown as Transport, transport instanceof StdioClientTransport ? transport : undefined);
       if (transport instanceof StdioClientTransport) transport.stderr?.on("data", () => {});
+      let ready = false;
       if (transport instanceof SSEClientTransport || transport instanceof StreamableHTTPClientTransport) {
-        transport.onerror = () => { void close(); };
+        // While degrading, a server failing its own startup must not close the servers already connected.
+        transport.onerror = () => { void (ready || !options.onSkip ? close() : client.close()); };
       }
-      try {
-        await deadline(client.connect(transport as unknown as Transport,
-          { timeout: timeoutMs, ...(options.signal ? { signal: options.signal } : {}) }), timeoutMs, options.signal);
-      } catch { throw new Error(`MCP server ${name} connection failed`); }
       const catalog = new Map<string, { description: string; inputSchema: ToolRegistration["inputSchema"] }>();
-      const cursors = new Set<string>();
-      let cursor: string | undefined;
-      do {
-        let page;
-        try { page = await deadline(client.listTools(cursor ? { cursor } : undefined,
-          { timeout: timeoutMs, ...(options.signal ? { signal: options.signal } : {}) }), timeoutMs, options.signal); }
-        catch { throw new Error(`MCP server ${name} discovery failed`); }
-        for (const tool of page.tools) {
-          if (catalog.has(tool.name)) throw new Error(`duplicate MCP tool ${tool.name} from ${name}`);
-          catalog.set(tool.name, { description: tool.description ?? "MCP tool", inputSchema: tool.inputSchema as ToolRegistration["inputSchema"] });
-          discovered.push({ server: name, name: tool.name });
-        }
-        cursor = page.nextCursor;
-        if (cursor) { if (cursors.has(cursor)) throw new Error(`MCP pagination cycle from ${name}`); cursors.add(cursor); }
-      } while (cursor);
-      const selected = spec.tools === "*" ? [...catalog.keys()] : spec.tools ?? [];
-      for (const originalName of selected) if (!catalog.has(originalName)) throw new Error(`unknown MCP tool ${originalName} selected from ${name}`);
+      try {
+        try {
+          await deadline(client.connect(transport as unknown as Transport,
+            { timeout: timeoutMs, ...(options.signal ? { signal: options.signal } : {}) }), timeoutMs, options.signal);
+        } catch { throw new Error(`MCP server ${name} connection failed`); }
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          let page;
+          try { page = await deadline(client.listTools(cursor ? { cursor } : undefined,
+            { timeout: timeoutMs, ...(options.signal ? { signal: options.signal } : {}) }), timeoutMs, options.signal); }
+          catch { throw new Error(`MCP server ${name} discovery failed`); }
+          for (const tool of page.tools) {
+            if (catalog.has(tool.name)) throw new Error(`duplicate MCP tool ${tool.name} from ${name}`);
+            catalog.set(tool.name, { description: tool.description ?? "MCP tool", inputSchema: tool.inputSchema as ToolRegistration["inputSchema"] });
+          }
+          cursor = page.nextCursor;
+          if (cursor) { if (cursors.has(cursor)) throw new Error(`MCP pagination cycle from ${name}`); cursors.add(cursor); }
+        } while (cursor);
+      } catch (error) {
+        if (!options.onSkip || options.signal?.aborted) throw error;
+        owners.splice(owners.indexOf(client), 1);
+        await client.close().catch(() => {});
+        options.onSkip(`${(error as Error).message}; skipped its tools`);
+        continue;
+      }
+      ready = true;
+      for (const toolName of catalog.keys()) discovered.push({ server: name, name: toolName });
+      const selected = (spec.tools === "*" ? [...catalog.keys()] : spec.tools ?? []).filter((originalName) => {
+        if (catalog.has(originalName)) return true;
+        const message = `unknown MCP tool ${originalName} selected from ${name}`;
+        if (!options.onSkip) throw new Error(message);
+        options.onSkip(`${message}; skipped`);
+        return false;
+      });
       for (const [originalName, tool] of catalog) {
         const alias = aliasFor(name, originalName);
         if (available.has(alias)) throw new Error(`duplicate MCP alias: ${alias}`);
@@ -385,15 +403,22 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
       }
     }
     const activated = new Set<string>();
-    const activate = (aliases: readonly string[]) => {
+    const activate = (aliases: readonly string[], skip?: (message: string) => void) => {
       const existing = new Set(registry.definitions().map((item) => item.name));
       const unique = [...new Set(aliases)];
       for (const alias of unique) {
         if (!available.has(alias) && !existing.has(alias)) throw new Error(`unknown MCP alias: ${alias}`);
         if (available.has(alias) && existing.has(alias) && !activated.has(alias)) throw new Error(`duplicate MCP alias: ${alias}`);
       }
-      const registrations = unique.filter((alias) => available.has(alias) && !activated.has(alias)).map((alias) => available.get(alias)!());
-      registry.validateRegistrations(registrations);
+      const pending = unique.filter((alias) => available.has(alias) && !activated.has(alias));
+      const registrations = skip ? pending.flatMap((alias) => {
+        try {
+          const registration = available.get(alias)!();
+          registry.validateRegistrations([registration]);
+          return [registration];
+        } catch (error) { skip(`${(error as Error).message}; skipped`); return []; }
+      }) : pending.map((alias) => available.get(alias)!());
+      if (!skip) registry.validateRegistrations(registrations);
       for (const registration of registrations) { registry.register(registration); activated.add(registration.name); }
       const visible = new Set(registry.definitions().map((item) => item.name));
       for (const registration of registrations) if (visible.has(registration.name)) {
@@ -401,8 +426,8 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
       }
       exposed.sort((a, b) => a.alias.localeCompare(b.alias));
     };
-    activate(selectedAliases);
+    activate(selectedAliases, options.onSkip);
     catalogInfo.sort((a, b) => a.alias.localeCompare(b.alias));
-    return { registry, discovered, catalog: catalogInfo, exposed, activate, close };
+    return { registry, discovered, catalog: catalogInfo, exposed, activate: (aliases) => activate(aliases), close };
   } catch (error) { await close(); throw error; }
 }

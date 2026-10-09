@@ -10,6 +10,7 @@ import { listInstalledPackages, resolveInstalledPackage } from "../packages/stor
 import { parseSkillMarkdown } from "../skills/frontmatter.js";
 import { compileToolSchema, parseToolManifest } from "../tools/plugins/manifest.js";
 import { parseHookManifest } from "../hooks/manifest.js";
+import { HOST_CONTENT_BYTES } from "../tools/results.js";
 import { mutateConfig, readManagedConfig } from "./config.js";
 import { record } from "./agents.js";
 import { contained, ManagementError, ownedPath, readText, relativeFile, saveOwnedText, validText, type TextSnapshot } from "./files.js";
@@ -248,8 +249,8 @@ export class ComponentManager {
       if (!Object.hasOwn(agents, agentName)) throw new ManagementError("not_found", "agent not found");
       const agent = record(agents[agentName]);
       if (agent.from) throw new ManagementError("invalid_input", "edit the package binding's complete selection override explicitly");
-      if (kind === "skills" && selected && (info.bodyBytes ?? 0) > Number(agent.max_output_bytes ?? 8192)) {
-        throw new ManagementError("invalid_input", "skill body exceeds this agent's max_output_bytes; adjust its output cap before selecting");
+      if (kind === "skills" && selected && (info.bodyBytes ?? 0) > HOST_CONTENT_BYTES) {
+        throw new ManagementError("invalid_input", "skill body exceeds 1 MiB");
       }
       const block = record(agent[kind]); const use = Array.isArray(block.use) ? [...block.use] : [];
       const matches = (item: unknown) => (typeof item === "string" ? item : record(item).ref) === id;

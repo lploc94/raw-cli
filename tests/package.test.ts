@@ -54,7 +54,6 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
     assert.equal(skill.name, id.replaceAll("_", "-"));
     assert.ok(skill.description);
     assert.ok(skill.markdown.trim());
-    assert.ok(Buffer.byteLength(skill.markdown) <= 8192);
     assert.equal(body, await readFile(join(repo, "src", "skills", "bundled", id, "SKILL.md"), "utf8"));
     assert.equal(body, await readFile(join(consumer, "node_modules", "@tlelabs", "raw", "examples", "skills", id, "SKILL.md"), "utf8"));
   }
