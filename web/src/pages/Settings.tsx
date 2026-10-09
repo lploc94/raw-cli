@@ -125,7 +125,7 @@ export function SettingsPage({
         <section>
           <h2>Set up Raw</h2>
           <p>
-            Create the shared starter agent with six setup skills, then
+            Create the shared starter agent with seven setup skills, then
             configure a model.
           </p>
           <button

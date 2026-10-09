@@ -1,6 +1,6 @@
 # Raw skill authoring cheatsheet
 
-Updated 2026-09-26. This guide describes the authoring approach used by Raw's six English setup skills.
+Updated 2026-09-26. This guide describes the authoring approach used by Raw's seven English setup skills.
 
 ## What makes a skill useful
 
@@ -24,7 +24,7 @@ Combine short parts rather than filling a rigid template. Branch before the acti
 
 The description should let an agent distinguish neighboring skills. Mention what the user wants and when this skill helps; internal file formats alone are weak selection hints. Test both likely requests and near misses. For example, writing an ordinary Markdown checklist should not automatically become installing a Raw skill. [Agent Skills: descriptions](https://agentskills.io/skill-creation/optimizing-descriptions)
 
-For this kit, prefer bounded descriptions over deliberately broad triggering. Raw has six setup skills and should not load them during unrelated coding work. This is a Raw design choice, not a universal specification rule.
+For this kit, prefer bounded descriptions over deliberately broad triggering. Raw has seven setup skills and should not load them during unrelated coding work. This is a Raw design choice, not a universal specification rule.
 
 ## Adapt the format to Raw
 

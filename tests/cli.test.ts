@@ -25,8 +25,9 @@ async function raw(args: string[], options: { cwd?: string; env?: NodeJS.Process
 }
 
 function ptyRaw(args: string[], env: NodeJS.ProcessEnv) {
+  // A PTY inherits the developer's TERM; NO_COLOR keeps prompt text plain unless a test overrides it.
   const child = spawn("python3", ["tests/fixtures/pty-bridge.py", process.execPath, "--import", import.meta.resolve("tsx"),
-    join(process.cwd(), "bin/raw.ts"), ...args], { cwd: process.cwd(), env, stdio: ["pipe", "pipe", "pipe"] });
+    join(process.cwd(), "bin/raw.ts"), ...args], { cwd: process.cwd(), env: { NO_COLOR: "1", ...env }, stdio: ["pipe", "pipe", "pipe"] });
   let output = "";
   child.stdout.setEncoding("utf8").on("data", (part: string) => { output += part; });
   child.stderr.setEncoding("utf8").on("data", (part: string) => { output += part; });
