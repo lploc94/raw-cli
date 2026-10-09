@@ -1,6 +1,6 @@
 {
   "name": "@tlelabs/raw",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A local coding agent for models with limited context: composable tools, skills, hooks and agents, with a terminal REPL, browser dashboard and ACP.",
   "keywords": [
     "ai",

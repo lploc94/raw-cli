@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-09
+
 - A selected MCP server that cannot start, a selected tool the server no
   longer lists, or a selected tool with an unusable schema is skipped with a
   stderr warning instead of blocking the whole session.
@@ -33,6 +35,7 @@ First public release.
 - Portable `.rawpkg` packages for sharing agents, tools and skills.
 - Runtime variables from config, environment, files or executable providers.
 
-[Unreleased]: https://github.com/lploc94/raw-cli/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/lploc94/raw-cli/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/lploc94/raw-cli/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/lploc94/raw-cli/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lploc94/raw-cli/releases/tag/v0.1.0
