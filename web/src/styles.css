@@ -8,24 +8,31 @@
     sans-serif;
   font-size: 14px;
   color-scheme: light;
-  --canvas: #fff;
-  --panel: #f6f7f9;
-  --panel-hover: #eceef3;
-  --text: #20232d;
-  --muted: #646b7b;
-  --scrollbar-thumb: #858b98;
-  --border: #dce0e8;
-  --accent: #4f46d4;
-  --accent-soft: #eeedff;
-  --focus: #5b50df;
-  --success: #23754e;
-  --warning: #8b5b03;
-  --error: #b42b3f;
-  --code: #f5f6f8;
-  --on-accent: #fff;
-  --accent-hover: #4033bd;
-  --on-error: #fff;
-  --error-hover: #912237;
+  --canvas: #ffffff;
+  --panel: #f7f6fa;
+  --panel-hover: #efedf4;
+  --text: #15111c;
+  --muted: #5f5a6e;
+  --scrollbar-thumb: #a7a2b5;
+  --border: #e3e0ea;
+  --accent: #6d28d9;
+  --accent-text: #6d28d9;
+  --accent-soft: #f1ecfc;
+  --focus: #7c3aed;
+  --success: #1f7a4f;
+  --warning: #8a5a00;
+  --error: #b4233f;
+  --code: #f5f4f8;
+  --button-bg: #ffffff;
+  --button-hover: #f4f2f8;
+  --button-border: #dedae6;
+  --primary-bg: #15111c;
+  --primary-text: #fbfaff;
+  --primary-hover: #2b2238;
+  --danger-bg: #fdecef;
+  --danger-text: #a8213b;
+  --danger-border: #f3c4ce;
+  --danger-hover: #fadde3;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -39,24 +46,31 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --canvas: #191b21;
-  --panel: #14161c;
-  --panel-hover: #262932;
-  --text: #e8eaf0;
-  --muted: #a1a8b8;
-  --scrollbar-thumb: #687080;
-  --border: #343845;
-  --accent: #b0a6ff;
-  --accent-soft: #2c2746;
-  --focus: #b0a6ff;
-  --success: #7acc9b;
-  --warning: #efc06b;
-  --error: #ff8d9f;
-  --code: #111319;
-  --on-accent: #17142b;
-  --accent-hover: #c4bcff;
-  --on-error: #2a0d13;
-  --error-hover: #ffa8b6;
+  --canvas: #0f0c16;
+  --panel: #0b0910;
+  --panel-hover: #1b1626;
+  --text: #f4f2fa;
+  --muted: #a39cb8;
+  --scrollbar-thumb: #4a4360;
+  --border: #2a2338;
+  --accent: #8b5cf6;
+  --accent-text: #b9a6fb;
+  --accent-soft: #1e1631;
+  --focus: #b9a6fb;
+  --success: #6fd3a0;
+  --warning: #f0c46c;
+  --error: #ff8fa3;
+  --code: #08070c;
+  --button-bg: #16121f;
+  --button-hover: #211b2e;
+  --button-border: #2a2338;
+  --primary-bg: #f4f2fa;
+  --primary-text: #0f0c16;
+  --primary-hover: #ddd3fb;
+  --danger-bg: #2a0f1a;
+  --danger-text: #ffa3b4;
+  --danger-border: #4d1a2c;
+  --danger-hover: #3a1424;
 }
 
 /* Diagram geometry comes from Mermaid; presentation stays in host CSS under CSP. */
@@ -139,21 +153,21 @@ button {
   gap: 8px;
   min-height: 36px;
   padding: 7px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--button-border);
   border-radius: 7px;
-  background: var(--canvas);
+  background: var(--button-bg);
   cursor: pointer;
   line-height: 1.4;
 }
 button:hover:not(:disabled) {
-  background: var(--panel-hover);
+  background: var(--button-hover);
 }
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 a:hover {
@@ -221,24 +235,23 @@ small,
   color: var(--error);
 }
 .primary {
-  background: var(--accent);
-  color: var(--on-accent);
-  border-color: var(--accent);
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  border-color: var(--primary-bg);
   font-weight: 600;
   min-height: 40px;
 }
 .primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 .danger {
-  background: var(--error);
-  color: var(--on-error);
-  border-color: var(--error);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: var(--danger-border);
 }
 .danger:hover:not(:disabled) {
-  background: var(--error-hover);
-  border-color: var(--error-hover);
+  background: var(--danger-hover);
 }
 .icon-button {
   min-width: 34px;
@@ -249,7 +262,7 @@ small,
 }
 .icon-button.selected {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .text-button {
   border: 0;
@@ -379,7 +392,7 @@ small,
 }
 .rail a.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .rail .brand {
   font-size: 28px;
@@ -460,16 +473,16 @@ small,
   min-height: 40px;
   justify-content: space-between;
   padding: 0 10px 0 12px;
-  border: 1px solid #5144d8;
-  border-left-color: #ffffff55;
+  border: 1px solid var(--primary-bg);
+  border-left-color: color-mix(in srgb, var(--primary-text) 25%, transparent);
   border-radius: 0 8px 8px 0;
-  background: #5144d8;
-  color: white;
+  background: var(--primary-bg);
+  color: var(--primary-text);
   font-weight: 600;
 }
 .context-panel .agent-picker:hover,
 .context-panel .agent-picker[data-state="open"] {
-  background: #4033bd;
+  background: var(--primary-hover);
 }
 .agent-picker span {
   overflow: hidden;
@@ -600,7 +613,7 @@ small,
 }
 .context-nav a[aria-current="page"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .context-empty {
   margin: 0;
@@ -707,7 +720,7 @@ main > .error-banner {
 }
 .brand-mark {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 32px;
   font-weight: 750;
   letter-spacing: -4px;
@@ -762,7 +775,7 @@ main > .error-banner {
   padding: 0 8px;
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1148,7 +1161,7 @@ summary::-webkit-details-marker {
   min-height: 34px;
 }
 .tabs button[data-state="active"] {
-  color: var(--accent);
+  color: var(--accent-text);
   border-bottom: 2px solid var(--accent);
 }
 .batch-rows {
@@ -1801,7 +1814,7 @@ summary::-webkit-details-marker {
 .badge.accent {
   border-color: transparent;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .badge.success {
   color: var(--success);
@@ -2629,7 +2642,7 @@ summary::-webkit-details-marker {
   justify-content: center;
   border-radius: 8px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
   pointer-events: none;
 }
@@ -2711,7 +2724,7 @@ summary::-webkit-details-marker {
 .request-pill:hover,
 .request-pill[data-state="open"] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .request-pill .pill-text {
   min-width: 0;
@@ -2800,7 +2813,7 @@ summary::-webkit-details-marker {
   }
 }
 .slider-stops .on {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .radio-group {
@@ -2963,7 +2976,7 @@ summary::-webkit-details-marker {
   color: var(--text);
 }
 .workspace-row-main[aria-current="true"] {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .workspace-row-main[aria-disabled="true"] {
   cursor: not-allowed;
@@ -3059,7 +3072,7 @@ summary::-webkit-details-marker {
 }
 .workspace-menu-item[data-highlighted] {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .workspace-popover :focus-visible,
 .workspace-menu :focus-visible {
@@ -3494,7 +3507,7 @@ summary::-webkit-details-marker {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
   font: inherit;
   font-family: ui-monospace, monospace;
   font-size: 12px;
@@ -3689,7 +3702,7 @@ summary::-webkit-details-marker {
   cursor: pointer;
 }
 .panel-glyph-button:hover:not(:disabled) {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .panel-glyph-button:disabled {
   cursor: default;

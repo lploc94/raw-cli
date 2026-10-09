@@ -42,14 +42,14 @@ test.describe("shared tokens and navigation", () => {
   });
 
   for (const theme of ["light", "dark"]) {
-    test(`primary buttons draw from the accent tokens in ${theme} mode`, async ({ page, raw }) => {
+    test(`primary buttons draw from the primary tokens in ${theme} mode`, async ({ page, raw }) => {
       await openAgents(page, raw.server.launchUrl);
       await page.evaluate((theme) => (document.documentElement.dataset.theme = theme), theme);
       await page.getByRole("button", { name: "Create agent" }).click();
       await page.getByLabel("Agent name").fill("styled");
       const create = page.getByRole("button", { name: "Create", exact: true });
-      await expect(create).toHaveCSS("background-color", await token(page, "--accent"));
-      await expect(create).toHaveCSS("color", await token(page, "--on-accent"));
+      await expect(create).toHaveCSS("background-color", await token(page, "--primary-bg"));
+      await expect(create).toHaveCSS("color", await token(page, "--primary-text"));
       if (theme === "dark") await expect(create).not.toHaveCSS("color", "rgb(255, 255, 255)");
     });
   }
