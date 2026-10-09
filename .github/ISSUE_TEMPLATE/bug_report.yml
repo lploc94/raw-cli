@@ -1,0 +1,30 @@
+name: Bug report
+description: Something in Raw behaves differently from its documentation
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands and a redacted config excerpt. Never paste API keys.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Raw version
+      placeholder: output of `raw --version`
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: OS, Node.js version, model provider

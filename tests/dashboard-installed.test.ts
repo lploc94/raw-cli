@@ -40,7 +40,7 @@ test("packed dashboard configures, reconnects, updates a package, then installed
   try {
     await mkdir(consumer); await mkdir(workspace); await mkdir(author);
     await writeFile(join(consumer, "package.json"), '{"name":"raw-dashboard-consumer","private":true,"type":"module"}\n');
-    const packed = await command("npm", ["pack", "--json", "--pack-destination", root], repo, env);
+    const packed = await command("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root], repo, env);
     const tarball = join(root, (JSON.parse(packed.stdout) as Array<{ filename: string }>)[0]!.filename);
     const artifactHash = createHash("sha256").update(await readFile(tarball)).digest("hex");
     await command("npm", ["install", "--omit=dev", "--prefer-offline", "--legacy-peer-deps", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer, env);

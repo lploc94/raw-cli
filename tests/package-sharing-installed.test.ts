@@ -26,7 +26,7 @@ function cacheKey(path: string, id: string): string {
 test("packed recipient installs mixed and standalone packages without author source or readable legacy state", async () => {
   const repo = process.cwd(), root = await mkdtemp(join(tmpdir(), "raw-package-installed-"));
   try {
-    const pack = spawnSync("npm", ["pack", "--json", "--pack-destination", root], { cwd: repo, encoding: "utf8" });
+    const pack = spawnSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root], { cwd: repo, encoding: "utf8" });
     assert.equal(pack.status, 0, pack.stderr);
     const tarball = join(root, (JSON.parse(pack.stdout) as Array<{ filename: string }>)[0]!.filename);
     const consumer = join(root, "consumer"); await mkdir(consumer);

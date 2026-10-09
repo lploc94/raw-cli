@@ -6,3 +6,8 @@ coverage/
 .DS_Store
 test-results/
 playwright-report/
+video/*/out/
+
+# Local planning notes (kept out of the public tree)
+*-plan.md
+raw-cli-implementation-handoff.md

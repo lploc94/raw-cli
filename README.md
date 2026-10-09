@@ -4,17 +4,24 @@
 
 ## Install and run
 
-Requires Node.js 22.13+ and Bash for the `bash` tool. From this checkout:
+Requires Node.js 22.13+ and Bash for the `bash` tool. Documentation: [raw.tlelabs.com](https://raw.tlelabs.com).
 
 ```sh
-npm ci
-npm run build
-npm pack
-npm install -g ./raw-cli-0.1.0.tgz
+# Try it without installing (builds from the default branch)
+npx github:lploc94/raw-cli --help
+
+# Install globally from GitHub (pin a release tag for reproducible installs)
+npm install -g github:lploc94/raw-cli#v0.1.0
+
+# Or install the prebuilt tarball attached to a GitHub release
+npm install -g https://github.com/lploc94/raw-cli/releases/download/v0.1.0/raw-cli-0.1.0.tgz
+
 raw config init
 ```
 
-The package is not published. `config init` creates `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) once with setup-capable agent `raw`; edit the local model ID or add your hosted model. `raw "query"` uses the configured `default_agent`, which may name a different agent in an existing config. `--config PATH` selects another strict JSON config file.
+Installing from a Git ref runs the `prepare` build, so the first install downloads build tooling and takes longer than the release tarball. The package is not yet on the npm registry. To work from a checkout instead, run `npm ci` (which also builds) and `npm install -g .`.
+
+`config init` creates `~/.config/raw/config.json` (or `$XDG_CONFIG_HOME/raw/config.json`) once with setup-capable agent `raw`; edit the local model ID or add your hosted model. `raw "query"` uses the configured `default_agent`, which may name a different agent in an existing config. `--config PATH` selects another strict JSON config file.
 
 ```sh
 raw --agent raw "Explain the tests in this repository"
@@ -142,3 +149,7 @@ Tests use local provider/MCP/ACP fixtures. [Verification](docs/verification.md) 
 ## Runtime variables
 
 Agents can select named read-only values from config, environment, files or executable providers. Use `raw vars list` and `raw vars get now` without invoking a model. The starter raw agent includes current UTC time. Models can use list_vars/read_var or pass commands[].env_refs to Bash; use-only values need not be returned to the model. See [the variable contract](docs/vars.md) and the forkable [host-info provider](examples/providers/host-info/README.md).
+
+## License
+
+[MIT](LICENSE)

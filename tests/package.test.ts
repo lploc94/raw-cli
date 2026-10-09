@@ -24,7 +24,7 @@ test("T-08d: packed consumer executes installed CLI task/MCP/ACP and imports lib
   const repo = process.cwd();
   const root = await mkdtemp(join(tmpdir(), "raw-installed-"));
   try {
-  const pack = spawnSync("npm", ["pack", "--json", "--pack-destination", root], { cwd: repo, encoding: "utf8" });
+  const pack = spawnSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root], { cwd: repo, encoding: "utf8" });
   assert.equal(pack.status, 0, pack.stderr);
   const tarball = join(root, (JSON.parse(pack.stdout) as Array<{ filename: string }>)[0]!.filename);
   const consumer = join(root, "consumer");

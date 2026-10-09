@@ -54,7 +54,7 @@ test("packed forks and copied agent execute outside the checkout with isolated s
     call("project_note", {}, "note-b"), done("agent b"), done("agent resumed"),
   ]);
   try {
-    const pack = spawnSync("npm", ["pack", "--json", "--pack-destination", root], { cwd: repo, encoding: "utf8" });
+    const pack = spawnSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root], { cwd: repo, encoding: "utf8" });
     assert.equal(pack.status, 0, pack.stderr);
     const archive = join(root, (JSON.parse(pack.stdout) as Array<{ filename: string }>)[0]!.filename);
     const consumer = join(root, "consumer");

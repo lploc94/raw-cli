@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://raw.tlelabs.com
+    about: Guides and reference for installing, configuring and extending Raw.
+  - name: Report a security vulnerability
+    url: https://github.com/lploc94/raw-cli/security/advisories/new
+    about: Please report security issues privately.

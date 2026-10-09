@@ -1,7 +1,27 @@
 {
   "name": "raw-cli",
   "version": "0.1.0",
-  "private": true,
+  "description": "A local coding agent for models with limited context: composable tools, skills, hooks and agents, with a terminal REPL, browser dashboard and ACP.",
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "cli",
+    "llm",
+    "acp",
+    "mcp",
+    "terminal"
+  ],
+  "homepage": "https://raw.tlelabs.com",
+  "bugs": {
+    "url": "https://github.com/lploc94/raw-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lploc94/raw-cli.git"
+  },
+  "license": "MIT",
+  "author": "Thorn Lee <lploc94@gmail.com>",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
@@ -45,9 +65,11 @@
     "docs/processes.md",
     "docs/diagrams.md",
     "docs/panels-design.md",
-    "docs/evidence"
+    "docs/evidence",
+    "LICENSE"
   ],
   "scripts": {
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",
     "test": "npm run build && node scripts/test.mjs",
     "test:phase": "node scripts/test-phase.mjs",
