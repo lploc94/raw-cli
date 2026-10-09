@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-10
+
+- The dashboard has a new violet-black and white theme: near-black violet
+  surfaces with a white primary button in dark mode, and a white canvas with
+  a violet-black primary button in light mode. Primary, secondary and danger
+  buttons each have their own colours, and the favicon matches the new
+  palette.
+
 ## [0.1.2] - 2026-10-09
 
 - A selected MCP server that cannot start, a selected tool the server no
