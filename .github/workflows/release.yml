@@ -6,16 +6,18 @@ on:
 
 permissions:
   contents: write
+  id-token: write # npm trusted publishing (OIDC) and provenance
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Node 24 ships npm 11, which trusted publishing requires. No dependency cache in release builds.
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
-          cache: npm
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
       - name: Check tag matches package version
         run: |
           version="$(node -p 'require("./package.json").version')"
@@ -25,6 +27,14 @@ jobs:
       - run: npm run test:package
       - name: Pack
         run: npm pack --ignore-scripts
+      - name: Publish to npm
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if npm view "raw-cli@${version}" version >/dev/null 2>&1; then
+            echo "raw-cli@${version} is already on npm; skipping publish"
+          else
+            npm publish "raw-cli-${version}.tgz" --access public
+          fi
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
