@@ -2,7 +2,7 @@ import { createVariableResolver } from "../../vars/resolver.js";
 import type { VariableContext } from "../../vars/contract.js";
 import type { RuntimeConfig } from "../../config.js";
 import { connectMcpServers, type McpConnection, type McpServerConfig } from "../mcp-client.js";
-import { ToolRegistry } from "../registry.js";
+import { ToolRegistry, type ToolRegistration } from "../registry.js";
 import { loadToolPlugins } from "./loader.js";
 import { loadSelectedSkills } from "../../skills/loader.js";
 import type { SelectedSkill } from "../../skills/contract.js";
@@ -77,11 +77,16 @@ export async function createRuntimeTools(options: {
   for (const id of runtime.toolIds) {
     if (id.startsWith("mcp/") && !Object.hasOwn(specs, id.split("/")[1]!)) throw new Error(`unknown MCP server: ${id.split("/")[1]}`);
   }
+  const hooks = selectedHooks.length ? new HookDispatcher(selectedHooks, options.env) : undefined;
   const mcp = await connectMcpServers({ servers: specs, registry, cwd, timeoutMs: runtime.requestTimeoutMs,
     canonicalIdentities: runtime.packageMcpIdentities, onSkip: (message) => warnings.push(message),
+    // Denied tools never reach the model, so their schemas are not bound to hook conditions.
+    ...(hooks ? { validateRegistration: (registration: ToolRegistration) => {
+      const identity = registration.canonicalName ?? registration.name;
+      if (registry.policyEffect(identity) !== "deny") hooks.validateTool(identity, registration);
+    } } : {}),
     ...(signal ? { signal } : {}) });
   try {
-    const hooks = selectedHooks.length ? new HookDispatcher(selectedHooks, options.env) : undefined;
     const names: string[] = [];
     const kept: string[] = [];
     for (const id of runtime.toolIds) {
@@ -90,13 +95,9 @@ export async function createRuntimeTools(options: {
         const item = mcp.catalog.find((tool) => tool.server === server && tool.originalName === originalName);
         // connectMcpServers already reported why an unavailable selected tool was not registered.
         if (!item || !registry.inspectionDefinition(item.alias)) continue;
-        try { hooks?.validateTools(registry, [item.alias]); }
-        catch (error) { warnings.push(`${(error as Error).message}; skipped ${id}`); continue; }
         names.push(item.alias);
       } else {
-        const name = plugins.find((plugin) => plugin.id === id)!.registration.name;
-        hooks?.validateTools(registry, [name]);
-        names.push(name);
+        names.push(plugins.find((plugin) => plugin.id === id)!.registration.name);
       }
       kept.push(id);
     }
@@ -106,6 +107,7 @@ export async function createRuntimeTools(options: {
         : { id: runtime.packageTools[id]?.canonicalIdentity ?? id,
           source: plugins.find((plugin) => plugin.id === id)!.sourceDigest }));
     const toolSourceDigest = createHash("sha256").update(JSON.stringify(sources)).digest("hex");
+    hooks?.validateTools(registry, names);
     return { vars, registry, mcp, selectedNames: Object.freeze(names), skills, toolSourceDigest,
       ...(hooks ? { hooks } : {}), warnings: Object.freeze(warnings) };
   } catch (error) { await mcp.close(); throw error; }

@@ -68,6 +68,8 @@ export interface ConnectMcpOptions {
   canonicalIdentities?: Readonly<Record<string, string>>;
   /** When set, an unavailable server or unusable selected tool is skipped and reported here instead of failing startup. */
   onSkip?: (message: string) => void;
+  /** Extra host check before a tool registers (hook conditions); a failure skips or fails like an unsupported schema. */
+  validateRegistration?: (registration: ToolRegistration) => void;
 }
 
 export interface McpToolInfo {
@@ -415,10 +417,14 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
         try {
           const registration = available.get(alias)!();
           registry.validateRegistrations([registration]);
+          options.validateRegistration?.(registration);
           return [registration];
         } catch (error) { skip(`${(error as Error).message}; skipped`); return []; }
       }) : pending.map((alias) => available.get(alias)!());
-      if (!skip) registry.validateRegistrations(registrations);
+      if (!skip) {
+        registry.validateRegistrations(registrations);
+        for (const registration of registrations) options.validateRegistration?.(registration);
+      }
       for (const registration of registrations) { registry.register(registration); activated.add(registration.name); }
       const visible = new Set(registry.definitions().map((item) => item.name));
       for (const registration of registrations) if (visible.has(registration.name)) {
@@ -426,6 +432,8 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
       }
       exposed.sort((a, b) => a.alias.localeCompare(b.alias));
     };
+    // Skipping a failed server awaits its cleanup, so an abort may land after the loop's own check.
+    if (options.signal?.aborted) throw new Error("MCP startup aborted");
     activate(selectedAliases, options.onSkip);
     catalogInfo.sort((a, b) => a.alias.localeCompare(b.alias));
     return { registry, discovered, catalog: catalogInfo, exposed, activate: (aliases) => activate(aliases), close };

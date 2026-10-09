@@ -221,3 +221,12 @@ test("CLI appends list and load results after linked calls and keeps loaded Mark
     assert.equal((JSON.stringify(editedBody.messages).match(/reload notice/g) ?? []).length, 1);
   } finally { await provider.close(); }
 });
+
+test("skill tools return an explicit error instead of a partial catalog or body over the output bound", async () => {
+  const { handler: list } = await import("../src/tools/bundled/list_skills/index.js");
+  const { handler: load } = await import("../src/tools/bundled/load_skill/index.js");
+  const skills = [{ id: "agent/one", name: "one", description: "Use one", markdown: "body ".repeat(10) }];
+  const context = { cwd: process.cwd(), maxOutputBytes: 16, skills } as never;
+  assert.equal((await list({}, context)).code, "output_budget_too_small");
+  assert.equal((await load({ name: "one" }, context)).code, "output_budget_too_small");
+});

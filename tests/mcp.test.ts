@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -383,5 +383,36 @@ test("createRuntimeTools drops unavailable MCP selections with warnings instead 
     assert.equal(tools.selectedNames[1], tools.mcp.exposed[0]!.alias);
     assert.match(tools.warnings.join("\n"), /unknown MCP tool missing selected from good; skipped/);
     assert.match(tools.warnings.join("\n"), /MCP server down connection failed; skipped its tools/);
+  } finally { await tools.mcp.close(); }
+});
+
+test("an abort during the last skipped server's cleanup still fails startup", async () => {
+  const controller = new AbortController();
+  await assert.rejects(connectMcpServers({ servers: { z_crash: { ...stdio("crash"), env: { MCP_LABEL: "crash", MCP_COUNT: "2", MCP_MODE: "crash" } } },
+    cwd: process.cwd(), timeoutMs: 3000, signal: controller.signal, onSkip: () => controller.abort() }), /aborted/);
+});
+
+test("an MCP tool whose schema cannot bind a selected hook condition is skipped, not registered", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-mcp-hook-"));
+  const configPath = join(root, "config.json");
+  const hook = join(root, "hooks", "guard");
+  await mkdir(hook, { recursive: true });
+  await writeFile(join(hook, "hook.json"), JSON.stringify({ protocol_version: 2, name: "guard", command: "node", args: ["./run.mjs"],
+    events: [{ name: "PreToolUse", match: "mcp/good/selected", when: { source: "arguments", any: "absent", regex: "x" } }] }));
+  await writeFile(join(hook, "run.mjs"), "process.stdout.write('{}')\n");
+  await writeFile(configPath, JSON.stringify({ default_agent: "a",
+    models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture" } },
+    agents: { a: { model: "local", hooks: { use: ["agent/guard"] }, tools: { use: ["builtin/read_file", "mcp/good/selected"] } } },
+    mcp: { servers: { good: { transport: "stdio", command: process.execPath,
+      args: ["--import", "tsx", join(process.cwd(), "tests/fixtures/mcp-stdio.ts")], env: { MCP_LABEL: "good", MCP_COUNT: "2" } } } },
+  }));
+  const runtime = await loadConfig({ configPath, env: {}, requireModel: true });
+  const tools = await createRuntimeTools({ runtime, cwd: process.cwd() });
+  try {
+    assert.deepEqual(tools.selectedNames, ["read_file"]);
+    assert.deepEqual(tools.mcp.exposed, []);
+    assert.equal(tools.registry.nameForIdentity("mcp/good/selected"), undefined);
+    assert.equal(tools.warnings.length, 1);
+    assert.match(tools.warnings[0]!, /skipped$/);
   } finally { await tools.mcp.close(); }
 });
