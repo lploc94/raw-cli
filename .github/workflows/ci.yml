@@ -19,6 +19,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      # tests/dashboard-installed drives the packed dashboard in Chromium.
+      - run: npx playwright install --with-deps chromium
       - run: npm run check
       - run: npm run test:overhead
       - run: npm run test:package

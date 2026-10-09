@@ -23,6 +23,8 @@ jobs:
           version="$(node -p 'require("./package.json").version')"
           test "v${version}" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package v${version}"; exit 1; }
       - run: npm ci
+      # tests/dashboard-installed drives the packed dashboard in Chromium.
+      - run: npx playwright install --with-deps chromium
       - run: npm run check
       - run: npm run test:package
       - name: Pack

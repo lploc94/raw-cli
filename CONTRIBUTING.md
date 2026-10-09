@@ -11,7 +11,8 @@ Requires Node.js 22.13+ and Bash.
 git clone https://github.com/lploc94/raw-cli.git
 cd raw-cli
 npm ci                      # installs dependencies and builds dist/
-npx playwright install chromium firefox webkit   # only for npm run test:web
+npx playwright install chromium   # npm run check drives the dashboard in Chromium
+npx playwright install firefox webkit   # also needed for npm run test:web
 ```
 
 ## Checks
