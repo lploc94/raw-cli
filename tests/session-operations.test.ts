@@ -12,6 +12,7 @@ import type { ProviderAdapter } from "../src/llm/types.js";
 import { SessionOperations, type AttachSessionRuntime } from "../src/sessions/operations.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { ToolRegistry } from "../src/tools/registry.js";
+import { compactionInput, isCompactionRequest } from "./fixtures/compaction.js";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "raw-operations-"));
@@ -116,7 +117,7 @@ test("manual compact exposes stable outcomes and preserves old history atomicall
   const f = fixture();
   let failSummary = false;
   const provider: ProviderAdapter = { modelConfig, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) {
+    if (isCompactionRequest(request)) {
       if (failSummary) throw new Error("summary unavailable");
       return { text: "remember the task", toolCalls: [], finishReason: "stop" };
     }
@@ -150,7 +151,7 @@ test("an operation whose automatic compaction fails publishes the warning and co
   const f = fixture();
   let main = 0;
   const provider: ProviderAdapter = { modelConfig: { ...modelConfig, contextWindow: 20000, maxOutputTokens: 1000 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) throw new Error("summary unavailable");
+    if (isCompactionRequest(request)) throw new Error("summary unavailable");
     main++;
     return main <= 20 ? { text: "", toolCalls: [{ id: `p${main}`, name: "probe", arguments: {} }], finishReason: "tool_calls" }
       : { text: "done", toolCalls: [], finishReason: "stop" };
@@ -250,7 +251,7 @@ test("host heartbeat renews during slow startup and stale generations cannot pub
 test("compact replacement rollback cannot leave a success marker and rename does not extend retention", async () => {
   const f = fixture();
   const provider: ProviderAdapter = { modelConfig, async generate(request) { return {
-    text: request.system === COMPACT_SYSTEM_PROMPT ? "summary" : "long ".repeat(500), toolCalls: [], finishReason: "stop",
+    text: isCompactionRequest(request) ? "summary" : "long ".repeat(500), toolCalls: [], finishReason: "stop",
   }; } };
   const agent = createAgent({ provider, cwd: f.root, persistence: { store: f.store, sessionId: f.session.id, surface: "web" } });
   try {
@@ -272,7 +273,7 @@ test("compact no-op, non-smaller and cancellation leave context intact with dist
   for (const expected of ["noop", "not_smaller", "cancelled"] as const) {
     const f = fixture();
     const provider: ProviderAdapter = { modelConfig, async generate(request) {
-      return { text: request.system === COMPACT_SYSTEM_PROMPT ? "oversized ".repeat(2000) : "content ".repeat(300),
+      return { text: isCompactionRequest(request) ? "oversized ".repeat(2000) : "content ".repeat(300),
         toolCalls: [], finishReason: "stop" };
     } };
     const agent = createAgent({ provider, cwd: f.root, persistence: { store: f.store, sessionId: f.session.id, surface: "web" } });
@@ -294,7 +295,7 @@ test("compact no-op, non-smaller and cancellation leave context intact with dist
 test("automatic compaction emits and persists one matching successful attempt without another user message", async () => {
   const f = fixture();
   const provider: ProviderAdapter = { modelConfig, async generate(request) {
-    return { text: request.system === COMPACT_SYSTEM_PROMPT ? "summary" : "body ".repeat(400), toolCalls: [], finishReason: "stop" };
+    return { text: isCompactionRequest(request) ? "summary" : "body ".repeat(400), toolCalls: [], finishReason: "stop" };
   } };
   const agent = createAgent({ provider, cwd: f.root, system: "small", compact: { triggerTokens: 800, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 64 },
     persistence: { store: f.store, sessionId: f.session.id, surface: "web" } });

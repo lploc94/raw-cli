@@ -93,6 +93,8 @@ export interface ProviderRequest {
   maxOutputTokens?: number;
   /** `maxOutputTokens` is a host default, not a configured cap: an adapter may lower it to a limit the API states. */
   maxOutputTokensAssumed?: boolean;
+  /** Whether the model may call the tools it is given; unset sends no setting. See `toolChoiceKeepsCache`. */
+  toolChoice?: "auto" | "none";
   onTextDelta?: (delta: string) => void;
   onReasoningDelta?: (delta: string) => void;
   onUsage?: (raw: unknown) => void;

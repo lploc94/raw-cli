@@ -70,6 +70,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
           ...(configured?.effort ? { output_config: { effort: configured.effort } } : {}),
           ...(configured?.serviceTier ? { service_tier: configured.serviceTier } : {}),
           ...(tools.length ? { tools } : {}),
+          ...(tools.length && request.toolChoice ? { tool_choice: { type: request.toolChoice } } : {}),
         }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
         let stream: Awaited<ReturnType<typeof create>>;
         try { stream = await create(); }

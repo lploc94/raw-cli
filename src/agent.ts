@@ -11,7 +11,7 @@ import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFact
   type LedgerEntry, type RenderOptions } from "./compact.js";
 import { existsSync } from "node:fs";
 import { CLEAR_MIN_FREED_TOKENS, CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
-import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
+import { normalizeUsage, summarizeUsage, toolChoiceKeepsCache, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
 import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
 import { nativeUserContent } from "./llm/content.js";
@@ -684,6 +684,10 @@ export class AgentSession {
           maxOutputTokens: outputBudget, maxRetryOutputTokens: retryCap, prior: this.summaryText, instructions: settings.instructions,
           maxOutputTokensDefaulted: settings.maxOutputTokensDefaulted || outputBudget !== settings.maxOutputTokens,
           timeoutMs: this.options.requestTimeoutMs, signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
+          // The agent's own model can summarize from the main request itself and reuse its cached prefix (§6.6).
+          ...(provider === this.options.provider ? { sameContext: { system: this.options.system, tools: this.schemaView,
+            messages: this.sendMessages(), cacheKey: this.cacheKey,
+            ...(toolChoiceKeepsCache(provider.modelConfig) ? { toolChoice: "none" as const } : {}) } } : {}),
           onRequestStart: (index) => {
             const entry: UsageRecord = { method: provider.modelConfig.method, provider: provider.modelConfig.provider, raw: undefined };
             entries.set(index, { entry });

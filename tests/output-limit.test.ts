@@ -126,6 +126,7 @@ test("an explicitly configured compaction cap is never lowered, even when it equ
       anthropicFrame("message_stop", {}),
     ] },
     { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "max_tokens: 16384 > 8192, which is the maximum" } } },
+    { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "max_tokens: 16384 > 8192, which is the maximum" } } },
   ]);
   const agent = createAgent({ provider: createProvider({ agentName: "fixture", provider: "anthropic", method: "anthropic-messages", model: "claude-old",
     baseUrl: fixture.url, apiKey: "fixture" }), registry: createTestToolRegistry() });
@@ -133,6 +134,8 @@ test("an explicitly configured compaction cap is never lowered, even when it equ
     assert.equal((await agent.run("hello")).status, "completed");
     assert.equal((await agent.run("again")).status, "completed");
     await assert.rejects(agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 16384 }));
-    assert.equal(fixture.requests.length, 3);
+    // The same-context attempt and the chunked one both keep the explicit cap.
+    assert.equal(fixture.requests.length, 4);
+    assert.deepEqual(fixture.requests.slice(2).map((request) => (request.body as { max_tokens: number }).max_tokens), [16384, 16384]);
   } finally { await agent.close(); await fixture.close(); }
 });

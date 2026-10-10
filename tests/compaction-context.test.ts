@@ -17,6 +17,7 @@ import { loadBundledTools } from "../src/tools/plugins/loader.js";
 import type { PanelDeclaration } from "../src/panels/contract.js";
 import { createTestToolRegistry, type ToolRegistry } from "./fixtures/registry.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+import { compactionInput, isCompactionRequest } from "./fixtures/compaction.js";
 
 /** Random lowercase hex of `bytes` bytes: distinct per call and never JSON-escaped, so byte counts are exact. */
 const noise = (bytes: number) => randomBytes(Math.ceil(bytes / 2)).toString("hex").slice(0, bytes);
@@ -39,9 +40,8 @@ function scripted(model: Partial<ResolvedModelConfig>, script: ProviderTurn[], c
   const summaries: Array<{ text: string; maxOutputTokens?: number | undefined }> = [];
   const provider: ProviderAdapter = { modelConfig: { agentName: "fixture", provider: "ollama", method: "openai-chat-completions", model: "fixture", ...model },
     async generate(request) {
-      if (request.system === COMPACT_SYSTEM_PROMPT) {
-        const content = request.messages[0]?.role === "user" ? request.messages[0].content : "";
-        summaries.push({ text: typeof content === "string" ? content : "", maxOutputTokens: request.maxOutputTokens });
+      if (isCompactionRequest(request)) {
+        summaries.push({ text: compactionInput(request), maxOutputTokens: request.maxOutputTokens });
         return stop(checkpoint(request));
       }
       main.push({ messages: structuredClone(request.messages) as ModelMessage[] });
@@ -799,7 +799,7 @@ test("R11: the checkpoint reserve covers the note a cut summary adds", async () 
   const summaries: number[] = [];
   const provider: ProviderAdapter = { modelConfig: model,
     async generate(request) {
-      if (request.system === COMPACT_SYSTEM_PROMPT) {
+      if (isCompactionRequest(request)) {
         summaries.push(request.maxOutputTokens!);
         return { text: `## Goal\n${"w".repeat(4 * request.maxOutputTokens! - 8)}`, toolCalls: [], finishReason: "length", truncated: true };
       }
@@ -829,7 +829,7 @@ test("R12: a checkpoint larger than its estimate is cut to the input budget, and
   let checkpoint = "";
   const provider: ProviderAdapter = { modelConfig: model,
     async generate(request) {
-      if (request.system === COMPACT_SYSTEM_PROMPT) {
+      if (isCompactionRequest(request)) {
         // Within the output limit by the provider's count, yet three times the bytes the estimate allowed.
         checkpoint = `## Goal\n${head}\n${"w".repeat(12 * request.maxOutputTokens!)}\n## Next actions\n${end}`;
         return stop(checkpoint);

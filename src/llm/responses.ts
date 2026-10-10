@@ -88,6 +88,7 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
           ? { max_output_tokens: request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens } : {}),
         ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: "function" as const, name: tool.name,
           description: tool.description, parameters: tool.inputSchema as Record<string, unknown>, strict: false })) } : {}),
+        ...(request.tools.length && request.toolChoice ? { tool_choice: request.toolChoice } : {}),
       }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
       let completed: ResponseOutputItem[] | undefined;
       let usage: unknown;

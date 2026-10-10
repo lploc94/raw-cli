@@ -8,6 +8,7 @@ import { loadConfig } from "../src/config.js";
 import { ToolRegistry, createTestToolRegistry } from "./fixtures/registry.js";
 import { COMPACT_SYSTEM_PROMPT, CompactionOverheadError, estimateRequestTokens, summarizeTranscript } from "../src/compact.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
+import { compactionInput, isCompactionRequest } from "./fixtures/compaction.js";
 
 const result = (text: string, usage?: unknown): ProviderTurn => ({ text, toolCalls: [], finishReason: "stop",
   ...(usage === undefined ? {} : { usage }) });
@@ -36,7 +37,7 @@ test("automatic compact runs before the next over-threshold inference and keeps 
     const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta,
       onReasoningDelta: _onReasoningDelta, ...wire } = request;
     requests.push(structuredClone(wire));
-    if (request.system === COMPACT_SYSTEM_PROMPT) return result("Summary of the prior task.", { prompt_tokens: 30, completion_tokens: 8 });
+    if (isCompactionRequest(request)) return result("Summary of the prior task.", { prompt_tokens: 30, completion_tokens: 8 });
     return result(requests.length === 1 ? "x".repeat(1600) : "continued", requests.length === 1 ? { prompt_tokens: 100, completion_tokens: 400 } : { prompt_tokens: 100, completion_tokens: 10 });
   } };
   const events: string[] = [];
@@ -45,11 +46,13 @@ test("automatic compact runs before the next over-threshold inference and keeps 
   assert.equal((await agent.run("first")).status, "completed");
   assert.equal((await agent.run("continue", (event) => events.push(event.type))).status, "completed");
   assert.equal(requests.length, 3);
-  assert.deepEqual(requests.map((request) => request.system), ["tiny", COMPACT_SYSTEM_PROMPT, "tiny"]);
+  assert.deepEqual(requests.map((request) => isCompactionRequest(request)), [false, true, false]);
   assert.ok(events.includes("compact_start") && events.includes("compact_end"));
   assert.equal(agent.stats().requests, 3);
+  // The summary is written from the main context, under the main cache key (§6.6).
   assert.equal(requests[0]?.cacheKey, requests[2]?.cacheKey);
-  assert.notEqual(requests[1]?.cacheKey, requests[2]?.cacheKey);
+  assert.equal(requests[1]?.cacheKey, requests[2]?.cacheKey);
+  assert.equal(requests[1]?.system, "tiny");
   assert.match(JSON.stringify(agent.transcript), /Raw compaction checkpoint #1/);
 });
 
@@ -96,7 +99,7 @@ test("tool output and opaque reasoning trigger compact despite small previous us
   let main = 0;
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 5000, maxOutputTokens: 100 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result("task and tool result summarized"); }
+    if (isCompactionRequest(request)) { summaries++; return result("task and tool result summarized"); }
     main++;
     if (main === 1) return { text: "", toolCalls: [{ id: "c", name: "large", arguments: {} }],
       opaque: { reasoning: "R".repeat(1200) }, finishReason: "tool_calls", usage: { prompt_tokens: 20, completion_tokens: 5 } };
@@ -123,7 +126,7 @@ test("an early no-op over the threshold is stuck: the next crossing takes the fa
   let summaries = 0;
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 5000, maxOutputTokens: 100 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result("summarized"); }
+    if (isCompactionRequest(request)) { summaries++; return result("summarized"); }
     main++;
     return main === 1 ? { text: "", toolCalls: [{ id: "c", name: "large", arguments: {} }], finishReason: "tool_calls" } : result("done");
   } };
@@ -150,7 +153,7 @@ test("an oversized recent image is summarized as metadata before the next main r
   let summarized = false;
   const provider: ProviderAdapter = { modelConfig: { agentName: "vision", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", vision: true, contextWindow: 4000, maxOutputTokens: 100 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) {
+    if (isCompactionRequest(request)) {
       summarized = true;
       assert.ok(!JSON.stringify(request.messages).includes(data));
       return result("The photo was examined.");
@@ -174,7 +177,7 @@ test("a summarizer context too small for the checkpoint prompt fails before infe
   const small = (contextWindow: number): ProviderAdapter => ({ modelConfig: { agentName: "small", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow, maxOutputTokens: 100 }, async generate(request) {
     requests++;
-    if (request.system === COMPACT_SYSTEM_PROMPT) return result("S".repeat(5000));
+    if (isCompactionRequest(request)) return result("S".repeat(5000));
     return result("answer");
   } });
   // A summarizer whose context cannot hold the checkpoint prompt fails before any request.
@@ -217,7 +220,7 @@ test("automatic compact is abortable and cannot commit a late summary", async ()
   let main = 0;
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 4000, maxOutputTokens: 100 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) { entered(); return late; }
+    if (isCompactionRequest(request)) { entered(); return late; }
     main++;
     return result("x".repeat(1600));
   } };
@@ -244,7 +247,7 @@ test("a second automatic compact can summarize continuation after zero-retention
   let summaries = 0;
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 5000, maxOutputTokens: 100 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result(`summary ${summaries}`); }
+    if (isCompactionRequest(request)) { summaries++; return result(`summary ${summaries}`); }
     main++;
     if (main === 1) return { text: "", toolCalls: [{ id: "c", name: "large", arguments: {} }], finishReason: "tool_calls" };
     return result("D".repeat(1400));
@@ -262,7 +265,7 @@ test("successive usage reports can increase absolute token calibration", async (
   let summaries = 0;
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 10000, maxOutputTokens: 100 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) { summaries++; return result("summary"); }
+    if (isCompactionRequest(request)) { summaries++; return result("summary"); }
     main++;
     const base = estimateRequestTokens(request.system, request.messages, request.tools);
     const actual = Math.ceil(base * (main === 1 ? 1.5 : 1.9));
@@ -322,9 +325,8 @@ test("compact.instructions is validated and reaches the summarizer for manual an
   let main = 0;
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: 8000, maxOutputTokens: 100 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) {
-      const content = request.messages[0]?.role === "user" ? request.messages[0].content : "";
-      seen.push(typeof content === "string" && content.endsWith(marker) ? "with" : "without");
+    if (isCompactionRequest(request)) {
+      seen.push(compactionInput(request).endsWith(marker) ? "with" : "without");
       return result("summary");
     }
     main++;
@@ -367,7 +369,7 @@ function refill(options: { contextWindow: number; trigger: number; pad: number; 
   let calls = 0;
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow: options.contextWindow, maxOutputTokens: 1000 }, async generate(request) {
-    if (request.system === COMPACT_SYSTEM_PROMPT) { log.push("S"); return options.summary(); }
+    if (isCompactionRequest(request)) { log.push(request.system === COMPACT_SYSTEM_PROMPT ? "S" : "C"); return options.summary(); }
     log.push("M");
     mains.push(structuredClone({ system: request.system, messages: request.messages }) as ProviderRequest);
     const index = calls++;
@@ -386,6 +388,15 @@ function refill(options: { contextWindow: number; trigger: number; pad: number; 
   return { agent, log, mains, events, run };
 }
 const STUB = "[Old tool result cleared: ";
+/**
+ * Summary attempts in the log: a same-context request ("C"), alone or followed by its chunked fallback ("S"). Throws when
+ * two attempts happen without a main request between them.
+ */
+const attempts = (log: readonly string[]) => {
+  const segments = log.join("").split("M").filter(Boolean);
+  for (const segment of segments) assert.match(segment, /^(C|CS|S)$/, `summary requests without a main step between: ${log.join("")}`);
+  return segments.length;
+};
 const MECHANICAL = "[Checkpoint unavailable: ";
 
 test("phase 4/1: tool output that refills the window twice in one turn is compacted twice and the turn completes", async () => {
@@ -396,9 +407,8 @@ test("phase 4/1: tool output that refills the window twice in one turn is compac
   const compactions = f.events.filter((event) => event.type === "compact_end");
   assert.ok(compactions.length >= 2, `compactions: ${compactions.length}`);
   assert.ok(compactions.every((event) => event.status === "compacted" && event.afterTokens! < 0.7 * 29600));
-  assert.equal(f.log.filter((entry) => entry === "S").length, compactions.length);
   // Each compaction follows completed main steps, and the committed context is the latest checkpoint, not a fallback.
-  assert.doesNotMatch(f.log.join(""), /SS/);
+  assert.equal(attempts(f.log), compactions.length);
   const context = JSON.stringify(f.agent.transcript);
   assert.match(context, new RegExp(`Raw compaction checkpoint #${compactions.length}\\]`));
   assert.ok(!context.includes(MECHANICAL) && !context.includes(STUB));
@@ -411,7 +421,7 @@ test("phase 4/2: after a weak compaction the next crossing runs the fallback bef
   const first = f.events.find((event) => event.type === "compact_end")!;
   assert.equal(first.status, "compacted");
   assert.ok(first.afterTokens! >= 0.7 * 29600 && first.afterTokens! < 29600, `after ${first.afterTokens}`);
-  assert.equal(f.log.filter((entry) => entry === "S").length, 1, "no second summarizer request");
+  assert.equal(attempts(f.log), 1, "no second summary attempt");
   // The crossing after it cleared old results to saved copies instead, and the next request carried the stubs.
   const afterFirst = f.mains.filter((request) => JSON.stringify(request.messages).includes("Raw compaction checkpoint #1"));
   assert.ok(afterFirst.some((request) => JSON.stringify(request.messages).includes(STUB)));
@@ -432,9 +442,8 @@ test("phase 4/3: a failing summarizer warns, commits a mechanical checkpoint, an
 test("phase 4/4: a summarizer that keeps failing is never asked twice without a completed step in between", async () => {
   const f = refill({ contextWindow: 20000, trigger: 14400, pad: 1800, probes: 60, summary: () => { throw new Error("summary unavailable"); } });
   assert.equal((await f.run()).status, "completed");
-  const summaries = f.log.filter((entry) => entry === "S").length;
+  const summaries = attempts(f.log);
   assert.ok(summaries >= 2, `summaries: ${summaries}`);
-  assert.doesNotMatch(f.log.join(""), /SS/);
   assert.ok(summaries <= f.log.filter((entry) => entry === "M").length);
 });
 

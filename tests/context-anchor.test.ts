@@ -10,6 +10,7 @@ import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/
 import { measureSession } from "../src/sessions/metrics.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { createTestToolRegistry } from "./fixtures/registry.js";
+import { isCompactionRequest } from "./fixtures/compaction.js";
 
 const usage = (input: number, output: number) => ({ prompt_tokens: input, completion_tokens: output });
 const reply = (text: string, reported?: unknown): ProviderTurn => ({ text, toolCalls: [], finishReason: "stop", ...(reported === undefined ? {} : { usage: reported }) });
@@ -138,7 +139,7 @@ test("auto compact is judged on the reported size, so a large tool schema no lon
 test("compaction drops the reported size until the next response", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "raw-anchor-"));
   const agent = createAgent({ cwd, system: "tiny", registry: createTestToolRegistry(), compact: { keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100 },
-    provider: provider(async (request) => request.system === "tiny" ? reply("answer ".repeat(200), usage(5000, 200)) : reply("Summary.", usage(60, 5))) });
+    provider: provider(async (request) => !isCompactionRequest(request) ? reply("answer ".repeat(200), usage(5000, 200)) : reply("Summary.", usage(60, 5))) });
   await agent.run("first");
   await agent.run("second");
   assert.equal(agent.estimatedContextTokens(), 5200);

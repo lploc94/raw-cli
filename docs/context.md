@@ -41,7 +41,7 @@ An automatic compaction failure is a warning, not a turn outcome: Raw emits `com
 - Assistant messages and their native reasoning are never changed. The first request after a clearing gets the same one-time retry as after compaction (below) if the provider rejects the replayed reasoning.
 - The clearing is saved with the session in one step, with a `context_clearing` history item naming each cleared result and its path. The visible history keeps the original results.
 
-The operation keeps the newest steps verbatim and sends the older ones to the selected model as a structured checkpoint request ([compaction v2 design](compaction-v2-design.md) §6.3 and §7.2). The request has no tools and a short compact-only system instruction.
+The operation keeps the newest steps verbatim and sends the older ones to the selected model as a structured checkpoint request ([compaction v2 design](compaction-v2-design.md) §6.3 and §7.2). That chunked request has no tools and a short compact-only system instruction; when it fits, the agent's own model first writes the checkpoint from the cached main context instead (below).
 
 **After compaction** the model context is, in order ([design](compaction-v2-design.md) §6.2):
 
@@ -83,7 +83,12 @@ The facts that outlive their steps (files and saved outputs) are stored with the
 
 **Rejected reasoning.** If the first request after a compaction, in the same process or after a restart, fails with a provider validation error about thinking, reasoning, signatures or encrypted content, Raw retries it once with every earlier message projected to portable text, the same projection a model switch uses. The boundary is saved with the session, so later requests and a restart use it too.
 
-**Request contents.**
+**Summary from the cached main context** ([design](compaction-v2-design.md) §6.6). When the checkpoint is written by the agent's own model, Raw first sends the main request unchanged (system prompt, tools, every message, the main cache key) with the checkpoint prompt appended as one last user message. The prompt opens with the no-tools guard and carries the same rules, length rule, previous checkpoint and `compact.instructions` as the chunked request below, and the answer is handled the same way. A provider can then reuse the cached prefix; the usage events report cache-read tokens when it does. Tool settings stay as the main request has them, except `tool_choice: "none"` on providers that document that it keeps the cache ([providers](providers.md)). Raw uses the chunked request below instead:
+- when the main request, the prompt and the checkpoint's output budget do not fit the context;
+- when `/compact` or the library names another compaction model;
+- after one failed attempt: an error, a tool call, or an empty or unusable answer.
+
+**Request contents** of the chunked request.
 - **Rendered transcript.** The turns are rendered as labeled lines (`USER:`, `ASSISTANT:`, `REASONING:`, `TOOL CALL name(args)`, `TOOL RESULT name:`), not JSON.
 - **Reasoning.** Readable reasoning the provider returned is included:
   - Anthropic thinking text;

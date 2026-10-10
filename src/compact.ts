@@ -314,6 +314,12 @@ export async function summarizeTranscript(
     /** Largest output a retry may use: what the context after compaction has room for. */
     maxRetryOutputTokens?: number | undefined;
     onRequestStart?: (index: number) => void; onUsage?: (index: number, raw: unknown) => void;
+    /**
+     * The main request to summarize from (design §6.6), tried first when the summary is written by the agent's own model:
+     * its system prompt, tools and messages unchanged, so a provider can reuse the cached prefix.
+     */
+    sameContext?: { system: string; tools: readonly ToolDefinition[]; messages: readonly ModelMessage[]; cacheKey: string;
+      toolChoice?: "none" | undefined } | undefined;
   },
 ): Promise<SummaryResult> {
   const steps = transcriptSteps(messages);
@@ -332,7 +338,49 @@ export async function summarizeTranscript(
   const placeholderPath = "x".repeat(jsonBytes(tmpdir()) + SPILL_PATH_RESERVE - tmpdir().length + 64);
   let summary = options.prior;
   let usage: unknown;
-  for (let offset = 0, requestIndex = 0; offset < steps.length;) {
+  let requestIndex = 0;
+  if (options.sameContext) {
+    const same = options.sameContext;
+    // The prompt is the chunked one, guard first; the previous checkpoint is passed the same way for its merge rules.
+    const prompt = (budget: number) => checkpointPrompt({ words: checkpointWords(budget), instructions: options.instructions, prior: options.prior });
+    const request = (budget: number): ModelMessage[] => [...same.messages, { role: "user", content: prompt(budget) }];
+    const fitsSame = (budget: number) => context === undefined
+      || estimateRequestTokens(same.system, request(budget), same.tools) + budget + margin <= context;
+    let budget = options.maxOutputTokens;
+    if (fitsSame(budget)) {
+      // One attempt: an error, a tool call or an unusable answer falls back to the chunked path below.
+      try {
+        let turn: ProviderTurn;
+        for (;;) {
+          const index = requestIndex++;
+          options.onRequestStart?.(index);
+          turn = await provider.generate({
+            system: same.system, messages: request(budget), tools: same.tools, timeoutMs: options.timeoutMs, maxOutputTokens: budget,
+            ...(budget !== options.maxOutputTokens || options.maxOutputTokensDefaulted ? { maxOutputTokensAssumed: true } : {}),
+            ...(same.toolChoice ? { toolChoice: same.toolChoice } : {}),
+            signal: options.signal, cacheKey: same.cacheKey,
+            onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(index, raw); },
+          });
+          if (!options.signal.aborted && turn.usage !== undefined) options.onUsage?.(index, turn.usage);
+          if (options.signal.aborted) return { status: "cancelled" };
+          const larger = Math.min(budget * 2, provider.modelConfig.maxOutputTokens ?? Infinity, options.maxRetryOutputTokens ?? Infinity);
+          // A tool call is never retried here: the chunked path takes over.
+          if (turn.toolCalls.length || !turn.truncated || budget !== options.maxOutputTokens || larger <= budget || !fitsSame(larger)) break;
+          budget = larger;
+        }
+        const checkpoint = checkpointText(turn.text);
+        const reportedOutput = normalizeUsage(provider.modelConfig.method, turn.usage, provider.modelConfig.provider).outputTokens;
+        if (!turn.toolCalls.length && (turn.truncated || ["stop", "end_turn", "STOP"].includes(turn.finishReason)) && checkpoint
+          && (reportedOutput === undefined || reportedOutput <= budget)) {
+          return { status: "summarized", summary: turn.truncated ? `${checkpoint}${SUMMARY_CUT_NOTICE}` : checkpoint,
+            ...(turn.usage !== undefined ? { usage: turn.usage } : {}) };
+        }
+      } catch {
+        if (options.signal.aborted) return { status: "cancelled" };
+      }
+    }
+  }
+  for (let offset = 0; offset < steps.length;) {
     const prompt = (budget: number) => checkpointPrompt({ words: checkpointWords(budget), instructions: options.instructions, prior: summary });
     // Overhead first: the prompt, running checkpoint, output budget and margin must leave room for one one-line record.
     let budget = options.maxOutputTokens;

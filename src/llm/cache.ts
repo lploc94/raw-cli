@@ -1,5 +1,14 @@
 import type { ApiMethod, ResolvedModelConfig } from "./types.js";
 
+/**
+ * Whether the adapter's provider documents that sending `tool_choice: "none"` keeps the prompt cache, so a compaction
+ * request may set it (design §6.6; sources in docs/providers.md). OpenAI recommends it over removing tools; Anthropic
+ * documents that a `tool_choice` change invalidates cached message blocks; Google documents nothing either way.
+ */
+export function toolChoiceKeepsCache(model: Pick<ResolvedModelConfig, "provider" | "method">): boolean {
+  return model.provider === "openai" && (model.method === "openai-chat-completions" || model.method === "openai-responses");
+}
+
 export interface NormalizedUsage {
   inputTokensTotal?: number;
   outputTokens?: number;

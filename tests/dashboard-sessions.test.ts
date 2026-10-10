@@ -10,6 +10,7 @@ import type { SessionOperation } from "../src/sessions/operations.js";
 import type { SessionSnapshot } from "../src/dashboard/sessions.js";
 import { createAgent } from "../src/agent.js";
 import { COMPACT_SYSTEM_PROMPT } from "../src/compact.js";
+import { compactionInput, isCompactionRequest } from "./fixtures/compaction.js";
 
 test("HTTP duplicate submissions execute one real Bash effect and return the saved receipt", async () => {
   const f = await dashboardFixture({ agent: { tools: { use: ["builtin/bash"] } }, responses: [
@@ -157,7 +158,7 @@ for (const target of ["startup", "provider", "compact"] as const) test(`HTTP Sto
     if (target === "startup") return stopped(signal);
     return { modelConfig, compactOptions: { keepRecentTurns: 0, keepRecentTokens: 1 }, async close() {},
       agent: createAgent({ cwd: session.cwd, provider: { modelConfig, async generate(request) {
-        if (target === "provider" || request.system === COMPACT_SYSTEM_PROMPT) return stopped(request.signal);
+        if (target === "provider" || isCompactionRequest(request)) return stopped(request.signal);
         return { text: "details ".repeat(300), toolCalls: [], finishReason: "stop" };
       } }, persistence: { store, sessionId: session.id, owner, surface: "web", ownership: "host", operationId: operation.id } }),
     };

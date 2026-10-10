@@ -1,4 +1,4 @@
-import { GoogleGenAI, ThinkingLevel, type Content, type Part } from "@google/genai";
+import { FunctionCallingConfigMode, GoogleGenAI, ThinkingLevel, type Content, type Part } from "@google/genai";
 import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
@@ -81,6 +81,8 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
             ...(request.tools.length ? { tools: [{ functionDeclarations: request.tools.map((tool) => ({
               name: tool.name, description: tool.description, parametersJsonSchema: tool.inputSchema,
             })) }] } : {}),
+            ...(request.tools.length && request.toolChoice ? { toolConfig: { functionCallingConfig: {
+              mode: request.toolChoice === "none" ? FunctionCallingConfigMode.NONE : FunctionCallingConfigMode.AUTO } } } : {}),
           },
         }));
         let text = "";

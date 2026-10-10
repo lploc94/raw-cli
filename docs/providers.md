@@ -33,6 +33,17 @@ A response that stops at the output limit (`length`, `max_tokens`, `MAX_TOKENS`,
 
 The system prompt, tool definitions and committed message history keep stable order across turns. OpenAI receives a stable session `prompt_cache_key`; Anthropic receives `cache_control` in auto mode; Google relies on implicit caching; other services get no guessed hint. A selected `llama.cpp` Chat backend can opt into `cache_prompt`. Cache availability and hits remain provider decisions. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching), [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
 
+**Tool choice for compaction.** A request can carry `toolChoice` (`"auto"` or `"none"`). Each adapter sends it only when it is set and the request has tools: Chat Completions and Responses send `tool_choice`, Anthropic `tool_choice: {type}`, Gemini `toolConfig.functionCallingConfig.mode` (`AUTO` or `NONE`). Main requests never set it. A summary written from the cached main context (see [context](context.md)) sets `"none"` only where the provider documents that this keeps the prompt cache:
+
+| Service and method | Sent by compaction | Source |
+|---|---|---|
+| OpenAI, Chat Completions and Responses | `tool_choice: "none"` | The [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) recommends: "Set tool_choice to "none" instead of removing the tool definitions." |
+| Anthropic | nothing | The [prompt caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) lists tool choice under what invalidates the cache: "Changes to `tool_choice` parameter only affect message blocks." |
+| Google Gemini | nothing | The [context caching guide](https://ai.google.dev/gemini-api/docs/caching) does not say whether tool settings are part of the implicitly cached prefix. |
+| Other services on a compatible method | nothing | No documented cache behavior. |
+
+Without `"none"`, the summary request relies on its no-tools instruction, and a tool call in the answer sends compaction to its chunked path. Whether the prefix was reused shows in the compaction's usage events as cache-read tokens, when the provider reports them.
+
 Function calls and tool results remain linked by call ID. Responses output items, Anthropic thinking/signature blocks, Gemini thought signatures, OpenRouter reasoning details and DeepSeek `reasoning_content` are kept as opaque continuation data and never mixed into assistant answer text. When a provider streams plaintext reasoning, the CLI displays those deltas on stderr. Opaque signatures and encrypted reasoning remain hidden. Tool images are passed as native image content where the method accepts them; base64 is never presented as an ordinary text description.
 
 For `vision:true`, `view_image` produces a typed PNG/JPEG tool result. Chat Completions sends the linked text tool response followed by an image user block; Responses sends image content inside the linked `function_call_output`; Anthropic uses an image within the `tool_result`; Gemini uses `inlineData` in the function response. A provider may still reject a specific model's vision capability; that upstream error remains visible. Text-only agents can use MCP vision-to-text tools that perform OCR or visual analysis outside the selected model and return text.

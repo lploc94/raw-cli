@@ -273,10 +273,12 @@ The model then writes from its full context, including its own reasoning items. 
 
 | Adapter | Mapping if enabled | Cache effect |
 |---|---|---|
-| OpenAI chat | `tool_choice: "none"` | to verify |
-| Responses | `tool_choice: "none"` | to verify |
+| OpenAI chat | `tool_choice: "none"` | kept: the OpenAI prompt caching guide recommends it over removing tools; used for the `openai` service |
+| Responses | `tool_choice: "none"` | kept, same source; used for the `openai` service |
 | Anthropic | `tool_choice: {type: "none"}` | invalidates message cache: not used |
-| Google | `functionCallingConfig.mode: "NONE"` | to verify |
+| Google | `functionCallingConfig.mode: "NONE"` | undocumented for implicit caching: not used |
+
+Sources are recorded in `docs/providers.md` (checked 2026-10-11).
 
 Cache reuse is reported from provider usage (cache-read tokens), never assumed. Tests check the wire settings each adapter sends. A mocked cache count is not proof of reuse.
 
