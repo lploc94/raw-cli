@@ -104,6 +104,11 @@ export class OutputSpill {
   }
 }
 
+/** Whether a copy of `bytes` can be saved whole without deleting any saved file. */
+export function spillFits(bytes: number): boolean {
+  return bytes <= SPILL_MAX_BYTES && savedBytes + bytes <= totalLimit;
+}
+
 /** Saves `text` and returns where, or no path when it cannot be saved; `capped` when only its start fit. */
 export function spillText(label: string, text: string): { path?: string; capped: boolean } {
   const spill = new OutputSpill(label);

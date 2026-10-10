@@ -480,6 +480,14 @@ export function textTokens(text: string, calibration = 1): number {
 
 export function emptyFacts(): WorkingFacts { return { written: [], read: [], outputs: [] }; }
 
+/** The saved full outputs a tool result names: its own, and those of the rows of a batch result. */
+export function savedOutputPaths(result: ToolResult): string[] {
+  const results = record(result.content.find((block) => block.type === "json")?.value)?.results;
+  const rows = Array.isArray(results) ? results.map(record) : [];
+  return [...(result.fullOutputPath ? [result.fullOutputPath] : []),
+    ...rows.flatMap((row) => typeof row?.full_output === "string" ? [row.full_output] : [])];
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -512,10 +520,9 @@ export function collectFacts(messages: readonly ModelMessage[], facts: WorkingFa
         }
       }
     } else if (message.role === "tool") {
-      if (message.result.fullOutputPath) add(next.outputs, message.result.fullOutputPath);
+      for (const path of savedOutputPaths(message.result)) add(next.outputs, path);
       const results = record(message.result.content.find((block) => block.type === "json")?.value)?.results;
       const rows = Array.isArray(results) ? results.map(record) : [];
-      for (const row of rows) if (typeof row?.full_output === "string") add(next.outputs, row.full_output);
       // Only completed writes count: an operation or patch row that is ok, or a patch destination it already created.
       if (writes.has(message.callId)) for (const row of rows) {
         const tool = `${message.name}${typeof row?.mode === "string" ? ` ${row.mode}` : ""}`;

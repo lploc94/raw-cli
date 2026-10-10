@@ -10,6 +10,7 @@ import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFact
   summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, type CompactionLedgerState, type CompactOptions, type CompactResult,
   type LedgerEntry, type RenderOptions } from "./compact.js";
 import { existsSync } from "node:fs";
+import { CLEAR_MIN_FREED_TOKENS, CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
 import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
@@ -194,6 +195,10 @@ export class AgentSession {
         || options.compact.triggerTokens < 1 || options.compact.triggerTokens >= context! - output - Math.max(64, Math.ceil(context! * 0.05))) {
         throw new Error("auto compact trigger requires a valid context window and output reserve");
       }
+    }
+    if (options.compact?.clearTokens !== undefined && (!Number.isSafeInteger(options.provider.modelConfig.contextWindow)
+      || !Number.isSafeInteger(options.compact.clearTokens) || options.compact.clearTokens < 1)) {
+      throw new Error("tool result clearing requires a valid context window and threshold");
     }
     this.options = {
       provider: options.provider,
@@ -446,7 +451,6 @@ export class AgentSession {
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
     // Roles and identities come from the stored messages; what is sent comes from their replay projection, index for index.
     const source = structuredClone(this.messages);
-    const projected = structuredClone(this.requestMessages());
     const text = (message: ModelMessage | undefined) => message?.role === "user" && typeof message.content === "string" ? message.content : undefined;
     // The host prefix of the last compaction: a checkpoint message, or the old layout's pinned task and summary.
     let start = 0;
@@ -509,10 +513,10 @@ export class AgentSession {
     // Entries that left the context earlier: the stored ledger, or for a session compacted before it, what history proves.
     let base: LedgerEntry[] = [];
     let facts = emptyFacts();
-    if (this.ledgerState) {
-      base = structuredClone(this.ledgerState.entries);
-      facts = structuredClone(this.ledgerState.facts);
-    } else if (this.summaryText !== undefined) {
+    // A ledger state written only by tool-result clearing (no compaction yet) holds facts, not entries.
+    if (this.ledgerState) facts = structuredClone(this.ledgerState.facts);
+    if (this.ledgerState?.compactions) base = structuredClone(this.ledgerState.entries);
+    else if (this.summaryText !== undefined) {
       const activeSequences = new Set([...inputEntries.values()].flatMap((entry) => entry.sequence === undefined ? [] : [entry.sequence]));
       const legacy = this.persistence && this.originalTask !== undefined
         ? this.persistence.store.legacyUserInputs(this.persistence.sessionId, this.originalTask) : undefined;
@@ -524,7 +528,7 @@ export class AgentSession {
           { source: LEGACY_NOTE_SOURCE, content: LEGACY_LEDGER_NOTE }];
       }
     }
-    const n = (this.ledgerState?.compactions ?? (this.summaryText !== undefined ? 1 : 0)) + 1;
+    const n = (this.ledgerState?.compactions || (this.summaryText !== undefined ? 1 : 0)) + 1;
 
     // Allocation (§6.2.1), in the agent's calibrated estimate of the request the next turn sends.
     const modelConfig = this.options.provider.modelConfig;
@@ -755,6 +759,63 @@ export class AgentSession {
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       throw error;
     } finally { controller.signal.removeEventListener("abort", onAbort); }
+  }
+
+  /**
+   * Tier-0 clearing (docs/compaction-v2-design.md §6.8): old, large tool results before the protected tail become stubs
+   * naming a secured copy, until the next request is at most 45% of the input budget. Commits only when it frees at least
+   * `minFreedTokens`; true when it committed.
+   */
+  private clearWork(inputBudget: number, minFreedTokens: number, cause: "threshold" | "fallback"): boolean {
+    // One basis for the current size, the savings and the size after: the calibrated byte estimate of what is sent. A size
+    // anchored to provider usage is dropped by the replacement, so the target is checked the way the next request is.
+    const measure = (messages: readonly ModelMessage[]) => this.nextRequestSize(this.sendMessages(projectReplayMessages(messages, this.replayBefore)), false).tokens;
+    const currentTokens = measure(this.messages);
+    const messageTokens = (message: ModelMessage, index: number) => {
+      const sent = this.sendMessages(projectReplayMessages([message], index < this.replayBefore ? 1 : 0));
+      return Math.ceil((estimateRequestTokens("", sent, []) - estimateRequestTokens("", [], [])) * this.tokenCalibration);
+    };
+    // The protected tail: the last step, then earlier steps up to keep_recent_tokens, as compaction keeps them.
+    const units = transcriptSteps(this.messages);
+    const keepTokens = this.options.compact?.keepRecentTokens ?? Math.min(20000, Math.floor(0.25 * inputBudget));
+    let protectedFrom = this.messages.length;
+    const stepTokens = (unit: number) => units[unit]!.reduce((sum, message, offset) => sum + messageTokens(message, protectedFrom - units[unit]!.length + offset), 0);
+    let kept = 0;
+    if (units.length) { kept = stepTokens(units.length - 1); protectedFrom -= units.at(-1)!.length; }
+    for (let unit = units.length - 2; unit >= 0; unit--) {
+      const cost = stepTokens(unit);
+      if (kept + cost > keepTokens) break;
+      kept += cost;
+      protectedFrom -= units[unit]!.length;
+    }
+    const reminders = [...panelReminders(this.panels.snapshot()),
+      ...this.messages.flatMap((message) => message.role === "user" && typeof message.content === "string" && isPanelReminder(message.content) ? [message.content] : [])];
+    const exempt = (message: ToolMessage) => {
+      const identity = this.toolIdentity(message.name);
+      return identity === "builtin/ask_user" || identity === "builtin/load_skill"
+        || namedByReminder(message, reminders);
+    };
+    const outcome = clearToolResults(this.messages, { protectedFrom, currentTokens, targetTokens: Math.floor(CLEAR_TARGET_RATIO * inputBudget),
+      minFreedTokens, messageTokens, exempt, measure });
+    if (!outcome) return false;
+    // Facts of the steps whose results become stubs are folded first, so the working state keeps them (§6.2).
+    const covered = Math.min(this.ledgerState?.factsThrough ?? 0, this.messages.length);
+    const through = Math.max(covered, protectedFrom);
+    const facts = collectFacts(this.messages.slice(covered, through), this.ledgerState?.facts ?? emptyFacts(), (name) => this.toolIdentity(name));
+    // The copies clearing wrote are saved outputs too; the stubs naming them may later be summarized away.
+    for (const { path } of outcome.cleared) if (!facts.outputs.includes(path)) facts.outputs.push(path);
+    const ledger: CompactionLedgerState = { ...(this.ledgerState ?? { entries: [], compactions: 0 }), facts, factsThrough: through, retryArmed: true };
+    const afterTokens = currentTokens - outcome.freedTokens;
+    this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, outcome.messages, { ledger, anchor: null }, false,
+      [{ kind: "context_clearing", payload: this.visiblePayload({ id: randomUUID(), cause, beforeTokens: currentTokens, afterTokens,
+        freedTokens: outcome.freedTokens, results: outcome.cleared }) }]));
+    if (this.persistenceError) throw this.persistenceError;
+    this.messages = outcome.messages;
+    this.anchor = undefined;
+    this.ledgerState = ledger;
+    // The request after clearing replays reasoning around stubs; a provider that rejects it gets the projected retry.
+    this.replayRetryArmed = true;
+    return true;
   }
 
   private async compactAttempt(provider: ProviderAdapter, settings: CompactWorkSettings, controller: AbortController,
@@ -1111,7 +1172,7 @@ export class AgentSession {
         let baseEstimate = 0;
         let measured = false;
         const compact = this.options.compact;
-        if (compact?.triggerTokens !== undefined) {
+        if (compact && (compact.triggerTokens !== undefined || compact.clearTokens !== undefined)) {
           const modelConfig = this.options.provider.modelConfig;
           const context = modelConfig.contextWindow!;
           const outputReserve = effectiveOutputTokens(modelConfig);
@@ -1123,7 +1184,11 @@ export class AgentSession {
             return size.tokens;
           };
           requestEstimate = estimate();
-          if (requestEstimate >= compact.triggerTokens && !autoCompacted) {
+          // Tier 0 (§6.8): below the compaction trigger, old tool results are cleared to saved copies first.
+          if (compact.clearTokens !== undefined && requestEstimate >= compact.clearTokens
+            && (compact.triggerTokens === undefined || requestEstimate < compact.triggerTokens)
+            && this.clearWork(inputBudget, CLEAR_MIN_FREED_TOKENS, "threshold")) requestEstimate = estimate();
+          if (compact.triggerTokens !== undefined && requestEstimate >= compact.triggerTokens && !autoCompacted) {
             if (controller.signal.aborted) return finish(interrupted());
             let compactResult: CompactResult;
             try { compactResult = await this.compactAttempt(this.options.provider, { keepRecentTurns: compact.keepRecentTurns,
@@ -1136,7 +1201,7 @@ export class AgentSession {
           }
           // Only a size anchored to provider-reported usage may stop the run; a byte estimate alone can overstate
           // tokens severalfold, so the request is sent and the provider decides.
-          if (measured && requestEstimate > inputBudget) return finish({ status: "error", steps, code: "context_budget_exceeded",
+          if (compact.triggerTokens !== undefined && measured && requestEstimate > inputBudget) return finish({ status: "error", steps, code: "context_budget_exceeded",
             message: `estimated input ${requestEstimate} exceeds budget ${inputBudget}` });
         }
         steps++;

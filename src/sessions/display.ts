@@ -33,6 +33,8 @@ export function storedAcpUpdates(item: HistoryItem): SessionUpdate[] {
   const payload = item.payload;
   if (item.kind === "compaction") return [{ sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compaction: ${String(payload.status)}.` } }];
+  if (item.kind === "context_clearing") return [{ sessionUpdate: "agent_thought_chunk", content: { type: "text",
+    text: `Cleared ${Array.isArray(payload.results) ? payload.results.length : 0} old tool results to saved copies (${String(payload.freedTokens)} tokens freed).` } }];
   if (item.kind === "run_end") return [];
   if (item.kind === "panel_receipt") return [{ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: receiptLine(payload as unknown as PanelReceipt).trim() } }];
   if (item.kind === "hook_event") return [acpUpdate({ type: "hook_event", id: String(payload.id),

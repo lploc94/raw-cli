@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
 import { defaultCompactOutputTokens } from "./compact.js";
+import { CLEAR_DEFAULT_RATIO } from "./context-clearing.js";
 import { effectiveOutputTokens } from "./llm/output.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS } from "./llm/types.js";
 import { DEFAULT_MAX_OUTPUT_BYTES } from "./tools/results.js";
@@ -67,6 +68,8 @@ export interface CompactSettings {
   /** maxOutputTokens is Raw's default rather than configured, so a provider may lower it to a model's stated maximum. */
   maxOutputTokensDefaulted?: boolean;
   triggerTokens?: number;
+  /** Next-request estimate at which old tool results are cleared to saved copies (tier 0); unset means never. */
+  clearTokens?: number;
   /** Extra text appended to the checkpoint prompt. */
   instructions?: string;
 }
@@ -539,9 +542,10 @@ function modelSpec(name: string, raw: unknown): ModelSpec {
   return result;
 }
 
-function defaultTriggerTokens(model: Parameters<typeof effectiveOutputTokens>[0] & { contextWindow?: number | undefined }): number {
+/** `ratio` of the input budget: the context minus the output reserve and the safety margin. */
+function defaultThreshold(model: Parameters<typeof effectiveOutputTokens>[0] & { contextWindow?: number | undefined }, ratio: number): number {
   const context = model.contextWindow!;
-  return Math.floor(0.8 * (context - effectiveOutputTokens(model) - Math.max(64, Math.ceil(context * 0.05))));
+  return Math.floor(ratio * (context - effectiveOutputTokens(model) - Math.max(64, Math.ceil(context * 0.05))));
 }
 
 /** Bound on `compact.instructions`, which is sent with every compaction request. */
@@ -549,7 +553,7 @@ const MAX_COMPACT_INSTRUCTIONS = 16384;
 
 function compactSpec(raw: unknown, where: string, model: Parameters<typeof defaultCompactOutputTokens>[0] = {}): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
-  keys(value, ["keep_recent_turns", "keep_recent_tokens", "max_output_tokens", "trigger_tokens", "instructions"], where);
+  keys(value, ["keep_recent_turns", "keep_recent_tokens", "max_output_tokens", "trigger_tokens", "clear_tokens", "instructions"], where);
   if (value.instructions !== undefined && (typeof value.instructions !== "string" || value.instructions.length > MAX_COMPACT_INSTRUCTIONS)) {
     throw new Error(`${where}.instructions must be a string of at most ${MAX_COMPACT_INSTRUCTIONS} characters`);
   }
@@ -562,7 +566,11 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
     // A declared context turns automatic compaction on at 80% of the input budget; `false` keeps it manual.
     ...(value.trigger_tokens === false ? {}
       : value.trigger_tokens !== undefined ? { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }
-      : model.contextWindow !== undefined && defaultTriggerTokens(model) > 0 ? { triggerTokens: defaultTriggerTokens(model) } : {}),
+      : model.contextWindow !== undefined && defaultThreshold(model, 0.8) > 0 ? { triggerTokens: defaultThreshold(model, 0.8) } : {}),
+    // A declared context clears old tool results at 60% of the input budget; `false` turns clearing off.
+    ...(value.clear_tokens === false ? {}
+      : value.clear_tokens !== undefined ? { clearTokens: positive(value.clear_tokens, where + ".clear_tokens") }
+      : model.contextWindow !== undefined && defaultThreshold(model, CLEAR_DEFAULT_RATIO) > 0 ? { clearTokens: defaultThreshold(model, CLEAR_DEFAULT_RATIO) } : {}),
     ...(typeof value.instructions === "string" && value.instructions.trim() ? { instructions: value.instructions } : {}),
   };
 }
@@ -587,6 +595,9 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
     ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
     ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
   const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
+  if (result.compact.clearTokens !== undefined && model.contextWindow === undefined) {
+    throw new Error(where + ".compact.clear_tokens requires model.context_window_tokens");
+  }
   if (result.compact.triggerTokens !== undefined) {
     if (model.contextWindow === undefined) throw new Error(where + ".compact.trigger_tokens requires model.context_window_tokens");
     const reserve = effectiveOutputTokens({ ...model, ...(result.request ? { request: result.request } : {}) });
