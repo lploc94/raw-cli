@@ -7,7 +7,7 @@ import { createAgent } from "../src/agent.js";
 import { estimateRequestTokens, performCompaction, USER_IMAGE_TOKEN_ESTIMATE } from "../src/compact.js";
 import { nativeUserContent } from "../src/llm/content.js";
 import { createProvider } from "../src/llm/client.js";
-import { projectVisionMessages } from "../src/llm/replay.js";
+import { projectImageLimits, projectVisionMessages, requestImageLimits } from "../src/llm/replay.js";
 import { renderUserInput, type ModelMessage, type ProviderAdapter, type ProviderRequest, type ProviderTurn, type UserBlock } from "../src/llm/types.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { storedAcpUpdates } from "../src/sessions/display.js";
@@ -184,6 +184,42 @@ test("projectVisionMessages replaces only user images and never mutates its inpu
   assert.deepEqual(blocks.map((block) => block.type), ["text", "text", "text", "text", "text"]);
   assert.match((blocks[1] as { text: string }).text, /a\.png/);
   assert.deepEqual(projectVisionMessages(messages, true), messages);
+});
+
+test("images the API would reject become text notes, newest images keep the request allowance, input is not mutated", () => {
+  const image = (characters: number, name: string) => ({ type: "image" as const, mimeType: "image/png" as const, data: "A".repeat(characters), name });
+  const messages: ModelMessage[] = [
+    { role: "user", content: [image(30, "old.png")] },
+    { role: "tool", callId: "c", name: "view_image", result: { isError: false, content: [{ type: "image", mimeType: "image/jpeg", data: "B".repeat(30), path: "/tmp/shot.jpg" }] } },
+    { role: "user", content: [{ type: "text", text: "look" }, image(80, "huge.png"), image(40, "new.png")] },
+  ];
+  const before = structuredClone(messages);
+  const projected = projectImageLimits(messages, { perImage: 50, total: 75, count: 3 });
+  assert.deepEqual(messages, before);
+  const latest = (projected[2] as unknown as { content: UserBlock[] }).content;
+  assert.equal(latest[0], (messages[2] as unknown as { content: UserBlock[] }).content[0]);
+  assert.match((latest[1] as { text: string }).text, /"huge\.png".*over the provider's 0\.0 MiB per-image limit.*smaller copy/);
+  assert.equal(latest[2]!.type, "image");
+  // The tool image (30) still fits after the newest (40); the oldest would pass the 75-character allowance.
+  assert.equal((projected[1] as unknown as { result: { content: Array<{ type: string }> } }).result.content[0]!.type, "image");
+  assert.match(((projected[0] as unknown as { content: UserBlock[] }).content[0] as { text: string }).text, /"old\.png".*per-request allowance/);
+  assert.deepEqual(projectImageLimits(messages, { total: 1000, count: 10 }), messages);
+  assert.deepEqual(requestImageLimits("anthropic-messages"), { perImage: 5 * 1024 * 1024, total: 24 * 1024 * 1024, count: 100 });
+});
+
+test("an Anthropic request carries a note instead of an image over 5 MB, and the stored turn keeps the image", async () => {
+  const fixture = await startMockProvider([{ frames: [...scenarios[2].frames] }]);
+  const big = makePngOfSize(4 * 1024 * 1024);
+  try {
+    const agent = createAgent({ provider: createProvider({ agentName: "f", provider: "anthropic", method: "anthropic-messages", model: "fixture",
+      baseUrl: fixture.url, apiKey: "fixture", vision: true }), registry: new ToolRegistry(), system: "s" });
+    assert.equal((await agent.run([{ type: "text", text: "look" }, imageBlock(big, "image/png", "big.png")])).status, "completed");
+    const sent = JSON.stringify(wireContent("anthropic-messages", fixture.requests[0]?.body));
+    assert.match(sent, /Image omitted from this request: image\/png, \\"big\.png\\", 5\.\d MiB encoded/);
+    assert.ok(!sent.includes(big.toString("base64").slice(0, 200)));
+    assert.ok(JSON.stringify(agent.transcript[0]).includes(big.toString("base64").slice(0, 200)));
+    await agent.close();
+  } finally { await fixture.close(); }
 });
 
 test("image blocks never leak base64 into rendered text, history views, terminal, ACP text or compaction summaries", async () => {

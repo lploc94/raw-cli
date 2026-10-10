@@ -7,7 +7,7 @@ import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anc
 import { defaultCompactOutputTokens, estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
-import { projectReplayMessages, projectVisionMessages } from "./llm/replay.js";
+import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
 import { nativeUserContent } from "./llm/content.js";
 import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
@@ -309,9 +309,10 @@ export class AgentSession {
     return { tokens: this.reported, base, messageCount: this.messages.length + 1, signature: this.anchorSignature() };
   }
   private requestMessages(): ModelMessage[] { return projectReplayMessages(this.messages, this.replayBefore); }
-  /** What the provider actually receives: replay projection plus text placeholders for images on non-vision models. */
+  /** What the provider actually receives: replay projection plus text placeholders for images the model cannot read or the API would reject. */
   private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
-    return projectVisionMessages(messages, this.options.provider.modelConfig.vision === true);
+    const modelConfig = this.options.provider.modelConfig;
+    return projectImageLimits(projectVisionMessages(messages, modelConfig.vision === true), requestImageLimits(modelConfig.method));
   }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
