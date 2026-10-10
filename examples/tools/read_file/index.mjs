@@ -57,6 +57,9 @@ var PANEL_LIMITS = {
   contextSummaryBytes: 2048
 };
 
+// src/tools/write-changes.ts
+var MAX_DIFF_SOURCE_BYTES = 8 * 1024 * 1024;
+
 // src/tools/primitives.ts
 import { open as open2, mkdir as mkdir2, writeFile, readFile, appendFile, stat } from "fs/promises";
 import { createHash as createHash2 } from "crypto";

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileTool } from "../src/tools/primitives.js";
 import { buildWriteChanges } from "../src/tools/write-changes.js";
+import { unifiedDiff } from "../src/tools/line-diff.js";
 import { validateDocument } from "../src/panels/validate.js";
 import type { PanelDocument, PanelContext, FileEntry } from "../src/panels/contract.js";
 
@@ -105,4 +106,45 @@ test("invalid or oversized display paths are omitted honestly without failing do
   assert.equal(entries(doc).length, 0);
   assert.equal(doc.summary, "0 paths shown; 2 history entries omitted");
   validateDocument(doc);
+});
+
+const diffText = (doc: PanelDocument) => (doc.blocks.find(b => b.id === "recent_diff") as { text: string }).text;
+
+test("Recent diff shows each changed region with context instead of the start of the file", () => {
+  const before = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`);
+  const after = [...before];
+  after[149] = "changed 150";
+  after.splice(280, 0, "inserted after 280");
+  const doc = buildWriteChanges(undefined, [{ path: "/p/big.ts", kind: "modified",
+    before: Buffer.from(before.join("\n") + "\n"), after: Buffer.from(after.join("\n") + "\n") }]);
+  const text = diffText(doc);
+  assert.match(text, /    @@ -147,7 \+147,7 @@\n     line 147\n     line 148\n     line 149\n    -line 150\n    \+changed 150\n     line 151/);
+  assert.match(text, /    @@ -278,6 \+278,7 @@\n(.*\n){3}    \+inserted after 280\n/);
+  assert.doesNotMatch(text, /line 1\n|line 100\n/);
+  assert.doesNotMatch(text, /diff truncated/);
+  validateDocument(doc);
+});
+
+test("unified diff covers added files, bounds its size and degrades binary content", () => {
+  assert.equal(unifiedDiff("", "a\nb\n", 1000).text, "@@ -0,0 +1,2 @@\n+a\n+b");
+  assert.equal(unifiedDiff("a\nb\n", "", 1000).text, "@@ -1,2 +0,0 @@\n-a\n-b");
+  const long = unifiedDiff("", Array.from({ length: 5000 }, (_, i) => `row ${i}`).join("\n"), 2000);
+  assert.equal(long.truncated, true);
+  assert.ok(Buffer.byteLength(long.text) <= 2000);
+  const binary = buildWriteChanges(undefined, [{ path: "/p/bin", kind: "modified", before: Buffer.from([0, 1, 2]), after: Buffer.from([0, 1, 3]) }]);
+  assert.match(diffText(binary), /\[binary content: 3 → 3 bytes\]/);
+});
+
+test("an overwrite deep inside a large file shows that change in Recent diff", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-changes-"));
+  let document: PanelDocument | undefined;
+  const panels: PanelContext = { protocol: 2, get: () => document ? { revision: 1, document } : undefined,
+    update: async (_id, update) => { if (update.op === "replace") document = update.document; return { revision: 1 }; } };
+  try {
+    const rows = Array.from({ length: 4000 }, (_, i) => `row ${i + 1}`);
+    await writeFileTool({ operations: [{ path: "big.txt", mode: "overwrite", content: rows.join("\n") }] }, { cwd, panels, maxOutputBytes: 4096 });
+    rows[3499] = "edited row 3500";
+    await writeFileTool({ operations: [{ path: "big.txt", mode: "overwrite", content: rows.join("\n") }] }, { cwd, panels, maxOutputBytes: 4096 });
+    assert.match(diffText(document!), /    @@ -3497,7 \+3497,7 @@[\s\S]*    -row 3500\n    \+edited row 3500/);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
 });

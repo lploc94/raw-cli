@@ -1,11 +1,27 @@
 import { PANEL_LIMITS, type FileEntry, type PanelDocument } from "../panels/contract.js";
 import { utf8Prefix } from "./results.js";
+import { unifiedDiff } from "./line-diff.js";
 import type { CompletedPatchChange } from "./file-patch.js";
 import type { ToolContext } from "./primitives.js";
 
 const clean = (text: string) => text.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "�");
 type CompletedWriteChange = CompletedPatchChange & { beforeUnavailable?: boolean; afterUnavailable?: boolean };
 const omittedKey = "Omitted history entries";
+const DIFF_PREVIEW_BYTES = 6144;
+/** Larger files are reported by size; the write snapshot reads one byte more to detect them. */
+export const MAX_DIFF_SOURCE_BYTES = 8 * 1024 * 1024;
+
+/** The changed regions of one write with surrounding context, not the start of the file. */
+function diffPreview(change: CompletedWriteChange): string {
+  const sides = [change.before, change.after];
+  if (sides.some((bytes) => bytes && bytes.length > MAX_DIFF_SOURCE_BYTES)) {
+    return `[file too large to diff: ${change.before?.length ?? 0} → ${change.after?.length ?? 0} bytes]\n`;
+  }
+  if (sides.some((bytes) => bytes?.subarray(0, 8192).includes(0))) return `[binary content: ${change.before?.length ?? 0} → ${change.after?.length ?? 0} bytes]\n`;
+  // Indented code avoids treating any file bytes (including Markdown fences) as active markup.
+  const diff = unifiedDiff(clean(change.before?.toString("utf8") ?? ""), clean(change.after?.toString("utf8") ?? ""), DIFF_PREVIEW_BYTES, "    ");
+  return `${diff.text}\n${diff.truncated ? "\n[diff truncated]" : ""}`;
+}
 
 /** Bounded, persisted history of tool writes; it deliberately does not inspect Git or the workspace. */
 export function buildWriteChanges(previous: PanelDocument | undefined, changes: readonly CompletedWriteChange[]): PanelDocument {
@@ -26,15 +42,7 @@ export function buildWriteChanges(previous: PanelDocument | undefined, changes: 
       put(change.oldPath, "deleted", `${change.oldPath} → ${change.path}`);
       put(change.path, "added", `${change.oldPath} → ${change.path}`);
     } else put(change.path, change.kind === "deleted" ? "deleted" : change.kind === "added" ? "added" : "modified");
-    const snapshot = (bytes: Buffer | undefined) => {
-      const prefix = utf8Prefix(clean(bytes?.subarray(0, 3076).toString("utf8") ?? ""), 3072);
-      return { text: prefix.text, truncated: prefix.truncated || (bytes?.length ?? 0) > 3072 };
-    };
-    const before = snapshot(change.before);
-    const after = snapshot(change.after);
-    // Indented code avoids treating any file bytes (including Markdown fences) as active markup.
-    const lines = [...(change.before ? before.text.split("\n").map(line => `    -${line}`) : []), ...(change.after ? after.text.split("\n").map(line => `    +${line}`) : [])];
-    previews.push(`Recent diff: ${clean(change.oldPath ? `${change.oldPath} → ${change.path}` : change.path)}\n\n${lines.join("\n")}\n${before.truncated || after.truncated ? "\n[diff truncated]" : ""}${change.beforeUnavailable || change.afterUnavailable ? "\n[diff unavailable: file bytes could not be read]" : ""}`);
+    previews.push(`Recent diff: ${clean(change.oldPath ? `${change.oldPath} → ${change.path}` : change.path)}\n\n${diffPreview(change)}${change.beforeUnavailable || change.afterUnavailable ? "\n[diff unavailable: file bytes could not be read]" : ""}`);
   }
   while (byPath.size > 200) { byPath.delete(byPath.keys().next().value!); omitted++; }
   const oldPreview = previous?.blocks.find(b => b.id === "recent_diff" && b.kind === "markdown") as { text: string } | undefined;

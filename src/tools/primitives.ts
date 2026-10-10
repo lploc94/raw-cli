@@ -1,6 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import { parseFilePatch, applyFilePatch } from "./file-patch.js";
-import { publishWriteChanges } from "./write-changes.js";
+import { MAX_DIFF_SOURCE_BYTES, publishWriteChanges } from "./write-changes.js";
 import type { CommandActivity } from "../processes/presentation.js";
 import type { ProcessContext } from "../processes/contract.js";
 import type { InteractionContext } from "../interactions/contract.js";
@@ -229,10 +229,17 @@ async function writeSnapshot(path: string): Promise<{ bytes?: Buffer; missing: b
   try {
     if (!(await stat(path)).isFile()) return { missing: false };
     file = await open(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
-    if (!(await file.stat()).isFile()) return { missing: false };
-    const bytes = Buffer.alloc(8193);
-    const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-    return { bytes: bytes.subarray(0, bytesRead), missing: false };
+    const info = await file.stat();
+    if (!info.isFile()) return { missing: false };
+    // One byte past the diff limit is enough to know the file is too large to diff.
+    const bytes = Buffer.alloc(Math.min(info.size, MAX_DIFF_SOURCE_BYTES) + 1);
+    let filled = 0;
+    while (filled < bytes.length) {
+      const { bytesRead } = await file.read(bytes, filled, bytes.length - filled, filled);
+      if (!bytesRead) break;
+      filled += bytesRead;
+    }
+    return { bytes: bytes.subarray(0, filled), missing: false };
   } catch (error) { return { missing: (error as NodeJS.ErrnoException).code === "ENOENT" }; }
   finally { await file?.close().catch(() => {}); }
 }

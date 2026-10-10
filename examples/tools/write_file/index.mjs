@@ -59,8 +59,8 @@ var fail = (code2) => {
 };
 var hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 function checkLines(bytes) {
-  let lines = bytes.length && bytes.at(-1) !== 10 ? 1 : 0;
-  for (const byte of bytes) if (byte === 10 && ++lines > FILE_LINES) fail("patch_too_many_lines");
+  let lines2 = bytes.length && bytes.at(-1) !== 10 ? 1 : 0;
+  for (const byte of bytes) if (byte === 10 && ++lines2 > FILE_LINES) fail("patch_too_many_lines");
 }
 var code = (error) => {
   const candidate = error instanceof PatchError ? error.code : error?.code;
@@ -74,9 +74,9 @@ function validateFilePatchSyntax(source) {
 }
 function parsePatch(source, cwd, checkResolvedTargets) {
   if (typeof source !== "string" || Buffer.byteLength(source) > PATCH_BYTES || source.includes("\0")) fail("patch_invalid_size_or_binary");
-  const lines = source.split("\n").map((line) => line.endsWith("\r") ? line.slice(0, -1) : line);
-  if (lines.at(-1) === "") lines.pop();
-  if (lines.shift() !== "*** Begin Patch" || lines.pop() !== "*** End Patch") fail("patch_invalid_envelope");
+  const lines2 = source.split("\n").map((line) => line.endsWith("\r") ? line.slice(0, -1) : line);
+  if (lines2.at(-1) === "") lines2.pop();
+  if (lines2.shift() !== "*** Begin Patch" || lines2.pop() !== "*** End Patch") fail("patch_invalid_envelope");
   const changes = [];
   const targets = /* @__PURE__ */ new Set();
   let targetCount = 0;
@@ -92,37 +92,37 @@ function parsePatch(source, cwd, checkResolvedTargets) {
     return path;
   };
   let cursor = 0;
-  while (cursor < lines.length) {
-    const header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(lines[cursor++]);
+  while (cursor < lines2.length) {
+    const header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(lines2[cursor++]);
     if (!header) fail("patch_invalid_header");
     const rawPath = header[2];
     const kind = header[1] === "Add" ? "add" : header[1] === "Update" ? "update" : "delete";
     const change = { kind, path: target(rawPath), rawPath, hunks: [], added: [], noNewline: false };
-    if (kind === "update" && lines[cursor]?.startsWith("*** Move to: ")) {
-      change.rawDestination = lines[cursor++].slice("*** Move to: ".length);
+    if (kind === "update" && lines2[cursor]?.startsWith("*** Move to: ")) {
+      change.rawDestination = lines2[cursor++].slice("*** Move to: ".length);
       change.destination = target(change.rawDestination);
     }
     if (kind === "add") {
-      while (lines[cursor]?.startsWith("+")) change.added.push(lines[cursor++].slice(1));
+      while (lines2[cursor]?.startsWith("+")) change.added.push(lines2[cursor++].slice(1));
     } else if (kind === "update") {
-      while (lines[cursor] === "@@") {
+      while (lines2[cursor] === "@@") {
         cursor++;
         const hunk = { lines: [], eof: false };
-        while (cursor < lines.length && /^[ +\-]/.test(lines[cursor])) {
-          const line = lines[cursor++];
+        while (cursor < lines2.length && /^[ +\-]/.test(lines2[cursor])) {
+          const line = lines2[cursor++];
           hunk.lines.push({ kind: line[0], text: line.slice(1) });
         }
         if (!hunk.lines.length) fail("patch_empty_hunk");
-        if (lines[cursor] === "*** End of File") {
+        if (lines2[cursor] === "*** End of File") {
           hunk.eof = true;
           cursor++;
         }
         change.hunks.push(hunk);
-        if (hunk.eof && lines[cursor] === "@@") fail("patch_hunk_after_eof");
+        if (hunk.eof && lines2[cursor] === "@@") fail("patch_hunk_after_eof");
       }
       if (!change.hunks.length) fail("patch_missing_hunk");
     }
-    if (kind !== "delete" && lines[cursor] === "*** No newline at end of file") {
+    if (kind !== "delete" && lines2[cursor] === "*** No newline at end of file") {
       change.noNewline = true;
       cursor++;
     }
@@ -418,9 +418,114 @@ var PANEL_LIMITS = {
   contextSummaryBytes: 2048
 };
 
+// src/tools/line-diff.ts
+var CONTEXT_LINES = 3;
+var MAX_CELLS = 1e6;
+var MAX_LINE_CHARS = 500;
+function lines(text) {
+  if (!text) return [];
+  const split = text.split("\n");
+  if (split.at(-1) === "") split.pop();
+  return split;
+}
+function operations(before, after) {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let endOld = before.length;
+  let endNew = after.length;
+  while (endOld > start && endNew > start && before[endOld - 1] === after[endNew - 1]) {
+    endOld--;
+    endNew--;
+  }
+  const ops = [];
+  for (let index = Math.max(0, start - CONTEXT_LINES); index < start; index++) ops.push({ kind: " ", text: before[index], oldAt: index, newAt: index });
+  const removed = before.slice(start, endOld);
+  const added = after.slice(start, endNew);
+  const n = removed.length;
+  const m = added.length;
+  if (n && m && n * m <= MAX_CELLS) {
+    const width = m + 1;
+    const common = new Uint32Array((n + 1) * width);
+    for (let i2 = n - 1; i2 >= 0; i2--) for (let j2 = m - 1; j2 >= 0; j2--) {
+      common[i2 * width + j2] = removed[i2] === added[j2] ? common[(i2 + 1) * width + j2 + 1] + 1 : Math.max(common[(i2 + 1) * width + j2], common[i2 * width + j2 + 1]);
+    }
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      const at = { oldAt: start + i, newAt: start + j };
+      if (i < n && j < m && removed[i] === added[j]) {
+        ops.push({ kind: " ", text: removed[i], ...at });
+        i++;
+        j++;
+      } else if (i < n && (j === m || common[(i + 1) * width + j] >= common[i * width + j + 1])) {
+        ops.push({ kind: "-", text: removed[i], ...at });
+        i++;
+      } else {
+        ops.push({ kind: "+", text: added[j], ...at });
+        j++;
+      }
+    }
+  } else {
+    removed.forEach((text, index) => ops.push({ kind: "-", text, oldAt: start + index, newAt: start }));
+    added.forEach((text, index) => ops.push({ kind: "+", text, oldAt: endOld, newAt: start + index }));
+  }
+  for (let index = 0; index < Math.min(CONTEXT_LINES, before.length - endOld); index++) {
+    ops.push({ kind: " ", text: before[endOld + index], oldAt: endOld + index, newAt: endNew + index });
+  }
+  return ops;
+}
+function unifiedDiff(before, after, budgetBytes, indent = "") {
+  const ops = operations(lines(before), lines(after));
+  const changed = ops.flatMap((op, index) => op.kind === " " ? [] : [index]);
+  const hunks = [];
+  for (const index of changed) {
+    const from = Math.max(0, index - CONTEXT_LINES);
+    const to = Math.min(ops.length - 1, index + CONTEXT_LINES);
+    const last = hunks.at(-1);
+    if (last && from <= last[1] + 1) last[1] = Math.max(last[1], to);
+    else hunks.push([from, to]);
+  }
+  const out = [];
+  let bytes = 0;
+  const push = (line) => {
+    const size = Buffer.byteLength(line, "utf8") + 1;
+    if (bytes + size > budgetBytes) return false;
+    out.push(line);
+    bytes += size;
+    return true;
+  };
+  for (const [from, to] of hunks) {
+    const slice = ops.slice(from, to + 1);
+    const oldCount = slice.filter((op) => op.kind !== "+").length;
+    const newCount = slice.filter((op) => op.kind !== "-").length;
+    const first = slice[0];
+    if (!push(`${indent}@@ -${first.oldAt + (oldCount ? 1 : 0)},${oldCount} +${first.newAt + (newCount ? 1 : 0)},${newCount} @@`)) return { text: out.join("\n"), truncated: true };
+    for (const op of slice) {
+      const chars = [...op.text];
+      const text = chars.length > MAX_LINE_CHARS ? `${chars.slice(0, MAX_LINE_CHARS).join("")}\u2026` : op.text;
+      if (!push(`${indent}${op.kind}${text}`)) return { text: out.join("\n"), truncated: true };
+    }
+  }
+  return { text: out.join("\n"), truncated: false };
+}
+
 // src/tools/write-changes.ts
 var clean = (text) => text.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "\uFFFD");
 var omittedKey = "Omitted history entries";
+var DIFF_PREVIEW_BYTES = 6144;
+var MAX_DIFF_SOURCE_BYTES = 8 * 1024 * 1024;
+function diffPreview(change) {
+  const sides = [change.before, change.after];
+  if (sides.some((bytes) => bytes && bytes.length > MAX_DIFF_SOURCE_BYTES)) {
+    return `[file too large to diff: ${change.before?.length ?? 0} \u2192 ${change.after?.length ?? 0} bytes]
+`;
+  }
+  if (sides.some((bytes) => bytes?.subarray(0, 8192).includes(0))) return `[binary content: ${change.before?.length ?? 0} \u2192 ${change.after?.length ?? 0} bytes]
+`;
+  const diff = unifiedDiff(clean(change.before?.toString("utf8") ?? ""), clean(change.after?.toString("utf8") ?? ""), DIFF_PREVIEW_BYTES, "    ");
+  return `${diff.text}
+${diff.truncated ? "\n[diff truncated]" : ""}`;
+}
 function buildWriteChanges(previous, changes) {
   const files = previous?.blocks.find((b) => b.id === "files" && b.kind === "files");
   const retention = previous?.blocks.find((b) => b.id === "retention" && b.kind === "key_value");
@@ -445,17 +550,9 @@ function buildWriteChanges(previous, changes) {
       put(change.oldPath, "deleted", `${change.oldPath} \u2192 ${change.path}`);
       put(change.path, "added", `${change.oldPath} \u2192 ${change.path}`);
     } else put(change.path, change.kind === "deleted" ? "deleted" : change.kind === "added" ? "added" : "modified");
-    const snapshot2 = (bytes) => {
-      const prefix = utf8Prefix(clean(bytes?.subarray(0, 3076).toString("utf8") ?? ""), 3072);
-      return { text: prefix.text, truncated: prefix.truncated || (bytes?.length ?? 0) > 3072 };
-    };
-    const before = snapshot2(change.before);
-    const after = snapshot2(change.after);
-    const lines = [...change.before ? before.text.split("\n").map((line) => `    -${line}`) : [], ...change.after ? after.text.split("\n").map((line) => `    +${line}`) : []];
     previews.push(`Recent diff: ${clean(change.oldPath ? `${change.oldPath} \u2192 ${change.path}` : change.path)}
 
-${lines.join("\n")}
-${before.truncated || after.truncated ? "\n[diff truncated]" : ""}${change.beforeUnavailable || change.afterUnavailable ? "\n[diff unavailable: file bytes could not be read]" : ""}`);
+${diffPreview(change)}${change.beforeUnavailable || change.afterUnavailable ? "\n[diff unavailable: file bytes could not be read]" : ""}`);
   }
   while (byPath.size > 200) {
     byPath.delete(byPath.keys().next().value);
@@ -530,10 +627,16 @@ async function writeSnapshot(path) {
   try {
     if (!(await stat(path)).isFile()) return { missing: false };
     file = await open2(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
-    if (!(await file.stat()).isFile()) return { missing: false };
-    const bytes = Buffer.alloc(8193);
-    const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-    return { bytes: bytes.subarray(0, bytesRead), missing: false };
+    const info = await file.stat();
+    if (!info.isFile()) return { missing: false };
+    const bytes = Buffer.alloc(Math.min(info.size, MAX_DIFF_SOURCE_BYTES) + 1);
+    let filled = 0;
+    while (filled < bytes.length) {
+      const { bytesRead } = await file.read(bytes, filled, bytes.length - filled, filled);
+      if (!bytesRead) break;
+      filled += bytesRead;
+    }
+    return { bytes: bytes.subarray(0, filled), missing: false };
   } catch (error) {
     return { missing: error.code === "ENOENT" };
   } finally {
@@ -617,8 +720,8 @@ async function writeFileTool(args, context) {
 import { resolve as resolve3 } from "path";
 function describeEffects(args, context) {
   if (typeof args.patch === "string") return describePatchEffects(parseFilePatch(args.patch, context.cwd));
-  const operations = args.operations;
-  const paths = [...new Set(operations.map((operation) => resolve3(context.cwd, operation.path)))];
+  const operations2 = args.operations;
+  const paths = [...new Set(operations2.map((operation) => resolve3(context.cwd, operation.path)))];
   return { files: paths.map((path) => ({ path, operation: "write" })) };
 }
 function validateArgs(value) {
