@@ -31,7 +31,7 @@ export interface DashboardEventData {
   text: { segmentId: string; kind: "assistant" | "reasoning"; turnId?: string; text: string; bytes: number; unavailable?: string };
   tool: { callId: string; state?: "requested" | "running"; call?: VisibleToolCall; result?: VisibleToolResult; turnId?: string };
   operation: SessionOperation; metrics: SessionMetrics;
-  compaction: Extract<RunEvent, { type: "compact_start" | "compact_end" | "compact_error" }>;
+  compaction: Extract<RunEvent, { type: "compact_start" | "compact_end" | "compact_error" | "compact_warning" }>;
   approval: Approval & { status: "pending" | "allowed" | "denied" | "expired" | "cancelled" };
   ownership: { ownership: "idle" | "here" | "elsewhere" };
   host_error: { message: string };
@@ -204,7 +204,8 @@ export class SessionStreams {
       this.publishPanel(sessionId, operationId, { panel: `${event.owner}#${event.panel}`, owner: event.owner, revision: event.revision,
         closed: event.closed, live: event.live, document: event.document,
         ...(event.view ? { view: event.view } : {}), ...(event.declaration ? { declaration: event.declaration } : {}) });
-    } else if (event.type === "compact_start" || event.type === "compact_end" || event.type === "compact_error") this.publish(sessionId, "compaction", event, operationId);
+    } else if (event.type === "compact_start" || event.type === "compact_end" || event.type === "compact_error"
+      || event.type === "compact_warning") this.publish(sessionId, "compaction", event, operationId);
     // Core commits can follow the synchronous callback. Flush after that commit and before a snapshot.
     queueMicrotask(() => { try { this.syncHistory(sessionId); } catch { /* Closing the host cannot abort execution through an observer. */ } });
     if (event.type === "usage" || event.type === "run_end") {

@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
-import { defaultCompactOutputTokens } from "./compact.js";
+import { defaultCompactOutputTokens, type CompactStrategy } from "./compact.js";
 import { CLEAR_DEFAULT_RATIO } from "./context-clearing.js";
 import { effectiveOutputTokens } from "./llm/output.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS } from "./llm/types.js";
@@ -72,6 +72,8 @@ export interface CompactSettings {
   clearTokens?: number;
   /** Extra text appended to the checkpoint prompt. */
   instructions?: string;
+  /** `"native"` tries the provider's own compaction first; unset means `"checkpoint"`. */
+  strategy?: CompactStrategy;
 }
 
 export interface RuntimeConfig {
@@ -553,7 +555,10 @@ const MAX_COMPACT_INSTRUCTIONS = 16384;
 
 function compactSpec(raw: unknown, where: string, model: Parameters<typeof defaultCompactOutputTokens>[0] = {}): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
-  keys(value, ["keep_recent_turns", "keep_recent_tokens", "max_output_tokens", "trigger_tokens", "clear_tokens", "instructions"], where);
+  keys(value, ["keep_recent_turns", "keep_recent_tokens", "max_output_tokens", "trigger_tokens", "clear_tokens", "instructions", "strategy"], where);
+  if (value.strategy !== undefined && value.strategy !== "checkpoint" && value.strategy !== "native") {
+    throw new Error(`${where}.strategy must be "checkpoint" or "native"`);
+  }
   if (value.instructions !== undefined && (typeof value.instructions !== "string" || value.instructions.length > MAX_COMPACT_INSTRUCTIONS)) {
     throw new Error(`${where}.instructions must be a string of at most ${MAX_COMPACT_INSTRUCTIONS} characters`);
   }
@@ -572,6 +577,7 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
       : value.clear_tokens !== undefined ? { clearTokens: positive(value.clear_tokens, where + ".clear_tokens") }
       : model.contextWindow !== undefined && defaultThreshold(model, CLEAR_DEFAULT_RATIO) > 0 ? { clearTokens: defaultThreshold(model, CLEAR_DEFAULT_RATIO) } : {}),
     ...(typeof value.instructions === "string" && value.instructions.trim() ? { instructions: value.instructions } : {}),
+    ...(value.strategy === "native" ? { strategy: "native" as const } : {}),
   };
 }
 

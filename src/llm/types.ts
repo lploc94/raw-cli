@@ -119,7 +119,37 @@ export function truncatedArgumentsError(name: string): string {
   return `tool ${name} arguments were cut off at the output token limit; call it again with smaller arguments, for example by splitting large content across several calls`;
 }
 
+/** A provider-native compaction request (docs/compaction-v2-design.md §6.9.1): `messages` are summarized, nothing is answered. */
+export interface NativeCompactRequest {
+  system: string;
+  messages: readonly ModelMessage[];
+  tools: readonly ToolDefinition[];
+  timeoutMs: number;
+  signal?: AbortSignal;
+  /** Replaces the provider's own summarization prompt, where the provider accepts one. */
+  instructions?: string;
+  maxOutputTokens?: number;
+  onUsage?: (raw: unknown) => void;
+  cacheKey?: string;
+}
+
+export interface NativeCompaction {
+  /** What the provider returned, exactly: stored as the `opaque` of the message that replaces the summarized ones. */
+  items: unknown[];
+  /** The summary as readable text, when the provider returns one. */
+  summary?: string;
+  usage?: unknown;
+}
+
 export interface ProviderAdapter {
   readonly modelConfig: Readonly<ResolvedModelConfig>;
   generate(request: ProviderRequest): Promise<ProviderTurn>;
+  /** Provider-native compaction, on the adapters whose API offers one. */
+  compact?(request: NativeCompactRequest): Promise<NativeCompaction>;
+}
+
+/** Whether `message` holds a provider-native compaction result: an assistant message whose opaque items include one. */
+export function isNativeCompaction(message: ModelMessage | undefined): boolean {
+  return message?.role === "assistant" && Array.isArray(message.opaque)
+    && message.opaque.some((item) => (item as { type?: unknown } | null)?.type === "compaction");
 }

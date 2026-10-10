@@ -1,12 +1,21 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
 import { effectiveOutputTokens } from "./output.js";
-import { renderUserInput, truncatedArgumentsError, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
+import { isNativeCompaction, renderUserInput, truncatedArgumentsError, type ModelMessage, type NativeCompactRequest, type ProviderAdapter,
+  type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
-function inputMessages(request: ProviderRequest): MessageParam[] {
+/**
+ * Beta of on-demand compaction: sent on the compaction request and on every request that carries its block
+ * (https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand, checked 2026-10-11).
+ */
+export const ANTHROPIC_COMPACTION_BETA = "compact-2026-09-04";
+/** The documented maximum length of compaction `instructions`, in characters. */
+export const ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT = 16384;
+
+function inputMessages(request: { messages: readonly ModelMessage[] }): MessageParam[] {
   const messages: MessageParam[] = [];
   for (const message of request.messages) {
     if (message.role === "user") {
@@ -34,6 +43,25 @@ function inputMessages(request: ProviderRequest): MessageParam[] {
   return messages;
 }
 
+/** Request settings shared by ordinary and compaction requests, so a compaction sees what the main request sees. */
+function sharedSettings(modelConfig: Readonly<ResolvedModelConfig>, request: { tools: ProviderRequest["tools"]; cacheKey?: string | undefined }) {
+  const configured = modelConfig.request?.kind === "anthropic" ? modelConfig.request : undefined;
+  const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
+  return {
+    configured,
+    tools,
+    params: {
+      ...cacheSettings(modelConfig, request.cacheKey).anthropic,
+      ...(configured?.thinking ? { thinking: configured.thinking.type === "enabled"
+        ? { type: "enabled" as const, budget_tokens: configured.thinking.budgetTokens }
+        : { type: configured.thinking.type } } : {}),
+      ...(configured?.effort ? { output_config: { effort: configured.effort } } : {}),
+      ...(configured?.serviceTier ? { service_tier: configured.serviceTier } : {}),
+      ...(tools.length ? { tools } : {}),
+    },
+  };
+}
+
 export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const client = new Anthropic({
     apiKey: modelConfig.apiKey ?? "",
@@ -42,10 +70,41 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
   });
   return {
     modelConfig,
+    /** On-demand compaction (design §6.9.1): the signed `compaction` block, exactly as returned. */
+    async compact(request: NativeCompactRequest) {
+      return withProviderAbort(request, async (signal, touch) => {
+        const { configured, params } = sharedSettings(modelConfig, request);
+        const maxTokens = request.maxOutputTokens ?? effectiveOutputTokens(modelConfig);
+        if (configured?.thinking?.type === "enabled" && configured.thinking.budgetTokens >= maxTokens) {
+          throw new ProviderError("invalid_request", "Anthropic thinking budget must be smaller than max output tokens");
+        }
+        const response = await client.beta.messages.create({
+          model: modelConfig.model,
+          max_tokens: maxTokens,
+          system: request.system,
+          messages: inputMessages(request) as never,
+          betas: [ANTHROPIC_COMPACTION_BETA],
+          compaction: { type: "summarize", ...(request.instructions ? { instructions: request.instructions } : {}) },
+          ...params,
+        } as never, { signal, timeout: request.timeoutMs, maxRetries: 0 }) as unknown as {
+          stop_reason?: unknown; content?: unknown; usage?: { iterations?: unknown } };
+        touch();
+        // The summary's own usage is the `compaction` iteration; the top-level counts are zero because nothing is answered.
+        const iterations = Array.isArray(response.usage?.iterations) ? response.usage.iterations as Array<{ type?: unknown }> : [];
+        const usage = iterations.find((entry) => entry?.type === "compaction") ?? response.usage;
+        if (usage !== undefined && !signal.aborted) request.onUsage?.(usage);
+        const blocks = Array.isArray(response.content) ? response.content as Array<Record<string, unknown>> : [];
+        const block = blocks[0];
+        if (response.stop_reason !== "compaction" || blocks.length !== 1 || block?.type !== "compaction"
+          || typeof block.content !== "string" || !block.content) {
+          throw new ProviderError("native_compaction", `Anthropic compaction returned no summary (stop reason: ${String(response.stop_reason)})`);
+        }
+        return { items: [structuredClone(block)], summary: block.content, ...(usage !== undefined ? { usage } : {}) };
+      });
+    },
     async generate(request): Promise<ProviderTurn> {
       return withProviderAbort(request, async (signal, touch) => {
-        const cache = cacheSettings(modelConfig, request.cacheKey);
-        const configured = modelConfig.request?.kind === "anthropic" ? modelConfig.request : undefined;
+        const { configured, tools, params } = sharedSettings(modelConfig, request);
         // Anthropic requires max_tokens; an assumed default that an older model rejects is lowered to its stated maximum.
         const assumed = request.maxOutputTokens !== undefined ? request.maxOutputTokensAssumed === true
           : modelConfig.request?.maxOutputTokens === undefined && modelConfig.maxOutputTokens === undefined;
@@ -56,22 +115,17 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
           }
         };
         checkThinking();
-        const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
+        // The API accepts a compaction block only with the compaction beta.
+        const beta = request.messages.some((message) => isNativeCompaction(message)) ? { headers: { "anthropic-beta": ANTHROPIC_COMPACTION_BETA } } : {};
         const create = () => client.messages.create({
           model: modelConfig.model,
           max_tokens: outputLimit,
           system: request.system,
           messages: inputMessages(request),
           stream: true,
-          ...cache.anthropic,
-          ...(configured?.thinking ? { thinking: configured.thinking.type === "enabled"
-            ? { type: "enabled" as const, budget_tokens: configured.thinking.budgetTokens }
-            : { type: configured.thinking.type } } : {}),
-          ...(configured?.effort ? { output_config: { effort: configured.effort } } : {}),
-          ...(configured?.serviceTier ? { service_tier: configured.serviceTier } : {}),
-          ...(tools.length ? { tools } : {}),
+          ...params,
           ...(tools.length && request.toolChoice ? { tool_choice: { type: request.toolChoice } } : {}),
-        }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
+        }, { signal, timeout: request.timeoutMs, maxRetries: 0, ...beta });
         let stream: Awaited<ReturnType<typeof create>>;
         try { stream = await create(); }
         catch (error) {

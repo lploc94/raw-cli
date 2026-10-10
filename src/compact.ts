@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import type { AgentSession } from "./agent.js";
 import { normalizeUsage } from "./llm/cache.js";
-import { base64ByteLength, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type ProviderTurn, type UserInput } from "./llm/types.js";
+import { base64ByteLength, isNativeCompaction, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type ProviderTurn, type UserInput } from "./llm/types.js";
 import type { ToolDefinition } from "./tools/registry.js";
 import { elideMiddle, utf8Prefix, utf8Suffix } from "./tools/results.js";
 import { SPILL_PATH_RESERVE, savedLabel, spillText } from "./tools/spill.js";
@@ -17,7 +17,11 @@ export interface CompactOptions {
   maxOutputTokensDefaulted?: boolean;
   /** Extra text appended to the checkpoint prompt (`compact.instructions`). */
   instructions?: string;
+  /** `"native"` tries the provider's own compaction first (`compact.strategy`, design §6.9.1). */
+  strategy?: CompactStrategy;
 }
+
+export type CompactStrategy = "checkpoint" | "native";
 
 export interface CompactResult {
   status: "compacted" | "noop" | "not_smaller" | "cancelled";
@@ -128,6 +132,8 @@ export const USER_IMAGE_TOKEN_ESTIMATE = 1600;
 export function estimateRequestTokens(system: string, messages: readonly ModelMessage[], tools: readonly ToolDefinition[]): number {
   let images = 0;
   const light = messages.map((message): ModelMessage => {
+    // A native compaction item travels as its opaque items; its portable text is sent only once projected (design §6.9.1).
+    if (message.role === "assistant" && isNativeCompaction(message)) return { ...message, text: "" };
     if (message.role !== "user" || typeof message.content === "string" || !message.content.some((block) => block.type === "image")) return message;
     return { role: "user", content: message.content.map((block) => {
       if (block.type !== "image") return block;
@@ -165,6 +171,37 @@ export function checkpointPrompt(options: { words: number; instructions?: string
     CHECKPOINT_PROMPT.replace("{WORDS}", String(options.words)),
     ...(options.instructions?.trim() ? [`Additional instructions from the agent configuration:\n${options.instructions}`] : []),
   ].join("\n\n");
+}
+
+const ANALYSIS_STEP = "First, inside <analysis></analysis> (discarded by the host, so keep it to short notes), go through this checklist against the conversation. For each line, write what you found or \"none\".";
+const ANALYSIS_END = "Then, after </analysis>, write the checkpoint.";
+
+/**
+ * The checkpoint prompt as provider-native compaction `instructions` (design §6.9.1): the provider signs what it returns,
+ * so the host cannot strip an analysis section, and the checklist is gone through in the model's thinking instead.
+ */
+export function nativeInstructions(options: { words: number; instructions?: string | undefined }): string {
+  const prompt = checkpointPrompt(options);
+  if (!prompt.includes(ANALYSIS_STEP) || !prompt.includes(ANALYSIS_END)) throw new Error("checkpoint prompt changed: update nativeInstructions");
+  return prompt.replace(ANALYSIS_STEP, "First, in your thinking, go through this checklist against the conversation, writing none of it in the summary.")
+    .replace(ANALYSIS_END, "Then write the checkpoint.");
+}
+
+/** The host message's checkpoint body when a provider-native item at the start of the context holds the summary. */
+export const NATIVE_CHECKPOINT_BODY = "The provider-native summary at the start of the context covers the older steps.";
+/** Portable text of an encrypted Responses compaction item. */
+export const ENCRYPTED_SUMMARY_NOTE = "[Earlier steps are summarized in an encrypted OpenAI compaction item that only this provider can read.]";
+
+/**
+ * What a native compaction leaves readable, for other models and later checkpoints: the provider's summary text, or the
+ * previous written checkpoint followed by the note that the rest is encrypted.
+ */
+export function nativePortableText(summary: string | undefined, prior: string | undefined): string {
+  if (summary !== undefined) return summary;
+  let written = writtenCheckpoint(prior);
+  if (written === ENCRYPTED_SUMMARY_NOTE) written = undefined;
+  else if (written?.endsWith(`\n\n${ENCRYPTED_SUMMARY_NOTE}`)) written = written.slice(0, -ENCRYPTED_SUMMARY_NOTE.length - 2);
+  return written ? `${written}\n\n${ENCRYPTED_SUMMARY_NOTE}` : ENCRYPTED_SUMMARY_NOTE;
 }
 
 /** The checkpoint the host keeps: the model output without its discarded `<analysis>` notes. */

@@ -6,15 +6,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anchor.js";
 import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFacts, cutNames, cutText, cutToolResult, cutUserInput, defaultCompactOutputTokens, emptyFacts,
   estimateRequestTokens, isCheckpointMessage, isReasoningRejection, LEDGER_CAP_TOKENS, ledgerPointer, ledgerText, LEGACY_LEDGER_NOTE,
-  LEGACY_NOTE_SOURCE, mechanicalCheckpoint, MIN_CHECKPOINT_OUTPUT_TOKENS, renderLedger, renderWorkingState, resultText, SUMMARY_CUT_NOTICE, SUMMARY_MESSAGE_PREFIX,
+  LEGACY_NOTE_SOURCE, mechanicalCheckpoint, MIN_CHECKPOINT_OUTPUT_TOKENS, NATIVE_CHECKPOINT_BODY, nativeInstructions, nativePortableText, renderLedger, renderWorkingState, resultText, SUMMARY_CUT_NOTICE, SUMMARY_MESSAGE_PREFIX,
   summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, writtenCheckpoint, type CompactionLedgerState, type CompactOptions, type CompactResult,
-  type LedgerEntry, type RenderOptions } from "./compact.js";
+  type CompactStrategy, type LedgerEntry, type RenderOptions } from "./compact.js";
+import { ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT } from "./llm/anthropic.js";
 import { existsSync } from "node:fs";
 import { CLEAR_MIN_FREED_TOKENS, CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
 import { normalizeUsage, summarizeUsage, toolChoiceKeepsCache, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
 import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
 import { nativeUserContent } from "./llm/content.js";
+import { ProviderError } from "./llm/client.js";
 import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
@@ -75,6 +77,8 @@ export type RunEvent = (
   | { type: "compact_start"; estimatedTokens: number; details?: CompactionDetails }
   | { type: "compact_end"; result: CompactResult; details?: CompactionDetails }
   | { type: "compact_error"; details: CompactionDetails }
+  /** Provider-native compaction was configured but not used for this compaction; the checkpoint strategy ran instead. */
+  | { type: "compact_warning"; message: string; details?: CompactionDetails }
   | { type: "run_end"; result: RunResult }
   | ({ type: "panel_update" } & PanelLiveEvent)
   | { type: "hook_event"; id: string; event: HookReceipt["event"]; outcome: HookReceipt["outcome"];
@@ -92,6 +96,8 @@ export interface CompactionDetails {
   afterBytes?: number;
   summary?: string;
   message?: string;
+  /** Set when the provider's own compaction wrote the summary (design §6.9.1). */
+  strategy?: "native";
 }
 
 type ToolMessage = Extract<ModelMessage, { role: "tool" }>;
@@ -105,6 +111,7 @@ interface CompactWorkSettings {
   instructions?: string | undefined;
   /** A fallback compaction (§6.7): no summary request; the checkpoint is the previous one with a note giving this reason. */
   mechanical?: string | undefined;
+  strategy?: CompactStrategy | undefined;
 }
 
 export interface AgentOptions {
@@ -449,7 +456,7 @@ export class AgentSession {
    * the newest stay verbatim, and the user's messages, working state, checkpoint and resume text lead the new context.
    */
   private async compactWork(provider: ProviderAdapter, settings: CompactWorkSettings, controller: AbortController, details: CompactionDetails,
-    onUsage?: (raw: unknown) => void): Promise<CompactResult> {
+    onUsage?: (raw: unknown) => void, onWarning?: (message: string) => void): Promise<CompactResult> {
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
     // Roles and identities come from the stored messages; what is sent comes from their replay projection, index for index.
     const source = structuredClone(this.messages);
@@ -477,7 +484,8 @@ export class AgentSession {
         inputEntries.set(index, { source: `history:${row.sequence}`, content: ledgerText(row.input), sequence: row.sequence });
         rows = rows.slice(1);
       } else if (typeof content === "string" && hostNote(content)) {
-        if (isPanelReminder(content)) reminderAt.add(index);
+        // An earlier host checkpoint message after a native item (design §6.9.1) is replaced like a reminder.
+        if (isPanelReminder(content) || content.startsWith(CHECKPOINT_MARKER)) reminderAt.add(index);
       } else {
         // Without a matching row the boundary is unknown from here back; the message text is kept instead.
         rows = [];
@@ -669,17 +677,116 @@ export class AgentSession {
       : Math.max(outputBudget, fitOutput(budget - (target - left - reserve(outputBudget))));
 
     const entries = new Map<number, { entry: UsageRecord; rawIndex?: number }>();
+    // Each request of this compaction is recorded when it starts and again when its usage is reported.
+    const startUsage = (index: number) => {
+      const entry: UsageRecord = { method: provider.modelConfig.method, provider: provider.modelConfig.provider, raw: undefined };
+      entries.set(index, { entry });
+      this.usageEntries.push(entry);
+      this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+        { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
+    };
+    const recordUsage = (index: number, raw: unknown) => {
+      if (controller.signal.aborted) return;
+      const current = entries.get(index);
+      if (!current) return;
+      current.entry.raw = structuredClone(raw);
+      if (current.rawIndex === undefined) current.rawIndex = this.rawUsage.push(structuredClone(raw)) - 1;
+      else this.rawUsage[current.rawIndex] = structuredClone(raw);
+      this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+        { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
+      onUsage?.(raw);
+    };
+    const retained = loadedSkillNames(tail);
+    const selectedNames = new Set(this.selectedSkills.map((skill) => skill.name));
+    const missing = this.skillVisibility.loaded.filter((name) => selectedNames.has(name) && !retained.has(name));
+    const priorNotices = tail.flatMap((message) => text(message)?.startsWith("[Raw skill reload notice]") ? [text(message)!] : []).join("\n");
+    const uncovered = missing.filter((name) => !priorNotices.includes(name)).sort();
+    const skillNotice = uncovered.length
+      ? `[Raw skill reload notice] Loaded skill content was removed by compaction: ${uncovered.join(", ")}. Call load_skill again before relying on earlier instructions.`
+      : undefined;
+    const workingState = stateBytes === undefined ? "" : workingFor(stateBytes);
+    // A compaction that succeeds reminds the model of the open summary panels (§10); reminders of an earlier one are replaced.
+    // After a native item, which must come first, the tail follows it directly and the host message comes after the tail.
+    const build = (body: string, native?: ModelMessage): ModelMessage[] => {
+      const host: ModelMessage = { role: "user", content: buildCheckpointMessage({ n, ledger: ledger.text, workingState, checkpoint: body }) };
+      return [...(native ? [native, ...tail, host] : [host, ...tail]), ...(skillNotice ? [{ role: "user" as const, content: skillNotice }] : []), ...reminders];
+    };
+    // Why the provider's own compaction cannot be used for this compaction (design §6.9.1); `once` when that cannot change.
+    const cut = positions[unitStart[tailStart]!]!;
+    const modelKey = ({ provider: name, method, model: id, baseUrl }: ProviderAdapter["modelConfig"]) => JSON.stringify([name, method, id, baseUrl ?? null]);
+    const anthropic = provider.modelConfig.method === "anthropic-messages";
+    const nativeBlocker = (): { reason: string; once?: boolean } | undefined => {
+      // The item is replayed to the agent's model, so it must come from that model; manual compaction builds its own adapter.
+      if (modelKey(provider.modelConfig) !== modelKey(this.options.provider.modelConfig)) return { reason: "the compaction runs on a different model than the agent" };
+      if (!provider.compact) return { reason: `the ${provider.modelConfig.method} API has no native compaction`, once: true };
+      const disabled = nativeDisabled.get(modelKey(provider.modelConfig));
+      if (disabled !== undefined) return { reason: `it failed earlier in this process (${disabled})`, once: true };
+      if (tailReplayed) return { reason: "the recent steps are replayed as text after a model or tool change" };
+      if (anthropic && outputBudget !== undefined
+        && nativeInstructions({ words: checkpointWords(outputBudget), instructions: settings.instructions }).length > ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT) {
+        return { reason: `the checkpoint prompt with compact.instructions exceeds ${ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT} characters`, once: true };
+      }
+      // Kept thinking stays valid only when the tail directly and unchanged follows the summarized messages, roles alternating.
+      const thinking = (message: ModelMessage) => message.role === "assistant" && Array.isArray(message.opaque)
+        && message.opaque.some((block) => ["thinking", "redacted_thinking"].includes(String((block as { type?: unknown } | null)?.type)));
+      if (anthropic && tail.some(thinking)) {
+        const wire = (message: ModelMessage | undefined) => message?.role === "assistant" ? "assistant" : "user";
+        if (wire(this.sendMessages()[cut - 1]) === wire(tail[0])) return { reason: "the recent steps would merge into the summarized messages" };
+        if ([...reminderAt].some((index) => index >= cut)) return { reason: "a host note inside the recent steps would be replaced" };
+      }
+      return undefined;
+    };
+    const warn = (reason: string, once = false) => {
+      const message = `Provider-native compaction not used: ${reason}; using checkpoint compaction.`;
+      const key = JSON.stringify([this.persistence?.sessionId ?? this.processSessionId, message]);
+      if (once && nativeWarned.has(key)) return;
+      if (once) nativeWarned.add(key);
+      onWarning?.(message);
+    };
     let onAbort: (() => void) | undefined;
+    // Only the summary requests wait; each abort promise exists only while one does, so it is always observed.
+    const abortable = () => new Promise<never>((_resolve, reject) => {
+      if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+      onAbort = () => reject(new Error("compaction aborted"));
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      if (controller.signal.aborted) onAbort();
+    });
     try {
       let checkpoint = mechanical;
       let usage: unknown;
+      let native: ModelMessage | undefined;
       if (outputBudget !== undefined) {
-        // Only the summary request waits; the abort promise exists only while it does, so it is always observed.
-        const aborted = new Promise<never>((_resolve, reject) => {
-          onAbort = () => reject(new Error("compaction aborted"));
-          controller.signal.addEventListener("abort", onAbort, { once: true });
-          if (controller.signal.aborted) onAbort();
-        });
+        const blocked = settings.strategy === "native" ? nativeBlocker() : undefined;
+        if (blocked) warn(blocked.reason, blocked.once);
+        else if (settings.strategy === "native") {
+          try {
+            startUsage(-1);
+            // The stored messages before the tail, exactly as the last main request sent them.
+            const result = await Promise.race([provider.compact!({ system: this.options.system, tools: this.schemaView,
+              messages: this.sendMessages().slice(0, cut), timeoutMs: this.options.requestTimeoutMs, signal: controller.signal,
+              cacheKey: this.cacheKey, maxOutputTokens: outputBudget,
+              ...(anthropic ? { instructions: nativeInstructions({ words: checkpointWords(outputBudget), instructions: settings.instructions }) } : {}),
+              onUsage: (raw) => recordUsage(-1, raw) }), abortable()]);
+            if (this.persistenceError) throw this.persistenceError;
+            if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
+            const portable = nativePortableText(result.summary, this.summaryText);
+            const candidate: ModelMessage = { role: "assistant", text: portable, toolCalls: [], opaque: result.items };
+            // A signed item cannot be shortened, so one that would overflow the input budget is not used.
+            if (measure(build(NATIVE_CHECKPOINT_BODY, candidate)) > budget) warn("the provider-native summary does not fit the input budget");
+            else { native = candidate; checkpoint = portable; usage = result.usage; }
+          } catch (error) {
+            if (this.persistenceError) throw this.persistenceError;
+            if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
+            const message = error instanceof Error ? error.message : String(error);
+            const status = (error as { status?: unknown } | undefined)?.status;
+            if (status === 400 || status === 404 || status === 422 || (error instanceof ProviderError && error.code === "invalid_request")) {
+              nativeDisabled.set(modelKey(provider.modelConfig), message);
+            }
+            warn(`the provider request failed (${message})`);
+          }
+        }
+      }
+      if (outputBudget !== undefined && native === undefined) {
         const work = await Promise.race([summarizeTranscript(head, provider, {
           maxOutputTokens: outputBudget, maxRetryOutputTokens: retryCap, prior: this.summaryText, instructions: settings.instructions,
           maxOutputTokensDefaulted: settings.maxOutputTokensDefaulted || outputBudget !== settings.maxOutputTokens,
@@ -688,51 +795,19 @@ export class AgentSession {
           ...(provider === this.options.provider ? { sameContext: { system: this.options.system, tools: this.schemaView,
             messages: this.sendMessages(), cacheKey: this.cacheKey,
             ...(toolChoiceKeepsCache(provider.modelConfig) ? { toolChoice: "none" as const } : {}) } } : {}),
-          onRequestStart: (index) => {
-            const entry: UsageRecord = { method: provider.modelConfig.method, provider: provider.modelConfig.provider, raw: undefined };
-            entries.set(index, { entry });
-            this.usageEntries.push(entry);
-            this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
-              { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
-          },
-          onUsage: (index, raw) => {
-            if (controller.signal.aborted) return;
-            const current = entries.get(index);
-            if (!current) return;
-            current.entry.raw = structuredClone(raw);
-            if (current.rawIndex === undefined) current.rawIndex = this.rawUsage.push(structuredClone(raw)) - 1;
-            else this.rawUsage[current.rawIndex] = structuredClone(raw);
-            this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
-              { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
-            onUsage?.(raw);
-          },
-        }), aborted]);
+          onRequestStart: startUsage,
+          onUsage: recordUsage,
+        }), abortable()]);
         if (this.persistenceError) throw this.persistenceError;
         if (controller.signal.aborted || work.status === "cancelled") return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
         checkpoint = work.summary;
         usage = work.usage;
       }
-      const retained = loadedSkillNames(tail);
-      const selectedNames = new Set(this.selectedSkills.map((skill) => skill.name));
-      const missing = this.skillVisibility.loaded.filter((name) => selectedNames.has(name) && !retained.has(name));
-      const priorNotices = tail.flatMap((message) => text(message)?.startsWith("[Raw skill reload notice]") ? [text(message)!] : []).join("\n");
-      const uncovered = missing.filter((name) => !priorNotices.includes(name)).sort();
-      const notice = uncovered.length
-        ? `[Raw skill reload notice] Loaded skill content was removed by compaction: ${uncovered.join(", ")}. Call load_skill again before relying on earlier instructions.`
-        : undefined;
-      const workingState = stateBytes === undefined ? "" : workingFor(stateBytes);
-      // A compaction that succeeds reminds the model of the open summary panels (§10); reminders of an earlier one are replaced.
-      const build = (body: string): ModelMessage[] => [
-        { role: "user", content: buildCheckpointMessage({ n, ledger: ledger.text, workingState, checkpoint: body }) },
-        ...tail,
-        ...(notice ? [{ role: "user" as const, content: notice }] : []),
-        ...reminders,
-      ];
       // The checkpoint's size was only estimated (§6.2.1). One that would overflow the input budget keeps its start and end
       // around a pointer to the compaction record, which stores it whole; without room for that, the mechanical note replaces it.
-      let placed = checkpoint!;
-      let replacement = build(placed);
-      for (let attempt = 0; attempt < 4 && mechanical === undefined; attempt++) {
+      let placed = native ? NATIVE_CHECKPOINT_BODY : checkpoint!;
+      let replacement = build(placed, native);
+      for (let attempt = 0; attempt < 4 && mechanical === undefined && native === undefined; attempt++) {
         const over = measure(projectReplayMessages(replacement, replayBefore)) - budget;
         if (over <= 0) break;
         const room = Buffer.byteLength(placed) - Math.ceil(over * 2 / calibration) - 64;
@@ -754,10 +829,11 @@ export class AgentSession {
       const ledgerState: CompactionLedgerState = { entries: [...base, ...leaving], facts: allFacts, factsThrough: replacement.length, compactions: n,
         ...(kept.length ? { retained: kept } : {}), retryArmed: true };
       const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: checkpoint!, beforeBytes, afterBytes: finalBytes,
+        ...(native ? { strategy: "native" as const } : {}),
         afterTokens: this.nextRequestSize(this.sendMessages(projectReplayMessages(replacement, replayBefore)), false).tokens };
       this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
         { summaryText: checkpoint!, ledger: ledgerState, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
-          tokenCalibration: this.tokenCalibration, replayBefore, anchor: null, ...(notice ? { skillNotice: notice } : {}) },
+          tokenCalibration: this.tokenCalibration, replayBefore, anchor: null, ...(skillNotice ? { skillNotice } : {}) },
         false, [{ kind: "compaction", payload: this.visiblePayload({ ...committedDetails }) }]));
       Object.assign(details, committedDetails);
       this.messages = structuredClone(replacement);
@@ -840,7 +916,8 @@ export class AgentSession {
     this.recordVisible("compaction", { ...details });
     try {
       emit({ type: "compact_start", estimatedTokens: details.beforeTokens, details });
-      const result = await this.compactWork(provider, settings, controller, details, (raw) => emit({ type: "usage", raw }));
+      const result = await this.compactWork(provider, settings, controller, details, (raw) => emit({ type: "usage", raw }),
+        (message) => emit({ type: "compact_warning", message, details: { ...details } }));
       Object.assign(details, { status: result.status, afterTokens: this.estimatedContextTokens(),
         beforeBytes: result.beforeBytes ?? details.beforeBytes, afterBytes: result.status === "compacted" ? result.afterBytes : details.beforeBytes });
       if (result.status !== "compacted") this.recordVisible("compaction", { ...details });
@@ -897,8 +974,9 @@ export class AgentSession {
     const defaulted = options.maxOutputTokens === undefined || options.maxOutputTokensDefaulted === true;
     const instructions = options.instructions ?? this.options.compact?.instructions;
     const keepRecentTokens = options.keepRecentTokens ?? this.options.compact?.keepRecentTokens;
+    const strategy = options.strategy ?? this.options.compact?.strategy;
     const task = this.compactAttempt(options.provider ?? this.options.provider, { keepRecentTurns, keepRecentTokens, maxOutputTokens,
-      maxOutputTokensDefaulted: defaulted, instructions }, controller, "manual", onEvent).finally(() => {
+      maxOutputTokensDefaulted: defaulted, instructions, strategy }, controller, "manual", onEvent).finally(() => {
       this.controller = undefined;
       this.activeCompact = undefined;
       this.heartbeat?.unref();
@@ -1207,7 +1285,8 @@ export class AgentSession {
           if (trigger !== undefined && requestEstimate >= trigger) {
             if (controller.signal.aborted) return finish(interrupted());
             const settings: CompactWorkSettings = { keepRecentTurns: compact.keepRecentTurns, keepRecentTokens: compact.keepRecentTokens,
-              maxOutputTokens: compact.maxOutputTokens, maxOutputTokensDefaulted: compact.maxOutputTokensDefaulted === true, instructions: compact.instructions };
+              maxOutputTokens: compact.maxOutputTokens, maxOutputTokensDefaulted: compact.maxOutputTokensDefaulted === true, instructions: compact.instructions,
+              strategy: compact.strategy };
             const classOf = (tokens: number) => tokens < 0.7 * trigger ? "effective" as const : tokens < trigger ? "weak" as const : "stuck" as const;
             // An automatic attempt never ends the turn: a failure is a compact_error warning, and the fallback takes over.
             const attempt = async (work: CompactWorkSettings): Promise<CompactResult | "failed" | "stop"> => {
@@ -1400,5 +1479,10 @@ export class AgentSession {
     }
   }
 }
+
+/** Why provider-native compaction is off for a model for the rest of this process, after a permanent request error (design §6.9.1). */
+const nativeDisabled = new Map<string, string>();
+/** Native-compaction warnings that cannot change within a session, already emitted once, keyed by session and message; hosts create an agent per operation. */
+const nativeWarned = new Set<string>();
 
 export function createAgent(options: AgentOptions): AgentSession { return new AgentSession(options); }

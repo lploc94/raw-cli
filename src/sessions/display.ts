@@ -24,6 +24,7 @@ export function acpUpdate(event: RunEvent): SessionUpdate | undefined {
     content: { type: "text", text: `Compacting context (${event.estimatedTokens} estimated input tokens).` } };
   if (event.type === "compact_end") return { sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Context compact ${event.result.status}.` } };
+  if (event.type === "compact_warning") return { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: event.message } };
   if (event.type === "hook_event") return { sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: `Hook ${event.id} ${event.event}: ${event.outcome}${event.message ? ` · ${event.message}` : event.code ? ` · ${event.code}` : ""}` } };
   return undefined;

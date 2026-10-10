@@ -349,7 +349,7 @@ Raw uses the on-demand forms: Anthropic's `compaction` parameter and OpenAI's `/
 
 **When native is tried.** With `compact.strategy` `"checkpoint"` (the default) native is never considered and nothing new is emitted. With `"native"`, all of these must hold, otherwise the compaction is a normal tier-1 checkpoint:
 
-- the compaction runs on the agent's own provider (not `compact.model` or another provider passed to a manual compaction);
+- the compaction runs on the agent's own model: the same provider, method, model and endpoint (a manual compaction builds its own adapter for that model; a library caller may pass another);
 - the adapter offers native compaction (Anthropic Messages or OpenAI Responses);
 - no step of the verbatim tail is replayed as projected text (§6.2: after a model switch or a reasoning rejection, until those steps leave the tail);
 - native has not failed with a permanent error earlier in this process;

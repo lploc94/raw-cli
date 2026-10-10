@@ -1,4 +1,4 @@
-import type { ModelMessage } from "../llm/types.js";
+import { isNativeCompaction, type ModelMessage } from "../llm/types.js";
 import type { StoredAgentState } from "./store.js";
 
 export function isEphemeralPeerAlias(name: string): boolean { return /^raw_[A-Za-z0-9_-]+_[a-f0-9]{12}$/.test(name); }
@@ -32,7 +32,10 @@ export function validateStoredAgentState(state: StoredAgentState): void {
     } else throw new Error("invalid saved model role");
   }
   if (pending.size) throw new Error("saved tool call has no result");
-  if (state.messages.length && state.messages[0]?.role !== "user") throw new Error("saved context must begin with user input");
+  // A provider-native compaction item must come first (design §6.9.1); any other context begins with user input.
+  if (state.messages.length && state.messages[0]?.role !== "user" && !isNativeCompaction(state.messages[0])) {
+    throw new Error("saved context must begin with user input");
+  }
 }
 
 export function cloneModelMessage(message: ModelMessage): ModelMessage { return structuredClone(message); }

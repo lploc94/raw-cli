@@ -50,8 +50,8 @@ function retryAfterMs(error: unknown): number | undefined {
  * or a request that never starts is. Transient failures (rate limits, overload, 5xx, dropped connections) that happen
  * before any stream event are retried with exponential backoff, honoring retry-after.
  */
-export async function withProviderAbort(request: ProviderRequest,
-  run: (signal: AbortSignal, touch: () => void) => Promise<ProviderTurn>): Promise<ProviderTurn> {
+export async function withProviderAbort<T = ProviderTurn>(request: Pick<ProviderRequest, "timeoutMs" | "signal">,
+  run: (signal: AbortSignal, touch: () => void) => Promise<T>): Promise<T> {
   if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > 2147483647) {
     throw new ProviderError("invalid_timeout", "request timeout must be a positive integer within the timer range");
   }

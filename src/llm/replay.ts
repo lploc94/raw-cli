@@ -1,4 +1,4 @@
-import { imagePlaceholderText, type ApiMethod, type ModelMessage } from "./types.js";
+import { imagePlaceholderText, isNativeCompaction, type ApiMethod, type ModelMessage } from "./types.js";
 import type { ToolContent } from "../tools/types.js";
 
 function historicalResult(message: Extract<ModelMessage, { role: "tool" }>): string {
@@ -10,11 +10,16 @@ function historicalResult(message: Extract<ModelMessage, { role: "tool" }>): str
   return `[Historical tool result: ${message.name}, call ${message.callId}, ${message.result.isError ? "error" : "success"}]\n${content}`;
 }
 
+/** Starts the portable form of a provider-native compaction item (design §6.9.1). */
+export const NATIVE_SUMMARY_PREFIX = "[Earlier conversation summary]\n";
+
 export function projectReplayMessages(messages: readonly ModelMessage[], replayBefore: number): ModelMessage[] {
   if (replayBefore <= 0) return [...messages];
   return messages.flatMap((message, index): ModelMessage[] => {
     if (index >= replayBefore || message.role === "user") return [message];
     if (message.role === "tool") return [{ role: "user", content: historicalResult(message) }];
+    // A native compaction item is readable only by the provider that wrote it; its portable text leads as user input.
+    if (isNativeCompaction(message)) return [{ role: "user", content: `${NATIVE_SUMMARY_PREFIX}${message.text}` }];
     const calls = message.toolCalls.map((call) =>
       `[Historical tool call: ${call.name}, call ${call.id}]\nArguments: ${call.rawArguments ?? JSON.stringify(call.arguments)}`);
     return [{ role: "assistant", text: [message.text, ...calls].filter(Boolean).join("\n")

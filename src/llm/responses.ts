@@ -1,12 +1,13 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ResponseInput, ResponseOutputItem } from "openai/resources/responses/responses";
-import { renderUserInput, truncatedArgumentsError, type ModelToolCall, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn } from "./types.js";
+import { renderUserInput, truncatedArgumentsError, type ModelMessage, type ModelToolCall, type NativeCompactRequest, type ProviderAdapter,
+  type ResolvedModelConfig, type ProviderTurn } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
-function inputItems(request: ProviderRequest): ResponseInput {
+function inputItems(request: { messages: readonly ModelMessage[] }): ResponseInput {
   const input: unknown[] = [];
   for (const message of request.messages) {
     if (message.role === "user") {
@@ -68,7 +69,30 @@ function completedTurn(output: readonly ResponseOutputItem[], usage: unknown, tr
 export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const fallbackCacheKey = randomUUID();
   const client = new OpenAI({ apiKey: modelConfig.apiKey ?? "unused", ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}), maxRetries: 0 });
-  return { modelConfig, async generate(request): Promise<ProviderTurn> {
+  return { modelConfig,
+  /** `/responses/compact` (design §6.9.1): the compacted window, every item as returned. */
+  async compact(request: NativeCompactRequest) {
+    return withProviderAbort(request, async (signal, touch) => {
+      const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
+      const options = modelConfig.request?.kind === "openai" ? modelConfig.request : undefined;
+      const response = await client.responses.compact({
+        model: modelConfig.model,
+        instructions: request.system,
+        input: inputItems(request),
+        ...cache.openai,
+        ...(options?.serviceTier ? { service_tier: options.serviceTier } : {}),
+      }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
+      touch();
+      if (response.usage !== undefined && !signal.aborted) request.onUsage?.(response.usage);
+      const output: unknown[] = Array.isArray(response.output) ? response.output : [];
+      const items = output.filter((item) => (item as { type?: unknown } | null)?.type === "compaction");
+      if (items.length !== 1 || typeof (items[0] as { encrypted_content?: unknown }).encrypted_content !== "string") {
+        throw new ProviderError("native_compaction", "Responses compaction returned no compaction item");
+      }
+      return { items: structuredClone(output), ...(response.usage !== undefined ? { usage: response.usage } : {}) };
+    });
+  },
+  async generate(request): Promise<ProviderTurn> {
     return withProviderAbort(request, async (signal, touch) => {
       const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
       const options = modelConfig.request?.kind === "openai" ? modelConfig.request : undefined;

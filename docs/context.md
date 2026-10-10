@@ -88,6 +88,21 @@ The facts that outlive their steps (files and saved outputs) are stored with the
 - when `/compact` or the library names another compaction model;
 - after one failed attempt: an error, a tool call, or an empty or unusable answer.
 
+**Provider-native compaction** ([design](compaction-v2-design.md) §6.9.1) is opt-in with `compact.strategy: "native"`; the default `"checkpoint"` never uses it. With `"native"`, the checkpoint body of a compaction comes from the provider's own compaction instead of a checkpoint request. Everything else stays the same: the tail, the ledger, the working state, the size allocation, the repeated-compaction classes and the fallback. A mechanical checkpoint never uses native compaction.
+- **Anthropic Messages.** Raw sends the messages before the tail exactly as the last main request sent them, with the same system prompt, tools and thinking settings, plus `compaction: {type: "summarize", instructions}` and the `compact-2026-09-04` beta. The instructions are the checkpoint prompt with `compact.instructions`, except that the checklist is gone through in the model's thinking. The signed `compaction` block is stored exactly as returned.
+- **OpenAI Responses.** Raw sends the same messages to `/responses/compact`. OpenAI's own compaction writes an encrypted item, so the checkpoint prompt and `compact.instructions` do not apply. Every returned item is stored exactly as returned.
+- **Context.** The returned block or items come first, then the verbatim tail unchanged, then the `[Raw compaction checkpoint #N]` message with the ledger, the working state, the line `The provider-native summary at the start of the context covers the older steps.` and the resume text, then the skill notice and panel reminders. Requests that carry an Anthropic block send the beta header. A restart sends the stored block or items unchanged.
+- **Switching** the model, provider or tools after a native compaction sends it as a user message `[Earlier conversation summary]` with its readable text: Anthropic's summary, or for Responses the previous written checkpoint followed by a note that the rest is encrypted. The same projection is the one-time retry when a provider rejects the replayed reasoning.
+- **Fallback.** Raw writes a normal checkpoint instead and emits a `compact_warning` event naming the reason:
+  - when the adapter has no native compaction;
+  - when the compaction runs on another model than the agent's (a library `compactSession` given another provider);
+  - when the tail still holds steps replayed as text after a switch;
+  - when Anthropic thinking in the tail would not stay valid;
+  - when the summary would not fit the input budget;
+  - when the provider request fails or returns no summary.
+
+  A reason that cannot change within a session warns once. HTTP 400, 404 or 422 turn native compaction off until the process restarts; other errors affect only that compaction.
+
 **Request contents** of the chunked request.
 - **Rendered transcript.** The turns are rendered as labeled lines (`USER:`, `ASSISTANT:`, `REASONING:`, `TOOL CALL name(args)`, `TOOL RESULT name:`), not JSON.
 - **Reasoning.** Readable reasoning the provider returned is included:
