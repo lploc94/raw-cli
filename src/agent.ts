@@ -14,6 +14,7 @@ import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAd
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
 import { capResult, DEFAULT_MAX_OUTPUT_BYTES, errorResult } from "./tools/results.js";
 import { effectiveOutputTokens } from "./llm/output.js";
+import { DEFAULT_REQUEST_TIMEOUT_MS } from "./llm/types.js";
 import type { ToolContext } from "./tools/primitives.js";
 import { resolveAction } from "./panels/actions.js";
 import { PanelHost, type PanelCall, type PanelLiveEvent } from "./panels/host.js";
@@ -155,7 +156,7 @@ export class AgentSession {
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
     const maxSteps = options.maxSteps ?? 10000;
     const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-    const requestTimeoutMs = options.requestTimeoutMs ?? 120000;
+    const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     for (const [name, value] of [["maxSteps", maxSteps], ["maxOutputBytes", maxOutputBytes], ["requestTimeoutMs", requestTimeoutMs]] as const) {
       if (!Number.isSafeInteger(value) || value < 1 || (name === "requestTimeoutMs" && value > 2147483647)) throw new Error(`${name} must be a positive integer within the supported range`);
     }

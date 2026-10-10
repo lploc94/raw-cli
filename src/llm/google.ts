@@ -51,7 +51,7 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
   return {
     modelConfig,
     async generate(request): Promise<ProviderTurn> {
-      return withProviderAbort(request, async (signal) => {
+      return withProviderAbort(request, async (signal, touch) => {
         cacheSettings(modelConfig, request.cacheKey);
         const configured = modelConfig.request?.kind === "google" ? modelConfig.request : undefined;
         const stream = await client.models.generateContentStream({
@@ -79,6 +79,7 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
         const rawCalls: { id?: string; name: string; arguments: Record<string, unknown> }[] = [];
         try {
         for await (const chunk of stream) {
+          touch();
           if (signal.aborted) throw new ProviderError("aborted", "provider stream aborted");
           if (chunk.usageMetadata) usage = chunk.usageMetadata;
           if (chunk.promptFeedback?.blockReason) throw new ProviderError("refusal", `Google prompt blocked: ${chunk.promptFeedback.blockReason}`);

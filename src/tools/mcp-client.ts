@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { DEFAULT_REQUEST_TIMEOUT_MS } from "../llm/types.js";
 import AjvDraft7 from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
@@ -281,7 +282,7 @@ async function deadline<T>(work: Promise<T>, timeoutMs: number, signal?: AbortSi
 }
 
 export async function connectMcpServers(options: ConnectMcpOptions = {}): Promise<McpConnection> {
-  const timeoutMs = options.timeoutMs ?? 120000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) throw new Error("MCP timeout must be a positive integer");
   const configs = options.servers ?? {};
   const specs = Object.entries(configs).map(([name, raw]) => [string(name, "MCP server name"), validateServer(name, raw)] as const).sort(([a], [b]) => a.localeCompare(b));

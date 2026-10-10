@@ -118,7 +118,7 @@ Mermaid fences and tool diagram blocks share a lazy renderer in chat and the sid
 
 The REPL saves turns across process restarts. Use `raw --continue` for the latest session in this workspace, `raw --resume ID` for a specific saved cwd, and `raw sessions show ID --before CURSOR` to page older visible history. Host commands are `/compact`, `/clear`, `/stats`, and `/exit`; `/clear` starts a new saved session. Without `compact.trigger_tokens`, compaction is manual. With it, Raw estimates the complete next request, emits visible compact progress, and sends bounded summary requests to the selected model when the threshold is reached. It excludes image base64 from summary prompts and retains a stable main cache key until a deliberate compact boundary. Cache reuse depends on the upstream service; a cache hit is only claimed when its usage counters report one. See [CLI sessions](docs/cli.md) and [context and cache](docs/context.md).
 
-`--system-prompt` or `RAW_SYSTEM_PROMPT` overrides an agent's `system_prompt` or `system_prompt_file`, then Raw's default. `--max-steps` defaults to 10000 inference requests, `--max-output-bytes` to 65536 text bytes per tool result, and `--request-timeout-ms` to 120000. Use `raw --help` for flags and exit codes.
+`--system-prompt` or `RAW_SYSTEM_PROMPT` overrides an agent's `system_prompt` or `system_prompt_file`, then Raw's default. `--max-steps` defaults to 10000 inference requests, `--max-output-bytes` to 65536 text bytes per tool result, and `--request-timeout-ms` to 600000 ms of model-stream silence. Use `raw --help` for flags and exit codes.
 
 ## Terminal appearance
 

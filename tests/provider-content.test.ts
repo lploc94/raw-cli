@@ -72,8 +72,9 @@ test("Anthropic thinking/signature and Google thought signatures survive replay 
   }
 });
 
-test("SDK failures, incomplete stream and cancellation are terminal with no retries", async () => {
-  for (const status of [401, 429, 500]) {
+test("client errors, incomplete stream and cancellation are terminal with no retries", async () => {
+  // Transient 408/409/429/5xx failures are retried; tests/provider-retry.test.ts covers them.
+  for (const status of [401, 403, 404]) {
     const fixture = await startMockProvider([{ status, body: { error: { message: "failed", type: "fixture" } } }]);
     try {
       await assert.rejects(createProvider(agent("openai", fixture.url)).generate(request));

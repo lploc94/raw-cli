@@ -43,7 +43,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
   return {
     modelConfig,
     async generate(request): Promise<ProviderTurn> {
-      return withProviderAbort(request, async (signal) => {
+      return withProviderAbort(request, async (signal, touch) => {
         const cache = cacheSettings(modelConfig, request.cacheKey);
         const configured = modelConfig.request?.kind === "anthropic" ? modelConfig.request : undefined;
         // Anthropic requires max_tokens; an assumed default that an older model rejects is lowered to its stated maximum.
@@ -90,6 +90,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         let usage: Record<string, unknown> = {};
         try {
         for await (const event of stream) {
+          touch();
           if (signal.aborted) throw new ProviderError("aborted", "provider stream aborted");
           if (stopped) throw new ProviderError("invalid_stream", "Anthropic event after message stop");
           if (event.type === "message_start") {

@@ -59,7 +59,7 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
   return {
     modelConfig,
     async generate(request): Promise<ProviderTurn> {
-      return withProviderAbort(request, async (signal) => {
+      return withProviderAbort(request, async (signal, touch) => {
         const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
         const messages = inputMessages(request, modelConfig.provider);
         const tools: ChatCompletionTool[] = request.tools.map((tool) => ({
@@ -94,6 +94,7 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
         const calls = new Map<number, { id: string; name: string; arguments: string }>();
         try {
         for await (const chunk of stream) {
+          touch();
           if (signal.aborted) throw new ProviderError("aborted", "provider stream aborted");
           if (chunk.usage) usage = chunk.usage;
           for (const choice of chunk.choices) {

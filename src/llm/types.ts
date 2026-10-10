@@ -107,6 +107,9 @@ export interface ProviderTurn {
   usage?: unknown;
 }
 
+/** Longest a provider stream may stay silent (including before its first event) before the request fails. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 600000;
+
 /** Argument error for a tool call whose JSON the output token limit cut off, telling the model how to recover. */
 export function truncatedArgumentsError(name: string): string {
   return `tool ${name} arguments were cut off at the output token limit; call it again with smaller arguments, for example by splitting large content across several calls`;

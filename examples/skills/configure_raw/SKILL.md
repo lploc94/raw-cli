@@ -32,7 +32,7 @@ Optional:
 - `skills.use`: unique builtin/local/agent IDs. Nonempty requires both `builtin/list_skills` and `builtin/load_skill`.
 - `hooks.use`: ordered unique exact string IDs: `local/<name>`, `agent/<name>` or `pkg/<alias>/hooks/<export>`; empty/omitted means none. The folder has `hook.json` and owned scripts. Read `references/hooks.md` for every field and value type; `create_hook` covers authoring and tests.
 - `vars`: ordered unique existing root variable names; omitted means none. Add `builtin/list_vars`/`builtin/read_var` to tools.use for discovery/reading.
-- Positive integers `max_steps` (10000), `max_output_bytes` (65536), `request_timeout_ms` (120000). Precedence: flags, RAW_* env, agent.
+- Positive integers `max_steps` (10000), `max_output_bytes` (65536), `request_timeout_ms` (600000, the longest a model stream may stay silent). Precedence: flags, RAW_* env, agent.
 - `tools.rules`: ordered `{match:string,effect:"allow"|"ask"|"deny"}`. Match canonical IDs/globs (`*`, `?`); last matching rule wins; unmatched runs automatically. Only ask permits `when:{any:string,regex:string}`, a schema-bound string path and RE2 search. Bash uses `commands[*].command`. `-y` cannot bypass ask; no approval channel fails closed. Not a shell parser/sandbox.
 
 `request.max_output_tokens`: positive, within model/context reserve. Other fields only for matching pairs:

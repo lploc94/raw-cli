@@ -9,7 +9,7 @@
 | `anthropic-messages` | `anthropic.messages.create` | Anthropic or compatible gateway | `max_tokens` |
 | `google-generate-content` | `google.models.generateContentStream` | Gemini or compatible gateway | `config.maxOutputTokens` |
 
-A service and method without a known matching endpoint must set `base_url`. Credential defaults apply only to the selected model, and unknown services have no guessed authentication or cache hints. SDK retries are disabled. Abort and timeout cover the full stream.
+A service and method without a known matching endpoint must set `base_url`. Credential defaults apply only to the selected model, and unknown services have no guessed authentication or cache hints. SDK retries are disabled; Raw retries transient failures (408/409/429/5xx/529, dropped connections) that happen before any stream event up to three times with exponential backoff, honoring `retry-after`. The request timeout restarts on every stream event, so it bounds silence rather than answer length. Abort covers the full stream.
 
 ## Agent request object
 

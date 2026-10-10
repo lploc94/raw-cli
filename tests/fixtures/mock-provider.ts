@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 export interface CapturedRequest { url: string; headers: IncomingMessage["headers"]; body: unknown }
-export interface MockResponse { status?: number; frames?: string[]; body?: unknown; hold?: boolean; keepOpen?: boolean }
+export interface MockResponse { status?: number; frames?: string[]; body?: unknown; hold?: boolean; keepOpen?: boolean;
+  headers?: Record<string, string>; frameDelayMs?: number }
 
 export async function startMockProvider(responses: MockResponse[]) {
   const requests: CapturedRequest[] = [];
@@ -16,11 +17,15 @@ export async function startMockProvider(responses: MockResponse[]) {
     const response = responses[requests.length - 1] ?? { status: 500, body: { error: "unexpected request" } };
     if (response.hold) return;
     if (response.frames) {
-      res.writeHead(response.status ?? 200, { "content-type": "text/event-stream" });
-      for (const frame of response.frames) res.write(frame);
+      res.writeHead(response.status ?? 200, { "content-type": "text/event-stream", ...response.headers });
+      for (const frame of response.frames) {
+        if (response.frameDelayMs) await new Promise((resolve) => setTimeout(resolve, response.frameDelayMs));
+        if (res.destroyed) return;
+        res.write(frame);
+      }
       if (!response.keepOpen) res.end();
     } else {
-      res.writeHead(response.status ?? 200, { "content-type": "application/json" });
+      res.writeHead(response.status ?? 200, { "content-type": "application/json", ...response.headers });
       res.end(JSON.stringify(response.body ?? { error: "fixture error" }));
     }
   });

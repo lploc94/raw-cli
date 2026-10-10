@@ -69,7 +69,7 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
   const fallbackCacheKey = randomUUID();
   const client = new OpenAI({ apiKey: modelConfig.apiKey ?? "unused", ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}), maxRetries: 0 });
   return { modelConfig, async generate(request): Promise<ProviderTurn> {
-    return withProviderAbort(request, async (signal) => {
+    return withProviderAbort(request, async (signal, touch) => {
       const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
       const options = modelConfig.request?.kind === "openai" ? modelConfig.request : undefined;
       const stream = await client.responses.create({
@@ -93,6 +93,7 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
       let usage: unknown;
       try {
         for await (const event of stream) {
+          touch();
           if (signal.aborted) throw new ProviderError("aborted", "Responses stream aborted");
           if (event.type === "response.output_text.delta") request.onTextDelta?.(event.delta);
           else if (event.type === "response.reasoning_summary_text.delta" || event.type === "response.reasoning_text.delta") {
