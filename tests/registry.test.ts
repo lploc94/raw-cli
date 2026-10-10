@@ -13,9 +13,9 @@ test("packaged bundled plugins preserve exact definitions and semantic batch pre
   const registry = new ToolRegistry();
   for (const plugin of plugins) registry.register(plugin);
   assert.deepEqual(registry.definitions(), createTestToolRegistry([], true).definitions());
-  // Intentional phase-7 contract revision: write_file accepts exclusive operations or patch inputs.
+  // Intentional revision: bash describes start/end truncation and the saved full_output file.
   assert.equal(createHash("sha256").update(JSON.stringify(registry.definitions())).digest("hex"),
-    "f4c774045a017af0b7a9d7e032f5872257a62c247a597b19bdfd23f8b9b156c2");
+    "2032d32c1d252a6a5a82532d89743dc6d2100aeb0701dc3302c43a49a5be9c68");
 
   const cwd = await mkdtemp(join(tmpdir(), "raw-bundled-"));
   const marker = join(cwd, "side-effect");

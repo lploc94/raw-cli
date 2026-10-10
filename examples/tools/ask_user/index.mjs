@@ -1,4 +1,5 @@
 // src/panels/contract.ts
+var MAX_TEXT_ANSWER_BYTES = 65536;
 var PANEL_LIMITS = {
   panelsPerTool: 4,
   actionsPerPanel: 8,
@@ -141,7 +142,7 @@ function block(value, path) {
         if (fieldKind === "text") {
           keys(field, [...base, "multiline", "max_bytes"], at);
           if (field.multiline !== void 0 && typeof field.multiline !== "boolean") invalid([...at, "multiline"], "must be boolean");
-          if (field.max_bytes !== void 0 && count(field.max_bytes, [...at, "max_bytes"], 1) > 8192) invalid([...at, "max_bytes"], "must be at most 8192");
+          if (field.max_bytes !== void 0 && count(field.max_bytes, [...at, "max_bytes"], 1) > MAX_TEXT_ANSWER_BYTES) invalid([...at, "max_bytes"], `must be at most ${MAX_TEXT_ANSWER_BYTES}`);
         } else {
           keys(field, [...base, "options", ...fieldKind === "multi_select" ? ["min_selected", "max_selected"] : []], at);
           const options = array(field.options, [...at, "options"], 32, 1);
@@ -331,7 +332,17 @@ function validateDocument(value) {
 // src/tools/types.ts
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 
+// src/tools/spill.ts
+import { closeSync, mkdtempSync, openSync, readdirSync, rmSync, statSync, writeSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { randomUUID } from "crypto";
+var SPILL_MAX_BYTES = 64 * 1024 * 1024;
+var SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+var SPILL_PATH_RESERVE = tmpdir().length + 64;
+
 // src/tools/results.ts
+var DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 var HOST_CONTENT_BYTES = 1024 * 1024;
 function errorResult(code, message) {
   return { isError: true, code, content: [{ type: "text", text: message }] };

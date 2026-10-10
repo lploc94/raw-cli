@@ -19,7 +19,7 @@ test("forms validate option identity, field bounds and block-scoped responses", 
   assert.throws(() => validateDocument(document([{ ...field, options: [{ id: "a", label: "A" }, { id: "a", label: "Duplicate" }] }])));
   assert.throws(() => validateDocument(document([field, field])));
   assert.throws(() => validateDocument(document([])));
-  assert.throws(() => validateDocument(document([{ id: "text", kind: "text", label: "Text", max_bytes: 8193 }])));
+  assert.throws(() => validateDocument(document([{ id: "text", kind: "text", label: "Text", max_bytes: 65537 }])));
   assert.doesNotThrow(() => validateDeclaration({ id: "question", title: "Question", actions: [
     { id: "submit", label: "Submit", scope: "block", blocks: ["question"], kind: "response", response: "submit" },
   ] }, "question"));

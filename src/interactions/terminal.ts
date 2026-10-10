@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FormAnswers } from "../panels/contract.js";
-import { validateFormAnswers } from "../panels/forms.js";
+import { MAX_TEXT_ANSWER_BYTES, validateFormAnswers } from "../panels/forms.js";
 import { safeTerminalText } from "../terminal/safe.js";
 import type { InteractionAdapter } from "./contract.js";
 
@@ -30,7 +30,7 @@ export function terminalInteractionAdapter(lines: Lines, write: (text: string) =
           const first = await lines.nextAfter(mark, signal);
           if (first === undefined || first === "/cancel" || signal.aborted) return cancel();
           if (field.kind === "text") {
-            const limit = field.max_bytes ?? 8192;
+            const limit = field.max_bytes ?? MAX_TEXT_ANSWER_BYTES;
             let retained = first === "." && field.multiline ? 0 : Buffer.byteLength(first);
             let oversized = retained > limit;
             const parts = oversized || (first === "." && field.multiline) ? [] : [first];

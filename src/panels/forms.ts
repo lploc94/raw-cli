@@ -1,4 +1,6 @@
-import type { FormAnswers, FormField, InteractionState } from "./contract.js";
+import { MAX_TEXT_ANSWER_BYTES, type FormAnswers, type FormField, type InteractionState } from "./contract.js";
+
+export { MAX_TEXT_ANSWER_BYTES };
 
 export type InteractionResult = { status: "answered"; answers: FormAnswers } | { status: Exclude<InteractionState, "pending" | "answered"> };
 export interface PreparedForm { fields: FormField[]; maxResultBytes: number }
@@ -8,6 +10,8 @@ export class FormValidationError extends Error {
   }
 }
 const bytes = (text: string) => new TextEncoder().encode(text).length;
+/** Safety bound for one encoded interaction result, whatever the output budget. */
+const MAX_RESULT_BYTES = 1024 * 1024;
 export const canonicalInteractionResult = (result: InteractionResult): string => JSON.stringify(result);
 const encodedSize = (answers: FormAnswers) => bytes(canonicalInteractionResult({ status: "answered", answers }));
 const fail = (message: string): never => { throw new FormValidationError("interaction_invalid", message); };
@@ -29,16 +33,17 @@ function minimumAnswers(fields: readonly FormField[]): FormAnswers {
 
 /** Portable host/browser oracle. The aggregate encoded limit remains authoritative. */
 export function prepareForm(fields: readonly FormField[], outputBudget: number): PreparedForm {
-  const maxResultBytes = Math.min(16384, Math.max(0, Math.floor(outputBudget)));
+  const maxResultBytes = Math.min(MAX_RESULT_BYTES, Math.max(0, Math.floor(outputBudget)));
   const minimum = minimumAnswers(fields);
   if (!Number.isFinite(maxResultBytes) || encodedSize(minimum) > maxResultBytes)
     throw new FormValidationError("interaction_budget_too_small", "the minimum answer and result envelope cannot fit");
   const effective = fields.map(field => {
     if (field.kind === "text") {
       const other = { ...minimum, [field.id]: "" };
-      // Six bytes per input byte covers the worst JSON escaping of ASCII control characters.
-      const available = Math.floor((maxResultBytes - encodedSize(other)) / 6);
-      return { ...field, max_bytes: Math.min(field.max_bytes ?? 8192, 8192, Math.max(1, available)) };
+      // Two bytes per input byte covers escaped quotes, backslashes and newlines in pasted text; the aggregate check
+      // below stays authoritative for rarer control characters.
+      const available = Math.floor((maxResultBytes - encodedSize(other)) / 2);
+      return { ...field, max_bytes: Math.min(field.max_bytes ?? MAX_TEXT_ANSWER_BYTES, MAX_TEXT_ANSWER_BYTES, Math.max(1, available)) };
     }
     if (field.kind === "multi_select") {
       const shortest = [...field.options].sort((a, b) => bytes(JSON.stringify(a.id)) - bytes(JSON.stringify(b.id)));
@@ -63,7 +68,7 @@ export function validateFormAnswers(form: PreparedForm, input: unknown): FormAns
       if (typeof value !== "string") fail(`${field.id} must be text`);
       const text = value as string;
       if (field.required && !text.trim()) fail(`${field.id} is required`);
-      if (bytes(text) > (field.max_bytes ?? 8192)) fail(`${field.id} exceeds its effective byte limit`);
+      if (bytes(text) > (field.max_bytes ?? MAX_TEXT_ANSWER_BYTES)) fail(`${field.id} exceeds its effective byte limit`);
       answers[field.id] = text;
     } else if (field.kind === "single_select") {
       if (typeof value !== "string" || !field.options.some(option => option.id === value)) fail(`${field.id} has an unknown option`);

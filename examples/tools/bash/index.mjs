@@ -2,15 +2,90 @@
 import { constants as fsConstants } from "fs";
 
 // src/tools/file-patch.ts
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomUUID as randomUUID2 } from "crypto";
 import { constants } from "fs";
 import { chmod, link, lstat, mkdir, open, rename, unlink } from "fs/promises";
-import { dirname, join, parse, relative, resolve, sep } from "path";
+import { dirname, join as join2, parse, relative, resolve, sep } from "path";
 
 // src/tools/types.ts
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 
+// src/tools/spill.ts
+import { closeSync, mkdtempSync, openSync, readdirSync, rmSync, statSync, writeSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { randomUUID } from "crypto";
+var SPILL_MAX_BYTES = 64 * 1024 * 1024;
+var SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+var PREFIX = "raw-output-";
+var directory;
+var SPILL_PATH_RESERVE = tmpdir().length + 64;
+function spillDirectory() {
+  if (directory) return directory;
+  const root = tmpdir();
+  try {
+    const cutoff = Date.now() - SPILL_RETENTION_MS;
+    for (const name of readdirSync(root)) {
+      if (!name.startsWith(PREFIX)) continue;
+      const path = join(root, name);
+      try {
+        if (statSync(path).mtimeMs < cutoff) rmSync(path, { recursive: true, force: true });
+      } catch {
+      }
+    }
+  } catch {
+  }
+  directory = mkdtempSync(join(root, PREFIX));
+  return directory;
+}
+var OutputSpill = class {
+  constructor(label) {
+    this.label = label;
+  }
+  label;
+  fd;
+  failed = false;
+  path;
+  bytes = 0;
+  capped = false;
+  write(data) {
+    if (this.failed || this.capped) return;
+    const buffer = typeof data === "string" ? Buffer.from(data) : data;
+    try {
+      if (this.fd === void 0) {
+        const path = join(spillDirectory(), `${this.label}-${randomUUID().slice(0, 8)}.log`);
+        this.fd = openSync(path, "wx", 384);
+        this.path = path;
+      }
+      const room = SPILL_MAX_BYTES - this.bytes;
+      const slice = buffer.length > room ? buffer.subarray(0, room) : buffer;
+      writeSync(this.fd, slice);
+      this.bytes += slice.length;
+      if (slice.length < buffer.length) this.capped = true;
+    } catch {
+      this.failed = true;
+      this.close();
+      this.path = void 0;
+    }
+  }
+  close() {
+    if (this.fd === void 0) return;
+    try {
+      closeSync(this.fd);
+    } catch {
+    }
+    this.fd = void 0;
+  }
+};
+function spillText(label, text) {
+  const spill = new OutputSpill(label);
+  spill.write(text);
+  spill.close();
+  return spill.path;
+}
+
 // src/tools/results.ts
+var DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 var HOST_CONTENT_BYTES = 1024 * 1024;
 function utf8Prefix(value, limit) {
   let text = "";
@@ -22,6 +97,34 @@ function utf8Prefix(value, limit) {
     bytes += size;
   }
   return { text, bytes, truncated: false };
+}
+function utf8Suffix(value, limit) {
+  const scalars = [...value];
+  let bytes = 0;
+  let start = scalars.length;
+  while (start > 0) {
+    const size = Buffer.byteLength(scalars[start - 1]);
+    if (bytes + size > limit) break;
+    bytes += size;
+    start--;
+  }
+  return { text: scalars.slice(start).join(""), bytes, truncated: start > 0 };
+}
+function elideMiddle(value, limit, fullOutputPath) {
+  const total = Buffer.byteLength(value);
+  if (total <= limit) return { text: value, bytes: total, truncated: false };
+  return elideParts(value, value, total, limit, fullOutputPath);
+}
+function elideParts(head, tail, total, limit, fullOutputPath) {
+  const marker = (omitted) => `
+\u2026[${omitted} bytes omitted${fullOutputPath ? `; full output: ${fullOutputPath}` : ""}]\u2026
+`;
+  const room = limit - Buffer.byteLength(marker(total));
+  if (room <= 0) return { ...utf8Prefix(head, limit), truncated: true };
+  const start = utf8Prefix(head, Math.floor(room / 5));
+  const end = utf8Suffix(tail, room - start.bytes);
+  const text = start.text + marker(total - start.bytes - end.bytes) + end.text;
+  return { text, bytes: Buffer.byteLength(text), truncated: true };
 }
 function errorResult(code, message) {
   return { isError: true, code, content: [{ type: "text", text: message }] };
@@ -66,6 +169,44 @@ import { dirname as dirname2, resolve as resolve2 } from "path";
 // src/tools/process.ts
 import { spawn } from "child_process";
 import { StringDecoder } from "string_decoder";
+var ChannelCapture = class {
+  constructor(headCap, tailCap) {
+    this.headCap = headCap;
+    this.tailCap = tailCap;
+  }
+  headCap;
+  tailCap;
+  head = "";
+  headBytes = 0;
+  tail = [];
+  tailBytes = 0;
+  total = 0;
+  dropped = false;
+  push(text) {
+    if (!text) return;
+    this.total += Buffer.byteLength(text);
+    let rest = text;
+    if (this.headBytes < this.headCap) {
+      const prefix = utf8Prefix(rest, this.headCap - this.headBytes);
+      this.head += prefix.text;
+      this.headBytes += prefix.bytes;
+      rest = rest.slice(prefix.text.length);
+      if (!rest) return;
+    }
+    this.tail.push(rest);
+    this.tailBytes += Buffer.byteLength(rest);
+    while (this.tail.length > 1 && this.tailBytes - Buffer.byteLength(this.tail[0]) >= this.tailCap) {
+      this.tailBytes -= Buffer.byteLength(this.tail.shift());
+      this.dropped = true;
+    }
+  }
+  /** Whole text when nothing was dropped and it fits; otherwise start + marker + end within `limit`. */
+  text(limit, fullOutputPath) {
+    const tail = this.tail.join("");
+    if (!this.dropped) return elideMiddle(this.head + tail, limit, fullOutputPath);
+    return elideParts(this.head, tail, this.total, limit, fullOutputPath);
+  }
+};
 function spawnShell(options, platform = process.platform) {
   return spawn(options.bashPath ?? process.env.RAW_BASH_PATH ?? "bash", ["-c", options.command], {
     cwd: options.cwd,
@@ -81,19 +222,18 @@ function signalShellGroup(child, signal, platform = process.platform) {
     if (error.code !== "ESRCH") throw error;
   }
 }
-async function runBash(options) {
-  if (options.signal?.aborted) return errorResult("aborted", "bash aborted before execution");
+async function runBashDetailed(options) {
+  if (options.signal?.aborted) return { result: errorResult("aborted", "bash aborted before execution") };
   const timeoutMs = options.timeoutMs ?? 12e4;
   const child = spawnShell(options);
   let observedBytes = 0;
-  let retainedBytes = 0;
-  let truncated = false;
-  let saturated = false;
   let timedOut = false;
   let aborted = false;
   let spawnError;
-  let stdout = "";
-  let stderr = "";
+  const max = Math.max(0, options.maxOutputBytes);
+  const captures = { stdout: new ChannelCapture(Math.floor(max / 5), max), stderr: new ChannelCapture(Math.floor(max / 5), max) };
+  let pending = [];
+  let spill;
   const outDecoder = new StringDecoder("utf8");
   const errDecoder = new StringDecoder("utf8");
   let killTimer;
@@ -134,14 +274,15 @@ async function runBash(options) {
       options.onOutput?.(channel, text);
     } catch {
     }
-    if (saturated) return;
-    const prefix = utf8Prefix(text, options.maxOutputBytes - retainedBytes);
-    retainedBytes += prefix.bytes;
-    if (channel === "stdout") stdout += prefix.text;
-    else stderr += prefix.text;
-    if (prefix.truncated) {
-      truncated = true;
-      saturated = true;
+    captures[channel].push(text);
+    if (spill) spill.write(chunk);
+    else {
+      pending.push(chunk);
+      if (observedBytes > max) {
+        spill = new OutputSpill("bash");
+        for (const buffered of pending) spill.write(buffered);
+        pending = [];
+      }
     }
   };
   child.stdout?.on("data", (chunk) => append("stdout", chunk));
@@ -176,30 +317,36 @@ async function runBash(options) {
       options.onOutput?.(channel, tail);
     } catch {
     }
-    if (!saturated) {
-      const prefix = utf8Prefix(tail, options.maxOutputBytes - retainedBytes);
-      retainedBytes += prefix.bytes;
-      if (channel === "stdout") stdout += prefix.text;
-      else stderr += prefix.text;
-      if (prefix.truncated) truncated = true;
-    }
+    captures[channel].push(tail);
   }
+  spill?.close();
   if (killTimer) clearTimeout(killTimer);
-  if (spawnError) return errorResult("bash_spawn_error", `cannot start Bash: ${spawnError.message}`);
+  if (spawnError) return { result: errorResult("bash_spawn_error", `cannot start Bash: ${spawnError.message}`) };
+  const render = (limit, fullOutputPath = spill?.path) => {
+    const small = captures.stdout.total <= captures.stderr.total ? "stdout" : "stderr";
+    const smallBudget = Math.min(captures[small].total, Math.floor(limit / 2));
+    const largeBudget = limit - smallBudget;
+    const out = captures.stdout.text(small === "stdout" ? smallBudget : largeBudget, fullOutputPath);
+    const err = captures.stderr.text(small === "stderr" ? smallBudget : largeBudget, fullOutputPath);
+    return { stdout: out.text, stderr: err.text, truncated: out.truncated || err.truncated };
+  };
+  const { stdout, stderr, truncated } = render(max);
+  const retainedBytes = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
   const content = [];
   if (stdout) content.push({ type: "text", channel: "stdout", text: stdout });
   if (stderr) content.push({ type: "text", channel: "stderr", text: stderr });
-  return {
+  return { render, result: {
     isError: aborted || timedOut,
     ...aborted ? { code: "aborted" } : timedOut ? { code: "timeout" } : {},
     content,
     exitCode: exited.code,
     signal: exited.signal,
     timedOut,
-    truncated: truncated || observedBytes > retainedBytes,
+    truncated,
     retainedBytes,
-    observedBytes
-  };
+    observedBytes,
+    ...truncated && spill?.path ? { fullOutputPath: spill.path, ...spill.capped ? { fullOutputCapped: true } : {} } : {}
+  } };
 }
 
 // src/tools/primitives.ts
@@ -239,6 +386,7 @@ async function bashTool(args, context) {
     const share = Math.max(0, Math.floor((context.maxOutputBytes - serialized) / (args.commands.length - index)));
     const reservedItemBytes = Buffer.byteLength(JSON.stringify(rows[index]), "utf8");
     let result;
+    let render;
     let bindings;
     try {
       if (command.env_refs && Object.keys(command.env_refs).length) bindings = await context.vars.resolveEnv(command.env_refs, { ...context.signal ? { signal: context.signal } : {} });
@@ -255,7 +403,7 @@ async function bashTool(args, context) {
     } catch {
     }
     try {
-      result = await runBash({
+      ({ result, render } = await runBashDetailed({
         command: command.command,
         cwd: context.cwd,
         maxOutputBytes: share,
@@ -264,7 +412,7 @@ async function bashTool(args, context) {
         ...command.timeout_ms !== void 0 ? { timeoutMs: command.timeout_ms } : {},
         ...context.signal ? { signal: context.signal } : {},
         ...context.bashPath ? { bashPath: context.bashPath } : {}
-      });
+      }));
     } catch (error) {
       result = errorResult("bash_error", error.message);
     }
@@ -275,6 +423,7 @@ async function bashTool(args, context) {
     let stdout = result.content.flatMap((item) => item.type === "text" && item.channel === "stdout" ? [item.text] : []).join("");
     let stderr = result.content.flatMap((item) => item.type === "text" && item.channel === "stderr" ? [item.text] : []).join("");
     const status = result.code === "aborted" || context.signal?.aborted ? "aborted" : result.code === "timeout" || result.timedOut ? "timeout" : result.isError ? "error" : "ok";
+    let fullOutput = result.fullOutputPath;
     const candidate = () => ({
       index,
       status,
@@ -285,7 +434,8 @@ async function bashTool(args, context) {
       stdout,
       stderr,
       observed_bytes: result.observedBytes ?? 0,
-      ...status === "error" ? { error: result.code ?? "bash_error" } : {}
+      ...status === "error" ? { error: result.code ?? "bash_error" } : {},
+      ...fullOutput ? { full_output: fullOutput } : {}
     });
     const originalStdout = stdout;
     const originalStderr = stderr;
@@ -295,10 +445,19 @@ async function bashTool(args, context) {
       const addedBytes = Buffer.byteLength(JSON.stringify(check[index]), "utf8") - reservedItemBytes;
       return addedBytes <= share && indexedResultFits(check, context.maxOutputBytes);
     };
-    while (!fits() && (stdout || stderr)) {
-      if (Buffer.byteLength(stdout) >= Buffer.byteLength(stderr) && stdout) stdout = utf8Prefix(stdout, Math.floor(Buffer.byteLength(stdout) / 2)).text;
-      else stderr = utf8Prefix(stderr, Math.floor(Buffer.byteLength(stderr) / 2)).text;
+    if (!fits() && !fullOutput) {
+      fullOutput = spillText("bash", `${originalStdout}${originalStderr ? `${originalStdout ? "\n" : ""}[stderr]
+${originalStderr}` : ""}`);
     }
+    for (let limit = Buffer.byteLength(stdout) + Buffer.byteLength(stderr); !fits() && limit > 0; ) {
+      limit = Math.floor(limit * 3 / 4);
+      if (render) ({ stdout, stderr } = render(limit, fullOutput));
+      else {
+        stdout = elideMiddle(stdout, Math.floor(limit / 2), fullOutput).text;
+        stderr = elideMiddle(stderr, limit - Buffer.byteLength(stdout), fullOutput).text;
+      }
+    }
+    if (!fits() && fullOutput) fullOutput = void 0;
     rows[index] = fits() ? candidate() : { index, status: "error", error: "result_budget_exhausted" };
     if (status === "aborted" || status === "timeout") stopped = true;
   }

@@ -93,3 +93,32 @@ test("invalid commands reject the whole call before approval and spawning", asyn
   assert.equal(approvals, 0);
   await assert.rejects(access(join(cwd, "marker")));
 });
+
+test("oversized output keeps its start and end and saves the complete output for later reading", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-bash-spill-"));
+  const result = await createTestToolRegistry().dispatch("bash", { commands: [
+    { command: "echo FIRST-LINE; for i in $(seq 1 20000); do echo line-$i; done; echo LAST-ERROR >&2; echo LAST-LINE" },
+  ] }, { cwd, maxOutputBytes: 4096 });
+  const [row] = rows(result);
+  assert.equal(row?.status, "ok");
+  assert.equal(row?.truncated, true);
+  const stdout = String(row?.stdout);
+  assert.match(stdout, /^FIRST-LINE\n/);
+  assert.match(stdout, /LAST-LINE\n$/);
+  assert.match(stdout, /…\[\d+ bytes omitted; full output: [^\]]+\]…/);
+  assert.equal(row?.stderr, "LAST-ERROR\n");
+  const saved = await readFile(String(row?.full_output), "utf8");
+  assert.match(saved, /^FIRST-LINE\nline-1\n/);
+  assert.ok(saved.includes("line-10000\n"));
+  assert.ok(saved.includes("LAST-ERROR\n"));
+  assert.match(saved, /LAST-LINE\n$/);
+  assert.ok(Buffer.byteLength(JSON.stringify(result.content[0])) <= 4096);
+});
+
+test("output within the budget is returned whole without a saved copy", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-bash-small-"));
+  const [row] = rows(await createTestToolRegistry().dispatch("bash", { commands: [{ command: "printf small" }] }, { cwd, maxOutputBytes: 4096 }));
+  assert.equal(row?.stdout, "small");
+  assert.equal(row?.truncated, false);
+  assert.equal(row?.full_output, undefined);
+});

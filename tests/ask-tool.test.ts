@@ -25,8 +25,8 @@ test("packaged Ask delivers every accepted ID and escaped Unicode byte through t
   ]);
   let requested=0;
   const interactionAdapter:InteractionAdapter=async request=>{
-    requested++;assert.equal(request.form.maxResultBytes,8192);
-    assert.ok((request.form.fields[0] as {max_bytes:number}).max_bytes<8192);
+    requested++;assert.equal(request.form.maxResultBytes,65536);
+    assert.ok((request.form.fields[0] as {max_bytes:number}).max_bytes<65536);
     assert.equal(request.declaration.placement,"chat");
     return {requestId:request.identity.requestId,expectedRevision:request.revision,idempotencyKey:randomUUID(),response:"submit",answers:{text,choices:["b","a"],extra,single:"no"}};
   };
@@ -39,7 +39,7 @@ test("packaged Ask delivers every accepted ID and escaped Unicode byte through t
     assert.deepEqual(JSON.parse(tool.content),expected);
     const result=agent.transcript.find(message=>message.role==="tool")!;
     assert.equal(result.result.truncated,false);assert.deepEqual(result.result.content,[{type:"json",value:expected}]);
-    assert.equal(Buffer.byteLength(canonicalInteractionResult(expected))<=8192,true);
+    assert.equal(Buffer.byteLength(canonicalInteractionResult(expected))<=65536,true);
   }finally{await agent.close();await fixture.close();}
 });
 test("Ask validates the complete question batch before permission or request publication",async()=>{

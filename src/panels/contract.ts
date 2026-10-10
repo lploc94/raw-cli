@@ -2,6 +2,9 @@
 
 export const PANEL_PROTOCOL = "raw.panel/2";
 
+/** Largest text answer one form field accepts; the result still has to fit the tool output budget it is returned in. */
+export const MAX_TEXT_ANSWER_BYTES = 65536;
+
 export const PANEL_LIMITS = {
   panelsPerTool: 4,
   actionsPerPanel: 8,

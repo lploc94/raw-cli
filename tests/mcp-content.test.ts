@@ -79,3 +79,18 @@ test("T-06d: real MCP structured/error/resource results preserve semantics and n
     assert.equal((await run("resource")).code, "unsupported_content");
   } finally { await connection.close(); }
 });
+
+test("a truncated MCP result tells the model and saves the complete content", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const text = `start-${"x".repeat(20000)}-end`;
+  const capped = mcpResultToToolResult({ content: [{ type: "text", text }] }, 2048);
+  assert.equal(capped.truncated, true);
+  const visible = capped.content.map((block) => block.type === "text" ? block.text : "").join("");
+  assert.ok(visible.startsWith("start-"));
+  assert.match(visible, /\[Output truncated: showing \d+ of 20010 bytes\. Full output saved to (\S+);/);
+  assert.ok((capped.retainedBytes ?? Infinity) <= 2048);
+  assert.equal(await readFile(capped.fullOutputPath!, "utf8"), text);
+  const whole = mcpResultToToolResult({ content: [{ type: "text", text: "short" }] }, 2048);
+  assert.equal(whole.truncated, false);
+  assert.equal(whole.fullOutputPath, undefined);
+});

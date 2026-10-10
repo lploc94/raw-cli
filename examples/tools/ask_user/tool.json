@@ -44,7 +44,7 @@
                 "max_bytes": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 8192,
+                  "maximum": 65536,
                   "description": "Declared UTF-8 ceiling; the host publishes a smaller effective limit when needed."
                 }
               },
@@ -128,7 +128,7 @@
                     "max_bytes": {
                       "type": "integer",
                       "minimum": 1,
-                      "maximum": 8192,
+                      "maximum": 65536,
                       "description": "Declared UTF-8 ceiling; the host publishes a smaller effective limit when needed."
                     }
                   },
@@ -220,7 +220,7 @@
                     "max_bytes": {
                       "type": "integer",
                       "minimum": 1,
-                      "maximum": 8192,
+                      "maximum": 65536,
                       "description": "Declared UTF-8 ceiling; the host publishes a smaller effective limit when needed."
                     }
                   },

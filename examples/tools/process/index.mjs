@@ -4,7 +4,17 @@ import { isAbsolute, resolve } from "path";
 // src/tools/types.ts
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 
+// src/tools/spill.ts
+import { closeSync, mkdtempSync, openSync, readdirSync, rmSync, statSync, writeSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { randomUUID } from "crypto";
+var SPILL_MAX_BYTES = 64 * 1024 * 1024;
+var SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+var SPILL_PATH_RESERVE = tmpdir().length + 64;
+
 // src/tools/results.ts
+var DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 var HOST_CONTENT_BYTES = 1024 * 1024;
 function utf8Prefix(value, limit) {
   let text = "";
@@ -68,7 +78,7 @@ async function handler(raw, context) {
     else if (args.action === "status") value = context.processes.status(args.id);
     else if (args.action === "stop") value = await context.processes.stop(args.id);
     else {
-      const page = context.processes.output(args.id, args.cursor, Math.min(args.max_bytes ?? 65536, Math.max(1, Math.floor(context.maxOutputBytes / 6))));
+      const page = context.processes.output(args.id, args.cursor, Math.min(args.max_bytes ?? 65536, Math.max(1, context.maxOutputBytes)));
       const hadOutput = page.chunks.length > 0;
       while (Buffer.byteLength(JSON.stringify(page)) > context.maxOutputBytes && page.chunks.length) {
         const last = page.chunks.at(-1);

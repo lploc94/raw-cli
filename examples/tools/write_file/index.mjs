@@ -1,13 +1,23 @@
 // src/tools/file-patch.ts
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomUUID as randomUUID2 } from "crypto";
 import { constants } from "fs";
 import { chmod, link, lstat, mkdir, open, rename, unlink } from "fs/promises";
-import { dirname, join, parse, relative, resolve, sep } from "path";
+import { dirname, join as join2, parse, relative, resolve, sep } from "path";
 
 // src/tools/types.ts
 var MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 
+// src/tools/spill.ts
+import { closeSync, mkdtempSync, openSync, readdirSync, rmSync, statSync, writeSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { randomUUID } from "crypto";
+var SPILL_MAX_BYTES = 64 * 1024 * 1024;
+var SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+var SPILL_PATH_RESERVE = tmpdir().length + 64;
+
 // src/tools/results.ts
+var DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 var HOST_CONTENT_BYTES = 1024 * 1024;
 function utf8Prefix(value, limit) {
   let text = "";
@@ -129,7 +139,7 @@ async function safeParents(path) {
   let current = root;
   const parts = relative(root, dirname(path)).split(sep).filter(Boolean);
   for (const component of ["", ...parts]) {
-    if (component) current = join(current, component);
+    if (component) current = join2(current, component);
     try {
       const info = await lstat(current);
       if (info.isSymbolicLink()) fail("patch_symlink_path");
@@ -330,7 +340,7 @@ async function applyStagedFilePatch(staged, options) {
         const destination = change.destination ?? change.path;
         await mkdir(dirname(destination), { recursive: true });
         await safeParents(destination);
-        temporary = join(dirname(destination), `.raw-patch-${randomUUID()}.tmp`);
+        temporary = join2(dirname(destination), `.raw-patch-${randomUUID2()}.tmp`);
         const handle = await open(temporary, "wx", source?.mode ?? 438);
         try {
           await handle.writeFile(after);

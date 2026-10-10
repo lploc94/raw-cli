@@ -8,8 +8,9 @@ import type { VariableContext } from "../vars/contract.js";
 import { open, mkdir, writeFile, readFile, appendFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
-import { runBash } from "./process.js";
-import { errorResult, indexedResult, indexedResultFits, utf8Prefix, type IndexedResult } from "./results.js";
+import { runBashDetailed, type BashRender } from "./process.js";
+import { elideMiddle, errorResult, indexedResult, indexedResultFits, utf8Prefix, type IndexedResult } from "./results.js";
+import { spillText } from "./spill.js";
 import type { ToolResult } from "./types.js";
 import type { PanelContext } from "../panels/contract.js";
 import type { ToolContentPanel } from "./types.js";
@@ -325,6 +326,7 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
     const share = Math.max(0, Math.floor((context.maxOutputBytes - serialized) / (args.commands.length - index)));
     const reservedItemBytes = Buffer.byteLength(JSON.stringify(rows[index]), "utf8");
     let result: ToolResult;
+    let render: BashRender | undefined;
     let bindings: Record<string, string> | undefined;
     try {
       if (command.env_refs && Object.keys(command.env_refs).length) bindings = await context.vars!.resolveEnv(command.env_refs, { ...(context.signal ? { signal: context.signal } : {}) });
@@ -336,13 +338,13 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
     let activity: ReturnType<CommandActivity["begin"]> | undefined;
     try { activity = context.commandActivity?.begin(command.command, context.cwd); } catch { /* UI persistence cannot change Bash execution. */ }
     try {
-      result = await runBash({ command: command.command, cwd: context.cwd, maxOutputBytes: share,
+      ({ result, render } = await runBashDetailed({ command: command.command, cwd: context.cwd, maxOutputBytes: share,
         ...(activity ? { onOutput: activity.output } : {}),
         ...(bindings ? { env: { ...process.env, ...bindings } } : {}),
         ...(command.timeout_ms !== undefined ? { timeoutMs: command.timeout_ms } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
         ...(context.bashPath ? { bashPath: context.bashPath } : {}),
-      });
+      }));
     } catch (error) {
       result = errorResult("bash_error", (error as Error).message);
     }
@@ -351,11 +353,13 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
     let stderr = result.content.flatMap((item) => item.type === "text" && item.channel === "stderr" ? [item.text] : []).join("");
     const status = result.code === "aborted" || context.signal?.aborted ? "aborted"
       : result.code === "timeout" || result.timedOut ? "timeout" : result.isError ? "error" : "ok";
+    let fullOutput = result.fullOutputPath;
     const candidate = (): IndexedResult => ({ index, status, exit_code: result.exitCode ?? null,
       signal: result.signal ?? null, timed_out: result.timedOut ?? false,
       truncated: Boolean(result.truncated || stdout !== originalStdout || stderr !== originalStderr),
       stdout, stderr, observed_bytes: result.observedBytes ?? 0,
-      ...(status === "error" ? { error: result.code ?? "bash_error" } : {}) });
+      ...(status === "error" ? { error: result.code ?? "bash_error" } : {}),
+      ...(fullOutput ? { full_output: fullOutput } : {}) });
     const originalStdout = stdout;
     const originalStderr = stderr;
     const fits = () => {
@@ -364,10 +368,20 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
       const addedBytes = Buffer.byteLength(JSON.stringify(check[index]), "utf8") - reservedItemBytes;
       return addedBytes <= share && indexedResultFits(check, context.maxOutputBytes);
     };
-    while (!fits() && (stdout || stderr)) {
-      if (Buffer.byteLength(stdout) >= Buffer.byteLength(stderr) && stdout) stdout = utf8Prefix(stdout, Math.floor(Buffer.byteLength(stdout) / 2)).text;
-      else stderr = utf8Prefix(stderr, Math.floor(Buffer.byteLength(stderr) / 2)).text;
+    // JSON escaping can still overflow the share: rebuild both channels for a smaller budget, keeping start and end.
+    if (!fits() && !fullOutput) {
+      fullOutput = spillText("bash", `${originalStdout}${originalStderr ? `${originalStdout ? "\n" : ""}[stderr]\n${originalStderr}` : ""}`);
     }
+    for (let limit = Buffer.byteLength(stdout) + Buffer.byteLength(stderr); !fits() && limit > 0;) {
+      limit = Math.floor(limit * 3 / 4);
+      if (render) ({ stdout, stderr } = render(limit, fullOutput));
+      else {
+        stdout = elideMiddle(stdout, Math.floor(limit / 2), fullOutput).text;
+        stderr = elideMiddle(stderr, limit - Buffer.byteLength(stdout), fullOutput).text;
+      }
+    }
+    // A budget too small for the saved-output path still reports the command; the path is the first thing dropped.
+    if (!fits() && fullOutput) fullOutput = undefined;
     rows[index] = fits() ? candidate() : { index, status: "error", error: "result_budget_exhausted" };
     if (status === "aborted" || status === "timeout") stopped = true;
   }

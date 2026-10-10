@@ -1,5 +1,9 @@
 import type { ToolContent, ToolHandlerContent, ToolHandlerResult, ToolResult } from "./types.js";
 import { MAX_IMAGE_BYTES } from "./types.js";
+import { SPILL_PATH_RESERVE, spillText, truncationNotice } from "./spill.js";
+
+/** Default text budget of one tool result: room for a few hundred source lines or a long build log's start and end. */
+export const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /** Safety bound for host-owned content (selected skills, var catalogs) returned whole instead of within max_output_bytes. */
 export const HOST_CONTENT_BYTES = 1024 * 1024;
@@ -14,6 +18,40 @@ export function utf8Prefix(value: string, limit: number): { text: string; bytes:
     bytes += size;
   }
   return { text, bytes, truncated: false };
+}
+
+export function utf8Suffix(value: string, limit: number): { text: string; bytes: number; truncated: boolean } {
+  const scalars = [...value];
+  let bytes = 0;
+  let start = scalars.length;
+  while (start > 0) {
+    const size = Buffer.byteLength(scalars[start - 1]!);
+    if (bytes + size > limit) break;
+    bytes += size;
+    start--;
+  }
+  return { text: scalars.slice(start).join(""), bytes, truncated: start > 0 };
+}
+
+/**
+ * Fits `value` in `limit` bytes by omitting its middle: the start (a fifth) and the end, where errors and summaries
+ * usually are, survive around a marker naming the omitted byte count and, when known, the full copy.
+ */
+export function elideMiddle(value: string, limit: number, fullOutputPath?: string): { text: string; bytes: number; truncated: boolean } {
+  const total = Buffer.byteLength(value);
+  if (total <= limit) return { text: value, bytes: total, truncated: false };
+  return elideParts(value, value, total, limit, fullOutputPath);
+}
+
+/** `elideMiddle` over a known start and end of a `total`-byte stream whose middle may already be gone. */
+export function elideParts(head: string, tail: string, total: number, limit: number, fullOutputPath?: string): { text: string; bytes: number; truncated: boolean } {
+  const marker = (omitted: number) => `\n…[${omitted} bytes omitted${fullOutputPath ? `; full output: ${fullOutputPath}` : ""}]…\n`;
+  const room = limit - Buffer.byteLength(marker(total));
+  if (room <= 0) return { ...utf8Prefix(head, limit), truncated: true };
+  const start = utf8Prefix(head, Math.floor(room / 5));
+  const end = utf8Suffix(tail, room - start.bytes);
+  const text = start.text + marker(total - start.bytes - end.bytes) + end.text;
+  return { text, bytes: Buffer.byteLength(text), truncated: true };
 }
 
 export function textResult(value: string, maxOutputBytes: number, meta: Partial<ToolResult> = {}): ToolResult {
@@ -47,7 +85,12 @@ export function indexedResult(results: readonly IndexedResult[], maxOutputBytes:
 export function capResult(result: ToolResult, maxOutputBytes: number): ToolResult;
 export function capResult(result: ToolHandlerResult, maxOutputBytes: number): ToolHandlerResult;
 export function capResult(result: ToolHandlerResult, maxOutputBytes: number): ToolHandlerResult {
-  let remaining = maxOutputBytes;
+  const textual = result.content.reduce((sum, block) => sum + (block.type === "text" ? Buffer.byteLength(block.text)
+    : block.type === "json" ? Buffer.byteLength(JSON.stringify(block.value) ?? "") : 0), 0);
+  // An oversized result keeps room for a note telling the model it was cut and where the complete copy is.
+  const overflow = textual > maxOutputBytes;
+  const noticeReserve = overflow ? Math.min(maxOutputBytes, 160 + SPILL_PATH_RESERVE) : 0;
+  let remaining = maxOutputBytes - noticeReserve;
   let truncated = false;
   const content: ToolHandlerContent[] = [];
   let observed = 0;
@@ -81,6 +124,15 @@ export function capResult(result: ToolHandlerResult, maxOutputBytes: number): To
       content.push(block);
     }
   }
+  remaining += noticeReserve;
+  let fullOutputPath = result.fullOutputPath;
+  if (truncated) {
+    fullOutputPath ??= spillText("tool", result.content.flatMap((block) => block.type === "text" ? [block.text]
+      : block.type === "json" ? [JSON.stringify(block.value, null, 2)] : []).join("\n"));
+    const notice = utf8Prefix(truncationNotice(maxOutputBytes - remaining, textual, fullOutputPath), remaining);
+    if (notice.text) { content.push({ type: "text", text: notice.text }); remaining -= notice.bytes; }
+  }
   const retained = maxOutputBytes - remaining + content.reduce((sum, block) => sum + (block.type === "image" ? Buffer.byteLength(block.data) : 0), 0);
-  return { ...result, content, truncated: result.truncated || truncated, retainedBytes: retained, observedBytes: result.observedBytes ?? observed };
+  return { ...result, content, truncated: result.truncated || truncated, retainedBytes: retained, observedBytes: result.observedBytes ?? observed,
+    ...(truncated && fullOutputPath ? { fullOutputPath } : {}) };
 }

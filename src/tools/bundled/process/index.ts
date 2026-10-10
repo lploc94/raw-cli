@@ -42,7 +42,7 @@ export async function handler(raw: unknown, context: ToolContext): Promise<ToolH
     else if (args.action === "status") value = context.processes.status(args.id!);
     else if (args.action === "stop") value = await context.processes.stop(args.id!);
     else {
-      const page = context.processes.output(args.id!, args.cursor, Math.min(args.max_bytes ?? 65536, Math.max(1, Math.floor(context.maxOutputBytes / 6))));
+      const page = context.processes.output(args.id!, args.cursor, Math.min(args.max_bytes ?? 65536, Math.max(1, context.maxOutputBytes)));
       const hadOutput = page.chunks.length > 0;
       // Keep cursor metadata in JSON even when escaped text or chunk envelopes consume the budget.
       while (Buffer.byteLength(JSON.stringify(page)) > context.maxOutputBytes && page.chunks.length) {

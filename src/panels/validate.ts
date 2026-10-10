@@ -1,5 +1,5 @@
 import {
-  PANEL_ICONS, PANEL_ITEM_STATUSES, PANEL_LIMITS, PANEL_STATUSES, PanelError,
+  MAX_TEXT_ANSWER_BYTES, PANEL_ICONS, PANEL_ITEM_STATUSES, PANEL_LIMITS, PANEL_STATUSES, PanelError,
   type PanelAction, type PanelBlock, type PanelDeclaration, type PanelDocument, type PanelPatch, type PanelUpdate,
 } from "./contract.js";
 
@@ -123,7 +123,7 @@ function block(value: unknown, path: Path): PanelBlock {
         if (fieldKind === "text") {
           keys(field, [...base, "multiline", "max_bytes"], at);
           if (field.multiline !== undefined && typeof field.multiline !== "boolean") invalid([...at, "multiline"], "must be boolean");
-          if (field.max_bytes !== undefined && count(field.max_bytes, [...at, "max_bytes"], 1) > 8192) invalid([...at, "max_bytes"], "must be at most 8192");
+          if (field.max_bytes !== undefined && count(field.max_bytes, [...at, "max_bytes"], 1) > MAX_TEXT_ANSWER_BYTES) invalid([...at, "max_bytes"], `must be at most ${MAX_TEXT_ANSWER_BYTES}`);
         } else {
           keys(field, [...base, "options", ...(fieldKind === "multi_select" ? ["min_selected", "max_selected"] : [])], at);
           const options = array(field.options, [...at, "options"], 32, 1);

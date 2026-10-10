@@ -46,6 +46,9 @@ export interface ToolResult {
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
   timedOut?: boolean;
+  /** Complete copy of output that was truncated before reaching the model, saved for later reading. */
+  fullOutputPath?: string;
+  fullOutputCapped?: boolean;
 }
 
 /** What a handler (or an MCP/ACP conversion) may return: a ToolResult that can also carry panel blocks. */

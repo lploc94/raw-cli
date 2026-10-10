@@ -12,7 +12,7 @@ import { nativeUserContent } from "./llm/content.js";
 import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
-import { capResult, errorResult } from "./tools/results.js";
+import { capResult, DEFAULT_MAX_OUTPUT_BYTES, errorResult } from "./tools/results.js";
 import type { ToolContext } from "./tools/primitives.js";
 import { resolveAction } from "./panels/actions.js";
 import { PanelHost, type PanelCall, type PanelLiveEvent } from "./panels/host.js";
@@ -149,7 +149,7 @@ export class AgentSession {
     if (options.persistence) options.interactions?.assertStoreBinding(options.persistence.store);
     this.selectedSkills = Object.freeze((options.selectedSkills ?? []).map((skill) => Object.freeze({ ...skill })));
     const maxSteps = options.maxSteps ?? 10000;
-    const maxOutputBytes = options.maxOutputBytes ?? 8192;
+    const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
     const requestTimeoutMs = options.requestTimeoutMs ?? 120000;
     for (const [name, value] of [["maxSteps", maxSteps], ["maxOutputBytes", maxOutputBytes], ["requestTimeoutMs", requestTimeoutMs]] as const) {
       if (!Number.isSafeInteger(value) || value < 1 || (name === "requestTimeoutMs" && value > 2147483647)) throw new Error(`${name} must be a positive integer within the supported range`);

@@ -1,7 +1,43 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { ToolResult } from "./types.js";
-import { errorResult, utf8Prefix } from "./results.js";
+import { elideMiddle, elideParts, errorResult, utf8Prefix } from "./results.js";
+import { OutputSpill } from "./spill.js";
+
+/** One channel's start and a rolling window of its end; the middle of an oversized stream is dropped. */
+class ChannelCapture {
+  private head = "";
+  private headBytes = 0;
+  private tail: string[] = [];
+  private tailBytes = 0;
+  total = 0;
+  dropped = false;
+  constructor(private readonly headCap: number, private readonly tailCap: number) {}
+  push(text: string): void {
+    if (!text) return;
+    this.total += Buffer.byteLength(text);
+    let rest = text;
+    if (this.headBytes < this.headCap) {
+      const prefix = utf8Prefix(rest, this.headCap - this.headBytes);
+      this.head += prefix.text;
+      this.headBytes += prefix.bytes;
+      rest = rest.slice(prefix.text.length);
+      if (!rest) return;
+    }
+    this.tail.push(rest);
+    this.tailBytes += Buffer.byteLength(rest);
+    while (this.tail.length > 1 && this.tailBytes - Buffer.byteLength(this.tail[0]!) >= this.tailCap) {
+      this.tailBytes -= Buffer.byteLength(this.tail.shift()!);
+      this.dropped = true;
+    }
+  }
+  /** Whole text when nothing was dropped and it fits; otherwise start + marker + end within `limit`. */
+  text(limit: number, fullOutputPath?: string): { text: string; bytes: number; truncated: boolean } {
+    const tail = this.tail.join("");
+    if (!this.dropped) return elideMiddle(this.head + tail, limit, fullOutputPath);
+    return elideParts(this.head, tail, this.total, limit, fullOutputPath);
+  }
+}
 
 export interface BashOptions {
   onOutput?: (channel: "stdout" | "stderr", text: string) => void;
@@ -26,18 +62,25 @@ export function signalShellGroup(child: ChildProcess, signal: NodeJS.Signals, pl
 }
 
 export async function runBash(options: BashOptions): Promise<ToolResult> {
-  if (options.signal?.aborted) return errorResult("aborted", "bash aborted before execution");
+  return (await runBashDetailed(options)).result;
+}
+
+/** Output of a finished command rebuilt for a smaller byte budget, for callers whose framing adds overhead. */
+export type BashRender = (limit: number, fullOutputPath?: string) => { stdout: string; stderr: string; truncated: boolean };
+
+export async function runBashDetailed(options: BashOptions): Promise<{ result: ToolResult; render?: BashRender }> {
+  if (options.signal?.aborted) return { result: errorResult("aborted", "bash aborted before execution") };
   const timeoutMs = options.timeoutMs ?? 120000;
   const child = spawnShell(options);
   let observedBytes = 0;
-  let retainedBytes = 0;
-  let truncated = false;
-  let saturated = false;
   let timedOut = false;
   let aborted = false;
   let spawnError: Error | undefined;
-  let stdout = "";
-  let stderr = "";
+  const max = Math.max(0, options.maxOutputBytes);
+  const captures = { stdout: new ChannelCapture(Math.floor(max / 5), max), stderr: new ChannelCapture(Math.floor(max / 5), max) };
+  // Output stays in memory until it exceeds the budget; from then on the complete stream is saved for the model to read.
+  let pending: Buffer[] = [];
+  let spill: OutputSpill | undefined;
   const outDecoder = new StringDecoder("utf8");
   const errDecoder = new StringDecoder("utf8");
   let killTimer: NodeJS.Timeout | undefined;
@@ -70,12 +113,16 @@ export async function runBash(options: BashOptions): Promise<ToolResult> {
     observedBytes += chunk.length;
     const text = (channel === "stdout" ? outDecoder : errDecoder).write(chunk);
     try { options.onOutput?.(channel, text); } catch { /* observers never own execution */ }
-    if (saturated) return;
-    const prefix = utf8Prefix(text, options.maxOutputBytes - retainedBytes);
-    retainedBytes += prefix.bytes;
-    if (channel === "stdout") stdout += prefix.text;
-    else stderr += prefix.text;
-    if (prefix.truncated) { truncated = true; saturated = true; }
+    captures[channel].push(text);
+    if (spill) spill.write(chunk);
+    else {
+      pending.push(chunk);
+      if (observedBytes > max) {
+        spill = new OutputSpill("bash");
+        for (const buffered of pending) spill.write(buffered);
+        pending = [];
+      }
+    }
   };
   child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
   child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
@@ -99,28 +146,35 @@ export async function runBash(options: BashOptions): Promise<ToolResult> {
   for (const [channel, tail] of [["stdout", outDecoder.end()], ["stderr", errDecoder.end()]] as const) {
     if (!tail) continue;
     try { options.onOutput?.(channel, tail); } catch { /* observers never own execution */ }
-    if (!saturated) {
-      const prefix = utf8Prefix(tail, options.maxOutputBytes - retainedBytes);
-      retainedBytes += prefix.bytes;
-      if (channel === "stdout") stdout += prefix.text;
-      else stderr += prefix.text;
-      if (prefix.truncated) truncated = true;
-    }
+    captures[channel].push(tail);
   }
+  spill?.close();
   if (killTimer) clearTimeout(killTimer);
-  if (spawnError) return errorResult("bash_spawn_error", `cannot start Bash: ${spawnError.message}`);
+  if (spawnError) return { result: errorResult("bash_spawn_error", `cannot start Bash: ${spawnError.message}`) };
+  const render: BashRender = (limit, fullOutputPath = spill?.path) => {
+    // A channel smaller than half the budget keeps all of it; the larger channel gets the rest.
+    const small = captures.stdout.total <= captures.stderr.total ? "stdout" : "stderr";
+    const smallBudget = Math.min(captures[small].total, Math.floor(limit / 2));
+    const largeBudget = limit - smallBudget;
+    const out = captures.stdout.text(small === "stdout" ? smallBudget : largeBudget, fullOutputPath);
+    const err = captures.stderr.text(small === "stderr" ? smallBudget : largeBudget, fullOutputPath);
+    return { stdout: out.text, stderr: err.text, truncated: out.truncated || err.truncated };
+  };
+  const { stdout, stderr, truncated } = render(max);
+  const retainedBytes = Buffer.byteLength(stdout) + Buffer.byteLength(stderr);
   const content: ToolResult["content"] = [];
   if (stdout) content.push({ type: "text", channel: "stdout", text: stdout });
   if (stderr) content.push({ type: "text", channel: "stderr", text: stderr });
-  return {
+  return { render, result: {
     isError: aborted || timedOut,
     ...(aborted ? { code: "aborted" } : timedOut ? { code: "timeout" } : {}),
     content,
     exitCode: exited.code,
     signal: exited.signal,
     timedOut,
-    truncated: truncated || observedBytes > retainedBytes,
+    truncated,
     retainedBytes,
     observedBytes,
-  };
+    ...(truncated && spill?.path ? { fullOutputPath: spill.path, ...(spill.capped ? { fullOutputCapped: true } : {}) } : {}),
+  } };
 }
