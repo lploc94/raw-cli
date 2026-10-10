@@ -219,27 +219,28 @@ test("unknown-usage requests remain in coverage and rejected summary usage remai
   assert.equal(missing.stats().inputCoverage, 0);
 });
 
-test("real SDK truncated compaction keeps reported usage while rolling back transcript", async () => {
-  const fixture = await startMockProvider([{ frames: [
-    openAiFrame({ content: "partial summary" }, "length"),
+test("a summary cut at the output limit is retried once with twice the budget, then kept with a note", async () => {
+  const truncated = (text: string) => ({ frames: [
+    openAiFrame({ content: text }, "length"),
     `data: ${JSON.stringify({ id: "usage", object: "chat.completion.chunk", created: 1, model: "fixture", choices: [], usage: {
       prompt_tokens: 800, completion_tokens: 512, prompt_tokens_details: { cached_tokens: 200 },
     } })}\n\n`,
     openAiDone,
-  ] }]);
+  ] });
+  const fixture = await startMockProvider([truncated("partial summary"), truncated("longer partial summary")]);
   try {
     const { agent } = await seededAgent();
-    const before = JSON.stringify(agent.transcript);
     const prior = agent.stats();
     const provider = createProvider({ agentName: "summary", provider: "openai", method: "openai-chat-completions", model: "fixture", baseUrl: fixture.url, apiKey: "key" });
-    await assert.rejects(compactSession(agent, { provider }), /length/);
-    assert.equal(JSON.stringify(agent.transcript), before);
-    assert.equal(fixture.requests.length, 1);
+    const result = await compactSession(agent, { provider, maxOutputTokens: 512 });
+    assert.equal(result.status, "compacted");
+    assert.deepEqual(fixture.requests.map((request) => (request.body as { max_completion_tokens: number }).max_completion_tokens), [512, 1024]);
+    assert.ok(JSON.stringify(agent.transcript).includes("longer partial summary\\n[Summary cut off at the output token limit.]"));
     const stats = agent.stats();
-    assert.equal(stats.requests, prior.requests + 1);
-    assert.equal(stats.inputTokensKnown, prior.inputTokensKnown + 800);
-    assert.equal(stats.outputTokensKnown, prior.outputTokensKnown + 512);
-    assert.equal(stats.cacheReadTokensKnown, prior.cacheReadTokensKnown + 200);
+    assert.equal(stats.requests, prior.requests + 2);
+    assert.equal(stats.inputTokensKnown, prior.inputTokensKnown + 1600);
+    assert.equal(stats.outputTokensKnown, prior.outputTokensKnown + 1024);
+    assert.equal(stats.cacheReadTokensKnown, prior.cacheReadTokensKnown + 400);
   } finally { await fixture.close(); }
 });
 

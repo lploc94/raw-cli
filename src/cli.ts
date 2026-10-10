@@ -18,6 +18,7 @@ import { toolArguments } from "./sessions/display.js";
 import { TerminalRenderer } from "./terminal/renderer.js";
 import { safeTerminalText } from "./terminal/safe.js";
 import { panelTitle, renderPanelsText, selectPanels } from "./panels/render.js";
+import { effectiveOutputTokens } from "./llm/output.js";
 
 async function textRun(session: AgentSession, task: string, renderer: TerminalRenderer): Promise<RunResult> {
   renderer.start();
@@ -116,7 +117,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   }
   const formatFooter = (result: RunResult, renderer: TerminalRenderer, id: string, resumable: boolean, repl = false) => {
     const window = runtime.modelConfig!.contextWindow;
-    const reserve = runtime.modelConfig!.request?.maxOutputTokens ?? runtime.modelConfig!.maxOutputTokens ?? 1024;
+    const reserve = effectiveOutputTokens(runtime.modelConfig!);
     const context = session.contextUsage();
     return formatTurnFooter({ status: result.status, ...(result.code ? { code: result.code } : {}),
       elapsedMs: renderer.elapsedMs, startedToolCalls: renderer.startedToolCalls, notRunToolCalls: renderer.notRunToolCalls,

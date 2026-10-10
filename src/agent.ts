@@ -13,6 +13,7 @@ import type { CompactSettings } from "./config.js";
 import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
 import { capResult, DEFAULT_MAX_OUTPUT_BYTES, errorResult } from "./tools/results.js";
+import { effectiveOutputTokens } from "./llm/output.js";
 import type { ToolContext } from "./tools/primitives.js";
 import { resolveAction } from "./panels/actions.js";
 import { PanelHost, type PanelCall, type PanelLiveEvent } from "./panels/host.js";
@@ -110,6 +111,10 @@ export interface AgentOptions {
   persistence?: { store: SessionStore; sessionId: string; surface: HistorySurface; owner?: SessionOwner; ownership?: "agent" | "host"; operationId?: string };
 }
 
+/** Consecutive cut-off answers continued before the run ends with what it has; bounds a model that never finishes. */
+const MAX_OUTPUT_CONTINUATIONS = 8;
+const OUTPUT_LIMIT_NOTICE = "[Raw output limit notice] Your previous response was cut off at the output token limit. Continue exactly where it stopped, without repeating what you already wrote.";
+
 export class AgentSession {
   private readonly options: Required<Pick<AgentOptions, "provider" | "registry" | "cwd" | "system" | "maxSteps" | "maxOutputBytes" | "requestTimeoutMs" | "autoApprove">> & Pick<AgentOptions, "approve" | "whitelist" | "compact" | "hooks" | "interactions" | "processes">;
   private messages: ModelMessage[] = [];
@@ -159,7 +164,7 @@ export class AgentSession {
       || options.compact.maxOutputTokens < 1)) throw new Error("invalid compaction settings");
     if (options.compact?.triggerTokens !== undefined) {
       const context = options.provider.modelConfig.contextWindow;
-      const output = options.provider.modelConfig.request?.maxOutputTokens ?? options.provider.modelConfig.maxOutputTokens ?? 1024;
+      const output = effectiveOutputTokens(options.provider.modelConfig);
       if (!Number.isSafeInteger(context) || context! < 1 || !Number.isSafeInteger(options.compact.triggerTokens)
         || options.compact.triggerTokens < 1 || options.compact.triggerTokens >= context! - output - Math.max(64, Math.ceil(context! * 0.05))) {
         throw new Error("auto compact trigger requires a valid context window and output reserve");
@@ -671,6 +676,8 @@ export class AgentSession {
 
   private async execute(input: UserInput, controller: AbortController, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     let steps = 0;
+    let continuations = 0;
+    let continuedText = "";
     let observerError: Error | undefined;
     let ended = false;
     let terminalDeadline: number | undefined;
@@ -820,7 +827,7 @@ export class AgentSession {
         if (compact?.triggerTokens !== undefined) {
           const modelConfig = this.options.provider.modelConfig;
           const context = modelConfig.contextWindow!;
-          const outputReserve = modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
+          const outputReserve = effectiveOutputTokens(modelConfig);
           const inputBudget = effectiveInputBudget(context, outputReserve);
           const estimate = () => {
             const size = this.nextRequestSize();
@@ -891,8 +898,6 @@ export class AgentSession {
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
             cacheKey: this.cacheKey,
-            ...(compact?.triggerTokens !== undefined ? { maxOutputTokens: this.options.provider.modelConfig.request?.maxOutputTokens
-              ?? this.options.provider.modelConfig.maxOutputTokens ?? 1024 } : {}),
             signal: controller.signal,
             onTextDelta: (text) => { if (!controller.signal.aborted) emit({ type: "text_delta", text }); },
             onReasoningDelta: (text) => { if (!controller.signal.aborted) emit({ type: "reasoning_delta", text }); },
@@ -908,8 +913,17 @@ export class AgentSession {
         if (!turn.toolCalls.length) {
           this.commitMessage(structuredClone({ role: "assistant", text: turn.text, toolCalls: [],
             ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }), {}, visibleMessage(turn.text));
-          return finish({ status: "completed", steps, text: turn.text });
+          continuedText += turn.text;
+          // An answer cut at the output token limit continues in a new request instead of ending the run half written.
+          if (turn.truncated && continuations < MAX_OUTPUT_CONTINUATIONS && steps < this.options.maxSteps) {
+            continuations++;
+            this.commitMessage({ role: "user", content: OUTPUT_LIMIT_NOTICE });
+            continue;
+          }
+          return finish({ status: "completed", steps, text: continuedText });
         }
+        continuations = 0;
+        continuedText = "";
         if (steps >= this.options.maxSteps) return finish({ status: "max_steps", steps, code: "max_steps", message: "tool calls require another inference step" });
         this.commitMessage(structuredClone({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls,
           ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }), {}, [

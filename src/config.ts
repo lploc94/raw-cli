@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
 import { defaultCompactOutputTokens } from "./compact.js";
+import { effectiveOutputTokens } from "./llm/output.js";
 import { DEFAULT_MAX_OUTPUT_BYTES } from "./tools/results.js";
 import { ANTHROPIC_EFFORTS, ANTHROPIC_TIERS, DEEPSEEK_EFFORTS, GOOGLE_LEVELS, OPENAI_EFFORTS, OPENAI_TIERS, requestKind } from "./request-controls.js";
 import type { ApiMethod, CacheOptions, ModelRequestOptions, ProviderName, ResolvedModelConfig } from "./llm/types.js";
@@ -467,7 +468,7 @@ function requestSpec(raw: unknown, model: ModelSpec, where: string): ModelReques
       keys(spec, type === "enabled" ? ["type", "budget_tokens"] : ["type"], where + ".thinking");
       thinking = type === "enabled" ? { type, budgetTokens: positive(spec.budget_tokens, where + ".thinking.budget_tokens") } : { type };
       if (thinking.type === "enabled" && thinking.budgetTokens < 1024) throw new Error(where + ".thinking.budget_tokens must be at least 1024");
-      if (thinking.type === "enabled" && thinking.budgetTokens >= (base.maxOutputTokens ?? model.maxOutputTokens ?? 1024)) {
+      if (thinking.type === "enabled" && thinking.budgetTokens >= effectiveOutputTokens({ ...model, request: base as ModelRequestOptions })) {
         throw new Error(where + ".thinking.budget_tokens must be smaller than the requested output cap");
       }
     }
@@ -553,7 +554,7 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
   const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
   if (result.compact.triggerTokens !== undefined) {
     if (model.contextWindow === undefined) throw new Error(where + ".compact.trigger_tokens requires model.context_window_tokens");
-    const reserve = requestedCap ?? 1024;
+    const reserve = effectiveOutputTokens({ ...model, ...(result.request ? { request: result.request } : {}) });
     const margin = Math.max(64, Math.ceil(model.contextWindow * 0.05));
     if (result.compact.triggerTokens >= model.contextWindow - reserve - margin) {
       throw new Error(where + ".compact.trigger_tokens must leave output reserve and safety margin");

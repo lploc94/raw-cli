@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
-import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
+import { effectiveOutputTokens } from "./output.js";
+import { renderUserInput, truncatedArgumentsError, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -45,12 +46,17 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
       return withProviderAbort(request, async (signal) => {
         const cache = cacheSettings(modelConfig, request.cacheKey);
         const configured = modelConfig.request?.kind === "anthropic" ? modelConfig.request : undefined;
-        const outputLimit = request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens ?? 1024;
-        if (configured?.thinking?.type === "enabled" && configured.thinking.budgetTokens >= outputLimit) {
-          throw new ProviderError("invalid_request", "Anthropic thinking budget must be smaller than max output tokens");
-        }
+        // Anthropic requires max_tokens; an assumed default that an older model rejects is lowered to its stated maximum.
+        const assumed = request.maxOutputTokens === undefined && modelConfig.request?.maxOutputTokens === undefined && modelConfig.maxOutputTokens === undefined;
+        let outputLimit = request.maxOutputTokens ?? effectiveOutputTokens(modelConfig);
+        const checkThinking = () => {
+          if (configured?.thinking?.type === "enabled" && configured.thinking.budgetTokens >= outputLimit) {
+            throw new ProviderError("invalid_request", "Anthropic thinking budget must be smaller than max output tokens");
+          }
+        };
+        checkThinking();
         const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
-        const stream = await client.messages.create({
+        const create = () => client.messages.create({
           model: modelConfig.model,
           max_tokens: outputLimit,
           system: request.system,
@@ -64,6 +70,15 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
           ...(configured?.serviceTier ? { service_tier: configured.serviceTier } : {}),
           ...(tools.length ? { tools } : {}),
         }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
+        let stream: Awaited<ReturnType<typeof create>>;
+        try { stream = await create(); }
+        catch (error) {
+          const allowed = assumed ? /max_tokens: \d+ > (\d+)/.exec(error instanceof Error ? error.message : "")?.[1] : undefined;
+          if (allowed === undefined || Number(allowed) >= outputLimit || Number(allowed) < 1) throw error;
+          outputLimit = Number(allowed);
+          checkThinking();
+          stream = await create();
+        }
         const blocks = new Map<number, Record<string, unknown>>();
         const toolJson = new Map<number, string>();
         const activeBlocks = new Set<number>();
@@ -123,12 +138,15 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
           }
         }
         if (!started || !stopped || !stopReason) throw new ProviderError("incomplete_stream", "Anthropic stream ended without terminal event");
-        if (stopReason !== "end_turn" && stopReason !== "tool_use") throw new ProviderError("provider_finish", `Anthropic stop reason: ${stopReason}`);
-        const orderedBlocks = [...blocks].sort(([a], [b]) => a - b);
+        const truncated = stopReason === "max_tokens" || stopReason === "model_context_window_exceeded";
+        if (!truncated && stopReason !== "end_turn" && stopReason !== "tool_use") throw new ProviderError("provider_finish", `Anthropic stop reason: ${stopReason}`);
+        // A thinking block cut before its signature cannot be sent back; the rest of a truncated turn can.
+        const orderedBlocks = [...blocks].sort(([a], [b]) => a - b)
+          .filter(([, block]) => !(truncated && block.type === "thinking" && !block.signature));
         const opaque = orderedBlocks.map(([index, block]) => {
           if (block.type === "tool_use" && toolJson.has(index)) {
             try { block.input = JSON.parse(toolJson.get(index)!); }
-            catch { argumentErrors.set(index, "Anthropic tool arguments are invalid JSON"); block.input = {}; }
+            catch { argumentErrors.set(index, truncated ? truncatedArgumentsError(String(block.name)) : "Anthropic tool arguments are invalid JSON"); block.input = {}; }
             if (!argumentErrors.has(index) && (!block.input || typeof block.input !== "object" || Array.isArray(block.input))) {
               argumentErrors.set(index, "Anthropic tool arguments must be an object");
               block.input = {};
@@ -148,7 +166,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         if (new Set(toolCalls.map((call) => call.id)).size !== toolCalls.length) throw new ProviderError("invalid_stream", "duplicate Anthropic tool call ID");
         if (stopReason === "tool_use" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool stop without calls");
         if (stopReason === "end_turn" && toolCalls.length) throw new ProviderError("invalid_stream", "tool calls with end_turn stop");
-        return { text, toolCalls, finishReason: stopReason, opaque, usage };
+        return { text, toolCalls, finishReason: stopReason, ...(truncated ? { truncated } : {}), opaque, usage };
         } finally {
           if (!signal.aborted && Object.keys(usage).length) request.onUsage?.(usage);
         }

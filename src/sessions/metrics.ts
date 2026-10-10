@@ -2,6 +2,7 @@ import type { AgentSession } from "../agent.js";
 import type { CompactSettings } from "../config.js";
 import type { UsageSummary } from "../llm/cache.js";
 import { effectiveInputBudget } from "../llm/context.js";
+import { effectiveOutputTokens } from "../llm/output.js";
 import type { ResolvedModelConfig } from "../llm/types.js";
 
 export interface SessionMetrics {
@@ -32,7 +33,7 @@ export function measureSession(agent: AgentSession, model: Readonly<ResolvedMode
   compact?: Readonly<CompactSettings>;
 }): SessionMetrics {
   const { tokens: estimatedTokens, source } = agent.contextUsage();
-  const outputReserve = model.request?.maxOutputTokens ?? model.maxOutputTokens ?? 1024;
+  const outputReserve = effectiveOutputTokens(model);
   return { measuredAt: Date.now(), elapsedMs: Math.max(0, Math.round(performance.now() - options.startedAt)),
     model: model.model, agentName: model.agentName, startedTools: options.startedTools, failedTools: options.failedTools,
     session: agent.stats(), turn: agent.stats(options.firstRequest), context: { estimatedTokens, source, outputReserve,

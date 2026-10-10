@@ -101,8 +101,15 @@ export interface ProviderTurn {
   text: string;
   toolCalls: ModelToolCall[];
   finishReason: string;
+  /** The response stopped at the output token limit; text and any complete tool calls are partial but usable. */
+  truncated?: boolean;
   opaque?: unknown;
   usage?: unknown;
+}
+
+/** Argument error for a tool call whose JSON the output token limit cut off, telling the model how to recover. */
+export function truncatedArgumentsError(name: string): string {
+  return `tool ${name} arguments were cut off at the output token limit; call it again with smaller arguments, for example by splitting large content across several calls`;
 }
 
 export interface ProviderAdapter {

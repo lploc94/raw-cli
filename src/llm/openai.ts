@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ChatCompletionContentPart, ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
-import { renderUserInput, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
+import { renderUserInput, truncatedArgumentsError, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -127,8 +127,11 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
             if (choice.finish_reason) finishReason = choice.finish_reason;
           }
         }
-        if (!finishReason) throw new ProviderError("incomplete_stream", "OpenAI stream ended without finish reason");
-        if (finishReason !== "stop" && finishReason !== "tool_calls") throw new ProviderError("provider_finish", `OpenAI finish reason: ${finishReason}`);
+        if (!finishReason) throw new ProviderError("incomplete_stream", `${modelConfig.provider} stream ended without finish reason`);
+        const truncated = finishReason === "length";
+        if (!truncated && finishReason !== "stop" && finishReason !== "tool_calls") {
+          throw new ProviderError("provider_finish", `${modelConfig.provider} finish reason: ${finishReason}`);
+        }
         const toolCalls: ModelToolCall[] = [];
         const suppliedIds = new Set<string>();
         for (const call of calls.values()) {
@@ -138,6 +141,7 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
         }
         const usedIds = new Set(suppliedIds);
         for (const [index, call] of [...calls].sort(([a], [b]) => a - b)) {
+          if (!call.name && truncated) continue;
           if (!call.name) throw new ProviderError("invalid_stream", "tool name missing");
           let id = call.id;
           let syntheticId = false;
@@ -150,14 +154,14 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
           let args: unknown;
           let argumentError: string | undefined;
           try { args = JSON.parse(call.arguments); }
-          catch { argumentError = `tool ${call.name} arguments are invalid JSON`; }
+          catch { argumentError = truncated ? truncatedArgumentsError(call.name) : `tool ${call.name} arguments are invalid JSON`; }
           if (!argumentError && (!args || typeof args !== "object" || Array.isArray(args))) argumentError = `tool ${call.name} arguments must be an object`;
           toolCalls.push({ id, name: call.name, arguments: argumentError ? {} : args as Record<string, unknown>,
             ...(argumentError ? { argumentError, rawArguments: call.arguments } : {}), ...(syntheticId ? { syntheticId } : {}) });
         }
         if (finishReason === "tool_calls" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool finish without calls");
         if (finishReason === "stop" && toolCalls.length) throw new ProviderError("invalid_stream", "calls without tool finish");
-        return { text, toolCalls, finishReason,
+        return { text, toolCalls, finishReason, ...(truncated ? { truncated } : {}),
           ...(reasoningDetails.length ? { opaque: { reasoning_details: reasoningDetails } } : {}),
           ...(reasoningContent ? { opaque: { reasoning_content: reasoningContent } } : {}),
           ...(usage !== undefined ? { usage } : {}) };

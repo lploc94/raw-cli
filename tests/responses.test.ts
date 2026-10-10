@@ -89,22 +89,28 @@ test("agent request options validate before connection and do not allow arbitrar
   await assert.rejects(loadConfig({ configPath, env: { OPENAI_API_KEY: "fixture" }, requireModel: true }), /unknown|model/);
 });
 
-test("Responses usage reads cached input and incomplete streams never become successful turns", async () => {
+test("Responses usage reads cached input; output-limit streams become truncated turns, other incomplete streams fail", async () => {
   assert.deepEqual(normalizeUsage("openai-responses", { input_tokens: 100, output_tokens: 20,
     input_tokens_details: { cached_tokens: 60, cache_write_tokens: 5 } }), {
     inputTokensTotal: 100, outputTokens: 20, cacheReadTokens: 60, cacheWriteTokens: 5, cacheReadRatio: 0.6,
   });
-  const fixture = await startMockProvider([{ frames: [event("response.incomplete", { response: {
-    id: "r", object: "response", status: "incomplete", output: [], usage: { input_tokens: 4, output_tokens: 2 },
-    incomplete_details: { reason: "max_output_tokens" },
-  } }), "data: [DONE]\n\n"] }]);
+  const incomplete = (reason: string) => ({ frames: [event("response.incomplete", { response: {
+    id: "r", object: "response", status: "incomplete", usage: { input_tokens: 4, output_tokens: 2 },
+    output: [{ type: "message", id: "m", role: "assistant", status: "incomplete", content: [{ type: "output_text", text: "half", annotations: [] }] }],
+    incomplete_details: { reason },
+  } }), "data: [DONE]\n\n"] });
+  const fixture = await startMockProvider([incomplete("max_output_tokens"), incomplete("content_filter")]);
   try {
     const adapter = createProvider({ agentName: "fixture", provider: "openai", method: "openai-responses",
       model: "gpt-6-astra", baseUrl: fixture.url, apiKey: "fixture" });
     const observed: unknown[] = [];
-    await assert.rejects(adapter.generate({ system: "tiny", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000,
-      onUsage: (raw) => observed.push(raw) }), /incomplete/);
-    assert.equal(fixture.requests.length, 1);
+    const turn = await adapter.generate({ system: "tiny", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000,
+      onUsage: (raw) => observed.push(raw) });
+    assert.equal(turn.truncated, true);
+    assert.equal(turn.text, "half");
+    assert.equal(turn.opaque, undefined);
+    await assert.rejects(adapter.generate({ system: "tiny", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000 }), /incomplete: content_filter/);
+    assert.equal(fixture.requests.length, 2);
     assert.equal((observed[0] as { output_tokens: number }).output_tokens, 2);
   } finally { await fixture.close(); }
 });

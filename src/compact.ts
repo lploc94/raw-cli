@@ -1,6 +1,6 @@
 import type { AgentSession } from "./agent.js";
 import { normalizeUsage } from "./llm/cache.js";
-import { base64ByteLength, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type UserInput } from "./llm/types.js";
+import { base64ByteLength, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type ProviderTurn, type UserInput } from "./llm/types.js";
 import type { ToolDefinition } from "./tools/registry.js";
 
 export interface CompactOptions {
@@ -131,31 +131,41 @@ export async function performCompaction(
   const sanitized = older.map((turn) => turn.map(summaryMessage));
   let summary = snapshot.previousSummary;
   let usage: unknown;
-  for (let offset = 0, requestIndex = 0; offset < sanitized.length; requestIndex++) {
+  for (let offset = 0, requestIndex = 0; offset < sanitized.length;) {
     let end = offset;
     while (end < sanitized.length && summaryFits(provider,
       summaryInput(snapshot.originalTask, snapshot.previousSummary && offset === 0 ? undefined : summary,
         sanitized.slice(offset, end + 1)), options.maxOutputTokens)) end++;
     if (end === offset) throw new Error("compaction input exceeds context budget for one turn");
     const input = summaryInput(snapshot.originalTask, snapshot.previousSummary && offset === 0 ? undefined : summary, sanitized.slice(offset, end));
-    options.onRequestStart?.(requestIndex);
-    const turn = await provider.generate({
-      system: COMPACT_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: input }],
-      tools: [],
-      timeoutMs: options.timeoutMs,
-      maxOutputTokens: options.maxOutputTokens,
-      signal: options.signal,
-      cacheKey: options.cacheKey,
-      onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(requestIndex, raw); },
-    });
-    if (!options.signal.aborted && turn.usage !== undefined) options.onUsage?.(requestIndex, turn.usage);
-    if (options.signal.aborted) return { result: { status: "cancelled", beforeBytes, afterBytes: beforeBytes } };
-    if (turn.toolCalls.length || !["stop", "end_turn", "STOP"].includes(turn.finishReason)) throw new Error("compaction did not return a final text answer");
+    let budget = options.maxOutputTokens;
+    let turn: ProviderTurn;
+    for (;;) {
+      const index = requestIndex++;
+      options.onRequestStart?.(index);
+      turn = await provider.generate({
+        system: COMPACT_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: input }],
+        tools: [],
+        timeoutMs: options.timeoutMs,
+        maxOutputTokens: budget,
+        signal: options.signal,
+        cacheKey: options.cacheKey,
+        onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(index, raw); },
+      });
+      if (!options.signal.aborted && turn.usage !== undefined) options.onUsage?.(index, turn.usage);
+      if (options.signal.aborted) return { result: { status: "cancelled", beforeBytes, afterBytes: beforeBytes } };
+      // A summary cut at the output limit is retried once with twice the budget when the model and context allow it.
+      const larger = Math.min(budget * 2, provider.modelConfig.maxOutputTokens ?? Infinity);
+      if (!turn.truncated || budget !== options.maxOutputTokens || larger <= budget || !summaryFits(provider, input, larger)) break;
+      budget = larger;
+    }
+    if (turn.toolCalls.length || (!turn.truncated && !["stop", "end_turn", "STOP"].includes(turn.finishReason))) throw new Error("compaction did not return a final text answer");
     if (!turn.text.trim()) throw new Error("compaction returned an empty summary");
     const reportedOutput = normalizeUsage(provider.modelConfig.method, turn.usage, provider.modelConfig.provider).outputTokens;
-    if (reportedOutput !== undefined && reportedOutput > options.maxOutputTokens) throw new Error("compaction exceeded output token budget");
-    summary = turn.text;
+    if (reportedOutput !== undefined && reportedOutput > budget) throw new Error("compaction exceeded output token budget");
+    // Still cut after the retry: a lossy summary that says so beats keeping a transcript too large to continue.
+    summary = turn.truncated ? `${turn.text}\n[Summary cut off at the output token limit.]` : turn.text;
     usage = turn.usage;
     offset = end;
   }

@@ -98,7 +98,8 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
           }
         }
         if (!finishReason) throw new ProviderError("incomplete_stream", "Google stream ended without finish reason");
-        if (finishReason !== "STOP") throw new ProviderError("provider_finish", `Google finish reason: ${finishReason}`);
+        const truncated = finishReason === "MAX_TOKENS";
+        if (!truncated && finishReason !== "STOP") throw new ProviderError("provider_finish", `Google finish reason: ${finishReason}`);
         const suppliedIds = new Set<string>();
         for (const call of rawCalls) {
           if (!call.id) continue;
@@ -113,7 +114,7 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
           usedIds.add(id);
           return { id, name: call.name, arguments: call.arguments, syntheticId: true };
         });
-        return { text, toolCalls, finishReason, opaque: parts, ...(usage !== undefined ? { usage } : {}) };
+        return { text, toolCalls, finishReason, ...(truncated ? { truncated } : {}), opaque: parts, ...(usage !== undefined ? { usage } : {}) };
         } finally {
           if (!signal.aborted && usage !== undefined) request.onUsage?.(usage);
         }

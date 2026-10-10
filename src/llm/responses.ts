@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ResponseInput, ResponseOutputItem } from "openai/resources/responses/responses";
-import { renderUserInput, type ModelToolCall, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn } from "./types.js";
+import { renderUserInput, truncatedArgumentsError, type ModelToolCall, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
 import { ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -36,7 +36,7 @@ function inputItems(request: ProviderRequest): ResponseInput {
   return input as ResponseInput;
 }
 
-function completedTurn(output: readonly ResponseOutputItem[], usage: unknown): ProviderTurn {
+function completedTurn(output: readonly ResponseOutputItem[], usage: unknown, truncated = false): ProviderTurn {
   let text = "";
   const calls: ModelToolCall[] = [];
   const seen = new Set<string>();
@@ -51,7 +51,8 @@ function completedTurn(output: readonly ResponseOutputItem[], usage: unknown): P
       seen.add(item.call_id);
       let args: unknown;
       let argumentError: string | undefined;
-      try { args = JSON.parse(item.arguments); } catch { argumentError = `tool ${item.name} arguments are invalid JSON`; }
+      try { args = JSON.parse(item.arguments); }
+      catch { argumentError = truncated ? truncatedArgumentsError(item.name) : `tool ${item.name} arguments are invalid JSON`; }
       if (!argumentError && (!args || typeof args !== "object" || Array.isArray(args))) argumentError = `tool ${item.name} arguments must be an object`;
       calls.push({ id: item.call_id, name: item.name, arguments: argumentError ? {} : args as Record<string, unknown>,
         ...(argumentError ? { argumentError, rawArguments: item.arguments } : {}) });
@@ -59,8 +60,9 @@ function completedTurn(output: readonly ResponseOutputItem[], usage: unknown): P
       throw new ProviderError("unsupported_output", `unsupported Responses output item: ${item.type}`);
     }
   }
-  return { text, toolCalls: calls, finishReason: calls.length ? "tool_calls" : "stop", opaque: structuredClone(output),
-    ...(usage !== undefined ? { usage } : {}) };
+  // Incomplete output items cannot be replayed as-is, so a truncated turn travels as its text and calls instead.
+  return { text, toolCalls: calls, finishReason: truncated ? "max_output_tokens" : calls.length ? "tool_calls" : "stop",
+    ...(truncated ? { truncated } : { opaque: structuredClone(output) }), ...(usage !== undefined ? { usage } : {}) };
 }
 
 export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
@@ -105,7 +107,10 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
             throw new ProviderError("provider_finish", "Responses request failed");
           } else if (event.type === "response.incomplete") {
             usage = event.response.usage;
-            throw new ProviderError("provider_finish", "Responses request incomplete");
+            const reason = event.response.incomplete_details?.reason;
+            if (reason !== "max_output_tokens") throw new ProviderError("provider_finish", `Responses request incomplete${reason ? `: ${reason}` : ""}`);
+            if (completed) throw new ProviderError("invalid_stream", "duplicate Responses completion");
+            return completedTurn(event.response.output, usage, true);
           }
           else if (event.type === "error") throw new ProviderError("provider_error", event.message);
         }
