@@ -72,7 +72,7 @@ Values cache per runtime; resume starts empty. Vars changes preserve the prefix/
 
 Root `ui`: `density` compact/normal/verbose; `reasoning` hidden/summary/full; `color` auto/always/never; `icons` auto/unicode/ascii; `theme` terminal/dark/light. Matching flags override config. Show thinking with `"ui":{"reasoning":"full"}`.
 
-`mcp.servers.<name>`: stdio `{transport:"stdio",command:string,args?:string[],env?:string-map}` or remote `{transport:"streamable-http",url:HTTP(S),headers?:string-map}`. Env/headers stay literal. Activate by exact tools.use IDs.
+`mcp.servers.<name>`: stdio `{transport:"stdio",command:string,args?:string[],env?:string-map,timeout_ms?}` or remote `{transport:"streamable-http",url:HTTP(S),headers?:string-map,timeout_ms?}`. `timeout_ms` (1..2147483647, default the agent request_timeout_ms) bounds connect, discovery and each call; progress notifications restart it. Env/headers stay literal. Activate by exact tools.use IDs.
 
 Canonical-only `sessions.retention_days`: positive integer, default 30. Resume uses current config/agent on the same ID. Meaningful changes rotate once; unchanged resumes stabilize. Old stores cannot block new work.
 

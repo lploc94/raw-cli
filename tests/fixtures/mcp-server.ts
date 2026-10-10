@@ -21,9 +21,17 @@ export function fixtureMcpServer(label: string, count = 2, reverse = false, mode
         : mode === "unsupported-hidden" && name.startsWith("hidden_") ? { ...schema, $schema: "https://example.invalid/unsupported-schema" } : schema })),
       ...(page ? {} : { nextCursor: "second" }) };
   });
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const name = request.params.name;
     const value = String(request.params.arguments?.value);
+    if (value === "progress") {
+      // Longer than the caller's timeout overall, but never silent for longer than 300ms.
+      const progressToken = request.params._meta?.progressToken;
+      for (let step = 1; step <= 5; step++) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        if (progressToken !== undefined) await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: step, total: 5 } });
+      }
+    }
     if (value === "slow") await new Promise((resolve) => setTimeout(resolve, 250));
     if (value === "timeout") await new Promise((resolve) => setTimeout(resolve, 1500));
     if (value === "huge" && mode === "large-result") return { content: [{ type: "text", text: "x".repeat(17 * 1024 * 1024) }] };

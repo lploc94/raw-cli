@@ -184,6 +184,24 @@ test("T-06c: abort during a slow MCP call settles linked result and ignores late
   } finally { await agent.close(); await connection.close(); }
 });
 
+test("a server's own timeoutMs overrides the connection default", async () => {
+  const connection = await connectMcpServers({ servers: { timed: { ...stdio("timed"), timeoutMs: 500 } }, cwd: process.cwd(), timeoutMs: 60000 });
+  try {
+    const timeout = await connection.registry.dispatch(connection.exposed[0]!.alias, { value: "timeout" }, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });
+    assert.equal(timeout.code, "mcp_call_error");
+    assert.match(JSON.stringify(timeout), /timed out/);
+  } finally { await connection.close(); }
+});
+
+test("a tool call that keeps reporting progress outlives the request timeout", async () => {
+  const connection = await connectMcpServers({ servers: { busy: stdio("busy") }, cwd: process.cwd(), timeoutMs: 1000 });
+  try {
+    const result = await connection.registry.dispatch(connection.exposed[0]!.alias, { value: "progress" }, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });
+    assert.equal(result.isError, false, JSON.stringify(result));
+    assert.match(JSON.stringify(result), /busy:selected:progress/);
+  } finally { await connection.close(); }
+});
+
 test("T-06c: SDK tool request deadline returns an explicit error and leaves connection usable", async () => {
   const connection = await connectMcpServers({ servers: { timed: stdio("timed") }, cwd: process.cwd(), timeoutMs: 1000 });
   try {

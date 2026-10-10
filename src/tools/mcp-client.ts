@@ -38,8 +38,8 @@ type Selection = "*" | readonly string[];
 export type McpPanelDeclaration = PanelDeclaration & { tool: string };
 
 export type McpServerConfig =
-  | { command: string; args?: readonly string[]; env?: Readonly<Record<string, string>>; tools?: Selection; panels?: readonly McpPanelDeclaration[] }
-  | { url: string; transport?: "sse" | "streamable-http"; headers?: Readonly<Record<string, string>>; tools?: Selection; panels?: readonly McpPanelDeclaration[] };
+  | { command: string; args?: readonly string[]; env?: Readonly<Record<string, string>>; tools?: Selection; panels?: readonly McpPanelDeclaration[]; timeoutMs?: number }
+  | { url: string; transport?: "sse" | "streamable-http"; headers?: Readonly<Record<string, string>>; tools?: Selection; panels?: readonly McpPanelDeclaration[]; timeoutMs?: number };
 
 /** Validates a server's `panels` list: at most 4 declarations per tool, unique ids per tool. */
 export function parseMcpPanels(value: unknown, where: string, warn?: (message: string) => void): McpPanelDeclaration[] {
@@ -128,14 +128,16 @@ function validateServer(name: string, raw: unknown): McpServerConfig {
     }
   }
   const panels = data.panels !== undefined ? { panels: parseMcpPanels(data.panels, `MCP server ${name}.panels`) } : {};
+  if (data.timeoutMs !== undefined && !validTimeout(data.timeoutMs)) throw new Error(`MCP server ${name}.timeoutMs must be a positive integer`);
+  const timeout = data.timeoutMs !== undefined ? { timeoutMs: data.timeoutMs as number } : {};
   if (hasCommand) {
-    checkKeys(data, ["command", "args", "env", "tools", "panels"], `MCP server ${name}`);
+    checkKeys(data, ["command", "args", "env", "tools", "panels", "timeoutMs"], `MCP server ${name}`);
     return { command: string(data.command, `MCP server ${name}.command`),
       ...(data.args !== undefined ? { args: strings(data.args, `MCP server ${name}.args`) } : {}),
       ...(data.env !== undefined ? { env: stringMap(data.env, `MCP server ${name}.env`) } : {}),
-      ...(tools !== undefined ? { tools } : {}), ...panels };
+      ...(tools !== undefined ? { tools } : {}), ...panels, ...timeout };
   }
-  checkKeys(data, ["url", "transport", "headers", "tools", "panels"], `MCP server ${name}`);
+  checkKeys(data, ["url", "transport", "headers", "tools", "panels", "timeoutMs"], `MCP server ${name}`);
   const url = string(data.url, `MCP server ${name}.url`);
   try { if (!["http:", "https:"].includes(new URL(url).protocol)) throw new Error("protocol"); }
   catch { throw new Error(`MCP server ${name}.url must be HTTP(S)`); }
@@ -143,7 +145,7 @@ function validateServer(name: string, raw: unknown): McpServerConfig {
   if (transport !== "sse" && transport !== "streamable-http") throw new Error(`MCP server ${name}.transport is unsupported`);
   return { url, transport,
     ...(data.headers !== undefined ? { headers: stringMap(data.headers, `MCP server ${name}.headers`) } : {}),
-    ...(tools !== undefined ? { tools } : {}), ...panels };
+    ...(tools !== undefined ? { tools } : {}), ...panels, ...timeout };
 }
 
 function canonical(value: unknown): unknown {
@@ -265,6 +267,10 @@ export function mcpResultToToolResult(raw: unknown, maxOutputBytes: number): Too
   } catch (error) { return errorResult("unsupported_content", `invalid MCP result: ${(error as Error).message}`); }
 }
 
+function validTimeout(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 2147483647;
+}
+
 async function deadline<T>(work: Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
@@ -282,8 +288,8 @@ async function deadline<T>(work: Promise<T>, timeoutMs: number, signal?: AbortSi
 }
 
 export async function connectMcpServers(options: ConnectMcpOptions = {}): Promise<McpConnection> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) throw new Error("MCP timeout must be a positive integer");
+  const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  if (!validTimeout(defaultTimeoutMs)) throw new Error("MCP timeout must be a positive integer");
   const configs = options.servers ?? {};
   const specs = Object.entries(configs).map(([name, raw]) => [string(name, "MCP server name"), validateServer(name, raw)] as const).sort(([a], [b]) => a.localeCompare(b));
   const registry = options.registry ?? new ToolRegistry();
@@ -304,6 +310,7 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
       if (options.signal?.aborted) throw new Error("MCP startup aborted");
       const client = new Client({ name: "raw-cli", version: VERSION }, { capabilities: {} });
       owners.push(client);
+      const timeoutMs = spec.timeoutMs ?? defaultTimeoutMs;
       const transport = "command" in spec
         ? new StdioClientTransport({ command: spec.command, args: [...(spec.args ?? [])],
           env: { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...spec.env },
@@ -391,8 +398,9 @@ export async function connectMcpServers(options: ConnectMcpOptions = {}): Promis
           handler: async (args, context) => {
             if (closed) return errorResult("mcp_closed", `MCP server ${name} is closed`);
             try {
+              // A server that reports progress keeps a long call alive; the timeout bounds silence, not total duration.
               const response = await client.callTool({ name: originalName, arguments: args }, undefined,
-                { timeout: timeoutMs, ...(context.signal ? { signal: context.signal } : {}) });
+                { timeout: timeoutMs, onprogress: () => {}, resetTimeoutOnProgress: true, ...(context.signal ? { signal: context.signal } : {}) });
               if (context.signal?.aborted) return errorResult("aborted", "MCP call aborted");
               return mcpResultToToolResult(response, context.maxOutputBytes);
             } catch (error) {

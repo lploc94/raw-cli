@@ -133,6 +133,13 @@ function booleanValue(value: unknown, context: string): boolean {
   return value;
 }
 
+/** A positive delay that a Node timer can represent. */
+function timerMs(value: unknown, context: string): number {
+  const ms = positive(value, context);
+  if (ms > 2147483647) throw new Error(`${context} must be at most 2147483647`);
+  return ms;
+}
+
 function positive(value: unknown, context: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${context} must be a positive integer`);
@@ -313,15 +320,16 @@ function mcpServersSpec(raw: unknown): Map<string, McpServerConfig> {
     const where = "mcp.servers." + name;
     const spec = object(entry, where);
     const transport = enumValue(spec.transport, new Set<"stdio" | "streamable-http">(["stdio", "streamable-http"]), where + ".transport");
+    const timeout = spec.timeout_ms === undefined ? {} : { timeoutMs: timerMs(spec.timeout_ms, where + ".timeout_ms") };
     if (transport === "stdio") {
-      keys(spec, ["transport", "command", "args", "env", "panels"], where);
-      result.set(name, { command: string(spec.command, where + ".command"),
+      keys(spec, ["transport", "command", "args", "env", "panels", "timeout_ms"], where);
+      result.set(name, { command: string(spec.command, where + ".command"), ...timeout,
         ...(spec.panels !== undefined ? { panels: parseMcpPanels(spec.panels, where + ".panels") } : {}),
         ...(spec.args !== undefined ? { args: argumentStrings(spec.args, where + ".args") } : {}),
         ...(spec.env !== undefined ? { env: stringMap(spec.env, where + ".env") } : {}) });
     } else {
-      keys(spec, ["transport", "url", "headers", "panels"], where);
-      result.set(name, { transport: "streamable-http", url: endpoint(spec.url, where + ".url"),
+      keys(spec, ["transport", "url", "headers", "panels", "timeout_ms"], where);
+      result.set(name, { transport: "streamable-http", url: endpoint(spec.url, where + ".url"), ...timeout,
         ...(spec.panels !== undefined ? { panels: parseMcpPanels(spec.panels, where + ".panels") } : {}),
         ...(spec.headers !== undefined ? { headers: stringMap(spec.headers, where + ".headers") } : {}) });
     }

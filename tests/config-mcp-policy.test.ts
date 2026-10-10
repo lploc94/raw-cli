@@ -29,6 +29,15 @@ test("agents require ordered tool IDs and resolve prompt overrides", async () =>
   await assert.rejects(loadConfig({ configPath: old, env: {} }), /mcp/);
 });
 
+test("an MCP server's timeout_ms is carried to the client and must be a timer-sized positive integer", async () => {
+  const load = (timeout: unknown) => loadConfig({ configPath: config({ default_agent: "p", models: { local: model },
+    mcp: { servers: { search: { ...server, timeout_ms: timeout } } }, agents: { p: { model: "local", tools: { use: ["mcp/search/web_search"] } } } }),
+    env: {}, requireModel: true });
+  assert.equal((await load(1_800_000)).mcpServers.search?.timeoutMs, 1_800_000);
+  await assert.rejects(load(0), /timeout_ms must be a positive integer/);
+  await assert.rejects(load(2 ** 31), /timeout_ms must be at most/);
+});
+
 test("root MCP definitions remain inert until selected by agent", async () => {
   const path = config({ default_agent: "plain", models: { local: model }, mcp: { servers: { search: server } },
     agents: { plain: { model: "local", tools: { use: [] } }, research: { model: "local", tools: { use: ["mcp/search/web_search"] } } } });

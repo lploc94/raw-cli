@@ -18,8 +18,10 @@ Top-level `mcp.servers` is a connection catalog. An agent activates only exact e
 
 | Transport | Required | Optional |
 | --- | --- | --- |
-| stdio | `transport:"stdio"`, nonempty string `command` | `args`: string array; `env`: string-to-string map |
-| remote | `transport:"streamable-http"`, HTTP(S) string `url` | `headers`: string-to-string map |
+| stdio | `transport:"stdio"`, nonempty string `command` | `args`: string array; `env`: string-to-string map; `timeout_ms` |
+| remote | `transport:"streamable-http"`, HTTP(S) string `url` | `headers`: string-to-string map; `timeout_ms` |
+
+`timeout_ms` (integer 1..2147483647, default the agent's `request_timeout_ms`) bounds connect, tool discovery and each tool call. A call whose server sends progress notifications restarts the timer on each one, so raise it only for tools that work silently for long.
 
 Those are the two configuration transports; unknown fields fail. Stdio starts in the session cwd. Make command/script paths valid for the target machine; a relative script argument is not automatically config-relative. Stdout must carry MCP protocol messages, with logs on stderr. Unselected catalog entries do not start.
 
@@ -83,7 +85,7 @@ With this fixture, verify a real `echo_text` call with `{"text":"hello"}` return
 
 ## Diagnose and report
 
-- Spawn/handshake failure: check command/PATH, cwd, script arguments, stdout protocol and timeout.
+- Spawn/handshake failure: check command/PATH, cwd, script arguments, stdout protocol and `timeout_ms`.
 - Unknown tool/server: check server key and actual original names, including paginated `tools/list`; do not guess from an alias. Raw skips an unavailable selected server or tool with a stderr warning (`unknown MCP tool NAME selected from SERVER; skipped`) and still starts; a server upgrade can rename or drop tools, so replace stale IDs with current names.
 - Unsupported selected schema: identify the actual schema error; an unselected unsupported tool is inert.
 - Authentication failure: check the server's real credential mechanism and literal headers/environment, not model-provider credentials.
