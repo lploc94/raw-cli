@@ -62,6 +62,8 @@ export interface CliArgs {
 export interface CompactSettings {
   keepRecentTurns: number;
   maxOutputTokens: number;
+  /** maxOutputTokens is Raw's default rather than configured, so a provider may lower it to a model's stated maximum. */
+  maxOutputTokensDefaulted?: boolean;
   triggerTokens?: number;
 }
 
@@ -545,6 +547,7 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
     keepRecentTurns: value.keep_recent_turns === undefined ? 2 : nonnegative(value.keep_recent_turns, where + ".keep_recent_turns"),
     maxOutputTokens: value.max_output_tokens === undefined ? defaultCompactOutputTokens(model)
       : positive(value.max_output_tokens, where + ".max_output_tokens"),
+    ...(value.max_output_tokens === undefined ? { maxOutputTokensDefaulted: true } : {}),
     // A declared context turns automatic compaction on at 80% of the input budget; `false` keeps it manual.
     ...(value.trigger_tokens === false ? {}
       : value.trigger_tokens !== undefined ? { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }

@@ -98,8 +98,10 @@ const imageBlocks = (message: ModelMessage): readonly { type: string }[] => mess
 export function projectImageLimits(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number = () => 0): ModelMessage[] {
   if (!messages.some((message) => imageBlocks(message).some((block) => block.type === "image"))) return [...messages];
   const omitted = new Map<object, string>();
-  const textBytes = Buffer.byteLength(JSON.stringify(messages, (key, value) =>
-    key === "data" && typeof value === "string" ? "" : value), "utf8");
+  // Everything but image payloads, as JSON escapes it; a tool argument that happens to be named `data` still counts.
+  const textBytes = Buffer.byteLength(JSON.stringify(messages, function (this: unknown, key, value) {
+    return key === "data" && typeof value === "string" && (this as { type?: unknown } | null)?.type === "image" ? "" : value;
+  }), "utf8");
   let budget = limits.request - reservedBytes() - textBytes;
   const admitted: ImageBlock[] = [];
   const label = (image: ImageBlock) => `${image.mimeType}${"path" in image && image.path ? `, ${JSON.stringify(image.path)}`
@@ -109,6 +111,8 @@ export function projectImageLimits(messages: readonly ModelMessage[], limits: Re
     const size = imageDimensions(image);
     return size !== null && Math.max(size.width, size.height) > maxDimension ? size : undefined;
   };
+  // Admitted images over the many-images pixel bound; while any is admitted, the request cannot grow past the threshold.
+  let overStrict = 0;
   for (let index = messages.length - 1; index >= 0; index--) {
     const blocks = imageBlocks(messages[index]!);
     for (let at = blocks.length - 1; at >= 0; at--) {
@@ -121,16 +125,16 @@ export function projectImageLimits(messages: readonly ModelMessage[], limits: Re
         omitted.set(block, `[Image omitted from this request: ${label(image)}, ${megabytes(size)} encoded, over the provider's ${megabytes(limits.perImage)} per-image limit. ${smaller}]`);
       } else if (pixels) {
         omitted.set(block, `[Image omitted from this request: ${label(image)}, ${pixels.width}x${pixels.height} px, over the provider's ${limits.maxDimension} px limit. ${smaller}]`);
-      } else if (admitted.length + 1 > limits.count || size > budget) {
-        omitted.set(block, `[Image omitted from this request: ${label(image)}, ${megabytes(size)} encoded. Newer images and the rest of the conversation already use the provider's request allowance (${limits.count} images, ${megabytes(limits.request)} per request); view it again if you need it.]`);
-      } else { admitted.push(image); budget -= size; }
-    }
-  }
-  // Past the many-images threshold every image in the request must meet the stricter dimension bound.
-  if (limits.manyImages && admitted.length > limits.manyImages.above) {
-    for (const image of admitted) {
-      const pixels = tooLarge(image, limits.manyImages.maxDimension);
-      if (pixels) omitted.set(image, `[Image omitted from this request: ${label(image)}, ${pixels.width}x${pixels.height} px, over the provider's ${limits.manyImages.maxDimension} px limit for requests with more than ${limits.manyImages.above} images. ${smaller}]`);
+      } else {
+        // Past the many-images threshold every image must meet the stricter bound; newer images are never given up for older ones.
+        const strict = limits.manyImages ? tooLarge(image, limits.manyImages.maxDimension) : undefined;
+        const crowded = limits.manyImages !== undefined && admitted.length + 1 > limits.manyImages.above;
+        if (crowded && strict && overStrict === 0) {
+          omitted.set(block, `[Image omitted from this request: ${label(image)}, ${strict.width}x${strict.height} px, over the provider's ${limits.manyImages!.maxDimension} px limit for requests with more than ${limits.manyImages!.above} images. ${smaller}]`);
+        } else if (admitted.length + 1 > limits.count || size > budget || (crowded && (strict || overStrict > 0))) {
+          omitted.set(block, `[Image omitted from this request: ${label(image)}, ${megabytes(size)} encoded. Newer images and the rest of the conversation already use the provider's request allowance (${limits.count} images, ${megabytes(limits.request)} per request); view it again if you need it.]`);
+        } else { admitted.push(image); budget -= size; if (strict) overStrict++; }
+      }
     }
   }
   if (!omitted.size) return [...messages];

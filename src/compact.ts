@@ -7,6 +7,8 @@ export interface CompactOptions {
   provider?: ProviderAdapter;
   keepRecentTurns?: number;
   maxOutputTokens?: number;
+  /** `maxOutputTokens` is a default, not a configured cap; omitting `maxOutputTokens` implies it. */
+  maxOutputTokensDefaulted?: boolean;
 }
 
 export interface CompactResult {
@@ -114,7 +116,7 @@ export async function performCompaction(
   snapshot: CompactSnapshot,
   provider: ProviderAdapter,
   options: Required<Pick<CompactOptions, "keepRecentTurns" | "maxOutputTokens">> & {
-    timeoutMs: number; signal: AbortSignal; cacheKey: string;
+    timeoutMs: number; signal: AbortSignal; cacheKey: string; maxOutputTokensDefaulted?: boolean;
     onRequestStart?: (index: number) => void; onUsage?: (index: number, raw: unknown) => void;
   },
 ): Promise<CompactWorkResult> {
@@ -149,8 +151,7 @@ export async function performCompaction(
         timeoutMs: options.timeoutMs,
         maxOutputTokens: budget,
         // The default summary cap, or the doubled retry, is Raw's guess; the model's stated maximum may lower it.
-        ...(budget !== options.maxOutputTokens || options.maxOutputTokens === defaultCompactOutputTokens(provider.modelConfig)
-          ? { maxOutputTokensAssumed: true } : {}),
+        ...(budget !== options.maxOutputTokens || options.maxOutputTokensDefaulted ? { maxOutputTokensAssumed: true } : {}),
         signal: options.signal,
         cacheKey: options.cacheKey,
         onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(index, raw); },

@@ -534,7 +534,8 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
     try {
       return await session.agent.compact({ provider: providerFactory(modelConfig),
         keepRecentTurns: options.runtime.compact.keepRecentTurns,
-        maxOutputTokens: options.runtime.compact.maxOutputTokens });
+        maxOutputTokens: options.runtime.compact.maxOutputTokens,
+        ...(options.runtime.compact.maxOutputTokensDefaulted ? { maxOutputTokensDefaulted: true } : {}) });
     } catch { throw rawError(rawErrors.upstream, "compaction failed"); }
   });
   return { app, close };

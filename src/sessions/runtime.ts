@@ -27,6 +27,7 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
   try {
     if (signal.aborted) throw new Error("startup aborted");
     const compactOptions = { keepRecentTurns: runtime.compact.keepRecentTurns, maxOutputTokens: runtime.compact.maxOutputTokens,
+      ...(runtime.compact.maxOutputTokensDefaulted ? { maxOutputTokensDefaulted: true } : {}),
       ...(operation.kind === "compact" ? { provider: createProvider(runtime.resolveCompactModelConfig()) } : {}) };
     const agent = createAgent({ ...runtimeAgentOptions(runtime, tools, provider, session.cwd),
       ...(options.approve ? { approve: options.approve } : {}),

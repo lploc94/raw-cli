@@ -208,6 +208,10 @@ test("images the API would reject become text notes, newest images keep the requ
   // The system prompt and tool schemas count against the same request.
   assert.equal(toolBlock(projectImageLimits(messages, { perImage: 5000, request: 7600, count: 3 }, () => 3000)), "text");
   assert.deepEqual(projectImageLimits(messages, { request: 100_000, count: 10 }), messages);
+  // A tool argument named `data` is ordinary request text, not an image payload.
+  const withArgument: ModelMessage[] = [{ role: "assistant", text: "", toolCalls: [{ id: "w", name: "write", arguments: { data: "x".repeat(5000) } }] },
+    { role: "user", content: [image(3000, "late.png")] }];
+  assert.equal(((projectImageLimits(withArgument, { request: 7000, count: 3 })[1] as unknown as { content: UserBlock[] }).content[0])!.type, "text");
 });
 
 test("images over the provider's pixel limits become notes, with the stricter bound for many images", () => {
@@ -220,9 +224,18 @@ test("images over the provider's pixel limits become notes, with the stricter bo
   assert.equal(blocks[1]!.type, "image");
   assert.match((((projectImageLimits([{ role: "user", content: [photo] }], { request: 100 * 1024 * 1024, count: 10, maxDimension: 1 })[0] as unknown as
     { content: UserBlock[] }).content[0]) as { text: string }).text, /"photo\.jpg", 2x2 px, over the provider's 1 px limit/);
-  const many = Array.from({ length: 3 }, (_, i) => imageBlock(makePng(30, 30), "image/png", `${i}.png`));
-  const crowded = (projectImageLimits([{ role: "user", content: many }], { request: 100 * 1024 * 1024, count: 10, manyImages: { above: 2, maxDimension: 20 } })[0] as unknown as { content: UserBlock[] }).content;
-  assert.ok(crowded.every((block) => block.type === "text" && /more than 2 images/.test(block.text)));
+  const crowd = (content: UserBlock[]) => (projectImageLimits([{ role: "user", content }], { request: 100 * 1024 * 1024, count: 10,
+    manyImages: { above: 2, maxDimension: 20 } })[0] as unknown as { content: UserBlock[] }).content.map((block) => block.type === "image" ? "image" : (block as { text: string }).text);
+  const big = (name: string) => imageBlock(makePng(30, 30), "image/png", name);
+  const small = (name: string) => imageBlock(makePng(10, 10), "image/png", name);
+  // Newer images are kept even when that means stopping below the many-images threshold.
+  const [oldest, middle, newest] = crowd([big("0.png"), big("1.png"), big("2.png")]);
+  assert.deepEqual([middle, newest], ["image", "image"]);
+  assert.match(oldest!, /"0\.png".*request allowance/);
+  // Small newer images may exceed the threshold; an older large one cannot join them.
+  const mixed = crowd([small("a.png"), big("b.png"), small("c.png"), small("d.png")]);
+  assert.deepEqual([mixed[0], mixed[2], mixed[3]], ["image", "image", "image"]);
+  assert.match(mixed[1]!, /"b\.png", 30x30 px, over the provider's 20 px limit for requests with more than 2 images/);
 });
 
 test("an Anthropic request carries a note instead of an image over 5 MB, and the stored turn keeps the image", async () => {

@@ -313,7 +313,7 @@ export class AgentSession {
   private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
     const modelConfig = this.options.provider.modelConfig;
     return projectImageLimits(projectVisionMessages(messages, modelConfig.vision === true), requestImageLimits(modelConfig.method),
-      () => Buffer.byteLength(this.options.system, "utf8") + Buffer.byteLength(JSON.stringify(this.schemaView), "utf8"));
+      () => Buffer.byteLength(JSON.stringify(this.options.system), "utf8") + Buffer.byteLength(JSON.stringify(this.schemaView), "utf8"));
   }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
@@ -406,7 +406,7 @@ export class AgentSession {
     return true;
   }
 
-  private async compactWork(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number,
+  private async compactWork(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number, maxOutputTokensDefaulted: boolean,
     controller: AbortController, details: CompactionDetails, onUsage?: (raw: unknown) => void): Promise<CompactResult> {
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
     const snapshot = { messages: structuredClone(this.requestMessages()), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
@@ -420,7 +420,7 @@ export class AgentSession {
     });
     try {
       const work = await Promise.race([performCompaction(snapshot, provider, {
-        keepRecentTurns, maxOutputTokens, timeoutMs: this.options.requestTimeoutMs,
+        keepRecentTurns, maxOutputTokens, maxOutputTokensDefaulted, timeoutMs: this.options.requestTimeoutMs,
         signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
         onRequestStart: (index) => {
           const entry: UsageRecord = { method: provider.modelConfig.method, provider: provider.modelConfig.provider, raw: undefined };
@@ -483,7 +483,7 @@ export class AgentSession {
     } finally { controller.signal.removeEventListener("abort", onAbort); }
   }
 
-  private async compactAttempt(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number,
+  private async compactAttempt(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number, maxOutputTokensDefaulted: boolean,
     controller: AbortController, cause: CompactionDetails["cause"], onEvent?: (event: RunEvent) => void): Promise<CompactResult> {
     const details: CompactionDetails = { id: randomUUID(), cause, status: "running", keepRecentTurns,
       beforeTokens: this.estimatedContextTokens(), beforeBytes: Buffer.byteLength(JSON.stringify(this.messages)) };
@@ -492,7 +492,7 @@ export class AgentSession {
     this.recordVisible("compaction", { ...details });
     try {
       emit({ type: "compact_start", estimatedTokens: details.beforeTokens, details });
-      const result = await this.compactWork(provider, keepRecentTurns, maxOutputTokens, controller, details,
+      const result = await this.compactWork(provider, keepRecentTurns, maxOutputTokens, maxOutputTokensDefaulted, controller, details,
         (raw) => emit({ type: "usage", raw }));
       Object.assign(details, { status: result.status, afterTokens: this.estimatedContextTokens(),
         beforeBytes: result.beforeBytes ?? details.beforeBytes, afterBytes: result.status === "compacted" ? result.afterBytes : details.beforeBytes });
@@ -546,7 +546,8 @@ export class AgentSession {
     this.heartbeat?.ref();
     const controller = new AbortController();
     this.controller = controller;
-    const task = this.compactAttempt(options.provider ?? this.options.provider, keepRecentTurns, maxOutputTokens, controller, "manual", onEvent).finally(() => {
+    const defaulted = options.maxOutputTokens === undefined || options.maxOutputTokensDefaulted === true;
+    const task = this.compactAttempt(options.provider ?? this.options.provider, keepRecentTurns, maxOutputTokens, defaulted, controller, "manual", onEvent).finally(() => {
       this.controller = undefined;
       this.activeCompact = undefined;
       this.heartbeat?.unref();
@@ -864,7 +865,7 @@ export class AgentSession {
               keep--;
             }
             try { compactResult = await this.compactAttempt(this.options.provider, keep, compact.maxOutputTokens,
-              controller, "automatic", emit); }
+              compact.maxOutputTokensDefaulted === true, controller, "automatic", emit); }
             catch (error) { return finish({ status: "error", steps, code: "compact_error", message: (error as Error).message }); }
             autoCompacted = compactResult.status !== "noop";
             if (controller.signal.aborted || compactResult.status === "cancelled") return finish(interrupted());

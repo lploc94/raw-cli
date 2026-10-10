@@ -83,7 +83,7 @@ export class ProcessControls {
         else record.result=await registry.dispatch(plugin!.registration.name,arguments_,{cwd:session.cwd,maxOutputBytes:Math.min(runtime.maxOutputBytes,65536),autoApprove:runtime.autoApprove,whitelist:[plugin!.registration.name],signal,toolCallId:record.id,
           approve:this.options.approve(record,approvalTimeoutMs(this.options.env)),processes:this.options.processes.forSession(record.sessionId),
           onHook:(event,identity,name,args,result,effects)=>hooks.run(event,{cwd:session.cwd,agent_id:savedAgent,session_id:record.sessionId,turn_id:record.id,tool:{identity,name,source:"user_action",arguments:args,...(result?{result}:{}),...(effects?{effects}:{})}},
-            {...(event==="PreToolUse"?{signal}:signal.aborted?{deadline:Date.now()+2000}:{}),onReceipt:receipt=>{record.hooks=[...(record.hooks??[]),receipt].slice(-64);this.save(record);}})});
+            {...(event==="PreToolUse"?{signal}:{hurry:{signal,graceMs:2000},...(signal.aborted?{deadline:Date.now()+2000}:{})}),onReceipt:receipt=>{record.hooks=[...(record.hooks??[]),receipt].slice(-64);this.save(record);}})});
       }
     }
     record.state=signal.aborted?"interrupted":record.result?.isError?"failed":"completed";record.updatedAt=Date.now();
