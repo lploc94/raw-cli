@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DEFAULT_SESSION_RETENTION_DAYS } from "../src/config.js";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -10,6 +11,7 @@ import { runSessionMaintenance } from "../src/sessions/maintenance.js";
 import { openSessionStore } from "../src/sessions/store.js";
 
 const day = 86_400_000;
+const retentionDays = DEFAULT_SESSION_RETENTION_DAYS;
 
 test("exact inactivity cutoff hides sessions; reads do not renew but writes do", () => {
   const root = mkdtempSync(join(tmpdir(), "raw-retention-clock-"));
@@ -17,7 +19,7 @@ test("exact inactivity cutoff hides sessions; reads do not renew but writes do",
   const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root }, now: () => now });
   try {
     const id = store.createSession({ cwd: root, title: "first" }).id;
-    now += 7 * day - 1;
+    now += retentionDays * day - 1;
     assert.ok(store.getSession(id));
     assert.equal(store.listSessions({ cwd: root }).items.length, 1);
     assert.equal(store.getSessionHistory({ sessionId: id }).items.length, 0);
@@ -27,7 +29,7 @@ test("exact inactivity cutoff hides sessions; reads do not renew but writes do",
     assert.throws(() => store.getSessionHistory({ sessionId: id }), /expired/);
 
     const fresh = store.createSession({ cwd: root, title: "second" }).id;
-    now += 7 * day - 1;
+    now += retentionDays * day - 1;
     store.appendHistory({ sessionId: fresh, kind: "user", payload: { input: "activity" } });
     now += 1;
     assert.ok(store.getSession(fresh));
@@ -46,7 +48,7 @@ test("idle cleanup skips live claims, then removes expired rows and referenced p
     const before = store.storageStats();
     assert.ok(before.payloadBytes > 90_000);
     assert.equal(Number(store.database.prepare("SELECT count(*) AS n FROM staged_payloads").get()?.n), 0);
-    now += 7 * day;
+    now += retentionDays * day;
     assert.equal(runSessionMaintenance(store).expiredDeleted, 0);
     assert.equal(Number(store.database.prepare("SELECT count(*) AS n FROM sessions WHERE id = ?").get(id)?.n), 1);
     store.releaseSession(id, owner);
@@ -111,7 +113,7 @@ test("idle maintenance reclaims SQLite free pages and stats identify the heavies
     const occupied = store.storageStats();
     assert.equal(occupied.heavySessions[0]?.id, large);
     assert.ok(occupied.databaseBytes + occupied.walBytes > 2_000_000);
-    now += 7 * day;
+    now += retentionDays * day;
     const cleanup = runSessionMaintenance(store, { maxSessions: 100 });
     assert.equal(cleanup.expiredDeleted, 2);
     const after = store.storageStats();
@@ -165,7 +167,7 @@ test("cleanup removes a dead owner's expired session and only dead-owner orphan 
     store.database.prepare("INSERT INTO staged_payloads(owner_token, relative_path) VALUES (?, ?)")
       .run(liveOwner.token, join("payloads", liveOwner.token, "unpublished.json"));
     assert.equal(store.storageStats().payloadBytes, 8);
-    now += 7 * day;
+    now += retentionDays * day;
     assert.equal(runSessionMaintenance(store).expiredDeleted, 1);
     assert.equal(existsSync(deadFile), false);
     assert.equal(existsSync(liveFile), true);
@@ -258,7 +260,7 @@ test("bounded cleanup advances past many still-live expired claims", () => {
       owners.push({ id, ...store.claimSession(id) });
     }
     const removable = store.createSession({ cwd: root, title: "removable" }).id;
-    now += 7 * day;
+    now += retentionDays * day;
     let deleted = 0;
     for (let attempt = 0; attempt < 5; attempt++) deleted += runSessionMaintenance(store,
       { maxSessions: 1, sweepOrphans: false, reclaim: false }).expiredDeleted;
@@ -283,7 +285,7 @@ test("legacy non-incremental SQLite store converts only during idle reclamation"
     for (let index = 0; index < 60; index++) store.appendHistory({ sessionId: id, kind: "status",
       payload: { text: `legacy-${index}-` + "x".repeat(50_000) } });
     const before = store.storageStats().databaseBytes + store.storageStats().walBytes;
-    now += 7 * day;
+    now += retentionDays * day;
     assert.equal(runSessionMaintenance(store).expiredDeleted, 1);
     assert.equal(Number(store.database.prepare("PRAGMA auto_vacuum").get()?.auto_vacuum), 2);
     assert.ok(store.storageStats().databaseBytes + store.storageStats().walBytes < before);
@@ -312,7 +314,7 @@ test("a dead claim on a recent session does not block unrelated expired-page rec
     const expired = store.createSession({ cwd: root, title: "expired-large" }).id;
     for (let index = 0; index < 80; index++) store.appendHistory({ sessionId: expired, kind: "status",
       payload: { text: `row-${index}-` + "x".repeat(50_000) } });
-    now += 8 * day;
+    now += (retentionDays + 1) * day;
     const recent = store.createSession({ cwd: root, title: "recent-dead" }).id;
     store.database.prepare("UPDATE sessions SET owner_token = ?, owner_generation = 1, lease_until = ? WHERE id = ?")
       .run("2147483647-dead-process", now - 1, recent);

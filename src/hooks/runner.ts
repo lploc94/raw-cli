@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { HookError, type HookExecution, type HookRequest, type SelectedHook } from "./contract.js";
 
-const MAX_IO = 65536;
-const MAX_INPUT = 1024 * 1024;
+/** Safety bounds: a hook's response is a small JSON decision, and its input carries tool arguments and results. */
+const MAX_IO = 1024 * 1024;
+const MAX_INPUT = 64 * 1024 * 1024;
 
 export async function runHook(hook: SelectedHook, request: HookRequest,
   options: { signal?: AbortSignal; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<HookExecution> {

@@ -2,6 +2,10 @@ import { RE2JS } from "re2js";
 import { compileWhen, matchesWhen, type ConditionSource } from "../tools/policy.js";
 import { hookEvents, toolHookEvents, type HookEventName, type HookManifest, type HookSubscription } from "./contract.js";
 
+/** A hook may run a formatter, linter or test command; ten minutes bounds a hung one. */
+export const DEFAULT_HOOK_TIMEOUT_MS = 60000;
+export const MAX_HOOK_TIMEOUT_MS = 600000;
+
 function object(value: unknown, where: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${where} must be an object`);
   return value as Record<string, unknown>;
@@ -53,8 +57,8 @@ export function parseHookManifest(raw: unknown, id: string, expectedName: string
   if (!Array.isArray(args) || args.length > 64 || args.some((arg) => typeof arg !== "string" || Buffer.byteLength(arg) > 4096)) {
     throw new Error(`invalid hook args: ${id}`);
   }
-  const timeoutMs = value.timeout_ms === undefined ? 5000 : value.timeout_ms;
-  if (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > 30000) {
+  const timeoutMs = value.timeout_ms === undefined ? DEFAULT_HOOK_TIMEOUT_MS : value.timeout_ms;
+  if (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 || (timeoutMs as number) > MAX_HOOK_TIMEOUT_MS) {
     throw new Error(`invalid hook timeout_ms: ${id}`);
   }
   return { protocol_version: 2, name, events, command, args: args as string[], timeoutMs: timeoutMs as number };

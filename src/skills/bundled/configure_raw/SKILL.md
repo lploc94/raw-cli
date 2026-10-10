@@ -74,7 +74,7 @@ Root `ui`: `density` compact/normal/verbose; `reasoning` hidden/summary/full; `c
 
 `mcp.servers.<name>`: stdio `{transport:"stdio",command:string,args?:string[],env?:string-map}` or remote `{transport:"streamable-http",url:HTTP(S),headers?:string-map}`. Env/headers stay literal. Activate by exact tools.use IDs.
 
-Canonical-only `sessions.retention_days`: positive integer, default 7. Resume uses current config/agent on the same ID. Meaningful changes rotate once; unchanged resumes stabilize. Old stores cannot block new work.
+Canonical-only `sessions.retention_days`: positive integer, default 30. Resume uses current config/agent on the same ID. Meaningful changes rotate once; unchanged resumes stabilize. Old stores cannot block new work.
 
 ## Edit and verify
 

@@ -8,9 +8,10 @@ import type { RequestOverride } from "../request-controls.js";
 import type { ToolContext } from "../tools/primitives.js";
 import type { UserInput } from "../llm/types.js";
 import { measureSession, type SessionMetrics } from "./metrics.js";
-import { SessionOperationError, terminalOperationStates, type OperationIntent, type OperationState, type SessionOperation } from "./operation-types.js";
+import { approvalTimeoutMs, SessionOperationError, terminalOperationStates, type OperationIntent, type OperationState, type SessionOperation } from "./operation-types.js";
 import { attachSessionRuntime } from "./runtime.js";
 import type { SessionOwner, SessionStore, SessionSummary } from "./store.js";
+
 
 export type { OperationIntent, OperationState, SessionOperation } from "./operation-types.js";
 export { SessionOperationError } from "./operation-types.js";
@@ -68,7 +69,7 @@ export class SessionOperations {
   owns(operationId: string): boolean { return this.active.has(operationId); }
   activeIds(): string[] { return [...this.active.keys()]; }
   metrics(operationId: string): SessionMetrics | undefined { return this.active.get(operationId)?.measure?.(); }
-  approvalTimeout(operationId: string): number { return this.active.get(operationId)?.agent?.requestTimeoutMs ?? 120000; }
+  approvalTimeout(_operationId: string): number { return approvalTimeoutMs(this.options.env); }
   toolIdentity(operationId: string, name: string): string | undefined { return this.active.get(operationId)?.agent?.toolIdentity(name); }
 
   submit(intent: OperationIntent, blocks?: UserInput, request?: RequestOverride): SessionOperation {

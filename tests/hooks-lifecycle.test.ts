@@ -121,3 +121,25 @@ test("Stop and SessionEnd run after cancellation without an inherited aborted si
     ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"]);
   assert.equal(events.filter(event => event === "run_end").length, 1);
 });
+
+test("observing hooks get their own timeout_ms instead of a fixed two-second budget", async () => {
+  const f = await setup(`import { appendFileSync } from "node:fs";
+    let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => {
+      const event = JSON.parse(input).event;
+      setTimeout(() => { appendFileSync(process.argv[2], event + "\\n"); }, event === "PostToolUse" ? 2300 : 0);
+    });`);
+  f.hook.timeoutMs = 10000;
+  f.hook.events = [{ name: "PostToolUse" }];
+  let calls = 0;
+  const provider: ProviderAdapter = { modelConfig: { agentName: "raw", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+    generate: async () => ++calls === 1
+      ? { text: "", finishReason: "tool_calls", toolCalls: [{ id: "c", name: "doit", arguments: { value: "ok" } }] }
+      : { text: "done", finishReason: "stop", toolCalls: [] } };
+  const agent = createAgent({ provider, registry: f.registry, cwd: f.cwd, hooks: new HookDispatcher([f.hook]) });
+  const outcomes: string[] = [];
+  const result = await agent.run("do it", event => { if (event.type === "hook_event") outcomes.push(event.outcome); });
+  await agent.close();
+  assert.equal(result.status, "completed");
+  assert.deepEqual(outcomes, ["continued"]);
+  assert.equal((await readFile(f.log, "utf8")).trim(), "PostToolUse");
+});

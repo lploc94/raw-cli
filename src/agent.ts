@@ -112,6 +112,9 @@ export interface AgentOptions {
   persistence?: { store: SessionStore; sessionId: string; surface: HistorySurface; owner?: SessionOwner; ownership?: "agent" | "host"; operationId?: string };
 }
 
+/** Total time observing hooks may still take once a run was interrupted; otherwise each hook's own timeout_ms applies. */
+const HOOK_TEARDOWN_MS = 2000;
+
 /** Consecutive cut-off answers continued before the run ends with what it has; bounds a model that never finishes. */
 const MAX_OUTPUT_CONTINUATIONS = 8;
 const OUTPUT_LIMIT_NOTICE = "[Raw output limit notice] Your previous response was cut off at the output token limit. Continue exactly where it stopped, without repeating what you already wrote.";
@@ -353,8 +356,7 @@ export class AgentSession {
     await this.options.hooks?.run("SessionStart", { cwd: this.options.cwd,
       agent_id: this.options.provider.modelConfig.agentName,
       ...(this.persistence ? { session_id: this.persistence.sessionId } : {}), source },
-    { ...(signal ? { signal } : {}), deadline: Date.now() + 2000,
-      onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
+    { ...(signal ? { signal } : {}), onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
   }
 
   setToolView(whitelist?: readonly string[]): number {
@@ -517,7 +519,7 @@ export class AgentSession {
       if (this.hookStarted) await this.options.hooks?.run("SessionEnd", { cwd: this.options.cwd,
         agent_id: this.options.provider.modelConfig.agentName,
         ...(this.persistence ? { session_id: this.persistence.sessionId } : {}) },
-      { deadline: Date.now() + 2000, onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
+      { onReceipt: (receipt) => this.hookReceipt(receipt, onEvent) });
     }
     finally {
       this.ownedInteractions?.close();
@@ -639,7 +641,8 @@ export class AgentSession {
         panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates), onHandlerSettled: () => this.settleHandler(operationId, panelCall),
         ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) =>
           this.options.hooks!.run(event, { ...hookRequest(), tool: { identity, name, source: "user_action", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
-            { ...(event === "PreToolUse" ? { signal: controller.signal } : { deadline: Date.now() + 2000 }),
+            // Observing hooks get their own timeout_ms; only an interrupted run hurries them (HOOK_TEARDOWN_MS).
+            { ...(event === "PreToolUse" ? { signal: controller.signal } : controller.signal.aborted ? { deadline: Date.now() + HOOK_TEARDOWN_MS } : {}),
               onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
         onStart: () => { started = true; },
       });
@@ -731,7 +734,7 @@ export class AgentSession {
         let finalResult = result;
         try {
           await this.options.hooks?.run("Stop", { ...hookRequest(), run: result },
-            { deadline: terminalDeadline ?? Date.now() + 2000,
+            { ...(terminalDeadline !== undefined || result.status === "cancelled" ? { deadline: terminalDeadline ?? Date.now() + HOOK_TEARDOWN_MS } : {}),
               onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
         } catch (error) {
           finalResult = { status: "error", steps, code: "hook_event_error", message: String(error) };
@@ -958,8 +961,8 @@ export class AgentSession {
               ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
                 name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) => this.options.hooks!.run(event,
                 { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
-                { ...(event === "PreToolUse" ? { signal: controller.signal } : {
-                  deadline: controller.signal.aborted ? (terminalDeadline ??= Date.now() + 2000) : Date.now() + 2000 }),
+                { ...(event === "PreToolUse" ? { signal: controller.signal }
+                  : controller.signal.aborted ? { deadline: terminalDeadline ??= Date.now() + HOOK_TEARDOWN_MS } : {}),
                   onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
               onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
             });

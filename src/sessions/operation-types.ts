@@ -30,3 +30,12 @@ export class SessionOperationError extends Error {
     super(message); this.name = "SessionOperationError";
   }
 }
+
+/** Approvals wait for a person, not a model: a day, independent of request_timeout_ms; interrupting still cancels them. */
+export const APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+/** `RAW_APPROVAL_TIMEOUT_MS` may shorten (never lengthen) the approval wait. */
+export function approvalTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const value = Number(env.RAW_APPROVAL_TIMEOUT_MS);
+  return Number.isSafeInteger(value) && value > 0 ? Math.min(value, APPROVAL_TIMEOUT_MS) : APPROVAL_TIMEOUT_MS;
+}

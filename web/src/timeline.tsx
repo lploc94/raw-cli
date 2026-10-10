@@ -78,7 +78,7 @@ export function ApprovalActions({ approval }: { approval: Approval }) {
         </button>
       </div>
       <small className="muted">
-        Expires {new Date(approval.deadline).toLocaleTimeString()}
+        Expires {new Date(approval.deadline).toLocaleString()}
       </small>
       <ErrorMessage>{error}</ErrorMessage>
     </section>

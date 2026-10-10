@@ -87,16 +87,16 @@ test("a known service cannot silently use another adapter's default endpoint", a
   await assert.rejects(loadConfig({ home, env: { OPENAI_API_KEY: "fixture" }, requireModel: true }), /base_url is required/);
 });
 
-test("retention defaults to seven days and only canonical config may set it", async () => {
+test("retention defaults to thirty days and only canonical config may set it", async () => {
   const home = fixture({});
-  assert.equal(readSessionRetentionDays({ home, env: {} }), 7);
-  const canonical = join(home, ".config", "raw", "config.json");
-  writeFileSync(canonical, JSON.stringify({ sessions: { retention_days: 30 } }));
   assert.equal(readSessionRetentionDays({ home, env: {} }), 30);
+  const canonical = join(home, ".config", "raw", "config.json");
+  writeFileSync(canonical, JSON.stringify({ sessions: { retention_days: 7 } }));
+  assert.equal(readSessionRetentionDays({ home, env: {} }), 7);
   const alternate = join(home, "alternate.json");
   writeFileSync(alternate, JSON.stringify({}));
   const loaded = await loadConfig({ home, env: {}, configPath: alternate, requireModel: false });
-  assert.equal(loaded.sessionsRetentionDays, 30);
+  assert.equal(loaded.sessionsRetentionDays, 7);
   writeFileSync(alternate, JSON.stringify({ sessions: { retention_days: 1 } }));
   await assert.rejects(loadConfig({ home, env: {}, configPath: alternate, requireModel: false }), /canonical|global/i);
 });

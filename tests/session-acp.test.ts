@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { client, PROTOCOL_VERSION, type SessionUpdate } from "@agentclientprotocol/sdk";
 import { createAcpServer } from "../src/acp/methods.js";
-import { loadConfig } from "../src/config.js";
+import { DEFAULT_SESSION_RETENTION_DAYS, loadConfig } from "../src/config.js";
 import type { ProviderRequest } from "../src/llm/types.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { testConfig } from "./fixtures/config.js";
@@ -178,7 +178,7 @@ test("ACP rejects an expired ID without contacting a provider", async () => {
     await firstConnection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     id = (await firstConnection.agent.request("session/new", { cwd: root, mcpServers: [] })).sessionId;
   } finally { firstConnection.close(); await first.close(); }
-  now += 7 * 86_400_000;
+  now += DEFAULT_SESSION_RETENTION_DAYS * 86_400_000;
   const second = makeServer();
   const connection = client({ name: "expiry-second" }).connect(second.app);
   try {
@@ -221,7 +221,7 @@ test("ACP shutdown reclaims expired pages after releasing its session claim", as
   const expired = seed.createSession({ cwd: root, title: "expired" }).id;
   for (let index = 0; index < 80; index++) seed.appendHistory({ sessionId: expired, kind: "status",
     payload: { text: `large-${index}-` + "x".repeat(50_000) } });
-  now += 8 * 86_400_000;
+  now += (DEFAULT_SESSION_RETENTION_DAYS + 1) * 86_400_000;
   const recent = seed.createSession({ cwd: root, title: "recent", configPath: runtime.configPath,
     agentName: runtime.modelConfig!.agentName }).id;
   seed.close();

@@ -8,6 +8,7 @@ import { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext } from "../tools/primitives.js";
 import type { ToolResult } from "../tools/types.js";
 import { errorResult } from "../tools/results.js";
+import { approvalTimeoutMs } from "../sessions/operation-types.js";
 import type { ProcessSupervisor } from "./supervisor.js";
 import { ProcessError } from "./contract.js";
 export interface ProcessControl {
@@ -80,9 +81,9 @@ export class ProcessControls {
         // Loading may await I/O; a changed saved agent never inherits this captured authority.
         if(this.options.store.getSession(record.sessionId)?.agentName!==savedAgent)record.result=errorResult("stale_agent","session agent changed before control dispatch");
         else record.result=await registry.dispatch(plugin!.registration.name,arguments_,{cwd:session.cwd,maxOutputBytes:Math.min(runtime.maxOutputBytes,65536),autoApprove:runtime.autoApprove,whitelist:[plugin!.registration.name],signal,toolCallId:record.id,
-          approve:this.options.approve(record,runtime.requestTimeoutMs),processes:this.options.processes.forSession(record.sessionId),
+          approve:this.options.approve(record,approvalTimeoutMs(this.options.env)),processes:this.options.processes.forSession(record.sessionId),
           onHook:(event,identity,name,args,result,effects)=>hooks.run(event,{cwd:session.cwd,agent_id:savedAgent,session_id:record.sessionId,turn_id:record.id,tool:{identity,name,source:"user_action",arguments:args,...(result?{result}:{}),...(effects?{effects}:{})}},
-            {...(event==="PreToolUse"?{signal}:{deadline:Date.now()+2000}),onReceipt:receipt=>{record.hooks=[...(record.hooks??[]),receipt].slice(-64);this.save(record);}})});
+            {...(event==="PreToolUse"?{signal}:signal.aborted?{deadline:Date.now()+2000}:{}),onReceipt:receipt=>{record.hooks=[...(record.hooks??[]),receipt].slice(-64);this.save(record);}})});
       }
     }
     record.state=signal.aborted?"interrupted":record.result?.isError?"failed":"completed";record.updatedAt=Date.now();

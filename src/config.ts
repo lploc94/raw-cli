@@ -186,11 +186,14 @@ export function canonicalConfigPath(options: LoadConfigOptions = {}): string {
   return configFilePath({ ...rest, flags: otherFlags });
 }
 
+/** Sessions stay resumable for a month of inactivity; size-based maintenance bounds disk use. */
+export const DEFAULT_SESSION_RETENTION_DAYS = 30;
+
 function sessionsSpec(raw: unknown): number {
-  if (raw === undefined) return 7;
+  if (raw === undefined) return DEFAULT_SESSION_RETENTION_DAYS;
   const value = object(raw, "sessions");
   keys(value, ["retention_days"], "sessions");
-  return value.retention_days === undefined ? 7 : positive(value.retention_days, "sessions.retention_days");
+  return value.retention_days === undefined ? DEFAULT_SESSION_RETENTION_DAYS : positive(value.retention_days, "sessions.retention_days");
 }
 
 function parseConfigDocument(options: LoadConfigOptions, validateAgents: boolean): ConfigDocument {

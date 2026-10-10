@@ -35,7 +35,8 @@ test("conditional Bash approval gates only matching arguments and first answer w
 });
 
 for (const action of ["expire", "cancel"] as const) test(`pending approval can ${action} without a connected subscriber or tool effect`, async () => {
-  const f = await dashboardFixture({ agent: { request_timeout_ms: 500, tools: { use: ["builtin/bash"], rules: [{ match: "builtin/bash", effect: "ask" }] } }, responses: [
+  // Approval expiry no longer follows request_timeout_ms; the environment can shorten it.
+  const f = await dashboardFixture({ env: { RAW_APPROVAL_TIMEOUT_MS: "500" }, agent: { tools: { use: ["builtin/bash"], rules: [{ match: "builtin/bash", effect: "ask" }] } }, responses: [
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "pending", type: "function", function: { name: "bash", arguments: '{"commands":[{"command":"printf forbidden"}]}' } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "not executed" }, "stop"), openAiDone] },
   ] });
