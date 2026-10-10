@@ -104,10 +104,11 @@ test("1: a mid-turn automatic compaction keeps both typed inputs, the last step 
     let before: ModelMessage[] | undefined;
     const statuses: string[] = [];
     assert.equal((await agent.run(second, (event) => {
-      if (event.type === "compact_start") before = [...agent.transcript];
+      if (event.type === "compact_start" && !before) before = [...agent.transcript];
       if (event.type === "compact_end") statuses.push(event.result.status);
     })).status, "completed");
-    assert.deepEqual(statuses, ["compacted"]);
+    // The turn may compact again as the probes refill the window; the first compaction is the one checked here.
+    assert.ok(statuses.length >= 1 && statuses.every((status) => status === "compacted"), statuses.join());
     const next = main.find((request) => firstText(request.messages).startsWith("[Raw compaction checkpoint #1]"))!;
     assert.ok(next, "a request after the compaction starts with the checkpoint");
     const order = sequences(store, id);

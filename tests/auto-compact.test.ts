@@ -115,7 +115,7 @@ test("tool output and opaque reasoning trigger compact despite small previous us
   assert.ok(transcript.includes('"callId":"c"') && transcript.includes('"id":"c"'));
 });
 
-test("an early no-op does not consume the one actual compact attempt after a tool result", async () => {
+test("an early no-op over the threshold is stuck: the next crossing takes the fallback, not the summarizer", async () => {
   const registry = new ToolRegistry();
   registry.register({ name: "large", description: "large", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [{ type: "text", text: "T".repeat(1600) }] }) });
@@ -133,8 +133,11 @@ test("an early no-op does not consume the one actual compact attempt after a too
   assert.equal((await agent.run("go", (event) => {
     if (event.type === "compact_end") statuses.push(event.result.status);
   })).status, "completed");
-  assert.deepEqual(statuses, ["noop", "compacted"]);
-  assert.equal(summaries, 1);
+  // The no-op leaves the request over the threshold, so the fallback runs at once and finds nothing older either. After the
+  // tool result, the stuck class sends the next crossing to the fallback's mechanical checkpoint.
+  assert.deepEqual(statuses, ["noop", "noop", "compacted"]);
+  assert.equal(summaries, 0);
+  assert.match(JSON.stringify(agent.transcript), /\[Checkpoint unavailable: compaction earlier in this turn did not bring the context under the threshold; older steps were removed/);
 });
 
 test("an oversized recent image is summarized as metadata before the next main request", async () => {
@@ -188,7 +191,8 @@ test("a summarizer context too small for the checkpoint prompt fails before infe
   const statuses: string[] = [];
   const degraded = await tight.run("X".repeat(5000), (event) => { if (event.type === "compact_end") statuses.push(event.result.status); });
   assert.equal(degraded.status, "completed");
-  assert.deepEqual(statuses, ["compacted"]);
+  // Still over the threshold, so the fallback runs and finds nothing older to remove.
+  assert.deepEqual(statuses, ["compacted", "noop"]);
   const context = JSON.stringify(tight.transcript);
   assert.match(context, /\[Checkpoint unavailable: no room left in the context for a new checkpoint; older steps were removed/);
   assert.ok(context.includes("[… cut; full text: not kept]") && !context.includes("X".repeat(5000)));
@@ -200,7 +204,8 @@ test("a summarizer context too small for the checkpoint prompt fails before infe
     if (event.type === "compact_end") statuses.push(event.result.status);
   });
   assert.equal(nonshrinking.status, "completed");
-  assert.deepEqual(statuses.slice(1), ["not_smaller"]);
+  // The fallback's mechanical checkpoint is not smaller either, and makes no request.
+  assert.deepEqual(statuses.slice(2), ["not_smaller", "not_smaller"]);
   assert.equal(requests, 3);
 });
 
@@ -345,4 +350,139 @@ test("compact.instructions is validated and reaches the summarizer for manual an
   await none.run("second");
   assert.equal((await none.compact({ keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 100 })).status, "compacted");
   assert.deepEqual(seen.slice(-3), ["with", "with", "without"]);
+});
+
+/**
+ * Phase 4 fixture (§6.5, §6.7): every main step calls `probe`, whose result is `pad` bytes, until `probes` calls; then "done".
+ * `summary` answers the summarizer. `log` records the order of main ("M") and summarizer ("S") requests.
+ */
+function refill(options: { contextWindow: number; trigger: number; pad: number; probes: number; summary: () => ProviderTurn;
+  system?: string; usage?: (index: number) => unknown; main?: (index: number) => ProviderTurn | undefined }) {
+  const registry = new ToolRegistry();
+  let serial = 0;
+  registry.register({ name: "probe", description: "probe", inputSchema: { type: "object" },
+    handler: async () => ({ isError: false, content: [{ type: "text", text: `result ${++serial} ${"r".repeat(options.pad)}` }] }) });
+  const log: string[] = [];
+  const mains: ProviderRequest[] = [];
+  let calls = 0;
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
+    model: "fixture", contextWindow: options.contextWindow, maxOutputTokens: 1000 }, async generate(request) {
+    if (request.system === COMPACT_SYSTEM_PROMPT) { log.push("S"); return options.summary(); }
+    log.push("M");
+    mains.push(structuredClone({ system: request.system, messages: request.messages }) as ProviderRequest);
+    const index = calls++;
+    const usage = options.usage?.(index);
+    const turn = options.main?.(index) ?? (index < options.probes
+      ? { text: "", toolCalls: [{ id: `p${index}`, name: "probe", arguments: {} }], finishReason: "tool_calls" as const } : result("done"));
+    return usage === undefined ? turn : { ...turn, usage };
+  } };
+  const events: Array<{ type: string; status?: string; cause?: string; afterTokens?: number | undefined }> = [];
+  const agent = createAgent({ provider, registry, system: options.system ?? "tiny", maxSteps: 200,
+    compact: { triggerTokens: options.trigger, keepRecentTurns: 0, keepRecentTokens: 1500, maxOutputTokens: 1000 } });
+  const run = (input = "go") => agent.run(input, (event) => {
+    if (event.type === "compact_end") events.push({ type: event.type, status: event.result.status, afterTokens: event.details?.afterTokens });
+    else if (event.type === "compact_error") events.push({ type: event.type, cause: event.details.cause });
+  });
+  return { agent, log, mains, events, run };
+}
+const STUB = "[Old tool result cleared: ";
+const MECHANICAL = "[Checkpoint unavailable: ";
+
+test("phase 4/1: tool output that refills the window twice in one turn is compacted twice and the turn completes", async () => {
+  // 40k context: input budget 37000, trigger 80% of it. A compaction lands near half the budget, under 0.7·T.
+  const f = refill({ contextWindow: 40000, trigger: 29600, pad: 6000, probes: 25, summary: () => result("## Goal\nkeep probing") });
+  const outcome = await f.run();
+  assert.equal(outcome.status, "completed");
+  const compactions = f.events.filter((event) => event.type === "compact_end");
+  assert.ok(compactions.length >= 2, `compactions: ${compactions.length}`);
+  assert.ok(compactions.every((event) => event.status === "compacted" && event.afterTokens! < 0.7 * 29600));
+  assert.equal(f.log.filter((entry) => entry === "S").length, compactions.length);
+  // Each compaction follows completed main steps, and the committed context is the latest checkpoint, not a fallback.
+  assert.doesNotMatch(f.log.join(""), /SS/);
+  const context = JSON.stringify(f.agent.transcript);
+  assert.match(context, new RegExp(`Raw compaction checkpoint #${compactions.length}\\]`));
+  assert.ok(!context.includes(MECHANICAL) && !context.includes(STUB));
+});
+
+test("phase 4/2: after a weak compaction the next crossing runs the fallback before any second summary", async () => {
+  // A checkpoint of about 21k tokens leaves the context near 0.8·T after the first compaction.
+  const f = refill({ contextWindow: 40000, trigger: 29600, pad: 6000, probes: 13, summary: () => result(`## Goal\n${"w ".repeat(21000)}`) });
+  assert.equal((await f.run()).status, "completed");
+  const first = f.events.find((event) => event.type === "compact_end")!;
+  assert.equal(first.status, "compacted");
+  assert.ok(first.afterTokens! >= 0.7 * 29600 && first.afterTokens! < 29600, `after ${first.afterTokens}`);
+  assert.equal(f.log.filter((entry) => entry === "S").length, 1, "no second summarizer request");
+  // The crossing after it cleared old results to saved copies instead, and the next request carried the stubs.
+  const afterFirst = f.mains.filter((request) => JSON.stringify(request.messages).includes("Raw compaction checkpoint #1"));
+  assert.ok(afterFirst.some((request) => JSON.stringify(request.messages).includes(STUB)));
+});
+
+test("phase 4/3: a failing summarizer warns, commits a mechanical checkpoint, and the turn completes", async () => {
+  // Results under 2 KB cannot be cleared, so the fallback reaches the mechanical checkpoint.
+  const f = refill({ contextWindow: 20000, trigger: 14400, pad: 1800, probes: 20, summary: () => { throw new Error("summary unavailable"); } });
+  const outcome = await f.run();
+  assert.equal(outcome.status, "completed");
+  assert.deepEqual(f.events.find((event) => event.type === "compact_error"), { type: "compact_error", cause: "automatic" });
+  const context = JSON.stringify(f.agent.transcript);
+  assert.ok(context.includes(`${MECHANICAL}the checkpoint request failed; older steps were removed`));
+  assert.match(context, /Raw compaction checkpoint #1\]/);
+  assert.ok(f.mains.some((request) => JSON.stringify(request.messages).includes(`${MECHANICAL}the checkpoint request failed`)));
+});
+
+test("phase 4/4: a summarizer that keeps failing is never asked twice without a completed step in between", async () => {
+  const f = refill({ contextWindow: 20000, trigger: 14400, pad: 1800, probes: 60, summary: () => { throw new Error("summary unavailable"); } });
+  assert.equal((await f.run()).status, "completed");
+  const summaries = f.log.filter((entry) => entry === "S").length;
+  assert.ok(summaries >= 2, `summaries: ${summaries}`);
+  assert.doesNotMatch(f.log.join(""), /SS/);
+  assert.ok(summaries <= f.log.filter((entry) => entry === "M").length);
+});
+
+test("phase 4/5: after the fallbacks a measured overflow ends the turn, and an estimated one is sent to the provider", async () => {
+  // Measured: the provider reports 50k input tokens for a 20k context, and nothing older can be removed.
+  const measured = refill({ contextWindow: 20000, trigger: 14400, pad: 10, probes: 5, summary: () => result("unused"),
+    usage: () => ({ prompt_tokens: 50000, completion_tokens: 10 }) });
+  const stopped = await measured.run();
+  assert.equal(stopped.status, "error");
+  assert.equal(stopped.code, "context_budget_exceeded");
+  assert.equal(measured.log.filter((entry) => entry === "M").length, 1);
+  assert.ok(!measured.events.some((event) => event.type === "compact_error"));
+  // Estimated: a system prompt larger than the budget cannot be compacted; the request is sent and the provider decides.
+  const estimated = refill({ contextWindow: 20000, trigger: 14400, pad: 10, probes: 0, summary: () => result("unused"), system: "S".repeat(40000),
+    main: () => { throw Object.assign(new Error("prompt is too long"), { code: "provider_error" }); } });
+  const rejected = await estimated.run();
+  assert.equal(rejected.status, "error");
+  assert.equal(rejected.code, "provider_error");
+  assert.match(rejected.message ?? "", /prompt is too long/);
+  assert.equal(estimated.log.filter((entry) => entry === "M").length, 1);
+});
+
+test("phase 4/6: manual compaction still rejects on a provider error", async () => {
+  const f = refill({ contextWindow: 20000, trigger: 14400, pad: 10, probes: 0, summary: () => { throw new Error("summary unavailable"); } });
+  await f.run("first");
+  await f.run("second");
+  const prior = JSON.stringify(f.agent.transcript);
+  await assert.rejects(f.agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 }), /summary unavailable/);
+  assert.equal(JSON.stringify(f.agent.transcript), prior);
+});
+
+test("phase 4/R1: an abort when the mechanical fallback starts cancels the turn and commits nothing", async () => {
+  const f = refill({ contextWindow: 20000, trigger: 14400, pad: 1800, probes: 20, summary: () => { throw new Error("summary unavailable"); } });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    let starts = 0;
+    let before: string | undefined;
+    const outcome = await f.agent.run("go", (event) => {
+      // The first start is the failing summary; the second is the fallback's mechanical checkpoint.
+      if (event.type === "compact_start" && ++starts === 2) { before = JSON.stringify(f.agent.transcript); f.agent.abort(); }
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(starts, 2);
+    assert.equal(outcome.status, "cancelled");
+    assert.equal(JSON.stringify(f.agent.transcript), before);
+    assert.doesNotMatch(before!, /Raw compaction checkpoint|Checkpoint unavailable/);
+    assert.deepEqual(unhandled, []);
+  } finally { process.off("unhandledRejection", onUnhandled); }
 });

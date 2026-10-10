@@ -146,6 +146,41 @@ test("manual compact exposes stable outcomes and preserves old history atomicall
   } finally { await agent.close(); f.cleanup(); }
 });
 
+test("an operation whose automatic compaction fails publishes the warning and completes", async () => {
+  const f = fixture();
+  let main = 0;
+  const provider: ProviderAdapter = { modelConfig: { ...modelConfig, contextWindow: 20000, maxOutputTokens: 1000 }, async generate(request) {
+    if (request.system === COMPACT_SYSTEM_PROMPT) throw new Error("summary unavailable");
+    main++;
+    return main <= 20 ? { text: "", toolCalls: [{ id: `p${main}`, name: "probe", arguments: {} }], finishReason: "tool_calls" }
+      : { text: "done", toolCalls: [], finishReason: "stop" };
+  } };
+  const registry = new ToolRegistry();
+  registry.register({ name: "probe", description: "Probe", inputSchema: { type: "object" }, async handler() {
+    return { isError: false, content: [{ type: "text", text: `result ${"r".repeat(1800)}` }] };
+  } });
+  const attach: AttachSessionRuntime = async ({ owner, operation }) => ({
+    agent: createAgent({ provider, registry, cwd: f.root, maxSteps: 100,
+      compact: { triggerTokens: 14400, keepRecentTurns: 0, keepRecentTokens: 1500, maxOutputTokens: 1000 },
+      persistence: { store: f.store, sessionId: f.session.id, surface: "web", owner, ownership: "host", operationId: operation.id } }),
+    modelConfig, compactOptions: { keepRecentTurns: 1, maxOutputTokens: 64 }, async close() {},
+  });
+  const service = new SessionOperations({ store: f.store, attach });
+  const warnings: RunEvent[] = [];
+  service.subscribe((event) => { if (event.type === "event" && event.event.type === "compact_error") warnings.push(event.event); });
+  try {
+    const operation = service.submit(f.intent);
+    const done = await service.wait(operation.id);
+    assert.equal(done.state, "completed");
+    assert.equal(done.error, undefined);
+    assert.ok(warnings.length >= 1);
+    assert.ok(warnings.every((event) => event.type === "compact_error" && event.details.cause === "automatic"));
+    const records = f.store.getSessionHistory({ sessionId: f.session.id, limit: 100 }).items.filter((item) => item.kind === "compaction");
+    assert.ok(records.some((item) => item.payload.status === "error"));
+    assert.ok(records.some((item) => item.payload.status === "compacted"), "the mechanical checkpoint is committed");
+  } finally { await service.close(); f.cleanup(); }
+});
+
 test("killed process leaves an interrupted receipt and unknown side effect without replay", async () => {
   const f = fixture(); const sentinel = join(f.root, "crashed-effect");
   const worker = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/operation-worker.ts", import.meta.url)),

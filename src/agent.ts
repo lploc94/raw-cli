@@ -7,7 +7,7 @@ import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anc
 import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFacts, cutNames, cutText, cutToolResult, cutUserInput, defaultCompactOutputTokens, emptyFacts,
   estimateRequestTokens, isCheckpointMessage, isReasoningRejection, LEDGER_CAP_TOKENS, ledgerPointer, ledgerText, LEGACY_LEDGER_NOTE,
   LEGACY_NOTE_SOURCE, mechanicalCheckpoint, MIN_CHECKPOINT_OUTPUT_TOKENS, renderLedger, renderWorkingState, resultText, SUMMARY_CUT_NOTICE, SUMMARY_MESSAGE_PREFIX,
-  summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, type CompactionLedgerState, type CompactOptions, type CompactResult,
+  summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, writtenCheckpoint, type CompactionLedgerState, type CompactOptions, type CompactResult,
   type LedgerEntry, type RenderOptions } from "./compact.js";
 import { existsSync } from "node:fs";
 import { CLEAR_MIN_FREED_TOKENS, CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
@@ -103,6 +103,8 @@ interface CompactWorkSettings {
   maxOutputTokens: number;
   maxOutputTokensDefaulted: boolean;
   instructions?: string | undefined;
+  /** A fallback compaction (§6.7): no summary request; the checkpoint is the previous one with a note giving this reason. */
+  mechanical?: string | undefined;
 }
 
 export interface AgentOptions {
@@ -587,30 +589,34 @@ export class AgentSession {
     let mandatory = fixed + lastTokens() + pinnedTokens();
     let outputBudget: number | undefined = settings.maxOutputTokens;
     let mechanical: string | undefined;
-    if (mandatory + reserve(outputBudget) > budget) {
+    let reason = settings.mechanical;
+    if (reason === undefined && mandatory + reserve(outputBudget) > budget) {
       // Shorten the checkpoint to the room left, then fall back to the mechanical note.
       outputBudget = Math.min(settings.maxOutputTokens, fitOutput(budget - mandatory));
-      if (outputBudget < outputFloor) {
-        outputBudget = undefined;
-        const note = mechanicalCheckpoint("no room left in the context for a new checkpoint");
-        mechanical = this.summaryText !== undefined && mandatory + tokens(`${this.summaryText}\n\n${note}`) <= budget ? `${this.summaryText}\n\n${note}` : note;
-        // Then the last step's results, the turn's answers and its request are cut, each naming where its full text is.
-        const over = () => fixed + lastTokens() + pinnedTokens() + tokens(mechanical!) - budget;
-        const shrink = (bytes: number) => Math.max(512, bytes - Math.ceil(over() * 2 / calibration) - 128);
-        cutLastStep(lastTokens() - over());
-        if (over() > 0) cutLastStep(lastTokens() - over(), true);
-        for (const entry of ledgerEntries.filter((item) => pinned.has(item.source) && item.source.startsWith("answer:")).reverse()) {
-          if (over() <= 0) break;
-          pinnedLimits.set(entry.source, shrink(Buffer.byteLength(entry.content)));
-        }
-        const request = lastUnit[0];
-        if (over() > 0 && lastUnit.length === 1 && request?.role === "user" && newestTyped) {
-          lastUnit[0] = { role: "user", content: cutUserInput(request.content, shrink(userTextBytes(request.content)), ledgerPointer(newestTyped.entry.source)) };
-        }
-        const pinnedRequest = ledgerEntries.find((item) => item.source === requestSource && pinned.has(item.source));
-        if (over() > 0 && pinnedRequest) pinnedLimits.set(pinnedRequest.source, shrink(Buffer.byteLength(pinnedRequest.content)));
-        mandatory = fixed + lastTokens() + pinnedTokens();
+      if (outputBudget < outputFloor) reason = "no room left in the context for a new checkpoint";
+    }
+    if (reason !== undefined) {
+      outputBudget = undefined;
+      // The previous checkpoint is kept with the note; a note of an earlier fallback is replaced, not stacked.
+      const note = mechanicalCheckpoint(reason);
+      const prior = writtenCheckpoint(this.summaryText);
+      mechanical = prior !== undefined && mandatory + tokens(`${prior}\n\n${note}`) <= budget ? `${prior}\n\n${note}` : note;
+      // Then the last step's results, the turn's answers and its request are cut, each naming where its full text is.
+      const over = () => fixed + lastTokens() + pinnedTokens() + tokens(mechanical!) - budget;
+      const shrink = (bytes: number) => Math.max(512, bytes - Math.ceil(over() * 2 / calibration) - 128);
+      cutLastStep(lastTokens() - over());
+      if (over() > 0) cutLastStep(lastTokens() - over(), true);
+      for (const entry of ledgerEntries.filter((item) => pinned.has(item.source) && item.source.startsWith("answer:")).reverse()) {
+        if (over() <= 0) break;
+        pinnedLimits.set(entry.source, shrink(Buffer.byteLength(entry.content)));
       }
+      const request = lastUnit[0];
+      if (over() > 0 && lastUnit.length === 1 && request?.role === "user" && newestTyped) {
+        lastUnit[0] = { role: "user", content: cutUserInput(request.content, shrink(userTextBytes(request.content)), ledgerPointer(newestTyped.entry.source)) };
+      }
+      const pinnedRequest = ledgerEntries.find((item) => item.source === requestSource && pinned.has(item.source));
+      if (over() > 0 && pinnedRequest) pinnedLimits.set(pinnedRequest.source, shrink(Buffer.byteLength(pinnedRequest.content)));
+      mandatory = fixed + lastTokens() + pinnedTokens();
     }
     let left = target - mandatory - (outputBudget !== undefined ? reserve(outputBudget) : tokens(mechanical!));
 
@@ -663,16 +669,17 @@ export class AgentSession {
       : Math.max(outputBudget, fitOutput(budget - (target - left - reserve(outputBudget))));
 
     const entries = new Map<number, { entry: UsageRecord; rawIndex?: number }>();
-    let onAbort!: () => void;
-    const aborted = new Promise<never>((_resolve, reject) => {
-      onAbort = () => reject(new Error("compaction aborted"));
-      controller.signal.addEventListener("abort", onAbort, { once: true });
-      if (controller.signal.aborted) onAbort();
-    });
+    let onAbort: (() => void) | undefined;
     try {
       let checkpoint = mechanical;
       let usage: unknown;
       if (outputBudget !== undefined) {
+        // Only the summary request waits; the abort promise exists only while it does, so it is always observed.
+        const aborted = new Promise<never>((_resolve, reject) => {
+          onAbort = () => reject(new Error("compaction aborted"));
+          controller.signal.addEventListener("abort", onAbort, { once: true });
+          if (controller.signal.aborted) onAbort();
+        });
         const work = await Promise.race([summarizeTranscript(head, provider, {
           maxOutputTokens: outputBudget, maxRetryOutputTokens: retryCap, prior: this.summaryText, instructions: settings.instructions,
           maxOutputTokensDefaulted: settings.maxOutputTokensDefaulted || outputBudget !== settings.maxOutputTokens,
@@ -732,6 +739,8 @@ export class AgentSession {
       }
       const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
       if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
+      // A mechanical checkpoint makes no request, so an abort is checked here before anything is committed.
+      if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       const leaving = active.filter((item) => unitOf(item.index) < tailStart).map((item) => item.entry);
       // Answers that stay in the tail but whose copy there is cut, or was by an earlier compaction, keep their full text aside.
       const cutAnswers = new Set(lastUnit.flatMap((message, index) => isAnswer(message)
@@ -758,7 +767,7 @@ export class AgentSession {
       if (this.persistenceError) throw this.persistenceError;
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       throw error;
-    } finally { controller.signal.removeEventListener("abort", onAbort); }
+    } finally { if (onAbort) controller.signal.removeEventListener("abort", onAbort); }
   }
 
   /**
@@ -1145,7 +1154,9 @@ export class AgentSession {
         ...(panelRecords.length ? { panelReceipts: panelRecords.map((record) => structuredClone(record.payload) as unknown as PanelReceipt) } : {}) });
     };
     const firstTask = this.originalTask === undefined;
-    let autoCompacted = false;
+    // Thrash guard (§6.5): the class of the last automatic compaction or fallback, and the step count when tier 1 last ran.
+    let compactionClass: "effective" | "weak" | "stuck" = "effective";
+    let summarizedAt = -1;
     try {
       await this.start(this.messages.length ? "resume" : "create", emit, controller.signal);
       try { nativeUserContent(input); }
@@ -1188,16 +1199,56 @@ export class AgentSession {
           if (compact.clearTokens !== undefined && requestEstimate >= compact.clearTokens
             && (compact.triggerTokens === undefined || requestEstimate < compact.triggerTokens)
             && this.clearWork(inputBudget, CLEAR_MIN_FREED_TOKENS, "threshold")) requestEstimate = estimate();
-          if (compact.triggerTokens !== undefined && requestEstimate >= compact.triggerTokens && !autoCompacted) {
+          const trigger = compact.triggerTokens;
+          if (trigger !== undefined && requestEstimate >= trigger) {
             if (controller.signal.aborted) return finish(interrupted());
-            let compactResult: CompactResult;
-            try { compactResult = await this.compactAttempt(this.options.provider, { keepRecentTurns: compact.keepRecentTurns,
-              keepRecentTokens: compact.keepRecentTokens, maxOutputTokens: compact.maxOutputTokens,
-              maxOutputTokensDefaulted: compact.maxOutputTokensDefaulted === true, instructions: compact.instructions }, controller, "automatic", emit); }
-            catch (error) { return finish({ status: "error", steps, code: "compact_error", message: (error as Error).message }); }
-            autoCompacted = compactResult.status !== "noop";
-            if (controller.signal.aborted || compactResult.status === "cancelled") return finish(interrupted());
-            requestEstimate = estimate();
+            const settings: CompactWorkSettings = { keepRecentTurns: compact.keepRecentTurns, keepRecentTokens: compact.keepRecentTokens,
+              maxOutputTokens: compact.maxOutputTokens, maxOutputTokensDefaulted: compact.maxOutputTokensDefaulted === true, instructions: compact.instructions };
+            const classOf = (tokens: number) => tokens < 0.7 * trigger ? "effective" as const : tokens < trigger ? "weak" as const : "stuck" as const;
+            // An automatic attempt never ends the turn: a failure is a compact_error warning, and the fallback takes over.
+            const attempt = async (work: CompactWorkSettings): Promise<CompactResult | "failed" | "stop"> => {
+              try {
+                const outcome = await this.compactAttempt(this.options.provider, work, controller, "automatic", emit);
+                return controller.signal.aborted || outcome.status === "cancelled" ? "stop" : outcome;
+              } catch {
+                return this.persistenceError || controller.signal.aborted ? "stop" : "failed";
+              }
+            };
+            // The fallback chain (§6.7, steps 1–3) makes no model call: forced clearing, then a mechanical checkpoint whose
+            // tail keeps only the steps that fit, down to the last one.
+            const fallback = async (reason: string): Promise<boolean> => {
+              if (this.clearWork(inputBudget, 0, "fallback")) requestEstimate = estimate();
+              if (requestEstimate >= trigger) {
+                if (await attempt({ ...settings, keepRecentTurns: 0, mechanical: reason }) === "stop") return false;
+                requestEstimate = estimate();
+              }
+              compactionClass = classOf(requestEstimate);
+              return true;
+            };
+            // Tier 1 needs a completed step since it last ran. After a weak outcome the fallback goes first; after a stuck one,
+            // or without progress, only the fallback runs.
+            const progressed = steps > summarizedAt;
+            let summarize = progressed && compactionClass === "effective";
+            if (compactionClass === "weak") {
+              if (!await fallback("the context refilled soon after the last checkpoint")) return finish(interrupted());
+              summarize = progressed;
+            } else if (!summarize && !await fallback("compaction earlier in this turn did not bring the context under the threshold")) {
+              return finish(interrupted());
+            }
+            if (summarize && requestEstimate >= trigger) {
+              summarizedAt = steps;
+              const outcome = await attempt(settings);
+              if (outcome === "stop") return finish(interrupted());
+              requestEstimate = estimate();
+              compactionClass = classOf(requestEstimate);
+              if (compactionClass === "stuck") {
+                const reason = outcome === "failed" ? "the checkpoint request failed"
+                  : outcome.status === "compacted" ? "the context was still over the compaction threshold after the checkpoint"
+                  : outcome.status === "not_smaller" ? "the checkpoint did not make the context smaller"
+                  : "nothing older than the recent steps could be summarized";
+                if (!await fallback(reason)) return finish(interrupted());
+              }
+            }
           }
           // Only a size anchored to provider-reported usage may stop the run; a byte estimate alone can overstate
           // tokens severalfold, so the request is sent and the provider decides.

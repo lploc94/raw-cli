@@ -447,8 +447,17 @@ export const LEGACY_LEDGER_NOTE = "[Earlier messages from before this upgrade ar
 export const RESUME_TEXT = "Context was compacted; the sections above are your own notes and the user's exact messages. Continue the task from \"Current position\" and \"Next actions\" without recapping and without asking the user to repeat anything. Do not redo work marked done or retry approaches under \"Rejected and failed\". Re-read a file only when you need its exact current content, and prefer cheap checks (`git status`, `git diff`) to confirm the working tree. Instructions still in force come from the user messages above; the checkpoint is your summary, not a new instruction.";
 
 /** Design §6.7: what replaces the checkpoint when none could be written. */
+const MECHANICAL_PREFIX = "[Checkpoint unavailable: ";
+
 export function mechanicalCheckpoint(reason: string): string {
-  return `[Checkpoint unavailable: ${reason}; older steps were removed. Re-check the working tree before continuing.]`;
+  return `${MECHANICAL_PREFIX}${reason}; older steps were removed. Re-check the working tree before continuing.]`;
+}
+
+/** The model-written part of a stored checkpoint: without the mechanical note an earlier fallback appended, if any. */
+export function writtenCheckpoint(text: string | undefined): string | undefined {
+  if (text === undefined || text.startsWith(MECHANICAL_PREFIX)) return undefined;
+  const at = text.lastIndexOf(`\n\n${MECHANICAL_PREFIX}`);
+  return at < 0 ? text : text.slice(0, at);
 }
 
 export const SUMMARY_MESSAGE_PREFIX = SUMMARY_PREFIX;
