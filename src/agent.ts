@@ -4,7 +4,7 @@ import { InteractionService } from "./interactions/service.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { createHash, randomUUID } from "node:crypto";
 import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anchor.js";
-import { estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
+import { defaultCompactOutputTokens, estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
 import { projectReplayMessages, projectVisionMessages } from "./llm/replay.js";
@@ -528,7 +528,7 @@ export class AgentSession {
     if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
     this.currentTurnId = undefined;
     const keepRecentTurns = options.keepRecentTurns ?? 2;
-    const maxOutputTokens = options.maxOutputTokens ?? 512;
+    const maxOutputTokens = options.maxOutputTokens ?? defaultCompactOutputTokens((options.provider ?? this.options.provider).modelConfig);
     if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0 || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
       return Promise.reject(new Error("invalid compaction settings"));
     }

@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
+import { defaultCompactOutputTokens } from "./compact.js";
 import { ANTHROPIC_EFFORTS, ANTHROPIC_TIERS, DEEPSEEK_EFFORTS, GOOGLE_LEVELS, OPENAI_EFFORTS, OPENAI_TIERS, requestKind } from "./request-controls.js";
 import type { ApiMethod, CacheOptions, ModelRequestOptions, ProviderName, ResolvedModelConfig } from "./llm/types.js";
 import { parseMcpPanels, type McpServerConfig } from "./tools/mcp-client.js";
@@ -518,12 +519,13 @@ function modelSpec(name: string, raw: unknown): ModelSpec {
   return result;
 }
 
-function compactSpec(raw: unknown, where: string): CompactSettings {
+function compactSpec(raw: unknown, where: string, model: Parameters<typeof defaultCompactOutputTokens>[0] = {}): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
   keys(value, ["keep_recent_turns", "max_output_tokens", "trigger_tokens"], where);
   return {
     keepRecentTurns: value.keep_recent_turns === undefined ? 2 : nonnegative(value.keep_recent_turns, where + ".keep_recent_turns"),
-    maxOutputTokens: value.max_output_tokens === undefined ? 512 : positive(value.max_output_tokens, where + ".max_output_tokens"),
+    maxOutputTokens: value.max_output_tokens === undefined ? defaultCompactOutputTokens(model)
+      : positive(value.max_output_tokens, where + ".max_output_tokens"),
     ...(value.trigger_tokens === undefined ? {} : { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }),
   };
 }
@@ -542,11 +544,11 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
     throw new Error(where + " with skills.use requires builtin/list_skills and builtin/load_skill in tools.use");
   }
   if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
-  const result: AgentSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact"),
-    toolIds: tools.ids, skillIds, hookIds, toolRules: tools.rules,
+  const request = value.request === undefined ? undefined : requestSpec(value.request, model, where + ".request");
+  const result: AgentSpec = { modelAlias, compact: compactSpec(value.compact, where + ".compact", { ...model, request }),
+    ...(request !== undefined ? { request } : {}), toolIds: tools.ids, skillIds, hookIds, toolRules: tools.rules,
     ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
     ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
-  if (value.request !== undefined) result.request = requestSpec(value.request, model, where + ".request");
   const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
   if (result.compact.triggerTokens !== undefined) {
     if (model.contextWindow === undefined) throw new Error(where + ".compact.trigger_tokens requires model.context_window_tokens");

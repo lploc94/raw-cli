@@ -83,3 +83,18 @@ test("T-01a: inherited object names stay positional task strings", () => {
     assert.deepEqual(parseCliArgs([name]), { command: "task", task: name, flags: {} });
   }
 });
+
+test("compact summary output defaults to 16k, bounded by the model and kept above a manual thinking budget", async () => {
+  const tools = { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] };
+  const load = async (models: Record<string, unknown>, agent: Record<string, unknown> = {}) => {
+    const { home } = fixture({ default_agent: "x", models, agents: { x: { model: "x", tools, ...agent } } });
+    return (await loadConfig({ home, env: {}, requireModel: true })).compact.maxOutputTokens;
+  };
+  assert.equal(await load({ x: model("ollama", "a") }), 16384);
+  assert.equal(await load({ x: { ...model("ollama", "a"), context_window_tokens: 1048576 } }), 16384);
+  assert.equal(await load({ x: { ...model("ollama", "a"), context_window_tokens: 32768 } }, { compact: { trigger_tokens: 24000 } }), 8192);
+  assert.equal(await load({ x: { ...model("ollama", "a"), max_output_tokens: 4096 } }), 4096);
+  assert.equal(await load({ x: { ...model("ollama", "a"), context_window_tokens: 1048576 } }, { compact: { max_output_tokens: 512 } }), 512);
+  assert.equal(await load({ x: { provider: "anthropic", method: "anthropic-messages", model_id: "m", api_key: "k", max_output_tokens: 64000 } },
+    { request: { max_output_tokens: 40000, thinking: { type: "enabled", budget_tokens: 20000 } } }), 40000);
+});

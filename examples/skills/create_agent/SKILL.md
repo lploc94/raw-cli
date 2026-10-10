@@ -32,7 +32,7 @@ Copy examples/agents/project-helper/ for a forkable layout. This example selects
       "skills": { "use": ["builtin/configure_raw"] },
       "hooks": { "use": ["agent/guard"] },
       "max_steps": 25,
-      "compact": { "keep_recent_turns": 2, "max_output_tokens": 512, "trigger_tokens": 24000 }
+      "compact": { "keep_recent_turns": 2, "trigger_tokens": 24000 }
     }
   }
 }

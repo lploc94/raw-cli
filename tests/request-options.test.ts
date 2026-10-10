@@ -122,9 +122,12 @@ test("Anthropic manual thinking requires a valid compact cap and rejects smaller
   try {
     const path = config("anthropic", "anthropic-messages", { thinking: { type: "enabled", budget_tokens: 1024 }, max_output_tokens: 2048 },
       fixture.url, { max_output_tokens: 4096 });
-    await assert.rejects(loadConfig({ configPath: path, env: {}, requireModel: true }), /compact.max_output_tokens/);
+    assert.equal((await loadConfig({ configPath: path, env: {}, requireModel: true })).compact.maxOutputTokens, 4096);
     const fs = await import("node:fs/promises");
     const doc = JSON.parse(await fs.readFile(path, "utf8"));
+    doc.agents.run.compact = { max_output_tokens: 1024 };
+    await fs.writeFile(path, JSON.stringify(doc));
+    await assert.rejects(loadConfig({ configPath: path, env: {}, requireModel: true }), /compact.max_output_tokens/);
     doc.agents.run.compact = { max_output_tokens: 2048 };
     await fs.writeFile(path, JSON.stringify(doc));
     const runtime = await loadConfig({ configPath: path, env: {}, requireModel: true });

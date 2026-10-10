@@ -1,6 +1,6 @@
 import type { AgentSession } from "./agent.js";
 import { normalizeUsage } from "./llm/cache.js";
-import { base64ByteLength, type ModelMessage, type ProviderAdapter, type UserInput } from "./llm/types.js";
+import { base64ByteLength, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type UserInput } from "./llm/types.js";
 import type { ToolDefinition } from "./tools/registry.js";
 
 export interface CompactOptions {
@@ -26,6 +26,24 @@ export interface CompactWorkResult {
   result: CompactResult;
   replacement?: ModelMessage[];
   summary?: string;
+}
+
+export const DEFAULT_COMPACT_OUTPUT_TOKENS = 16384;
+
+/**
+ * Summary output cap used when none is configured: 16k, bounded by the model's output capability and a quarter of its
+ * context, and kept above a manual Anthropic thinking budget so the default never fails validation.
+ */
+export function defaultCompactOutputTokens(model: { contextWindow?: number | undefined; maxOutputTokens?: number | undefined;
+  request?: Readonly<ModelRequestOptions> | undefined }): number {
+  let limit = Math.min(DEFAULT_COMPACT_OUTPUT_TOKENS, model.maxOutputTokens ?? Infinity,
+    model.contextWindow !== undefined ? Math.max(1, Math.floor(model.contextWindow / 4)) : Infinity);
+  const thinking = model.request?.kind === "anthropic" ? model.request.thinking : undefined;
+  // A manual budget is already validated below the ordinary request cap, so that cap is a summary limit the API accepts.
+  if (thinking?.type === "enabled" && limit <= thinking.budgetTokens) {
+    limit = model.request?.maxOutputTokens ?? model.maxOutputTokens ?? thinking.budgetTokens + 1;
+  }
+  return limit;
 }
 
 export const COMPACT_SYSTEM_PROMPT =

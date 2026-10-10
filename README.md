@@ -67,7 +67,7 @@ Tool calls run automatically in terminal, headless, dashboard and ACP modes, usi
       "model": "flash",
       "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"] },
       "request": { "thinking": "enabled", "reasoning_effort": "high", "max_output_tokens": 4096 },
-      "compact": { "trigger_tokens": 800000, "keep_recent_turns": 2, "max_output_tokens": 512 }
+      "compact": { "trigger_tokens": 800000, "keep_recent_turns": 2, "max_output_tokens": 16384 }
     }
   }
 }

@@ -45,7 +45,7 @@ The normal system/tool/history prefix and selected tool order remain stable acro
     "deepseek": {
       "model": "flash",
       "request": { "thinking": "enabled", "reasoning_effort": "high", "max_output_tokens": 4096 },
-      "compact": { "trigger_tokens": 800000, "keep_recent_turns": 2, "max_output_tokens": 512 },
+      "compact": { "trigger_tokens": 800000, "keep_recent_turns": 2, "max_output_tokens": 16384 },
       "tools": { "use": ["builtin/read_file", "builtin/write_file", "builtin/bash"], "rules": [{ "match": "mcp/unsafe/*", "effect": "deny" }] }
     }
   },

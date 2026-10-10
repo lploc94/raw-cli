@@ -38,7 +38,7 @@ The unreleased schema is breaking. It has no old flat-agent parser or migration 
       "max_steps": 25,
       "max_output_bytes": 8192,
       "request_timeout_ms": 120000,
-      "compact": {"keep_recent_turns": 2, "max_output_tokens": 512}
+      "compact": {"keep_recent_turns": 2, "max_output_tokens": 16384}
     }
   }
 }
