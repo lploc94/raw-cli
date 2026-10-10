@@ -18,9 +18,36 @@ Fields larger than 64 KiB are stored as checksum-verified files under the privat
 
 Compaction is a host operation: REPL `/compact`, library `compactSession`, negotiated ACP extension, or automatic compaction. It never appears in the model's built-in tools. When the model declares `context_window_tokens`, automatic compaction is on by default at 80% of the input budget (context minus output reserve and safety margin); an explicit `compact.trigger_tokens` sets another threshold and `"trigger_tokens": false` keeps compaction manual. The setting is an estimated input-token threshold below the model context window after an output reserve and safety margin; it is not a provider-reported remaining-token count. Before every inference step, Raw estimates the complete next request from the system prompt, selected tool schemas, committed messages, opaque reasoning items and image bytes. Prior provider usage can calibrate the estimate but cannot replace inspection of new content. A turn auto-compacts at most once, emits progress and usage, then checks the next request again. If a size anchored to provider-reported usage still exceeds the context budget, Raw returns a clear error instead of submitting it; a byte estimate alone, which can overstate tokens severalfold, never stops the request, and the provider decides.
 
-The operation keeps the original user task once and keeps the most recent two complete turns by default. It sends older eligible turns plus any previous summary to the selected model with no tools and a short compact-only system instruction. Older images are represented by path, MIME type and byte size, never base64. When the selected model declares a context window, large history is split into chronological summary requests that individually fit its context and output reserve; an irreducible oversized turn fails before a provider call. Automatic compact can retain fewer recent turns when needed to fit the next request.
+The operation keeps the original user task once and keeps the most recent two complete turns by default. The older turns go to the selected model as a structured checkpoint request ([compaction v2 design](compaction-v2-design.md) §6.3 and §7.2). The request has no tools and a short compact-only system instruction.
 
-The new summary is labeled as conversation data, not a system instruction. It must be nonempty, complete, and produce a strictly shorter UTF-8 serialized transcript. Provider-reported output tokens, when available, must fit `compact.max_output_tokens` (by default 16384, lowered to the model's `max_output_tokens` and to a quarter of `context_window_tokens` when those are declared, and raised to the request output cap when a manual Anthropic thinking budget would not fit below it). No eligible older turn returns `noop` without an inference request. A summary cut at the output limit is requested once more with twice the budget when the model cap and context allow it; if it is still cut, the partial summary is kept with a `[Summary cut off at the output token limit.]` line rather than failing. Provider error, cancellation, empty or over-budget summary, or a nonshrinking result leaves the previous transcript byte-for-byte intact. Summaries are lossy: decisions, changed files and unresolved failures should be recorded, but a model may still omit a fact. `/clear` removes conversation history while idle and keeps configuration and cumulative usage.
+**Request contents.**
+- **Rendered transcript.** The turns are rendered as labeled lines (`USER:`, `ASSISTANT:`, `REASONING:`, `TOOL CALL name(args)`, `TOOL RESULT name:`), not JSON.
+- **Reasoning.** Readable reasoning the provider returned is included:
+  - Anthropic thinking text;
+  - Responses reasoning summaries;
+  - Gemini thought parts;
+  - OpenRouter reasoning text;
+  - DeepSeek `reasoning_content`.
+
+  Signatures, encrypted reasoning, redacted thinking and unknown provider data are left out.
+- **Images** are represented by path, MIME type and byte size, never base64.
+- **Large results.** A tool result over 4 KB keeps its start and end around `…[N bytes omitted; full output: <path>]…`. The path is the result's saved full output, or a new saved copy, or `unavailable` when saving failed.
+- **Checkpoint prompt.** The transcript is followed by the checkpoint prompt:
+  - it opens with a no-tools guard;
+  - it contains the carry-sheet rules and a 13-item checklist the model works through inside `<analysis>…</analysis>`;
+  - it requires nine fixed sections, from `## Goal` to `## Next actions`;
+  - its length rule allows min(4000, 60% of the output budget) words.
+- **Previous summary.** A previous summary is passed as `<prior-checkpoint>` with merge rules: carry forward open items, the newer conversation wins on conflict.
+- **`compact.instructions`.** When configured, it is appended last.
+
+**Splitting.** When the selected model declares a context window, the input is split at step boundaries into chronological requests that each fit its context and output reserve. A step is an assistant message with all of its tool results, so a call is never separated from its result and one long turn can span several requests. Each request carries the checkpoint written so far as `<prior-checkpoint>`.
+- A step too large for a request of its own is cut to fit.
+- If it still does not fit, it becomes a one-line record of its tool calls and result sizes with saved paths.
+- Before admitting any step, each request checks that the prompt, the running checkpoint, the output budget and a margin leave room for one record. If not, the output budget is lowered, down to 1,024 tokens. If even that does not fit, compaction fails before a provider call.
+
+**Storage.** The `<analysis>` notes are discarded; only the sections after them are stored. Automatic compact can retain fewer recent turns when needed to fit the next request.
+
+The new summary is labeled as conversation data, not a system instruction. With its notes removed, it must be nonempty, complete, and produce a strictly shorter UTF-8 serialized transcript. Provider-reported output tokens, when available, must fit `compact.max_output_tokens` (by default 16384, lowered to the model's `max_output_tokens` and to a quarter of `context_window_tokens` when those are declared, and raised to the request output cap when a manual Anthropic thinking budget would not fit below it). No eligible older turn returns `noop` without an inference request. A summary cut at the output limit is requested once more with twice the budget when the model cap and context allow it; if it is still cut, the partial summary is kept with a `[Summary cut off at the output token limit.]` line rather than failing. Provider error, cancellation, empty or over-budget summary, or a nonshrinking result leaves the previous transcript byte-for-byte intact. Summaries are lossy: decisions, changed files and unresolved failures should be recorded, but a model may still omit a fact. `/clear` removes conversation history while idle and keeps configuration and cumulative usage.
 
 ## Cache controls
 

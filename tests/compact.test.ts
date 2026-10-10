@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
-import { compactSession } from "../src/compact.js";
+import { CHECKPOINT_MERGE_PREFIX, CHECKPOINT_NO_TOOLS_GUARD, COMPACT_SYSTEM_PROMPT, CompactionOverheadError, checkpointPrompt, checkpointWords,
+  compactSession, estimateRequestTokens, performCompaction, renderTranscript } from "../src/compact.js";
 import { createProvider } from "../src/llm/client.js";
-import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
+import type { ModelMessage, ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 const fake = (generate: (request: ProviderRequest) => Promise<ProviderTurn>): ProviderAdapter => ({
@@ -255,4 +256,250 @@ test("Google thought tokens count toward measurable compact output budget", asyn
   };
   await assert.rejects(compactSession(agent, { provider: google, maxOutputTokens: 512 }));
   assert.equal(JSON.stringify(agent.transcript), before);
+});
+
+const turn = (text: string): ProviderTurn => ({ text, toolCalls: [], finishReason: "stop" });
+const userText = (request: ProviderRequest) => {
+  const content = request.messages[0]?.role === "user" ? request.messages[0].content : "";
+  return typeof content === "string" ? content : "";
+};
+
+test("checkpoint prompt follows design §7.2: guard first, conditional merge block, computed length rule, instructions last", () => {
+  assert.equal(checkpointWords(16384), 4000);
+  assert.equal(checkpointWords(2000), 1200);
+  assert.equal(checkpointWords(100), 60);
+  const plain = checkpointPrompt({ words: checkpointWords(16384) });
+  assert.ok(plain.startsWith(CHECKPOINT_NO_TOOLS_GUARD));
+  assert.ok(plain.includes("Use up to about 4000 words."));
+  assert.ok(!plain.includes("{WORDS}"));
+  assert.ok(!plain.includes(CHECKPOINT_MERGE_PREFIX) && !plain.includes("<prior-checkpoint>\n"));
+  assert.ok(!plain.includes("Additional instructions from the agent configuration:"));
+  assert.ok(plain.includes("13. The last 3 actions and their results") && plain.endsWith("up to the end of the plan."));
+  const prior = `prior-${Math.random()}`;
+  const instructions = `keep-${Math.random()}`;
+  const merged = checkpointPrompt({ words: checkpointWords(2000), prior, instructions });
+  const order = [CHECKPOINT_NO_TOOLS_GUARD, `<prior-checkpoint>\n${prior}\n</prior-checkpoint>`, CHECKPOINT_MERGE_PREFIX,
+    "You are checkpointing your own working memory.", "Use up to about 1200 words.", "## Goal", "## Next actions",
+    `Additional instructions from the agent configuration:\n${instructions}`].map((part) => merged.indexOf(part));
+  assert.ok(order.every((index) => index >= 0), `missing part: ${order}`);
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.ok(merged.endsWith(instructions));
+  // A blank instruction adds nothing.
+  assert.equal(checkpointPrompt({ words: 60, instructions: "  " }), checkpointPrompt({ words: 60 }));
+});
+
+test("transcript rendering keeps readable reasoning, drops unreadable opaque data, and cuts large results to a saved copy", async () => {
+  const head = `HEAD-${"h".repeat(200)}`;
+  const tail = `${"t".repeat(200)}-TAIL`;
+  const big = head + "m".repeat(10_000) + tail;
+  const messages: ModelMessage[] = [
+    { role: "user", content: [{ type: "text", text: "look" }, { type: "image", mimeType: "image/png", data: Buffer.alloc(30, 1).toString("base64"), name: "shot.png" }] },
+    { role: "assistant", text: "anthropic step", toolCalls: [], opaque: [
+      { type: "thinking", thinking: "READABLE-ANTHROPIC", signature: "SECRET-ANTHROPIC-SIG" },
+      { type: "redacted_thinking", data: "SECRET-REDACTED" }, { type: "text", text: "anthropic step" }] },
+    { role: "assistant", text: "responses step", toolCalls: [], opaque: [
+      { type: "reasoning", id: "rs", summary: [{ type: "summary_text", text: "READABLE-RESPONSES" }], encrypted_content: "SECRET-ENCRYPTED" }] },
+    { role: "assistant", text: "google step", toolCalls: [], opaque: [
+      { text: "READABLE-GOOGLE", thought: true, thoughtSignature: "SECRET-GOOGLE-SIG" }, { text: "google step" }] },
+    { role: "assistant", text: "openrouter step", toolCalls: [], opaque: { reasoning_details: [
+      { type: "reasoning.text", text: "READABLE-OPENROUTER", signature: "SECRET-OPENROUTER-SIG" },
+      { type: "reasoning.summary", summary: "READABLE-OR-SUMMARY" }, { type: "reasoning.encrypted", data: "SECRET-OPENROUTER-DATA" }] } },
+    { role: "assistant", text: "deepseek step", toolCalls: [], opaque: { reasoning_content: "READABLE-DEEPSEEK" } },
+    { role: "assistant", text: "unknown step", toolCalls: [], opaque: { mystery: "SECRET-UNKNOWN-OBJECT" } },
+    { role: "assistant", text: "", toolCalls: [{ id: "w", name: "write_file", arguments: { path: "big.txt", content: `WSTART${"w".repeat(9000)}WEND` } }] },
+    { role: "tool", callId: "w", name: "write_file", result: { isError: false, content: [{ type: "text", text: "wrote big.txt" }] } },
+    { role: "assistant", text: "", toolCalls: [{ id: "a", name: "bash", arguments: { command: "make" } }, { id: "b", name: "bash", arguments: { command: "make test" } }],
+      opaque: [{ type: "mystery", payload: "SECRET-UNKNOWN-ARRAY" }] },
+    { role: "tool", callId: "a", name: "bash", result: { isError: false, content: [{ type: "text", text: big }], fullOutputPath: "/saved/full.log" } },
+    { role: "tool", callId: "b", name: "bash", result: { isError: true, content: [{ type: "text", text: big }] } },
+  ];
+  const saved: string[] = [];
+  const text = renderTranscript(messages, { saveCopy: (copy) => { saved.push(copy); return "/spill/copy.log"; } });
+  for (const readable of ["READABLE-ANTHROPIC", "READABLE-RESPONSES", "READABLE-GOOGLE", "READABLE-OPENROUTER", "READABLE-OR-SUMMARY", "READABLE-DEEPSEEK"]) {
+    assert.ok(text.includes(`REASONING:\n${readable}`), readable);
+  }
+  for (const secret of ["SECRET-ANTHROPIC-SIG", "SECRET-REDACTED", "SECRET-ENCRYPTED", "SECRET-GOOGLE-SIG", "SECRET-OPENROUTER-SIG",
+    "SECRET-OPENROUTER-DATA", "SECRET-UNKNOWN-OBJECT", "SECRET-UNKNOWN-ARRAY"]) assert.ok(!text.includes(secret), secret);
+  assert.ok(text.includes('USER:\nlook\n[Image: image/png, 30 bytes, "shot.png"]'));
+  assert.ok(!text.includes(Buffer.alloc(30, 1).toString("base64")));
+  assert.match(text, /TOOL CALL write_file\(\{"path":"big.txt","content":"WSTART[^]*…\[\d+ bytes omitted\]…[^]*WEND"\}\)/);
+  assert.ok(!text.includes("w".repeat(5000)));
+  assert.ok(text.includes('TOOL CALL bash({"command":"make"})') && text.includes('TOOL CALL bash({"command":"make test"})'));
+  assert.equal(text.split("HEAD-").length - 1, 2);
+  assert.equal(text.split("-TAIL").length - 1, 2);
+  assert.ok(!text.includes("m".repeat(5000)));
+  assert.match(text, /TOOL RESULT bash:\nHEAD-[^]*…\[\d+ bytes omitted; full output: \/saved\/full\.log\]…[^]*-TAIL/);
+  assert.match(text, /TOOL RESULT bash \(error\):\nHEAD-[^]*…\[\d+ bytes omitted; full output: \/spill\/copy\.log\]…[^]*-TAIL/);
+  assert.deepEqual(saved, [big]);
+  // A failed save says so instead of naming a path.
+  const failed = renderTranscript(messages.slice(-1), { saveCopy: () => { throw new Error("disk full"); } });
+  assert.match(failed, /bytes omitted; full output: unavailable\]/);
+  // The default saver is the spill store, and its copy is the complete rendered result.
+  const spilled = /full output: ([^\]]+)\]/.exec(renderTranscript(messages.slice(-1)))?.[1];
+  assert.ok(spilled && spilled !== "unavailable");
+  assert.equal(await readFile(spilled, "utf8"), big);
+});
+
+test("a single turn larger than the summarizer context compacts in step chunks without splitting calls from results", async () => {
+  const contextWindow = 9000;
+  const messages: ModelMessage[] = [{ role: "user", content: "one long task" }];
+  for (let step = 0; step < 40; step++) {
+    messages.push({ role: "assistant", text: `step ${step}`, toolCalls: [
+      { id: `c${step}a`, name: "read_file", arguments: { path: `file-${step}-a` } },
+      { id: `c${step}b`, name: "read_file", arguments: { path: `file-${step}-b` } }] });
+    for (const side of ["a", "b"]) messages.push({ role: "tool", callId: `c${step}${side}`, name: "read_file",
+      result: { isError: false, content: [{ type: "text", text: `RESULT-${step}-${side} ${"r".repeat(200 + (step * 97 + (side === "a" ? 0 : 451)) % 1300)}` }] } });
+  }
+  const requests: ProviderRequest[] = [];
+  const provider = fake(async (request) => { requests.push(request); return turn(`checkpoint ${requests.length}`); });
+  (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
+  const work = await performCompaction({ messages, originalTask: "one long task" }, provider,
+    { keepRecentTurns: 0, maxOutputTokens: 1500, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+  assert.equal(work.result.status, "compacted");
+  assert.ok(requests.length >= 3, `requests: ${requests.length}`);
+  const margin = Math.max(64, Math.ceil(contextWindow * 0.05));
+  for (const [index, request] of requests.entries()) {
+    assert.ok(estimateRequestTokens(request.system, request.messages, request.tools) + request.maxOutputTokens! + margin <= contextWindow);
+    const content = userText(request);
+    for (let step = 0; step < 40; step++) for (const side of ["a", "b"]) {
+      assert.equal(content.includes(`RESULT-${step}-${side} `), content.includes(`TOOL CALL read_file({"path":"file-${step}-${side}"})`), `step ${step}${side}`);
+    }
+    if (index > 0) assert.ok(content.includes(`<prior-checkpoint>\ncheckpoint ${index}\n</prior-checkpoint>`));
+    else assert.ok(!content.includes("<prior-checkpoint>"));
+  }
+  for (let step = 0; step < 40; step++) assert.equal(requests.filter((request) => userText(request).includes(`RESULT-${step}-a `)).length, 1);
+  assert.equal(work.summary, `checkpoint ${requests.length}`);
+});
+
+test("summarizer overhead lowers the output budget, and throws CompactionOverheadError when even that does not fit", async () => {
+  const contextWindow = 9000;
+  const margin = Math.max(64, Math.ceil(contextWindow * 0.05));
+  const base = estimateRequestTokens(COMPACT_SYSTEM_PROMPT, [{ role: "user", content: checkpointPrompt({ words: 1229, prior: "" }) }], []);
+  const run = async (priorTokens: number) => {
+    const previousSummary = "p".repeat(priorTokens * 2);
+    const requests: ProviderRequest[] = [];
+    const provider = fake(async (request) => { requests.push(request); return turn("merged checkpoint"); });
+    (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
+    const messages: ModelMessage[] = [{ role: "user", content: "task" }, { role: "user", content: `[Conversation summary]\n${previousSummary}` },
+      { role: "user", content: "next" }, { role: "assistant", text: "done", toolCalls: [] }];
+    const work = await performCompaction({ messages, originalTask: "task", previousSummary }, provider,
+      { keepRecentTurns: 0, maxOutputTokens: 2048, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+    return { work, requests };
+  };
+  // Room for about 1,500 output tokens: the configured 2,048 does not fit, the lowered budget does.
+  const { work, requests } = await run(contextWindow - margin - base - 1500 - 60);
+  assert.equal(work.result.status, "compacted");
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0]!.maxOutputTokens! < 2048 && requests[0]!.maxOutputTokens! >= 1024, `budget ${requests[0]!.maxOutputTokens}`);
+  assert.equal(requests[0]!.maxOutputTokensAssumed, true);
+  assert.ok(userText(requests[0]!).includes(`Use up to about ${checkpointWords(requests[0]!.maxOutputTokens!)} words.`));
+  await assert.rejects(run(contextWindow - margin - base - 500), CompactionOverheadError);
+});
+
+test("the <analysis> notes never reach the stored checkpoint, and notes alone are an empty summary", async () => {
+  const kept = await seededAgent();
+  const result = await compactSession(kept.agent, { provider: fake(async () => turn("<analysis>\n1. secret-notes\n</analysis>\n## Goal\nfinish the task")) });
+  assert.equal(result.status, "compacted");
+  const stored = JSON.stringify(kept.agent.transcript);
+  assert.ok(stored.includes("## Goal\\nfinish the task") && !stored.includes("secret-notes") && !stored.includes("<analysis>"));
+  for (const output of ["<analysis>only notes</analysis>", "<analysis>notes cut off at the limit"]) {
+    const seeded = await seededAgent();
+    const before = JSON.stringify(seeded.agent.transcript);
+    await assert.rejects(compactSession(seeded.agent, { provider: fake(async () => turn(output)) }), /empty summary/);
+    assert.equal(JSON.stringify(seeded.agent.transcript), before);
+  }
+});
+
+test("a step too large for a chunk is cut to fit, and becomes a one-line record when even that does not fit", async () => {
+  const contextWindow = 9000;
+  const compactStep = async (calls: number) => {
+    const messages: ModelMessage[] = [{ role: "user", content: "task" }, { role: "assistant", text: "batch", toolCalls:
+      Array.from({ length: calls }, (_, index) => ({ id: `c${index}`, name: "grep", arguments: { pattern: `p${index}` } })) }];
+    for (let index = 0; index < calls; index++) messages.push({ role: "tool", callId: `c${index}`, name: "grep",
+      result: { isError: false, content: [{ type: "text", text: `START-${index} ${"g".repeat(3000)} END-${index}` }], fullOutputPath: `/saved/${index}.log` } });
+    const requests: ProviderRequest[] = [];
+    const provider = fake(async (request) => { requests.push(request); return turn(`checkpoint ${requests.length}`); });
+    (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
+    const work = await performCompaction({ messages, originalTask: "task" }, provider,
+      { keepRecentTurns: 0, maxOutputTokens: 1024, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+    assert.equal(work.result.status, "compacted");
+    return requests.map(userText);
+  };
+  const cut = (await compactStep(4)).join("\n");
+  assert.ok(cut.includes("START-3") && cut.includes("END-3") && cut.includes("full output: /saved/3.log") && !cut.includes("g".repeat(2500)));
+  const oneLine = (await compactStep(60)).join("\n");
+  assert.match(oneLine, /\[Step shortened to fit the summarizer: ASSISTANT 5 bytes of text; TOOL CALL grep\(\{"pattern":"p0"\}\)/);
+  assert.ok(oneLine.includes("TOOL RESULT grep: 3016 bytes, full output: /saved/59.log"));
+});
+
+test("review fixes: thinking-budget floor, user text that looks like a summary, and one-line records name saved copies", async () => {
+  const contextWindow = 9000;
+  const margin = Math.max(64, Math.ceil(contextWindow * 0.05));
+  const base = estimateRequestTokens(COMPACT_SYSTEM_PROMPT, [{ role: "user", content: checkpointPrompt({ words: 1229, prior: "" }) }], []);
+  // A lowered budget never goes below a manual Anthropic thinking budget: it stays above it or the compaction fails.
+  const lowered = async (roomTokens: number) => {
+    const previousSummary = "p".repeat((contextWindow - margin - base - roomTokens - 60) * 2);
+    const requests: ProviderRequest[] = [];
+    const provider: ProviderAdapter = { modelConfig: { agentName: "claude", provider: "anthropic", method: "anthropic-messages", model: "fixture",
+      contextWindow, request: { kind: "anthropic", thinking: { type: "enabled", budgetTokens: 1800 } } },
+    generate: async (request) => { requests.push(request); return turn("merged"); } };
+    const messages: ModelMessage[] = [{ role: "user", content: "task" }, { role: "user", content: `[Conversation summary]\n${previousSummary}` },
+      { role: "user", content: "next" }, { role: "assistant", text: "done", toolCalls: [] }];
+    await performCompaction({ messages, originalTask: "task", previousSummary }, provider,
+      { keepRecentTurns: 0, maxOutputTokens: 2048, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+    return requests;
+  };
+  const fitting = await lowered(1950);
+  assert.ok(fitting[0]!.maxOutputTokens! > 1800 && fitting[0]!.maxOutputTokens! < 2048, `budget ${fitting[0]!.maxOutputTokens}`);
+  await assert.rejects(lowered(1500), CompactionOverheadError);
+
+  // Only the synthetic summary message is merged as <prior-checkpoint>; a later user message with the same opening stays.
+  const requests: ProviderRequest[] = [];
+  const provider = fake(async (request) => { requests.push(request); return turn("merged"); });
+  const echoed = `[Conversation summary]\nuser-pasted-${Math.random()}`;
+  await performCompaction({ messages: [{ role: "user", content: "task" }, { role: "user", content: "[Conversation summary]\nold summary" },
+    { role: "user", content: echoed }, { role: "assistant", text: "noted", toolCalls: [] }], originalTask: "task", previousSummary: "old summary" }, provider,
+  { keepRecentTurns: 0, maxOutputTokens: 1000, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+  const sent = userText(requests[0]!);
+  assert.ok(sent.includes(`USER:\n${echoed}`));
+  assert.equal(sent.split("old summary").length - 1, 1);
+  assert.ok(sent.includes("<prior-checkpoint>\nold summary\n</prior-checkpoint>"));
+
+  // Small results omitted by a one-line record get saved copies first, so the record still says where to re-read them.
+  const step: ModelMessage[] = [{ role: "user", content: "task" }, { role: "assistant", text: "batch", toolCalls:
+    Array.from({ length: 60 }, (_, index) => ({ id: `s${index}`, name: "stat", arguments: { index } })) }];
+  for (let index = 0; index < 60; index++) step.push({ role: "tool", callId: `s${index}`, name: "stat",
+    result: { isError: false, content: [{ type: "text", text: `SMALL-${index} ${"s".repeat(190)}` }] } });
+  const copies: string[] = [];
+  const oneLine: ProviderRequest[] = [];
+  const small = fake(async (request) => { oneLine.push(request); return turn("checkpoint"); });
+  (small.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
+  await performCompaction({ messages: step, originalTask: "task" }, small, { keepRecentTurns: 0, maxOutputTokens: 1024, timeoutMs: 1000,
+    signal: new AbortController().signal, cacheKey: "test", saveCopy: (text) => { copies.push(text); return `/copies/${copies.length}`; } });
+  const record = oneLine.map(userText).join("\n");
+  assert.match(record, /\[Step shortened to fit the summarizer: /);
+  assert.equal(copies.length, 60);
+  assert.ok(copies.every((text, index) => text.startsWith(`SMALL-${index} `)));
+  assert.ok(record.includes("TOOL RESULT stat: 198 bytes, full output: /copies/1;") && record.includes("full output: /copies/60]"));
+});
+
+test("a one-line record whose saved paths are longer than sized is never sent over budget", async () => {
+  const contextWindow = 9000;
+  for (let results = 20; results <= 45; results++) {
+    const step: ModelMessage[] = [{ role: "user", content: "task" }, { role: "assistant", text: "batch", toolCalls:
+      Array.from({ length: results }, (_, index) => ({ id: `s${index}`, name: "stat", arguments: { index } })) }];
+    for (let index = 0; index < results; index++) step.push({ role: "tool", callId: `s${index}`, name: "stat",
+      result: { isError: false, content: [{ type: "text", text: `R-${index} ${"s".repeat(3000)}` }] } });
+    const requests: ProviderRequest[] = [];
+    const provider = fake(async (request) => { requests.push(request); return turn("checkpoint"); });
+    (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
+    let saved = 0;
+    const work = performCompaction({ messages: step, originalTask: "task" }, provider, { keepRecentTurns: 0, maxOutputTokens: 1024,
+      timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test", saveCopy: () => `/ü${saved++}/${"ü".repeat(300)}` });
+    const margin = Math.max(64, Math.ceil(contextWindow * 0.05));
+    try { await work; } catch (error) { assert.ok(error instanceof CompactionOverheadError, String(error)); }
+    for (const request of requests) {
+      assert.ok(estimateRequestTokens(request.system, request.messages, request.tools) + request.maxOutputTokens! + margin <= contextWindow);
+    }
+  }
 });

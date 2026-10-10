@@ -13,6 +13,7 @@ import { createAcpServer } from "../src/acp/methods.js";
 import { createProvider } from "../src/llm/client.js";
 import { startMockProvider } from "./fixtures/mock-provider.js";
 import type { ProviderRequest } from "../src/llm/types.js";
+import { COMPACT_SYSTEM_PROMPT } from "../src/compact.js";
 
 const configHome = mkdtempSync(join(tmpdir(), "raw-acp-test-config-"));
 process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-acp-test-state-"));
@@ -500,7 +501,7 @@ test("T-07f: compact extension delegates to atomic session compact and returns s
   let summaryText = "Task objective and chosen constraints remain.";
   let postCompactMessages: ProviderRequest["messages"] | undefined;
   const server = createAcpServer({ runtime, mcpServers: {}, providerFactory: () => ({ modelConfig: runtime.modelConfig!, generate: async (request) => {
-    if (request.system.startsWith("Summarize prior conversation")) {
+    if (request.system === COMPACT_SYSTEM_PROMPT) {
       summaries++;
       return { text: summaryText, toolCalls: [], finishReason: "stop", usage: { prompt_tokens: 40, completion_tokens: 10 } };
     }

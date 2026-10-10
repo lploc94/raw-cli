@@ -65,6 +65,8 @@ export interface CompactSettings {
   /** maxOutputTokens is Raw's default rather than configured, so a provider may lower it to a model's stated maximum. */
   maxOutputTokensDefaulted?: boolean;
   triggerTokens?: number;
+  /** Extra text appended to the checkpoint prompt. */
+  instructions?: string;
 }
 
 export interface RuntimeConfig {
@@ -540,9 +542,15 @@ function defaultTriggerTokens(model: Parameters<typeof effectiveOutputTokens>[0]
   return Math.floor(0.8 * (context - effectiveOutputTokens(model) - Math.max(64, Math.ceil(context * 0.05))));
 }
 
+/** Bound on `compact.instructions`, which is sent with every compaction request. */
+const MAX_COMPACT_INSTRUCTIONS = 16384;
+
 function compactSpec(raw: unknown, where: string, model: Parameters<typeof defaultCompactOutputTokens>[0] = {}): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
-  keys(value, ["keep_recent_turns", "max_output_tokens", "trigger_tokens"], where);
+  keys(value, ["keep_recent_turns", "max_output_tokens", "trigger_tokens", "instructions"], where);
+  if (value.instructions !== undefined && (typeof value.instructions !== "string" || value.instructions.length > MAX_COMPACT_INSTRUCTIONS)) {
+    throw new Error(`${where}.instructions must be a string of at most ${MAX_COMPACT_INSTRUCTIONS} characters`);
+  }
   return {
     keepRecentTurns: value.keep_recent_turns === undefined ? 2 : nonnegative(value.keep_recent_turns, where + ".keep_recent_turns"),
     maxOutputTokens: value.max_output_tokens === undefined ? defaultCompactOutputTokens(model)
@@ -552,6 +560,7 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
     ...(value.trigger_tokens === false ? {}
       : value.trigger_tokens !== undefined ? { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }
       : model.contextWindow !== undefined && defaultTriggerTokens(model) > 0 ? { triggerTokens: defaultTriggerTokens(model) } : {}),
+    ...(typeof value.instructions === "string" && value.instructions.trim() ? { instructions: value.instructions } : {}),
   };
 }
 

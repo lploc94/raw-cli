@@ -32,7 +32,7 @@ test("automatic compact runs before the next over-threshold inference and keeps 
   const cwd = await mkdtemp(join(tmpdir(), "raw-auto-run-"));
   const requests: ProviderRequest[] = [];
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
-    model: "fixture", contextWindow: 4000, maxOutputTokens: 100 }, async generate(request) {
+    model: "fixture", contextWindow: 8000, maxOutputTokens: 100 }, async generate(request) {
     const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta,
       onReasoningDelta: _onReasoningDelta, ...wire } = request;
     requests.push(structuredClone(wire));
@@ -62,7 +62,7 @@ test("manual compaction chunks older turns and never sends image base64 to the s
       path: "photo.png", byteSize: 8 }] }) });
   let calls = 0;
   const main: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
-    model: "fixture", vision: true, contextWindow: 1500, maxOutputTokens: 100 }, async generate() {
+    model: "fixture", vision: true, contextWindow: 4600, maxOutputTokens: 100 }, async generate() {
     calls++;
     if (calls === 1) return { text: "", toolCalls: [{ id: "img", name: "fixture_image", arguments: {} }], finishReason: "tool_calls" };
     return result("answer ".repeat(80));
@@ -83,7 +83,7 @@ test("manual compaction chunks older turns and never sends image base64 to the s
   assert.ok(summaries.length >= 2);
   assert.equal(agent.stats().requests, priorRequests + summaries.length);
   assert.ok(summaries.every((request) => !JSON.stringify(request.messages).includes(image)));
-  assert.ok(summaries.every((request) => estimateRequestTokens(request.system, request.messages, request.tools) + 100 + 75 <= 1500));
+  assert.ok(summaries.every((request) => estimateRequestTokens(request.system, request.messages, request.tools) + 100 + 230 <= 4600));
   assert.ok(!JSON.stringify(agent.transcript).includes(image));
 });
 
@@ -161,20 +161,20 @@ test("an oversized recent image is summarized as metadata before the next main r
   assert.equal(summarized, true);
 });
 
-test("irreducible summary fails before inference and nonshrinking summary does not recurse", async () => {
+test("a summarizer context too small for the checkpoint prompt fails before inference and nonshrinking summary does not recurse", async () => {
   let requests = 0;
-  const provider: ProviderAdapter = { modelConfig: { agentName: "small", provider: "ollama", method: "openai-chat-completions",
-    model: "fixture", contextWindow: 2000, maxOutputTokens: 100 }, async generate(request) {
+  const small = (contextWindow: number): ProviderAdapter => ({ modelConfig: { agentName: "small", provider: "ollama", method: "openai-chat-completions",
+    model: "fixture", contextWindow, maxOutputTokens: 100 }, async generate(request) {
     requests++;
     if (request.system === COMPACT_SYSTEM_PROMPT) return result("S".repeat(5000));
     return result("answer");
-  } };
-  const first = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
+  } });
+  const first = createAgent({ provider: small(2000), registry: new ToolRegistry(), system: "tiny",
     compact: { triggerTokens: 400, keepRecentTurns: 0, maxOutputTokens: 100 } });
   const irreducible = await first.run("X".repeat(5000));
   assert.equal(irreducible.code, "compact_error");
   assert.equal(requests, 0);
-  const second = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
+  const second = createAgent({ provider: small(6000), registry: new ToolRegistry(), system: "tiny",
     compact: { triggerTokens: 250, keepRecentTurns: 0, maxOutputTokens: 100 } });
   const statuses: string[] = [];
   const nonshrinking = await second.run("Y".repeat(700), (event) => {
@@ -255,7 +255,7 @@ test("successive usage reports can increase absolute token calibration", async (
 });
 
 test("every chunk of a repeated compact budgets its accumulated summary", async () => {
-  const contextWindow = 1500;
+  const contextWindow = 4600;
   const outputTokens = 100;
   const previousSummary = "Earlier task summary";
   const messages: ProviderRequest["messages"][number][] = [
@@ -267,7 +267,7 @@ test("every chunk of a repeated compact budgets its accumulated summary", async 
   const totals: number[] = [];
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow }, async generate(request) {
-    totals.push(estimateRequestTokens(request.system, request.messages, request.tools) + outputTokens + 75);
+    totals.push(estimateRequestTokens(request.system, request.messages, request.tools) + outputTokens + 230);
     return result("S".repeat(350), { completion_tokens: 50 });
   } };
   const work = await performCompaction({ messages, originalTask: "task", previousSummary }, provider,
@@ -275,4 +275,52 @@ test("every chunk of a repeated compact budgets its accumulated summary", async 
   assert.equal(work.result.status, "compacted");
   assert.ok(totals.length >= 2);
   assert.ok(totals.every((total) => total <= contextWindow), `out-of-budget requests: ${totals}`);
+});
+
+test("compact.instructions is validated and reaches the summarizer for manual and automatic compaction", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "raw-compact-instructions-"));
+  const path = join(directory, "config.json");
+  const config = (instructions: unknown) => ({ default_agent: "p",
+    models: { m: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture", context_window_tokens: 20000 } },
+    agents: { p: { model: "m", tools: { use: ["builtin/read_file"] }, compact: { instructions } } } });
+  await writeFile(path, JSON.stringify(config("Keep every audit item ID.")));
+  assert.equal((await loadConfig({ configPath: path, env: {}, requireModel: true })).compact.instructions, "Keep every audit item ID.");
+  await writeFile(path, JSON.stringify(config("x".repeat(16384))));
+  assert.equal((await loadConfig({ configPath: path, env: {}, requireModel: true })).compact.instructions?.length, 16384);
+  for (const invalid of [42, ["a"], "x".repeat(16385)]) {
+    await writeFile(path, JSON.stringify(config(invalid)));
+    await assert.rejects(loadConfig({ configPath: path, env: {}, requireModel: true }), /compact\.instructions/);
+  }
+
+  const instructions = `instructions-${Math.random()}`;
+  const marker = `Additional instructions from the agent configuration:\n${instructions}`;
+  const seen: string[] = [];
+  let main = 0;
+  const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
+    model: "fixture", contextWindow: 8000, maxOutputTokens: 100 }, async generate(request) {
+    if (request.system === COMPACT_SYSTEM_PROMPT) {
+      const content = request.messages[0]?.role === "user" ? request.messages[0].content : "";
+      seen.push(typeof content === "string" && content.endsWith(marker) ? "with" : "without");
+      return result("summary");
+    }
+    main++;
+    return result("x".repeat(1600));
+  } };
+  const automatic = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
+    compact: { triggerTokens: 400, keepRecentTurns: 1, maxOutputTokens: 100, instructions } });
+  await automatic.run("first");
+  assert.equal((await automatic.run("second")).status, "completed");
+  assert.deepEqual(seen, ["with"]);
+  await automatic.run("third");
+  const manual = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
+    compact: { keepRecentTurns: 0, maxOutputTokens: 100, instructions } });
+  await manual.run("first");
+  assert.equal((await manual.compact({ keepRecentTurns: 0, maxOutputTokens: 100 })).status, "compacted");
+  const explicit = createAgent({ provider, registry: new ToolRegistry(), system: "tiny" });
+  await explicit.run("first");
+  assert.equal((await explicit.compact({ keepRecentTurns: 0, maxOutputTokens: 100, instructions })).status, "compacted");
+  const none = createAgent({ provider, registry: new ToolRegistry(), system: "tiny" });
+  await none.run("first");
+  assert.equal((await none.compact({ keepRecentTurns: 0, maxOutputTokens: 100 })).status, "compacted");
+  assert.deepEqual(seen.slice(-3), ["with", "with", "without"]);
 });

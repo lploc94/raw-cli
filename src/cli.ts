@@ -218,7 +218,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
           process.stderr.write(`${paint("thinking", icon("thinking", runtime.ui, caps), runtime.ui, caps)} Compacting with ${modelConfig.agentName}\n`);
           const result = await session.compact({ provider: createProvider(modelConfig),
             keepRecentTurns: runtime.compact.keepRecentTurns, maxOutputTokens: runtime.compact.maxOutputTokens,
-            ...(runtime.compact.maxOutputTokensDefaulted ? { maxOutputTokensDefaulted: true } : {}) });
+            ...(runtime.compact.maxOutputTokensDefaulted ? { maxOutputTokensDefaulted: true } : {}),
+            ...(runtime.compact.instructions ? { instructions: runtime.compact.instructions } : {}) });
           process.stderr.write(`${paint(result.status === "compacted" ? "success" : "warning",
             icon(result.status === "compacted" ? "success" : "attention", runtime.ui, caps), runtime.ui, caps)} Compact ${result.status}\n`);
         } catch { process.stderr.write("raw: compaction failed\n"); }

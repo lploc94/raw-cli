@@ -7,6 +7,7 @@ import { createAgent } from "../src/agent.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { createTestToolRegistry } from "./fixtures/registry.js";
+import { COMPACT_SYSTEM_PROMPT } from "../src/compact.js";
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "raw-session-agent-"));
@@ -186,7 +187,7 @@ test("compaction that removes a loaded skill appends one durable tail reminder",
   async handler() { return { isError: false, content: [{ type: "text", text: body }] }; } });
   let ordinary = 0;
   const agent = createAgent({ cwd: root, provider: provider(async (request) => {
-    if (request.system.startsWith("Summarize prior conversation")) return { text: "Earlier work summarized.", toolCalls: [], finishReason: "stop" };
+    if (request.system === COMPACT_SYSTEM_PROMPT) return { text: "Earlier work summarized.", toolCalls: [], finishReason: "stop" };
     return ++ordinary === 1 ? { text: "", toolCalls: [{ id: "load", name: "load_skill", arguments: { name: "example" } }], finishReason: "tool_calls" }
       : { text: "done", toolCalls: [], finishReason: "stop" };
   }), registry, whitelist: ["load_skill"], selectedSkills: [{ id: "agent/example", version: "1.0.0", name: "example",
@@ -416,7 +417,7 @@ test("successful compact retains full CLI Bash arguments and ACP raw result in d
   const bashArgument = "printf " + "a".repeat(70_000);
   let ordinary = 0;
   const runtime = provider(async (request) => {
-    if (request.system.startsWith("Summarize prior conversation")) return { text: "short summary", toolCalls: [], finishReason: "stop" };
+    if (request.system === COMPACT_SYSTEM_PROMPT) return { text: "short summary", toolCalls: [], finishReason: "stop" };
     ordinary++;
     if (ordinary === 1) {
       request.onReasoningDelta?.("visible reasoning");
@@ -451,7 +452,7 @@ test("successful compact retains full CLI Bash arguments and ACP raw result in d
     handler: async () => ({ isError: false, content: [{ type: "text", text: output }] }) });
   let step = 0;
   const acpProvider = provider(async (request) => {
-    if (request.system.startsWith("Summarize prior conversation")) return { text: "summary", toolCalls: [], finishReason: "stop" };
+    if (request.system === COMPACT_SYSTEM_PROMPT) return { text: "summary", toolCalls: [], finishReason: "stop" };
     return ++step === 1 ? { text: "", toolCalls: [{ id: "large-result", name: "large", arguments: {} }], finishReason: "tool_calls" }
       : { text: "done", toolCalls: [], finishReason: "stop" };
   });
@@ -474,7 +475,7 @@ test("failed compaction leaves durable context intact and changed tool schema tr
   const registry = createTestToolRegistry();
   registry.register({ name: "selected", description: "Original", inputSchema: { type: "object" },
     handler: async () => ({ isError: false, content: [] }) });
-  const runtime = provider(async (request) => request.system.startsWith("Summarize prior conversation")
+  const runtime = provider(async (request) => request.system === COMPACT_SYSTEM_PROMPT
     ? { text: "", toolCalls: [], finishReason: "stop" }
     : { text: "answer", toolCalls: [], finishReason: "stop" });
   const agent = createAgent({ cwd: root, provider: runtime, registry, system: "system",
@@ -583,7 +584,7 @@ test("a failed durable assistant commit reports persistence error, not cancellat
 
 test("a failed durable compact checkpoint leaves the previous context on disk", async () => {
   const { root, store, id } = setup();
-  const runtime = provider(async (request) => request.system.startsWith("Summarize prior conversation")
+  const runtime = provider(async (request) => request.system === COMPACT_SYSTEM_PROMPT
     ? { text: "summary", toolCalls: [], finishReason: "stop" }
     : { text: "a".repeat(80_000), toolCalls: [], finishReason: "stop" });
   const agent = createAgent({ cwd: root, provider: runtime, system: "system", persistence: { store, sessionId: id, surface: "cli" } });
@@ -645,7 +646,7 @@ test("nonshrinking and aborted compact leave durable context unchanged", async (
     let summaryStarted!: () => void;
     const ready = new Promise<void>((resolve) => { summaryStarted = resolve; });
     const runtime = provider(async (request) => {
-      if (request.system.startsWith("Summarize prior conversation")) {
+      if (request.system === COMPACT_SYSTEM_PROMPT) {
         if (mode === "not_smaller") return { text: "expanded".repeat(2000), toolCalls: [], finishReason: "stop" };
         summaryStarted();
         await new Promise<void>(() => {});
