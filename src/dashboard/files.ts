@@ -1,12 +1,19 @@
+import { execFile } from "node:child_process";
 import { readdir, realpath, stat } from "node:fs/promises";
+import { promisify } from "node:util";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { UserBlock } from "../llm/types.js";
 import { DashboardError } from "./errors.js";
 
+// Only version-control internals and dependency trees are noise everywhere; a git repository's own ignore rules decide the rest.
 const IGNORED = new Set([".git", "node_modules"]);
-const MAX_VISITED = 20_000;
-const MAX_DEPTH = 8;
+const MAX_LISTED = 500_000;
+const MAX_DEPTH = 64;
+const WALK_BUDGET_MS = 2_000;
+const GIT_TIMEOUT_MS = 3_000;
+const LIST_TTL_MS = 5_000;
+const run = promisify(execFile);
 
 export interface FileHit { path: string; name: string }
 
@@ -27,16 +34,24 @@ function score(path: string, query: string): number {
   return 1000 + lower.length;
 }
 
-/** Bounded, non-following walk of a workspace for `@` file references. Symlinks and dot entries are skipped. */
-export async function searchWorkspaceFiles(cwd: string, rawQuery: string, limit: number): Promise<FileHit[]> {
-  const query = rawQuery.trim().toLowerCase();
-  let root: string;
-  try { root = await realpath(cwd); } catch { return []; }
-  const hits: Array<{ path: string; rank: number }> = [];
+/** Files git would show for the workspace: tracked plus untracked, minus everything its ignore rules exclude. */
+async function gitFiles(root: string): Promise<string[] | undefined> {
+  try {
+    const { stdout } = await run("git", ["-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+      { timeout: GIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } });
+    const files = [...new Set(stdout.split("\0").filter(Boolean))];
+    return files.length > MAX_LISTED ? files.slice(0, MAX_LISTED) : files;
+  } catch { return undefined; }
+}
+
+/** Outside git: a breadth-first, non-following walk bounded by entry count and time, skipping only `IGNORED`. */
+async function walkFiles(cwd: string, root: string): Promise<string[]> {
+  const files: string[] = [];
+  const deadline = Date.now() + WALK_BUDGET_MS;
   let visited = 0;
   const queue: Array<{ dir: string; depth: number }> = [{ dir: "", depth: 0 }];
-  while (queue.length && visited < MAX_VISITED) {
-    const { dir, depth } = queue.shift()!;
+  for (let next = 0; next < queue.length && visited < MAX_LISTED && Date.now() < deadline; next++) {
+    const { dir, depth } = queue[next]!;
     let entries;
     try {
       // A directory can be swapped for a symlink after it was queued. Read the resolved path, then confirm the
@@ -47,12 +62,38 @@ export async function searchWorkspaceFiles(cwd: string, rawQuery: string, limit:
       if (dir && (await realpath(join(cwd, dir))) !== resolved) continue;
     } catch { continue; }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (++visited > MAX_VISITED) break;
-      if (entry.name.startsWith(".") || IGNORED.has(entry.name) || entry.isSymbolicLink()) continue;
+      if (++visited > MAX_LISTED) break;
+      if (IGNORED.has(entry.name) || entry.isSymbolicLink()) continue;
       const path = dir ? `${dir}/${entry.name}` : entry.name;
       if (entry.isDirectory()) { if (depth < MAX_DEPTH) queue.push({ dir: path, depth: depth + 1 }); }
-      else if (entry.isFile()) { const rank = score(path, query); if (rank !== Infinity) hits.push({ path, rank }); }
+      else if (entry.isFile()) files.push(path);
     }
+  }
+  return files;
+}
+
+const listings = new Map<string, { at: number; files: Promise<string[]> }>();
+/** One listing per workspace for a few seconds, so each keystroke of a query does not rescan the tree. */
+function workspaceFiles(cwd: string, root: string): Promise<string[]> {
+  const cached = listings.get(root);
+  if (cached && Date.now() - cached.at < LIST_TTL_MS) return cached.files;
+  const files = gitFiles(root).then((listed) => listed ?? walkFiles(cwd, root));
+  listings.delete(root);
+  if (listings.size >= 32) listings.delete(listings.keys().next().value!);
+  listings.set(root, { at: Date.now(), files });
+  return files;
+}
+
+/** Workspace files for `@` references: git's view of the repository when available, otherwise a bounded walk. */
+export async function searchWorkspaceFiles(cwd: string, rawQuery: string, limit: number): Promise<FileHit[]> {
+  const query = rawQuery.trim().toLowerCase();
+  let root: string;
+  try { root = await realpath(cwd); } catch { return []; }
+  const hits: Array<{ path: string; rank: number }> = [];
+  for (const path of await workspaceFiles(cwd, root)) {
+    if (path.split("/").some((part) => IGNORED.has(part))) continue;
+    const rank = score(path, query);
+    if (rank !== Infinity) hits.push({ path, rank });
   }
   return hits.sort((a, b) => a.rank - b.rank || a.path.localeCompare(b.path)).slice(0, limit).map((hit) => ({ path: hit.path, name: basename(hit.path) }));
 }

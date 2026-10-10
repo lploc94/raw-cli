@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -176,7 +177,7 @@ test("workspace file references stay inside the workspace and reach the model as
   } finally { await f.close(); }
 });
 
-test("file search ranks, limits, ignores noise and never follows symlinks", async () => {
+test("file search ranks, limits, skips .git and node_modules, keeps dot files and never follows symlinks", async () => {
   const f = await dashboardFixture();
   try {
     const ws = join(f.root, "ws");
@@ -190,9 +191,25 @@ test("file search ranks, limits, ignores noise and never follows symlinks", asyn
     assert.deepEqual(await search("q=app&limit=1"), ["src/app.ts"]);
     assert.deepEqual(await search("q=sa"), ["src/app.ts", "docs/notes-app.md", "src/deep/application.ts"]);
     const all = await search("");
-    assert.ok(all.includes("README.md") && !all.some((path) => path.startsWith("node_modules") || path.startsWith(".git") || path.startsWith("linked") || path.startsWith(".hidden")));
-    assert.equal(all[0], "README.md");
+    assert.ok(all.includes("README.md") && all.includes(".hidden"));
+    assert.ok(!all.some((path) => path.startsWith("node_modules") || path.startsWith(".git/") || path.startsWith("linked")));
+    assert.equal(all[0], ".hidden");
     for (const limit of ["0", "51", "x"]) assert.equal((await f.api(`/sessions/${id}/files?limit=${limit}`)).status, 400);
+  } finally { await f.close(); }
+});
+
+test("inside a git repository file search follows .gitignore and lists untracked files", async () => {
+  const f = await dashboardFixture();
+  try {
+    const ws = join(f.root, "repo");
+    for (const dir of ["src", "dist", ".github/workflows", "node_modules/pkg"]) mkdirSync(join(ws, dir), { recursive: true });
+    writeFileSync(join(ws, ".gitignore"), "dist/\n*.log\n");
+    for (const file of ["src/app.ts", "dist/app.js", "debug.log", ".github/workflows/app.yml", "node_modules/pkg/app.js"]) writeFileSync(join(ws, file), "x");
+    execFileSync("git", ["init", "-q"], { cwd: ws });
+    execFileSync("git", ["add", "src/app.ts"], { cwd: ws });
+    const { id } = await f.json<SessionSummary>("/sessions", "POST", { cwd: ws });
+    const found = (await f.json<{ items: Array<{ path: string }> }>(`/sessions/${id}/files?q=app`)).items.map((item) => item.path);
+    assert.deepEqual(found.sort(), [".github/workflows/app.yml", "src/app.ts"]);
   } finally { await f.close(); }
 });
 

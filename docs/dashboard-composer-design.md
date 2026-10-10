@@ -71,7 +71,7 @@ Three registries, each seeded with `image`:
 All user-block validation and normalization happen in `nativeUserContent`, mirroring `nativeToolContent`. Normalization returns ordered parts so interleaved text/image order is preserved. The context estimator counts an image as a fixed conservative token constant, never as base64 text, so automatic compaction and `context_budget_exceeded` behave sensibly. Text-only turns keep the exact previous request bodies (OpenAI `content` stays a string).
 
 ### D7. Workspace file references are confined to the session cwd
-`@` search and `files[]` resolve relative paths against the session cwd with `realpath` containment. `..`, absolute paths and symlink escapes are rejected. Search ignores `.git` and `node_modules`.
+`@` search and `files[]` resolve relative paths against the session cwd with `realpath` containment. `..`, absolute paths and symlink escapes are rejected. Search ignores `.git` and `node_modules`, and inside a git repository also whatever its ignore rules exclude.
 
 ### D8. History exposes metadata, not bytes
 `HistoryView.attachments` carries `{index, kind, name, mimeType, byteSize}`; `kind` is the block's kind id (`image` today, `file` for a workspace `resource_link`, which has no bytes to serve), derived from the stored block in the session layer so history stays independent of the dashboard registry; the client keys its renderer registry on it. Bytes are served by `GET /api/sessions/:id/history/:sequence/attachments/:index`, dispatched through the server kind registry (`fromBlock`) and backed by a single-item store read by sequence (so old history pages stay reachable) with the stored mime, `nosniff` and same-origin `img-src`. Snapshots and SSE events never embed base64.
