@@ -108,10 +108,10 @@ test("oversized output keeps its start and end and saves the complete output for
   assert.match(stdout, /…\[\d+ bytes omitted; full output: [^\]]+\]…/);
   assert.equal(row?.stderr, "LAST-ERROR\n");
   const saved = await readFile(String(row?.full_output), "utf8");
-  assert.match(saved, /^FIRST-LINE\nline-1\n/);
-  assert.ok(saved.includes("line-10000\n"));
+  // Both channels are saved in arrival order; the one stderr write may land anywhere between stdout chunks.
   assert.ok(saved.includes("LAST-ERROR\n"));
-  assert.match(saved, /LAST-LINE\n$/);
+  const lines = Array.from({ length: 20000 }, (_, i) => `line-${i + 1}\n`).join("");
+  assert.equal(saved.replace("LAST-ERROR\n", ""), `FIRST-LINE\n${lines}LAST-LINE\n`);
   assert.ok(Buffer.byteLength(JSON.stringify(result.content[0])) <= 4096);
 });
 
