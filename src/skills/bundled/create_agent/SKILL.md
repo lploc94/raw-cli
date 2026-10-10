@@ -62,7 +62,7 @@ To make a new plugin or skill, use its creation skill only when needed. For exis
 
 Policy belongs in this agent's `tools.rules`. Ordered allow/ask/deny rules match canonical IDs, last match wins, unmatched calls run. Conditional ask may inspect a schema-bound string path with an RE2 search pattern. The example uses `commands[*].command` and a direct `rm` pattern; it is textual matching, not complete shell analysis. Ask without an approval channel fails closed. Preserve selective Bash approval rather than prompting for every command. Tools retain full OS permissions.
 
-Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_timeout_ms`; `request` for provider-specific reasoning/output; `cache` for supported hints; `compact` for retention/summarization. Automatic compact requires model context metadata and a `compact.trigger_tokens` leaving output reserve. Consult `configure_raw` for nontrivial provider-specific fields instead of copying another provider's controls blindly.
+Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_timeout_ms`; `request` for provider-specific reasoning/output; `cache` for supported hints; `compact` for retention/summarization. Automatic compact is on by default when the model declares `context_window_tokens`; `compact.trigger_tokens` sets a threshold leaving output reserve, or `false` keeps it manual. Consult `configure_raw` for nontrivial provider-specific fields instead of copying another provider's controls blindly.
 
 ## Create, verify and share
 

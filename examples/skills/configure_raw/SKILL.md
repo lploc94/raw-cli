@@ -46,7 +46,7 @@ Hook manifest and response fields are specified in `references/hooks.md`. Gate f
 | Anthropic messages | `thinking`: `{type:"adaptive"}`, `{type:"disabled"}` or `{type:"enabled",budget_tokens:N}` (integer >=1024, below output cap); `effort`: low/medium/high/xhigh/max; `service_tier`: auto/standard_only |
 | Google generate-content | `thinking_level`: minimal/low/medium/high OR nonnegative integer `thinking_budget` |
 
-Verify upstream support. `cache`: `mode` auto/no-hints, optional nonempty `key` (OpenAI), `retention` (OpenAI/Anthropic), `backend` generic/llama.cpp (latter requires chat). `compact`: nonnegative `keep_recent_turns` (2), positive `max_output_tokens` (512), optional positive `compact.trigger_tokens` with context metadata/output reserve.
+Verify upstream support. `cache`: `mode` auto/no-hints, optional nonempty `key` (OpenAI), `retention` (OpenAI/Anthropic), `backend` generic/llama.cpp (latter requires chat). `compact`: nonnegative `keep_recent_turns` (2), positive `max_output_tokens` (16384, lowered to the model output cap and a quarter of the context), `compact.trigger_tokens`: positive threshold with context metadata/output reserve, `false` for manual only; default is 80% of the input budget when the model declares `context_window_tokens`.
 
 ## Variables and providers
 

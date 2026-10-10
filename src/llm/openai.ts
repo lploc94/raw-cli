@@ -80,7 +80,7 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
           ...(openAiOptions?.reasoningEffort ? { reasoning_effort: openAiOptions.reasoningEffort } : {}),
           ...(deepSeekOptions?.thinking ? { thinking: { type: deepSeekOptions.thinking } } : {}),
           ...(deepSeekOptions?.reasoningEffort ? { reasoning_effort: deepSeekOptions.reasoningEffort } : {}),
-          ...(modelConfig.provider === "openai" ? { stream_options: { include_usage: true } } : {}),
+          ...(modelConfig.provider === "openai" || modelConfig.provider === "deepseek" ? { stream_options: { include_usage: true } } : {}),
           ...(tools.length ? { tools } : {}),
           ...(outputLimit !== undefined ? (modelConfig.provider === "openai"
             ? { max_completion_tokens: outputLimit }

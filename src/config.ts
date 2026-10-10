@@ -525,6 +525,11 @@ function modelSpec(name: string, raw: unknown): ModelSpec {
   return result;
 }
 
+function defaultTriggerTokens(model: Parameters<typeof effectiveOutputTokens>[0] & { contextWindow?: number | undefined }): number {
+  const context = model.contextWindow!;
+  return Math.floor(0.8 * (context - effectiveOutputTokens(model) - Math.max(64, Math.ceil(context * 0.05))));
+}
+
 function compactSpec(raw: unknown, where: string, model: Parameters<typeof defaultCompactOutputTokens>[0] = {}): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
   keys(value, ["keep_recent_turns", "max_output_tokens", "trigger_tokens"], where);
@@ -532,7 +537,10 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
     keepRecentTurns: value.keep_recent_turns === undefined ? 2 : nonnegative(value.keep_recent_turns, where + ".keep_recent_turns"),
     maxOutputTokens: value.max_output_tokens === undefined ? defaultCompactOutputTokens(model)
       : positive(value.max_output_tokens, where + ".max_output_tokens"),
-    ...(value.trigger_tokens === undefined ? {} : { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }),
+    // A declared context turns automatic compaction on at 80% of the input budget; `false` keeps it manual.
+    ...(value.trigger_tokens === false ? {}
+      : value.trigger_tokens !== undefined ? { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }
+      : model.contextWindow !== undefined && defaultTriggerTokens(model) > 0 ? { triggerTokens: defaultTriggerTokens(model) } : {}),
   };
 }
 

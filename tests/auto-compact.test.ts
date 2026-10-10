@@ -65,7 +65,7 @@ test("manual compaction chunks older turns and never sends image base64 to the s
     model: "fixture", vision: true, contextWindow: 1500, maxOutputTokens: 100 }, async generate() {
     calls++;
     if (calls === 1) return { text: "", toolCalls: [{ id: "img", name: "fixture_image", arguments: {} }], finishReason: "tool_calls" };
-    return result("answer ".repeat(40));
+    return result("answer ".repeat(80));
   } };
   const agent = createAgent({ provider: main, registry, cwd });
   await agent.run("first photo");
@@ -83,8 +83,7 @@ test("manual compaction chunks older turns and never sends image base64 to the s
   assert.ok(summaries.length >= 2);
   assert.equal(agent.stats().requests, priorRequests + summaries.length);
   assert.ok(summaries.every((request) => !JSON.stringify(request.messages).includes(image)));
-  assert.ok(summaries.every((request) => Buffer.byteLength(JSON.stringify({ system: request.system,
-    messages: request.messages, tools: request.tools })) + 100 + 75 <= 1500));
+  assert.ok(summaries.every((request) => estimateRequestTokens(request.system, request.messages, request.tools) + 100 + 75 <= 1500));
   assert.ok(!JSON.stringify(agent.transcript).includes(image));
 });
 
@@ -264,12 +263,11 @@ test("every chunk of a repeated compact budgets its accumulated summary", async 
     { role: "user", content: `[Conversation summary]\n${previousSummary}` },
   ];
   for (let index = 0; index < 6; index++) messages.push({ role: "user", content: `turn ${index}` },
-    { role: "assistant", text: "A".repeat(250), toolCalls: [] });
+    { role: "assistant", text: "A".repeat(500), toolCalls: [] });
   const totals: number[] = [];
   const provider: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
     model: "fixture", contextWindow }, async generate(request) {
-    totals.push(Buffer.byteLength(JSON.stringify({ system: request.system, messages: request.messages,
-      tools: request.tools })) + outputTokens + 75);
+    totals.push(estimateRequestTokens(request.system, request.messages, request.tools) + outputTokens + 75);
     return result("S".repeat(350), { completion_tokens: 50 });
   } };
   const work = await performCompaction({ messages, originalTask: "task", previousSummary }, provider,

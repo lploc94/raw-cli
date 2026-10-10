@@ -98,3 +98,16 @@ test("compact summary output defaults to 16k, bounded by the model and kept abov
   assert.equal(await load({ x: { provider: "anthropic", method: "anthropic-messages", model_id: "m", api_key: "k", max_output_tokens: 64000 } },
     { request: { max_output_tokens: 40000, thinking: { type: "enabled", budget_tokens: 20000 } } }), 40000);
 });
+
+test("a declared context turns automatic compaction on at 80% of the input budget unless trigger_tokens is false", async () => {
+  const tools = { use: ["builtin/read_file", "builtin/write_file", "builtin/bash"] };
+  const load = async (models: Record<string, unknown>, agent: Record<string, unknown> = {}) => {
+    const { home } = fixture({ default_agent: "x", models, agents: { x: { model: "x", tools, ...agent } } });
+    return (await loadConfig({ home, env: {}, requireModel: true })).compact.triggerTokens;
+  };
+  // 200k context: 25k output reserve, 10k margin, 80% of the remaining 165k.
+  assert.equal(await load({ x: { ...model("ollama", "a"), context_window_tokens: 200000 } }), 132000);
+  assert.equal(await load({ x: model("ollama", "a") }), undefined);
+  assert.equal(await load({ x: { ...model("ollama", "a"), context_window_tokens: 200000 } }, { compact: { trigger_tokens: false } }), undefined);
+  assert.equal(await load({ x: { ...model("ollama", "a"), context_window_tokens: 200000 } }, { compact: { trigger_tokens: 50000 } }), 50000);
+});

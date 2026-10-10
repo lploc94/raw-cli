@@ -297,10 +297,10 @@ export class AgentSession {
    * Tokens of the request that would be sent for `messages`. With `anchored` (the live conversation) a reported size plus the
    * estimated addition is used when it applies; a candidate context, or one the anchor does not describe, is the calibrated estimate.
    */
-  private nextRequestSize(messages: readonly ModelMessage[] = this.sendMessages(), anchored = true): { tokens: number; exact: boolean; base: number } {
+  private nextRequestSize(messages: readonly ModelMessage[] = this.sendMessages(), anchored = true): { tokens: number; exact: boolean; base: number; measured: boolean } {
     const base = estimateRequestTokens(this.options.system, messages, this.schemaView);
     const known = anchored ? anchoredEstimate(this.anchor, this.anchorSignature(), this.messages.length, base, this.tokenCalibration) : undefined;
-    return known ? { ...known, base } : { tokens: Math.ceil(base * this.tokenCalibration), exact: false, base };
+    return known ? { ...known, base, measured: true } : { tokens: Math.ceil(base * this.tokenCalibration), exact: false, base, measured: false };
   }
   /** The anchor for a reply about to be added: the reported size of the request it answers plus the byte estimate of request and reply. */
   private anchorFor(reply: ModelMessage): ContextAnchor | undefined {
@@ -827,6 +827,7 @@ export class AgentSession {
         if (controller.signal.aborted) return finish(interrupted());
         let requestEstimate = 0;
         let baseEstimate = 0;
+        let measured = false;
         const compact = this.options.compact;
         if (compact?.triggerTokens !== undefined) {
           const modelConfig = this.options.provider.modelConfig;
@@ -836,6 +837,7 @@ export class AgentSession {
           const estimate = () => {
             const size = this.nextRequestSize();
             baseEstimate = size.base;
+            measured = size.measured;
             return size.tokens;
           };
           requestEstimate = estimate();
@@ -864,7 +866,9 @@ export class AgentSession {
             if (controller.signal.aborted || compactResult.status === "cancelled") return finish(interrupted());
             requestEstimate = estimate();
           }
-          if (requestEstimate > inputBudget) return finish({ status: "error", steps, code: "context_budget_exceeded",
+          // Only a size anchored to provider-reported usage may stop the run; a byte estimate alone can overstate
+          // tokens severalfold, so the request is sent and the provider decides.
+          if (measured && requestEstimate > inputBudget) return finish({ status: "error", steps, code: "context_budget_exceeded",
             message: `estimated input ${requestEstimate} exceeds budget ${inputBudget}` });
         }
         steps++;

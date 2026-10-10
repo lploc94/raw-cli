@@ -89,9 +89,8 @@ function summaryFits(provider: ProviderAdapter, input: string, outputTokens: num
   const context = provider.modelConfig.contextWindow;
   if (context === undefined) return true;
   const margin = Math.max(64, Math.ceil(context * 0.05));
-  const serialized = Buffer.byteLength(JSON.stringify({ system: COMPACT_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: input }], tools: [] }), "utf8");
-  return serialized + outputTokens + margin <= context;
+  // The same token estimate the agent budgets with; counting bytes as tokens split compaction into far more requests.
+  return estimateRequestTokens(COMPACT_SYSTEM_PROMPT, [{ role: "user", content: input }], []) + outputTokens + margin <= context;
 }
 
 function completeTurns(messages: readonly ModelMessage[]): ModelMessage[][] {

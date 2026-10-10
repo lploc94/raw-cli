@@ -64,7 +64,7 @@ Vision: a model with vision=true may select builtin/view_image.
 Skills: agents may select packaged, global, or config-adjacent skills and both skill tools.
 Setup: config init selects seven packaged setup skills for the raw agent.
 Examples: installed examples/tools/ can be forked; examples/agents/project-helper/ is copyable.
-Compact: agent compact.trigger_tokens enables automatic compaction.
+Compact: automatic at 80% of the input budget when the model declares context_window_tokens; agent compact.trigger_tokens sets the threshold, false keeps it manual.
 Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 `;
 }
