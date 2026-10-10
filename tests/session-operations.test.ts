@@ -127,7 +127,7 @@ test("manual compact exposes stable outcomes and preserves old history atomicall
     await agent.run("first"); await agent.run("second");
     const before = f.store.getSessionHistory({ sessionId: f.session.id, limit: 100 }).items;
     const events: RunEvent[] = [];
-    const compact = await agent.compact({ keepRecentTurns: 0 }, (event) => events.push(event));
+    const compact = await agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 }, (event) => events.push(event));
     assert.equal(compact.status, "compacted");
     assert.ok(events.some((event) => event.type === "compact_start"));
     const history = f.store.getSessionHistory({ sessionId: f.session.id, limit: 100 }).items;
@@ -136,7 +136,7 @@ test("manual compact exposes stable outcomes and preserves old history atomicall
     assert.equal(marker.payload.status, "compacted");
     assert.equal(marker.payload.summary, "remember the task");
     assert.ok(Number(marker.payload.afterTokens) < Number(marker.payload.beforeTokens));
-    assert.match(JSON.stringify(agent.transcript), /Conversation summary/);
+    assert.match(JSON.stringify(agent.transcript), /Raw compaction checkpoint #1/);
     await agent.run("third");
     failSummary = true;
     const prior = agent.transcript;
@@ -242,8 +242,9 @@ test("compact no-op, non-smaller and cancellation leave context intact with dist
     } };
     const agent = createAgent({ provider, cwd: f.root, persistence: { store: f.store, sessionId: f.session.id, surface: "web" } });
     try {
-      await agent.run("one"); await agent.run("two"); const before = agent.transcript;
-      const result = await agent.compact({ keepRecentTurns: expected === "noop" ? 10 : 0 }, (event) => {
+      // One turn has nothing outside the ledger and the verbatim tail; two turns do once the tail is one token.
+      await agent.run("one"); if (expected !== "noop") await agent.run("two"); const before = agent.transcript;
+      const result = await agent.compact(expected === "noop" ? { keepRecentTurns: 10 } : { keepRecentTurns: 0, keepRecentTokens: 1 }, (event) => {
         if (expected === "cancelled" && event.type === "compact_start") agent.abort();
       });
       assert.equal(result.status, expected); assert.deepEqual(agent.transcript, before);
@@ -260,7 +261,7 @@ test("automatic compaction emits and persists one matching successful attempt wi
   const provider: ProviderAdapter = { modelConfig, async generate(request) {
     return { text: request.system === COMPACT_SYSTEM_PROMPT ? "summary" : "body ".repeat(400), toolCalls: [], finishReason: "stop" };
   } };
-  const agent = createAgent({ provider, cwd: f.root, system: "small", compact: { triggerTokens: 800, keepRecentTurns: 1, maxOutputTokens: 64 },
+  const agent = createAgent({ provider, cwd: f.root, system: "small", compact: { triggerTokens: 800, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 64 },
     persistence: { store: f.store, sessionId: f.session.id, surface: "web" } });
   try {
     await agent.run("one"); const events: RunEvent[] = []; await agent.run("two", (event) => events.push(event));

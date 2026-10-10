@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createAgent } from "../src/agent.js";
 import { loadConfig } from "../src/config.js";
 import { ToolRegistry, createTestToolRegistry } from "./fixtures/registry.js";
-import { COMPACT_SYSTEM_PROMPT, estimateRequestTokens, performCompaction } from "../src/compact.js";
+import { COMPACT_SYSTEM_PROMPT, CompactionOverheadError, estimateRequestTokens, summarizeTranscript } from "../src/compact.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
 
 const result = (text: string, usage?: unknown): ProviderTurn => ({ text, toolCalls: [], finishReason: "stop",
@@ -41,7 +41,7 @@ test("automatic compact runs before the next over-threshold inference and keeps 
   } };
   const events: string[] = [];
   const agent = createAgent({ provider, cwd, system: "tiny", registry: new ToolRegistry(),
-    compact: { triggerTokens: 400, keepRecentTurns: 1, maxOutputTokens: 100 } });
+    compact: { triggerTokens: 400, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100 } });
   assert.equal((await agent.run("first")).status, "completed");
   assert.equal((await agent.run("continue", (event) => events.push(event.type))).status, "completed");
   assert.equal(requests.length, 3);
@@ -50,7 +50,7 @@ test("automatic compact runs before the next over-threshold inference and keeps 
   assert.equal(agent.stats().requests, 3);
   assert.equal(requests[0]?.cacheKey, requests[2]?.cacheKey);
   assert.notEqual(requests[1]?.cacheKey, requests[2]?.cacheKey);
-  assert.match(JSON.stringify(agent.transcript), /Conversation summary/);
+  assert.match(JSON.stringify(agent.transcript), /Raw compaction checkpoint #1/);
 });
 
 test("manual compaction chunks older turns and never sends image base64 to the summarizer", async () => {
@@ -62,23 +62,24 @@ test("manual compaction chunks older turns and never sends image base64 to the s
       path: "photo.png", byteSize: 8 }] }) });
   let calls = 0;
   const main: ProviderAdapter = { modelConfig: { agentName: "p", provider: "ollama", method: "openai-chat-completions",
-    model: "fixture", vision: true, contextWindow: 4600, maxOutputTokens: 100 }, async generate() {
+    model: "fixture", vision: true, contextWindow: 20000, maxOutputTokens: 100 }, async generate() {
     calls++;
     if (calls === 1) return { text: "", toolCalls: [{ id: "img", name: "fixture_image", arguments: {} }], finishReason: "tool_calls" };
     return result("answer ".repeat(80));
   } };
-  const agent = createAgent({ provider: main, registry, cwd });
+  const agent = createAgent({ provider: main, registry, cwd, system: "tiny" });
   await agent.run("first photo");
   for (let index = 0; index < 5; index++) await agent.run(`turn ${index}`);
   const summaries: ProviderRequest[] = [];
-  const summarizer: ProviderAdapter = { modelConfig: main.modelConfig, async generate(request) {
+  // The summarizer's own context is small, so the older turns need several chunks.
+  const summarizer: ProviderAdapter = { modelConfig: { ...main.modelConfig, contextWindow: 4600 }, async generate(request) {
     summaries.push(request);
     assert.ok(!JSON.stringify(request.messages).includes(image));
     assert.ok(!JSON.stringify(request.messages).includes("data:image"));
     return result("summary");
   } };
   const priorRequests = agent.stats().requests;
-  const compacted = await agent.compact({ provider: summarizer, keepRecentTurns: 0, maxOutputTokens: 100 });
+  const compacted = await agent.compact({ provider: summarizer, keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 100 });
   assert.equal(compacted.status, "compacted");
   assert.ok(summaries.length >= 2);
   assert.equal(agent.stats().requests, priorRequests + summaries.length);
@@ -108,7 +109,10 @@ test("tool output and opaque reasoning trigger compact despite small previous us
   assert.equal(main, 2);
   assert.equal(summaries, 1);
   assert.ok(types.includes("compact_start"));
-  assert.ok(!JSON.stringify(agent.transcript).includes("T".repeat(100)));
+  // The step in progress stays, with its result head/tail-cut to the tail budget and a pointer to the full text.
+  const transcript = JSON.stringify(agent.transcript);
+  assert.ok(!transcript.includes("T".repeat(2200)) && transcript.includes("bytes omitted; full output: "));
+  assert.ok(transcript.includes('"callId":"c"') && transcript.includes('"id":"c"'));
 });
 
 test("an early no-op does not consume the one actual compact attempt after a tool result", async () => {
@@ -125,7 +129,7 @@ test("an early no-op does not consume the one actual compact attempt after a too
   } };
   const statuses: string[] = [];
   const agent = createAgent({ provider, registry, system: "tiny", compact: { triggerTokens: 40,
-    keepRecentTurns: 1, maxOutputTokens: 100 } });
+    keepRecentTurns: 1, keepRecentTokens: 100, maxOutputTokens: 100 } });
   assert.equal((await agent.run("go", (event) => {
     if (event.type === "compact_end") statuses.push(event.result.status);
   })).status, "completed");
@@ -146,12 +150,13 @@ test("an oversized recent image is summarized as metadata before the next main r
     if (request.system === COMPACT_SYSTEM_PROMPT) {
       summarized = true;
       assert.ok(!JSON.stringify(request.messages).includes(data));
-      assert.match(JSON.stringify(request.messages), /photo\.png/);
       return result("The photo was examined.");
     }
     main++;
     if (main === 1) return { text: "", toolCalls: [{ id: "i", name: "photo", arguments: {} }], finishReason: "tool_calls" };
+    // The image in the kept step is replaced by its metadata line.
     assert.ok(!JSON.stringify(request.messages).includes(data));
+    assert.match(JSON.stringify(request.messages), /photo\.png/);
     return result("done");
   } };
   const agent = createAgent({ provider, registry, system: "tiny", compact: { triggerTokens: 1000,
@@ -169,20 +174,34 @@ test("a summarizer context too small for the checkpoint prompt fails before infe
     if (request.system === COMPACT_SYSTEM_PROMPT) return result("S".repeat(5000));
     return result("answer");
   } });
-  const first = createAgent({ provider: small(2000), registry: new ToolRegistry(), system: "tiny",
-    compact: { triggerTokens: 400, keepRecentTurns: 0, maxOutputTokens: 100 } });
-  const irreducible = await first.run("X".repeat(5000));
-  assert.equal(irreducible.code, "compact_error");
+  // A summarizer whose context cannot hold the checkpoint prompt fails before any request.
+  const first = createAgent({ provider: small(20000), registry: new ToolRegistry(), system: "tiny" });
+  await first.run("hello");
+  await first.run("again");
+  requests = 0;
+  await assert.rejects(first.compact({ provider: small(2000), keepRecentTokens: 1 }), CompactionOverheadError);
   assert.equal(requests, 0);
-  const second = createAgent({ provider: small(6000), registry: new ToolRegistry(), system: "tiny",
-    compact: { triggerTokens: 250, keepRecentTurns: 0, maxOutputTokens: 100 } });
+  // A main context too small for any checkpoint degrades to the mechanical note and cuts the request with a pointer.
+  const tight = createAgent({ provider: small(2000), registry: new ToolRegistry(), system: "tiny",
+    compact: { triggerTokens: 400, keepRecentTurns: 0, maxOutputTokens: 100 } });
+  await tight.run("hello");
   const statuses: string[] = [];
+  const degraded = await tight.run("X".repeat(5000), (event) => { if (event.type === "compact_end") statuses.push(event.result.status); });
+  assert.equal(degraded.status, "completed");
+  assert.deepEqual(statuses, ["compacted"]);
+  const context = JSON.stringify(tight.transcript);
+  assert.match(context, /\[Checkpoint unavailable: no room left in the context for a new checkpoint; older steps were removed/);
+  assert.ok(context.includes("[… cut; full text: not kept]") && !context.includes("X".repeat(5000)));
+  requests = 0;
+  const second = createAgent({ provider: small(6000), registry: new ToolRegistry(), system: "tiny",
+    compact: { triggerTokens: 250, keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 100 } });
+  await second.run("hello");
   const nonshrinking = await second.run("Y".repeat(700), (event) => {
     if (event.type === "compact_end") statuses.push(event.result.status);
   });
   assert.equal(nonshrinking.status, "completed");
-  assert.deepEqual(statuses, ["not_smaller"]);
-  assert.equal(requests, 2);
+  assert.deepEqual(statuses.slice(1), ["not_smaller"]);
+  assert.equal(requests, 3);
 });
 
 test("automatic compact is abortable and cannot commit a late summary", async () => {
@@ -198,7 +217,7 @@ test("automatic compact is abortable and cannot commit a late summary", async ()
     return result("x".repeat(1600));
   } };
   const agent = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
-    compact: { triggerTokens: 400, keepRecentTurns: 1, maxOutputTokens: 100 } });
+    compact: { triggerTokens: 400, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100 } });
   await agent.run("first");
   const prior = JSON.stringify(agent.transcript);
   const pending = agent.run("continue");
@@ -209,7 +228,7 @@ test("automatic compact is abortable and cannot commit a late summary", async ()
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(main, 1);
   assert.ok(JSON.stringify(agent.transcript).startsWith(prior.slice(0, -1)));
-  assert.doesNotMatch(JSON.stringify(agent.transcript), /Conversation summary|late summary/);
+  assert.doesNotMatch(JSON.stringify(agent.transcript), /Raw compaction checkpoint|late summary/);
 });
 
 test("a second automatic compact can summarize continuation after zero-retention compact", async () => {
@@ -270,9 +289,9 @@ test("every chunk of a repeated compact budgets its accumulated summary", async 
     totals.push(estimateRequestTokens(request.system, request.messages, request.tools) + outputTokens + 230);
     return result("S".repeat(350), { completion_tokens: 50 });
   } };
-  const work = await performCompaction({ messages, originalTask: "task", previousSummary }, provider,
-    { keepRecentTurns: 0, maxOutputTokens: outputTokens, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
-  assert.equal(work.result.status, "compacted");
+  const work = await summarizeTranscript(messages.slice(2), provider,
+    { prior: previousSummary, maxOutputTokens: outputTokens, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+  assert.equal(work.status, "summarized");
   assert.ok(totals.length >= 2);
   assert.ok(totals.every((total) => total <= contextWindow), `out-of-budget requests: ${totals}`);
 });
@@ -307,20 +326,23 @@ test("compact.instructions is validated and reaches the summarizer for manual an
     return result("x".repeat(1600));
   } };
   const automatic = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
-    compact: { triggerTokens: 400, keepRecentTurns: 1, maxOutputTokens: 100, instructions } });
+    compact: { triggerTokens: 400, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100, instructions } });
   await automatic.run("first");
   assert.equal((await automatic.run("second")).status, "completed");
   assert.deepEqual(seen, ["with"]);
   await automatic.run("third");
   const manual = createAgent({ provider, registry: new ToolRegistry(), system: "tiny",
-    compact: { keepRecentTurns: 0, maxOutputTokens: 100, instructions } });
+    compact: { keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 100, instructions } });
   await manual.run("first");
+  await manual.run("second");
   assert.equal((await manual.compact({ keepRecentTurns: 0, maxOutputTokens: 100 })).status, "compacted");
   const explicit = createAgent({ provider, registry: new ToolRegistry(), system: "tiny" });
   await explicit.run("first");
-  assert.equal((await explicit.compact({ keepRecentTurns: 0, maxOutputTokens: 100, instructions })).status, "compacted");
+  await explicit.run("second");
+  assert.equal((await explicit.compact({ keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 100, instructions })).status, "compacted");
   const none = createAgent({ provider, registry: new ToolRegistry(), system: "tiny" });
   await none.run("first");
-  assert.equal((await none.compact({ keepRecentTurns: 0, maxOutputTokens: 100 })).status, "compacted");
+  await none.run("second");
+  assert.equal((await none.compact({ keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 100 })).status, "compacted");
   assert.deepEqual(seen.slice(-3), ["with", "with", "without"]);
 });

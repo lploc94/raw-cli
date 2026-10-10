@@ -94,7 +94,8 @@ test("default compaction on Anthropic lowers its assumed summary cap to the mode
     anthropicFrame("message_stop", {}),
   ];
   const fixture = await startMockProvider([
-    { frames: anthropicText("first answer") },
+    { frames: anthropicText(`first answer ${"x".repeat(4000)}`) },
+    { frames: anthropicText("second answer") },
     { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "max_tokens: 16384 > 8192, which is the maximum allowed number of output tokens for claude-old" } } },
     { frames: anthropicText("the summary") },
   ]);
@@ -102,8 +103,9 @@ test("default compaction on Anthropic lowers its assumed summary cap to the mode
     baseUrl: fixture.url, apiKey: "fixture" }), registry: createTestToolRegistry() });
   try {
     assert.equal((await agent.run("hello")).status, "completed");
-    assert.equal((await agent.compact({ keepRecentTurns: 0 })).status, "compacted");
-    assert.deepEqual(fixture.requests.slice(1).map((request) => (request.body as { max_tokens: number }).max_tokens), [16384, 8192]);
+    assert.equal((await agent.run("again")).status, "completed");
+    assert.equal((await agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 })).status, "compacted");
+    assert.deepEqual(fixture.requests.slice(2).map((request) => (request.body as { max_tokens: number }).max_tokens), [16384, 8192]);
   } finally { await agent.close(); await fixture.close(); }
 });
 
@@ -116,13 +118,21 @@ test("an explicitly configured compaction cap is never lowered, even when it equ
       anthropicFrame("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } }),
       anthropicFrame("message_stop", {}),
     ] },
+    { frames: [
+      anthropicFrame("message_start", { message: { id: "m2", type: "message", role: "assistant", content: [], model: "fixture", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } }),
+      anthropicFrame("content_block_start", { index: 0, content_block: { type: "text", text: "second answer" } }),
+      anthropicFrame("content_block_stop", { index: 0 }),
+      anthropicFrame("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } }),
+      anthropicFrame("message_stop", {}),
+    ] },
     { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "max_tokens: 16384 > 8192, which is the maximum" } } },
   ]);
   const agent = createAgent({ provider: createProvider({ agentName: "fixture", provider: "anthropic", method: "anthropic-messages", model: "claude-old",
     baseUrl: fixture.url, apiKey: "fixture" }), registry: createTestToolRegistry() });
   try {
     assert.equal((await agent.run("hello")).status, "completed");
-    await assert.rejects(agent.compact({ keepRecentTurns: 0, maxOutputTokens: 16384 }));
-    assert.equal(fixture.requests.length, 2);
+    assert.equal((await agent.run("again")).status, "completed");
+    await assert.rejects(agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 16384 }));
+    assert.equal(fixture.requests.length, 3);
   } finally { await agent.close(); await fixture.close(); }
 });

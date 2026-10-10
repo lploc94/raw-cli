@@ -4,7 +4,12 @@ import { InteractionService } from "./interactions/service.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { createHash, randomUUID } from "node:crypto";
 import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anchor.js";
-import { defaultCompactOutputTokens, estimateRequestTokens, performCompaction, type CompactOptions, type CompactResult } from "./compact.js";
+import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFacts, cutNames, cutText, cutToolResult, cutUserInput, defaultCompactOutputTokens, emptyFacts,
+  estimateRequestTokens, isCheckpointMessage, isReasoningRejection, LEDGER_CAP_TOKENS, ledgerPointer, ledgerText, LEGACY_LEDGER_NOTE,
+  LEGACY_NOTE_SOURCE, mechanicalCheckpoint, MIN_CHECKPOINT_OUTPUT_TOKENS, renderLedger, renderWorkingState, resultText, SUMMARY_CUT_NOTICE, SUMMARY_MESSAGE_PREFIX,
+  summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, type CompactionLedgerState, type CompactOptions, type CompactResult,
+  type LedgerEntry, type RenderOptions } from "./compact.js";
+import { existsSync } from "node:fs";
 import { normalizeUsage, summarizeUsage, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
 import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
@@ -88,6 +93,17 @@ export interface CompactionDetails {
   message?: string;
 }
 
+type ToolMessage = Extract<ModelMessage, { role: "tool" }>;
+
+/** What one compaction is asked to keep and spend. */
+interface CompactWorkSettings {
+  keepRecentTurns: number;
+  keepRecentTokens?: number | undefined;
+  maxOutputTokens: number;
+  maxOutputTokensDefaulted: boolean;
+  instructions?: string | undefined;
+}
+
 export interface AgentOptions {
   provider: ProviderAdapter;
   registry?: ToolRegistry;
@@ -130,6 +146,10 @@ export class AgentSession {
   private usageEntries: UsageRecord[] = [];
   private originalTask: UserInput | undefined;
   private summaryText: string | undefined;
+  /** The compaction ledger and working-state facts; absent until a checkpoint compaction commits (design §6.2). */
+  private ledgerState: CompactionLedgerState | undefined;
+  /** The first request after a compaction may retry once with history projected, when the provider rejects replayed reasoning. */
+  private replayRetryArmed = false;
   private cacheKey: string = randomUUID();
   private schemaView: readonly ToolDefinition[];
   private contextGenerationRevision = 1;
@@ -165,7 +185,8 @@ export class AgentSession {
     }
     if (options.compact !== undefined && (!Number.isSafeInteger(options.compact.keepRecentTurns)
       || options.compact.keepRecentTurns < 0 || !Number.isSafeInteger(options.compact.maxOutputTokens)
-      || options.compact.maxOutputTokens < 1)) throw new Error("invalid compaction settings");
+      || options.compact.maxOutputTokens < 1 || (options.compact.keepRecentTokens !== undefined
+        && (!Number.isSafeInteger(options.compact.keepRecentTokens) || options.compact.keepRecentTokens < 1)))) throw new Error("invalid compaction settings");
     if (options.compact?.triggerTokens !== undefined) {
       const context = options.provider.modelConfig.contextWindow;
       const output = effectiveOutputTokens(options.provider.modelConfig);
@@ -217,6 +238,8 @@ export class AgentSession {
         this.cacheKey = saved.cacheKey;
         this.originalTask = saved.originalTask;
         this.summaryText = saved.summaryText;
+        this.ledgerState = saved.ledger;
+        this.replayRetryArmed = saved.ledger?.retryArmed === true;
         this.rawUsage = structuredClone(saved.rawUsage);
         this.usageEntries = structuredClone(saved.usageEntries);
         this.tokenCalibration = saved.tokenCalibration;
@@ -390,6 +413,8 @@ export class AgentSession {
     this.replayBefore = 0;
     this.originalTask = undefined;
     this.summaryText = undefined;
+    this.ledgerState = undefined;
+    this.replayRetryArmed = false;
     this.skillVisibility = { listed: false, loaded: [] };
   }
 
@@ -406,11 +431,233 @@ export class AgentSession {
     return true;
   }
 
-  private async compactWork(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number, maxOutputTokensDefaulted: boolean,
-    instructions: string | undefined, controller: AbortController, details: CompactionDetails, onUsage?: (raw: unknown) => void): Promise<CompactResult> {
+  /** The user's typed input behind a context message: the message itself, or its tail after the panel-action notes. */
+  private static carriesInput(content: UserInput, input: UserInput): boolean {
+    if (typeof input === "string") return typeof content === "string" && (content === input || content.endsWith(`\n\n${input}`));
+    return Array.isArray(content) && content.length >= input.length && JSON.stringify(content.slice(content.length - input.length)) === JSON.stringify(input);
+  }
+
+  /**
+   * Plans and commits one checkpoint compaction (docs/compaction-v2-design.md §6.2, §6.2.1): the oldest steps are summarized,
+   * the newest stay verbatim, and the user's messages, working state, checkpoint and resume text lead the new context.
+   */
+  private async compactWork(provider: ProviderAdapter, settings: CompactWorkSettings, controller: AbortController, details: CompactionDetails,
+    onUsage?: (raw: unknown) => void): Promise<CompactResult> {
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
-    const snapshot = { messages: structuredClone(this.requestMessages()), ...(this.originalTask !== undefined ? { originalTask: this.originalTask } : {}),
-      ...(this.summaryText !== undefined ? { previousSummary: this.summaryText } : {}) };
+    // Roles and identities come from the stored messages; what is sent comes from their replay projection, index for index.
+    const source = structuredClone(this.messages);
+    const projected = structuredClone(this.requestMessages());
+    const text = (message: ModelMessage | undefined) => message?.role === "user" && typeof message.content === "string" ? message.content : undefined;
+    // The host prefix of the last compaction: a checkpoint message, or the old layout's pinned task and summary.
+    let start = 0;
+    if (this.summaryText !== undefined) {
+      if (isCheckpointMessage(source[0]) || text(source[0])?.startsWith(SUMMARY_MESSAGE_PREFIX)) start = 1;
+      else if (text(source[1])?.startsWith(SUMMARY_MESSAGE_PREFIX) && this.originalTask !== undefined
+        && source[0]?.role === "user" && JSON.stringify(source[0].content) === JSON.stringify(this.originalTask)) start = 2;
+    }
+
+    // Typed inputs, newest first, matched to their history rows; an unmatched message with a host note's form is the host's.
+    const hostNote = (content: string) => content === OUTPUT_LIMIT_NOTICE || content.startsWith("[Raw skill reload notice]")
+      || content.startsWith(CHECKPOINT_MARKER) || content.startsWith(SUMMARY_MESSAGE_PREFIX) || isPanelReminder(content);
+    const users = source.flatMap((message, index) => index >= start && message.role === "user" ? [index] : []);
+    let rows = this.persistence ? this.persistence.store.recentUserInputs(this.persistence.sessionId, users.length) : [];
+    const inputEntries = new Map<number, LedgerEntry & { sequence?: number }>();
+    const reminderAt = new Set<number>();
+    for (const index of [...users].reverse()) {
+      const content = (source[index] as Extract<ModelMessage, { role: "user" }>).content;
+      const row = rows[0];
+      // A request cut by an earlier compaction still names its history row.
+      if (row && (AgentSession.carriesInput(content, row.input) || cutNames(content, ledgerPointer(`history:${row.sequence}`)))) {
+        inputEntries.set(index, { source: `history:${row.sequence}`, content: ledgerText(row.input), sequence: row.sequence });
+        rows = rows.slice(1);
+      } else if (typeof content === "string" && hostNote(content)) {
+        if (isPanelReminder(content)) reminderAt.add(index);
+      } else {
+        // Without a matching row the boundary is unknown from here back; the message text is kept instead.
+        rows = [];
+        inputEntries.set(index, { source: `input:${randomUUID()}`, content: ledgerText(content) });
+      }
+    }
+    // Panel reminders are replaced, not kept; the conversation is everything else after the host prefix.
+    const positions = source.flatMap((_message, index) => index >= start && !reminderAt.has(index) ? [index] : []);
+    const conversation = positions.map((index) => source[index]!);
+    const units = transcriptSteps(conversation);
+    if (units.length < 2) return { status: "noop", beforeBytes, afterBytes: beforeBytes };
+    const unitStart: number[] = [];
+    units.reduce((offset, unit) => { unitStart.push(offset); return offset + unit.length; }, 0);
+    const unitOf = (index: number) => { let unit = 0; while (unit + 1 < units.length && unitStart[unit + 1]! <= index) unit++; return unit; };
+    // A step lies wholly before or after the replay boundary: both are set between complete steps.
+    const replayed = (unit: number) => positions[unitStart[unit]!]! < this.replayBefore;
+    const sent = (unit: number, messages: readonly ModelMessage[] = units[unit]!) =>
+      replayed(unit) ? projectReplayMessages(messages, messages.length) : [...messages];
+    const typed = conversation.flatMap((_message, index) => inputEntries.has(positions[index]!) ? [index] : []);
+
+    // Ledger entries of the active context, by occurrence: typed inputs and ask_user answers, at full length.
+    const retainedText = new Map((this.ledgerState?.retained ?? []).map((entry) => [entry.source, entry.content]));
+    const isAnswer = (message: ModelMessage): message is ToolMessage => message.role === "tool" && !message.result.isError
+      && this.toolIdentity(message.name) === "builtin/ask_user";
+    const active = conversation.flatMap((message, index): Array<{ index: number; entry: LedgerEntry; typed: boolean }> => {
+      const input = inputEntries.get(positions[index]!);
+      if (input) return [{ index, entry: { source: input.source, content: input.content }, typed: true }];
+      if (isAnswer(message)) {
+        const answer = `answer:${message.callId}`;
+        return [{ index, entry: { source: answer, content: retainedText.get(answer) ?? resultText(message.result) }, typed: false }];
+      }
+      return [];
+    });
+
+    // Entries that left the context earlier: the stored ledger, or for a session compacted before it, what history proves.
+    let base: LedgerEntry[] = [];
+    let facts = emptyFacts();
+    if (this.ledgerState) {
+      base = structuredClone(this.ledgerState.entries);
+      facts = structuredClone(this.ledgerState.facts);
+    } else if (this.summaryText !== undefined) {
+      const activeSequences = new Set([...inputEntries.values()].flatMap((entry) => entry.sequence === undefined ? [] : [entry.sequence]));
+      const legacy = this.persistence && this.originalTask !== undefined
+        ? this.persistence.store.legacyUserInputs(this.persistence.sessionId, this.originalTask) : undefined;
+      const legacySequences = new Set(legacy?.map((row) => row.sequence));
+      if (legacy && [...activeSequences].every((sequence) => legacySequences.has(sequence))) {
+        base = legacy.filter((row) => !activeSequences.has(row.sequence)).map((row) => ({ source: `history:${row.sequence}`, content: ledgerText(row.input) }));
+      } else {
+        base = [...(this.originalTask !== undefined ? [{ source: "original_task", content: ledgerText(this.originalTask) }] : []),
+          { source: LEGACY_NOTE_SOURCE, content: LEGACY_LEDGER_NOTE }];
+      }
+    }
+    const n = (this.ledgerState?.compactions ?? (this.summaryText !== undefined ? 1 : 0)) + 1;
+
+    // Allocation (§6.2.1), in the agent's calibrated estimate of the request the next turn sends.
+    const modelConfig = this.options.provider.modelConfig;
+    const budget = modelConfig.contextWindow === undefined ? Infinity
+      : effectiveInputBudget(modelConfig.contextWindow, effectiveOutputTokens(modelConfig));
+    const target = budget / 2;
+    const calibration = this.tokenCalibration;
+    const tokens = (value: string) => textTokens(value, calibration);
+    const measure = (messages: readonly ModelMessage[]) => this.nextRequestSize(this.sendMessages(messages), false).tokens;
+    const empty = measure([]);
+    const stepTokens = (unit: readonly ModelMessage[]) => Math.max(0, measure(unit) - empty);
+    const reminders = panelReminders(this.panels.snapshot()).map((content) => ({ role: "user" as const, content }));
+    const skeleton = buildCheckpointMessage({ n, ledger: "", workingState: "", checkpoint: "" });
+    const fixed = measure([{ role: "user", content: skeleton }, ...reminders]);
+    const last = units.length - 1;
+    const lastUnit = units[last]!.map((message) => structuredClone(message));
+    const lastTokens = () => stepTokens(sent(last, lastUnit));
+    const render: RenderOptions = { copies: new WeakMap() };
+    // Results of the last step are head/tail-cut, largest first, each naming its saved copy, until the step fits `limit`.
+    // The user's ask_user answers are cut only when the context has no room for them at all.
+    const cutLastStep = (limit: number, answers = false) => {
+      const order = lastUnit.flatMap((message, index) => message.role === "tool" && isAnswer(message) === answers ? [index] : [])
+        .sort((a, b) => Buffer.byteLength(resultText((lastUnit[b] as ToolMessage).result)) - Buffer.byteLength(resultText((lastUnit[a] as ToolMessage).result)));
+      for (const index of order) {
+        const over = lastTokens() - limit;
+        if (over <= 0) return;
+        const message = lastUnit[index] as ToolMessage;
+        // The marker naming the saved copy takes room too, so the cut goes a little further than the overflow.
+        lastUnit[index] = cutToolResult(message, Math.max(512, Buffer.byteLength(resultText(message.result)) - Math.ceil(over * 2 / calibration) - 256), render);
+      }
+    };
+    const keepTokens = settings.keepRecentTokens ?? Math.min(20000, Math.floor(0.25 * budget));
+    cutLastStep(keepTokens);
+    // The current turn's request group: the newest typed input, then the answers after it, unless the last step holds it.
+    const ledgerEntries = [...base, ...active.filter((item) => unitOf(item.index) < last).map((item) => item.entry)];
+    const newestTyped = [...active].reverse().find((item) => item.typed);
+    const requestSource = newestTyped ? newestTyped.entry.source
+      : [...base].reverse().find((entry) => entry.source !== LEGACY_NOTE_SOURCE && !entry.source.startsWith("answer:"))?.source;
+    // The legacy coverage line is never left out (§6.2.1).
+    const pinned = new Set<string>(base.some((entry) => entry.source === LEGACY_NOTE_SOURCE) ? [LEGACY_NOTE_SOURCE] : []);
+    if (requestSource !== undefined && !(newestTyped && unitOf(newestTyped.index) === last)) {
+      const position = ledgerEntries.findIndex((entry) => entry.source === requestSource);
+      pinned.add(requestSource);
+      for (const entry of ledgerEntries.slice(position + 1)) if (entry.source.startsWith("answer:")) pinned.add(entry.source);
+    }
+    const pinnedLimits = new Map<string, number>();
+    const pinnedTokens = () => renderLedger(ledgerEntries.filter((entry) => pinned.has(entry.source)),
+      { pinned, budgetTokens: 0, tokens, limits: pinnedLimits }).tokens;
+    const thinking = provider.modelConfig.request?.kind === "anthropic" ? provider.modelConfig.request.thinking : undefined;
+    const outputFloor = Math.min(settings.maxOutputTokens, Math.max(MIN_CHECKPOINT_OUTPUT_TOKENS, thinking?.type === "enabled" ? thinking.budgetTokens + 1 : 0));
+    // A checkpoint of `output` tokens, with the note added when the model stops at its limit.
+    const notice = Buffer.byteLength(SUMMARY_CUT_NOTICE);
+    const reserve = (output: number) => Math.ceil((Math.min(4 * output, 7 * checkpointWords(output)) + notice) / 2 * calibration);
+    // The largest output whose reserve fits `room`.
+    const fitOutput = (room: number) => Math.floor((room - 1) / (2 * calibration) - notice / 4);
+    let mandatory = fixed + lastTokens() + pinnedTokens();
+    let outputBudget: number | undefined = settings.maxOutputTokens;
+    let mechanical: string | undefined;
+    if (mandatory + reserve(outputBudget) > budget) {
+      // Shorten the checkpoint to the room left, then fall back to the mechanical note.
+      outputBudget = Math.min(settings.maxOutputTokens, fitOutput(budget - mandatory));
+      if (outputBudget < outputFloor) {
+        outputBudget = undefined;
+        const note = mechanicalCheckpoint("no room left in the context for a new checkpoint");
+        mechanical = this.summaryText !== undefined && mandatory + tokens(`${this.summaryText}\n\n${note}`) <= budget ? `${this.summaryText}\n\n${note}` : note;
+        // Then the last step's results, the turn's answers and its request are cut, each naming where its full text is.
+        const over = () => fixed + lastTokens() + pinnedTokens() + tokens(mechanical!) - budget;
+        const shrink = (bytes: number) => Math.max(512, bytes - Math.ceil(over() * 2 / calibration) - 128);
+        cutLastStep(lastTokens() - over());
+        if (over() > 0) cutLastStep(lastTokens() - over(), true);
+        for (const entry of ledgerEntries.filter((item) => pinned.has(item.source) && item.source.startsWith("answer:")).reverse()) {
+          if (over() <= 0) break;
+          pinnedLimits.set(entry.source, shrink(Buffer.byteLength(entry.content)));
+        }
+        const request = lastUnit[0];
+        if (over() > 0 && lastUnit.length === 1 && request?.role === "user" && newestTyped) {
+          lastUnit[0] = { role: "user", content: cutUserInput(request.content, shrink(userTextBytes(request.content)), ledgerPointer(newestTyped.entry.source)) };
+        }
+        const pinnedRequest = ledgerEntries.find((item) => item.source === requestSource && pinned.has(item.source));
+        if (over() > 0 && pinnedRequest) pinnedLimits.set(pinnedRequest.source, shrink(Buffer.byteLength(pinnedRequest.content)));
+        mandatory = fixed + lastTokens() + pinnedTokens();
+      }
+    }
+    let left = target - mandatory - (outputBudget !== undefined ? reserve(outputBudget) : tokens(mechanical!));
+
+    // Optional parts fill what the soft target leaves: working state, the rest of the ledger, the rest of the tail.
+    const identity = (name: string) => this.toolIdentity(name);
+    const processes = this.options.processes?.forSession(this.persistence?.sessionId ?? this.processSessionId).list()
+      .filter((job) => job.state === "starting" || job.state === "running" || job.state === "stopping")
+      .map((job) => ({ id: job.id, command: job.command, state: job.state })) ?? [];
+    // Facts come from the stored messages not yet covered, before any cut or projection; the tail is covered from now on.
+    const allFacts = collectFacts(source.slice(Math.min(this.ledgerState?.factsThrough ?? 0, source.length)), facts, identity);
+    const workingFor = (maxBytes?: number) => renderWorkingState(allFacts,
+      { cwd: this.options.cwd, compactions: n, processes, outputExists: existsSync }, maxBytes);
+    const fullState = workingFor();
+    let stateBytes: number | undefined;
+    if (tokens(fullState) <= left) { stateBytes = WORKING_STATE_BYTES; left -= tokens(fullState); }
+    else if (left * 2 / calibration >= 512) { stateBytes = Math.floor(left * 2 / calibration); left = 0; }
+    const pinnedUsed = pinnedTokens();
+    const ledger = renderLedger(ledgerEntries, { pinned, tokens, limits: pinnedLimits,
+      budgetTokens: Math.max(pinnedUsed, Math.min(LEDGER_CAP_TOKENS, pinnedUsed + Math.max(0, left))) });
+    left -= ledger.tokens - pinnedUsed;
+    let tailStart = last;
+    let tailTokens = lastTokens();
+    while (tailStart > 1) {
+      const cost = stepTokens(sent(tailStart - 1));
+      if (tailTokens + cost > keepTokens || cost > left) break;
+      tailStart--;
+      tailTokens += cost;
+      left -= cost;
+    }
+    // keep_recent_turns is a lower bound when those turns fit the target and leave something to summarize.
+    const turnStarts = typed.map(unitOf);
+    const turnStart = settings.keepRecentTurns > 0 ? turnStarts[turnStarts.length - settings.keepRecentTurns] : undefined;
+    if (turnStart !== undefined && turnStart >= 1 && turnStart < tailStart) {
+      let cost = 0;
+      for (let unit = turnStart; unit < tailStart; unit++) cost += stepTokens(sent(unit));
+      if (cost <= left) { tailStart = turnStart; left -= cost; }
+    }
+    const headSteps = units.slice(0, tailStart).flat();
+    // A head of typed inputs alone has nothing the ledger does not already keep verbatim, unless the last step had to be cut.
+    if (!headSteps.some((message) => message.role !== "user") && JSON.stringify(lastUnit) === JSON.stringify(units[last])) {
+      return { status: "noop", beforeBytes, afterBytes: beforeBytes };
+    }
+    // The summarizer reads what the provider would have been sent; the tail keeps the stored steps and their replay boundary.
+    const head = units.slice(0, tailStart).flatMap((_unit, unit) => sent(unit));
+    const tail = [...units.slice(tailStart, last).flat().map((message) => structuredClone(message)), ...lastUnit];
+    const tailReplayed = units.slice(tailStart).reduce((count, unit, offset) => count + (replayed(tailStart + offset) ? unit.length : 0), 0);
+    const replayBefore = tailReplayed ? 1 + tailReplayed : 0;
+    // Whatever the checkpoint, the rest of the new context stays within the input budget.
+    const retryCap = outputBudget === undefined || budget === Infinity ? undefined
+      : Math.max(outputBudget, fitOutput(budget - (target - left - reserve(outputBudget))));
+
     const entries = new Map<number, { entry: UsageRecord; rawIndex?: number }>();
     let onAbort!: () => void;
     const aborted = new Promise<never>((_resolve, reject) => {
@@ -419,63 +666,90 @@ export class AgentSession {
       if (controller.signal.aborted) onAbort();
     });
     try {
-      const work = await Promise.race([performCompaction(snapshot, provider, {
-        keepRecentTurns, maxOutputTokens, maxOutputTokensDefaulted, instructions, timeoutMs: this.options.requestTimeoutMs,
-        signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
-        onRequestStart: (index) => {
-          const entry: UsageRecord = { method: provider.modelConfig.method, provider: provider.modelConfig.provider, raw: undefined };
-          entries.set(index, { entry });
-          this.usageEntries.push(entry);
-          this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
-            { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
-        },
-        onUsage: (index, raw) => {
-          if (controller.signal.aborted) return;
-          const current = entries.get(index);
-          if (!current) return;
-          current.entry.raw = structuredClone(raw);
-          if (current.rawIndex === undefined) current.rawIndex = this.rawUsage.push(structuredClone(raw)) - 1;
-          else this.rawUsage[current.rawIndex] = structuredClone(raw);
-          this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
-            { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
-          onUsage?.(raw);
-        },
-      }), aborted]);
-      if (this.persistenceError) throw this.persistenceError;
-      if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
-      if (work.replacement && work.summary !== undefined) {
-        const retained = loadedSkillNames(work.replacement);
-        const selectedNames = new Set(this.selectedSkills.map((skill) => skill.name));
-        const missing = this.skillVisibility.loaded.filter((name) => selectedNames.has(name) && !retained.has(name));
-        const priorNotices = work.replacement.flatMap((message) => message.role === "user"
-          && typeof message.content === "string" && message.content.startsWith("[Raw skill reload notice]")
-          ? [message.content] : []).join("\n");
-        const uncovered = missing.filter((name) => !priorNotices.includes(name)).sort();
-        const notice = uncovered.length
-          ? `[Raw skill reload notice] Loaded skill content was removed by compaction: ${uncovered.join(", ")}. Call load_skill again before relying on earlier instructions.`
-          : undefined;
-        // A compaction that succeeds reminds the model of the open summary panels (§10). Reminders of an earlier compaction are replaced.
-        const reminders = panelReminders(this.panels.snapshot());
-        const replacement: ModelMessage[] = [
-          ...work.replacement.filter((message) => !(message.role === "user" && typeof message.content === "string" && isPanelReminder(message.content))),
-          ...(notice ? [{ role: "user" as const, content: notice }] : []),
-          ...reminders.map((content) => ({ role: "user" as const, content }))];
-        const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
-        if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
-        const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: work.summary, beforeBytes, afterBytes: finalBytes,
-          afterTokens: this.nextRequestSize(this.sendMessages(replacement), false).tokens };
-        this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
-          { summaryText: work.summary!, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
-            tokenCalibration: this.tokenCalibration, replayBefore: 0, anchor: null, ...(notice ? { skillNotice: notice } : {}) },
-          false, [{ kind: "compaction", payload: this.visiblePayload({ ...committedDetails }) }]));
-        Object.assign(details, committedDetails);
-        this.messages = structuredClone(replacement);
-        this.anchor = undefined;
-        this.replayBefore = 0;
-        this.summaryText = work.summary;
-        return { ...work.result, afterBytes: finalBytes };
+      let checkpoint = mechanical;
+      let usage: unknown;
+      if (outputBudget !== undefined) {
+        const work = await Promise.race([summarizeTranscript(head, provider, {
+          maxOutputTokens: outputBudget, maxRetryOutputTokens: retryCap, prior: this.summaryText, instructions: settings.instructions,
+          maxOutputTokensDefaulted: settings.maxOutputTokensDefaulted || outputBudget !== settings.maxOutputTokens,
+          timeoutMs: this.options.requestTimeoutMs, signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
+          onRequestStart: (index) => {
+            const entry: UsageRecord = { method: provider.modelConfig.method, provider: provider.modelConfig.provider, raw: undefined };
+            entries.set(index, { entry });
+            this.usageEntries.push(entry);
+            this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+              { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
+          },
+          onUsage: (index, raw) => {
+            if (controller.signal.aborted) return;
+            const current = entries.get(index);
+            if (!current) return;
+            current.entry.raw = structuredClone(raw);
+            if (current.rawIndex === undefined) current.rawIndex = this.rawUsage.push(structuredClone(raw)) - 1;
+            else this.rawUsage[current.rawIndex] = structuredClone(raw);
+            this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+              { rawUsage: this.rawUsage, usageEntries: this.usageEntries }));
+            onUsage?.(raw);
+          },
+        }), aborted]);
+        if (this.persistenceError) throw this.persistenceError;
+        if (controller.signal.aborted || work.status === "cancelled") return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
+        checkpoint = work.summary;
+        usage = work.usage;
       }
-      return work.result;
+      const retained = loadedSkillNames(tail);
+      const selectedNames = new Set(this.selectedSkills.map((skill) => skill.name));
+      const missing = this.skillVisibility.loaded.filter((name) => selectedNames.has(name) && !retained.has(name));
+      const priorNotices = tail.flatMap((message) => text(message)?.startsWith("[Raw skill reload notice]") ? [text(message)!] : []).join("\n");
+      const uncovered = missing.filter((name) => !priorNotices.includes(name)).sort();
+      const notice = uncovered.length
+        ? `[Raw skill reload notice] Loaded skill content was removed by compaction: ${uncovered.join(", ")}. Call load_skill again before relying on earlier instructions.`
+        : undefined;
+      const workingState = stateBytes === undefined ? "" : workingFor(stateBytes);
+      // A compaction that succeeds reminds the model of the open summary panels (§10); reminders of an earlier one are replaced.
+      const build = (body: string): ModelMessage[] => [
+        { role: "user", content: buildCheckpointMessage({ n, ledger: ledger.text, workingState, checkpoint: body }) },
+        ...tail,
+        ...(notice ? [{ role: "user" as const, content: notice }] : []),
+        ...reminders,
+      ];
+      // The checkpoint's size was only estimated (§6.2.1). One that would overflow the input budget keeps its start and end
+      // around a pointer to the compaction record, which stores it whole; without room for that, the mechanical note replaces it.
+      let placed = checkpoint!;
+      let replacement = build(placed);
+      for (let attempt = 0; attempt < 4 && mechanical === undefined; attempt++) {
+        const over = measure(projectReplayMessages(replacement, replayBefore)) - budget;
+        if (over <= 0) break;
+        const room = Buffer.byteLength(placed) - Math.ceil(over * 2 / calibration) - 64;
+        placed = room >= 1024 ? cutText(checkpoint!, room, "the compaction record in the session history")
+          : mechanicalCheckpoint("no room left in the context for a new checkpoint");
+        replacement = build(placed);
+        if (room < 1024) break;
+      }
+      const finalBytes = Buffer.byteLength(JSON.stringify(replacement), "utf8");
+      if (finalBytes >= beforeBytes) return { status: "not_smaller", beforeBytes, afterBytes: finalBytes };
+      const leaving = active.filter((item) => unitOf(item.index) < tailStart).map((item) => item.entry);
+      // Answers that stay in the tail but whose copy there is cut, or was by an earlier compaction, keep their full text aside.
+      const cutAnswers = new Set(lastUnit.flatMap((message, index) => isAnswer(message)
+        && JSON.stringify(message) !== JSON.stringify(units[last]![index]) ? [`answer:${message.callId}`] : []));
+      const kept = active.filter((item) => unitOf(item.index) >= tailStart && !item.typed
+        && (cutAnswers.has(item.entry.source) || retainedText.has(item.entry.source))).map((item) => item.entry);
+      const ledgerState: CompactionLedgerState = { entries: [...base, ...leaving], facts: allFacts, factsThrough: replacement.length, compactions: n,
+        ...(kept.length ? { retained: kept } : {}), retryArmed: true };
+      const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: checkpoint!, beforeBytes, afterBytes: finalBytes,
+        afterTokens: this.nextRequestSize(this.sendMessages(projectReplayMessages(replacement, replayBefore)), false).tokens };
+      this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, replacement,
+        { summaryText: checkpoint!, ledger: ledgerState, rawUsage: this.rawUsage, usageEntries: this.usageEntries,
+          tokenCalibration: this.tokenCalibration, replayBefore, anchor: null, ...(notice ? { skillNotice: notice } : {}) },
+        false, [{ kind: "compaction", payload: this.visiblePayload({ ...committedDetails }) }]));
+      Object.assign(details, committedDetails);
+      this.messages = structuredClone(replacement);
+      this.anchor = undefined;
+      this.replayBefore = replayBefore;
+      this.summaryText = checkpoint;
+      this.ledgerState = ledgerState;
+      this.replayRetryArmed = true;
+      return { status: "compacted", beforeBytes, afterBytes: finalBytes, ...(usage !== undefined ? { usage } : {}) };
     } catch (error) {
       if (this.persistenceError) throw this.persistenceError;
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
@@ -483,17 +757,16 @@ export class AgentSession {
     } finally { controller.signal.removeEventListener("abort", onAbort); }
   }
 
-  private async compactAttempt(provider: ProviderAdapter, keepRecentTurns: number, maxOutputTokens: number, maxOutputTokensDefaulted: boolean,
-    instructions: string | undefined, controller: AbortController, cause: CompactionDetails["cause"], onEvent?: (event: RunEvent) => void): Promise<CompactResult> {
-    const details: CompactionDetails = { id: randomUUID(), cause, status: "running", keepRecentTurns,
+  private async compactAttempt(provider: ProviderAdapter, settings: CompactWorkSettings, controller: AbortController,
+    cause: CompactionDetails["cause"], onEvent?: (event: RunEvent) => void): Promise<CompactResult> {
+    const details: CompactionDetails = { id: randomUUID(), cause, status: "running", keepRecentTurns: settings.keepRecentTurns,
       beforeTokens: this.estimatedContextTokens(), beforeBytes: Buffer.byteLength(JSON.stringify(this.messages)) };
     const emit = (event: RunEvent) => onEvent?.(structuredClone({ ...event,
       ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}) }));
     this.recordVisible("compaction", { ...details });
     try {
       emit({ type: "compact_start", estimatedTokens: details.beforeTokens, details });
-      const result = await this.compactWork(provider, keepRecentTurns, maxOutputTokens, maxOutputTokensDefaulted, instructions, controller, details,
-        (raw) => emit({ type: "usage", raw }));
+      const result = await this.compactWork(provider, settings, controller, details, (raw) => emit({ type: "usage", raw }));
       Object.assign(details, { status: result.status, afterTokens: this.estimatedContextTokens(),
         beforeBytes: result.beforeBytes ?? details.beforeBytes, afterBytes: result.status === "compacted" ? result.afterBytes : details.beforeBytes });
       if (result.status !== "compacted") this.recordVisible("compaction", { ...details });
@@ -539,7 +812,8 @@ export class AgentSession {
     this.currentTurnId = undefined;
     const keepRecentTurns = options.keepRecentTurns ?? 2;
     const maxOutputTokens = options.maxOutputTokens ?? defaultCompactOutputTokens((options.provider ?? this.options.provider).modelConfig);
-    if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0 || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+    if (!Number.isSafeInteger(keepRecentTurns) || keepRecentTurns < 0 || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1
+      || (options.keepRecentTokens !== undefined && (!Number.isSafeInteger(options.keepRecentTokens) || options.keepRecentTokens < 1))) {
       return Promise.reject(new Error("invalid compaction settings"));
     }
     this.currentState = "compacting";
@@ -548,8 +822,9 @@ export class AgentSession {
     this.controller = controller;
     const defaulted = options.maxOutputTokens === undefined || options.maxOutputTokensDefaulted === true;
     const instructions = options.instructions ?? this.options.compact?.instructions;
-    const task = this.compactAttempt(options.provider ?? this.options.provider, keepRecentTurns, maxOutputTokens, defaulted, instructions,
-      controller, "manual", onEvent).finally(() => {
+    const keepRecentTokens = options.keepRecentTokens ?? this.options.compact?.keepRecentTokens;
+    const task = this.compactAttempt(options.provider ?? this.options.provider, { keepRecentTurns, keepRecentTokens, maxOutputTokens,
+      maxOutputTokensDefaulted: defaulted, instructions }, controller, "manual", onEvent).finally(() => {
       this.controller = undefined;
       this.activeCompact = undefined;
       this.heartbeat?.unref();
@@ -851,23 +1126,9 @@ export class AgentSession {
           if (requestEstimate >= compact.triggerTokens && !autoCompacted) {
             if (controller.signal.aborted) return finish(interrupted());
             let compactResult: CompactResult;
-            const effective = this.requestMessages();
-            const history = this.summaryText ? effective.slice(1) : effective;
-            const starts = history.flatMap((message, index) => message.role === "user" ? [index] : []);
-            let keep = Math.min(compact.keepRecentTurns, starts.length);
-            if (keep === starts.length && history.length > starts.length) keep = Math.max(0, keep - 1);
-            const summaryPlaceholder = "x".repeat(Math.min(4 * compact.maxOutputTokens, 16384));
-            while (keep > 0) {
-              const tail = history.slice(starts[starts.length - keep]!);
-              const candidate: ModelMessage[] = [
-                ...(this.originalTask === undefined ? [] : [{ role: "user" as const, content: this.originalTask }]),
-                { role: "user", content: `[Conversation summary]\n${summaryPlaceholder}` }, ...tail,
-              ];
-              if (this.nextRequestSize(this.sendMessages(candidate), false).tokens <= inputBudget) break;
-              keep--;
-            }
-            try { compactResult = await this.compactAttempt(this.options.provider, keep, compact.maxOutputTokens,
-              compact.maxOutputTokensDefaulted === true, compact.instructions, controller, "automatic", emit); }
+            try { compactResult = await this.compactAttempt(this.options.provider, { keepRecentTurns: compact.keepRecentTurns,
+              keepRecentTokens: compact.keepRecentTokens, maxOutputTokens: compact.maxOutputTokens,
+              maxOutputTokensDefaulted: compact.maxOutputTokensDefaulted === true, instructions: compact.instructions }, controller, "automatic", emit); }
             catch (error) { return finish({ status: "error", steps, code: "compact_error", message: (error as Error).message }); }
             autoCompacted = compactResult.status !== "noop";
             if (controller.signal.aborted || compactResult.status === "cancelled") return finish(interrupted());
@@ -907,7 +1168,7 @@ export class AgentSession {
         });
         let turn;
         try {
-          turn = await Promise.race([this.options.provider.generate({
+          const request = () => Promise.race([this.options.provider.generate({
             system: this.options.system,
             messages: this.sendMessages(),
             tools: this.schemaView,
@@ -918,6 +1179,25 @@ export class AgentSession {
             onReasoningDelta: (text) => { if (!controller.signal.aborted) emit({ type: "reasoning_delta", text }); },
             onUsage: recordUsage,
           }), aborted]);
+          const retry = this.replayRetryArmed;
+          if (retry) {
+            // The first request after a compaction consumes the retry, in this runtime or a later one.
+            this.replayRetryArmed = false;
+            if (this.ledgerState?.retryArmed) {
+              const { retryArmed: _consumed, ...ledger } = this.ledgerState;
+              this.ledgerState = ledger;
+              this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { ledger }));
+            }
+          }
+          try { turn = await request(); }
+          catch (error) {
+            // Replayed reasoning the provider rejects after compaction is projected to text, as a model switch does (§6.2).
+            if (!retry || controller.signal.aborted || !isReasoningRejection(error) || this.replayBefore >= this.messages.length) throw error;
+            const replayBefore = this.messages.length;
+            this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { replayBefore }));
+            this.replayBefore = replayBefore;
+            turn = await request();
+          }
         } finally { controller.signal.removeEventListener("abort", onAbort); }
         if (controller.signal.aborted) return finish(interrupted());
         if (turn.usage !== undefined && usageIndex === undefined) recordUsage(turn.usage);

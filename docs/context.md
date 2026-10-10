@@ -18,7 +18,47 @@ Fields larger than 64 KiB are stored as checksum-verified files under the privat
 
 Compaction is a host operation: REPL `/compact`, library `compactSession`, negotiated ACP extension, or automatic compaction. It never appears in the model's built-in tools. When the model declares `context_window_tokens`, automatic compaction is on by default at 80% of the input budget (context minus output reserve and safety margin); an explicit `compact.trigger_tokens` sets another threshold and `"trigger_tokens": false` keeps compaction manual. The setting is an estimated input-token threshold below the model context window after an output reserve and safety margin; it is not a provider-reported remaining-token count. Before every inference step, Raw estimates the complete next request from the system prompt, selected tool schemas, committed messages, opaque reasoning items and image bytes. Prior provider usage can calibrate the estimate but cannot replace inspection of new content. A turn auto-compacts at most once, emits progress and usage, then checks the next request again. If a size anchored to provider-reported usage still exceeds the context budget, Raw returns a clear error instead of submitting it; a byte estimate alone, which can overstate tokens severalfold, never stops the request, and the provider decides.
 
-The operation keeps the original user task once and keeps the most recent two complete turns by default. The older turns go to the selected model as a structured checkpoint request ([compaction v2 design](compaction-v2-design.md) §6.3 and §7.2). The request has no tools and a short compact-only system instruction.
+The operation keeps the newest steps verbatim and sends the older ones to the selected model as a structured checkpoint request ([compaction v2 design](compaction-v2-design.md) §6.3 and §7.2). The request has no tools and a short compact-only system instruction.
+
+**After compaction** the model context is, in order ([design](compaction-v2-design.md) §6.2):
+
+1. One user message that starts with `[Raw compaction checkpoint #N]`, where N counts the session's compactions. It has four sections:
+   - `## User messages (verbatim, oldest first)`: the ledger described below;
+   - `## Working state`: facts Raw observed itself, at most 4 KB;
+   - `## Checkpoint`: the model-written checkpoint;
+   - `## Resume`: a fixed instruction to continue from the checkpoint's "Current position" and "Next actions" without recapping or redoing finished work.
+2. The verbatim tail: the newest steps, unchanged, including their tool call IDs and native reasoning (signatures, encrypted reasoning).
+3. The skill reload notice and panel reminders, as before.
+
+A new checkpoint message replaces the previous one; they are never stacked.
+
+**User-message ledger.** Every typed user input and every answer to `ask_user` is kept word for word. Images appear as their `[Image: type, N bytes]` placeholder.
+- Entries are rendered oldest first. They are chosen newest first up to 20,000 estimated tokens. The entry that overflows keeps its start and end around `[… cut; full text: history #N]` or `[… cut; full text: ask_user answer <call ID>]`, and older entries are left out.
+- The current turn's request and the `ask_user` answers given during that turn are always kept, whole when the budget allows; an answer never displaces its request.
+- Entries that leave the active context are stored with the session (see [sessions](sessions.md)), so they survive restarts and later compactions.
+
+**Working state** lists, when known:
+- the working directory and the number of compactions;
+- files written or patched in the session, each with the last tool that touched it;
+- files read earlier;
+- saved full outputs still on disk;
+- running background processes;
+- the last `bash` command and its exit code.
+
+The facts that outlive their steps (files and saved outputs) are stored with the ledger and merged at each compaction.
+
+**Verbatim tail.** The tail is chosen by steps, newest first, up to `compact.keep_recent_tokens` estimated tokens (default: the smaller of 20,000 and a quarter of the input budget). A step is an assistant message with all of its tool results, so a call is never separated from its result. The last step is always kept; when it is larger than the tail budget, its tool results keep their start and end around a marker naming a saved copy. `ask_user` answers there are cut only when nothing else makes the context fit, and the ledger then keeps their full text for when they leave the tail. `compact.keep_recent_turns` (default 2) keeps more when those turns fit and something older is left to summarize. Without anything older than the tail beyond typed inputs, which the ledger already keeps, compaction returns `noop`.
+
+**Size allocation.** The new context aims at half of the input budget, so the turn has room to continue:
+- The fixed parts, the current request with its answers, the last step and the checkpoint are always kept whole while they fit the full input budget.
+- Working state, the rest of the ledger and the rest of the tail fill only what is left under that half, in this order.
+- When even the kept parts exceed the input budget:
+  1. the checkpoint's output budget is lowered, down to 1,024 tokens;
+  2. then the checkpoint is replaced by `[Checkpoint unavailable: no room left in the context for a new checkpoint; older steps were removed. Re-check the working tree before continuing.]`, without a summary request;
+  3. then the last step's results, the turn's answers and finally the request are cut, each naming where its full text is.
+- The checkpoint's size is estimated before it is written. If the written checkpoint would still push the new context over the input budget, it keeps its start and end around `[… cut; full text: the compaction record in the session history]`; the compaction record keeps it whole.
+
+**Rejected reasoning.** If the first request after a compaction, in the same process or after a restart, fails with a provider validation error about thinking, reasoning, signatures or encrypted content, Raw retries it once with every earlier message projected to portable text, the same projection a model switch uses. The boundary is saved with the session, so later requests and a restart use it too.
 
 **Request contents.**
 - **Rendered transcript.** The turns are rendered as labeled lines (`USER:`, `ASSISTANT:`, `REASONING:`, `TOOL CALL name(args)`, `TOOL RESULT name:`), not JSON.
@@ -45,9 +85,9 @@ The operation keeps the original user task once and keeps the most recent two co
 - If it still does not fit, it becomes a one-line record of its tool calls and result sizes with saved paths.
 - Before admitting any step, each request checks that the prompt, the running checkpoint, the output budget and a margin leave room for one record. If not, the output budget is lowered, down to 1,024 tokens. If even that does not fit, compaction fails before a provider call.
 
-**Storage.** The `<analysis>` notes are discarded; only the sections after them are stored. Automatic compact can retain fewer recent turns when needed to fit the next request.
+**Storage.** The `<analysis>` notes are discarded; only the sections after them are stored.
 
-The new summary is labeled as conversation data, not a system instruction. With its notes removed, it must be nonempty, complete, and produce a strictly shorter UTF-8 serialized transcript. Provider-reported output tokens, when available, must fit `compact.max_output_tokens` (by default 16384, lowered to the model's `max_output_tokens` and to a quarter of `context_window_tokens` when those are declared, and raised to the request output cap when a manual Anthropic thinking budget would not fit below it). No eligible older turn returns `noop` without an inference request. A summary cut at the output limit is requested once more with twice the budget when the model cap and context allow it; if it is still cut, the partial summary is kept with a `[Summary cut off at the output token limit.]` line rather than failing. Provider error, cancellation, empty or over-budget summary, or a nonshrinking result leaves the previous transcript byte-for-byte intact. Summaries are lossy: decisions, changed files and unresolved failures should be recorded, but a model may still omit a fact. `/clear` removes conversation history while idle and keeps configuration and cumulative usage.
+The checkpoint is labeled as the agent's own notes, not a system instruction. With its notes removed, it must be nonempty and complete, and the new context must be a strictly shorter UTF-8 serialized transcript. Provider-reported output tokens, when available, must fit `compact.max_output_tokens` (by default 16384, lowered to the model's `max_output_tokens` and to a quarter of `context_window_tokens` when those are declared, and raised to the request output cap when a manual Anthropic thinking budget would not fit below it). No eligible older turn returns `noop` without an inference request. A summary cut at the output limit is requested once more with twice the budget when the model cap and context allow it; if it is still cut, the partial summary is kept with a `[Summary cut off at the output token limit.]` line rather than failing. Provider error, cancellation, empty or over-budget summary, or a nonshrinking result leaves the previous transcript byte-for-byte intact. Summaries are lossy: decisions, changed files and unresolved failures should be recorded, but a model may still omit a fact; the ledger and the tail are not summarized. `/clear` removes conversation history and the ledger while idle and keeps configuration and cumulative usage.
 
 ## Cache controls
 

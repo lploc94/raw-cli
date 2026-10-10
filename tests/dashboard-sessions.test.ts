@@ -103,7 +103,8 @@ test("history keysets split tool pairs without losing identity and metrics reads
 
 test("manual compaction preserves history, summary and failure rollback through HTTP", async () => {
   const long = "details ".repeat(300);
-  const f = await dashboardFixture({ agent: { compact: { keep_recent_turns: 0, max_output_tokens: 64 } }, responses: [
+  const f = await dashboardFixture({ agent: { compact: { keep_recent_turns: 0, keep_recent_tokens: 1, max_output_tokens: 64 } }, responses: [
+    { frames: [openAiFrame({ content: long }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: long }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "remember task" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: long }, "stop"), openAiDone] },
@@ -113,7 +114,7 @@ test("manual compaction preserves history, summary and failure rollback through 
     const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root });
     const run = async (kind: "turn" | "compact", key: string) => f.wait((await f.json<SessionOperation>(`/sessions/${session.id}/operations`, "POST",
       { clientRequestId: key, kind, agent: "raw", ...(kind === "turn" ? { input: key } : {}) })).id);
-    await run("turn", "one"); const compact = await run("compact", "compact"); assert.equal(compact.result?.status, "compacted", JSON.stringify(compact));
+    await run("turn", "one"); await run("turn", "again"); const compact = await run("compact", "compact"); assert.equal(compact.result?.status, "compacted", JSON.stringify(compact));
     let snapshot = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
     assert.equal(snapshot.context.summary, "remember task"); assert.ok(snapshot.history.items.some((item) => item.text === long));
     const successes = snapshot.history.items.filter((item) => item.compaction?.status === "compacted"); assert.equal(successes.length, 1);
@@ -127,7 +128,7 @@ test("manual compaction preserves history, summary and failure rollback through 
 });
 
 test("automatic compaction and manual no-op have distinct persisted outcomes", async () => {
-  const f = await dashboardFixture({ agent: { compact: { trigger_tokens: 800, keep_recent_turns: 1, max_output_tokens: 64 } }, responses: [
+  const f = await dashboardFixture({ agent: { compact: { trigger_tokens: 800, keep_recent_turns: 1, keep_recent_tokens: 1, max_output_tokens: 64 } }, responses: [
     { frames: [openAiFrame({ content: "body ".repeat(400) }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "summary" }, "stop"), openAiDone] },
     { frames: [openAiFrame({ content: "end" }, "stop"), openAiDone] },
@@ -154,7 +155,7 @@ for (const target of ["startup", "provider", "compact"] as const) test(`HTTP Sto
   });
   const f = await dashboardFixture({ attach: async ({ store, session, owner, operation, signal }) => {
     if (target === "startup") return stopped(signal);
-    return { modelConfig, compactOptions: { keepRecentTurns: 0 }, async close() {},
+    return { modelConfig, compactOptions: { keepRecentTurns: 0, keepRecentTokens: 1 }, async close() {},
       agent: createAgent({ cwd: session.cwd, provider: { modelConfig, async generate(request) {
         if (target === "provider" || request.system === COMPACT_SYSTEM_PROMPT) return stopped(request.signal);
         return { text: "details ".repeat(300), toolCalls: [], finishReason: "stop" };
@@ -165,7 +166,7 @@ for (const target of ["startup", "provider", "compact"] as const) test(`HTTP Sto
     const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root });
     const submit = (key: string, kind: string) => f.json<SessionOperation>(`/sessions/${session.id}/operations`, "POST",
       { clientRequestId: key, kind, agent: "raw", ...(kind === "turn" ? { input: key } : {}) });
-    if (target === "compact") await f.wait((await submit("seed", "turn")).id);
+    if (target === "compact") { await f.wait((await submit("seed", "turn")).id); await f.wait((await submit("seed2", "turn")).id); }
     const before = f.server.context.store!.getContextSummary(session.id);
     const op = await submit("stop", target === "compact" ? "compact" : "turn"); await ready;
     await f.json(`/operations/${op.id}/cancel`, "POST"); assert.equal((await f.wait(op.id)).state, "cancelled");

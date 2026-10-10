@@ -3,13 +3,15 @@ import type { AgentSession } from "./agent.js";
 import { normalizeUsage } from "./llm/cache.js";
 import { base64ByteLength, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type ProviderTurn, type UserInput } from "./llm/types.js";
 import type { ToolDefinition } from "./tools/registry.js";
-import { elideMiddle } from "./tools/results.js";
+import { elideMiddle, utf8Prefix, utf8Suffix } from "./tools/results.js";
 import { SPILL_PATH_RESERVE, savedLabel, spillText } from "./tools/spill.js";
 import type { ToolResult } from "./tools/types.js";
 
 export interface CompactOptions {
   provider?: ProviderAdapter;
   keepRecentTurns?: number;
+  /** Size of the verbatim tail kept after compaction, in estimated tokens (`compact.keep_recent_tokens`). */
+  keepRecentTokens?: number;
   maxOutputTokens?: number;
   /** `maxOutputTokens` is a default, not a configured cap; omitting `maxOutputTokens` implies it. */
   maxOutputTokensDefaulted?: boolean;
@@ -24,17 +26,7 @@ export interface CompactResult {
   usage?: unknown;
 }
 
-export interface CompactSnapshot {
-  messages: readonly ModelMessage[];
-  originalTask?: UserInput;
-  previousSummary?: string;
-}
-
-export interface CompactWorkResult {
-  result: CompactResult;
-  replacement?: ModelMessage[];
-  summary?: string;
-}
+export type SummaryResult = { status: "summarized"; summary: string; usage?: unknown } | { status: "cancelled" };
 
 export const DEFAULT_COMPACT_OUTPUT_TOKENS = 16384;
 
@@ -216,7 +208,7 @@ function userText(input: UserInput): string {
     : `[Resource link] ${JSON.stringify(block)}`).join("\n");
 }
 
-function resultText(result: ToolResult): string {
+export function resultText(result: ToolResult): string {
   return result.content.map((block) => block.type === "text" ? block.text
     : block.type === "json" ? JSON.stringify(block.value)
     : `[Image: path=${block.path ?? "unknown"}; mime=${block.mimeType}; bytes=${block.byteSize ?? base64ByteLength(block.data)}]`).join("\n");
@@ -290,8 +282,8 @@ function oneLineRecord(step: readonly ModelMessage[], path: (message: Extract<Mo
   return `[Step shortened to fit the summarizer: ${parts.join("; ")}]`;
 }
 
-/** Records of the summarizer input: a user message alone, or an assistant message with all of its tool results. */
-function transcriptSteps(messages: readonly ModelMessage[]): ModelMessage[][] {
+/** Steps of a conversation: a user message alone, or an assistant message with all of its tool results. */
+export function transcriptSteps(messages: readonly ModelMessage[]): ModelMessage[][] {
   const steps: ModelMessage[][] = [];
   for (const message of messages) {
     const last = steps.at(-1);
@@ -306,50 +298,25 @@ function jsonBytes(text: string): number {
   return Buffer.byteLength(JSON.stringify(text), "utf8") - 2;
 }
 
-function completeTurns(messages: readonly ModelMessage[]): ModelMessage[][] {
-  const turns: ModelMessage[][] = [];
-  for (const message of messages) {
-    if (message.role === "user") turns.push([message]);
-    else {
-      const current = turns.at(-1);
-      if (!current) throw new Error("transcript has content before the first user message");
-      current.push(message);
-    }
-  }
-  return turns;
-}
+/** Appended to a checkpoint the model left unfinished at its output limit. */
+export const SUMMARY_CUT_NOTICE = "\n[Summary cut off at the output token limit.]";
 
-function byteLength(messages: readonly ModelMessage[]): number {
-  return Buffer.byteLength(JSON.stringify(messages), "utf8");
-}
-
-export async function performCompaction(
-  snapshot: CompactSnapshot,
+/**
+ * Summarizes `messages` into a checkpoint, merging `prior` (design §6.3). Input that does not fit the summarizer's
+ * context is split at step boundaries; each request carries the checkpoint written so far.
+ */
+export async function summarizeTranscript(
+  messages: readonly ModelMessage[],
   provider: ProviderAdapter,
-  options: Required<Pick<CompactOptions, "keepRecentTurns" | "maxOutputTokens">> & {
-    timeoutMs: number; signal: AbortSignal; cacheKey: string; maxOutputTokensDefaulted?: boolean; instructions?: string | undefined;
-    saveCopy?: (text: string) => string | undefined;
+  options: {
+    maxOutputTokens: number; prior?: string | undefined; timeoutMs: number; signal: AbortSignal; cacheKey: string;
+    maxOutputTokensDefaulted?: boolean; instructions?: string | undefined; saveCopy?: (text: string) => string | undefined;
+    /** Largest output a retry may use: what the context after compaction has room for. */
+    maxRetryOutputTokens?: number | undefined;
     onRequestStart?: (index: number) => void; onUsage?: (index: number, raw: unknown) => void;
   },
-): Promise<CompactWorkResult> {
-  const beforeBytes = byteLength(snapshot.messages);
-  const history = snapshot.previousSummary ? snapshot.messages.slice(1) : snapshot.messages;
-  const turns = completeTurns(history);
-  if (snapshot.previousSummary && turns[0]?.length === 1 && turns.length <= options.keepRecentTurns + 1) {
-    return { result: { status: "noop", beforeBytes, afterBytes: beforeBytes } };
-  }
-  const older = turns.slice(0, Math.max(0, turns.length - options.keepRecentTurns));
-  if (!older.length) return { result: { status: "noop", beforeBytes, afterBytes: beforeBytes } };
-  const retained = turns.slice(turns.length - options.keepRecentTurns).flat();
-  // The previous summary message, which follows the pinned original task, is merged as <prior-checkpoint> rather than
-  // summarized again; a user message that merely starts with the same words stays conversation.
-  const prior = snapshot.previousSummary ? snapshot.messages[snapshot.originalTask !== undefined ? 1 : 0] : undefined;
-  const summarized = older.flat().filter((message) => !(message === prior && message.role === "user"
-    && typeof message.content === "string" && message.content.startsWith(SUMMARY_PREFIX)));
-  const steps = transcriptSteps([
-    ...(snapshot.previousSummary && snapshot.originalTask !== undefined ? [{ role: "user" as const, content: snapshot.originalTask }] : []),
-    ...summarized,
-  ]);
+): Promise<SummaryResult> {
+  const steps = transcriptSteps(messages);
   const render: RenderOptions = { copies: new WeakMap(), ...(options.saveCopy ? { saveCopy: options.saveCopy } : {}) };
   const rendered = steps.map((step) => renderTranscript(step, render));
   const context = provider.modelConfig.contextWindow;
@@ -363,7 +330,7 @@ export async function performCompaction(
   // Sizes a one-line record before its copies are saved: no saved path is longer than this.
   // Counted in JSON bytes, the estimator's unit, so a non-ASCII temp directory is not undercounted.
   const placeholderPath = "x".repeat(jsonBytes(tmpdir()) + SPILL_PATH_RESERVE - tmpdir().length + 64);
-  let summary = snapshot.previousSummary;
+  let summary = options.prior;
   let usage: unknown;
   for (let offset = 0, requestIndex = 0; offset < steps.length;) {
     const prompt = (budget: number) => checkpointPrompt({ words: checkpointWords(budget), instructions: options.instructions, prior: summary });
@@ -423,9 +390,9 @@ export async function performCompaction(
         onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(index, raw); },
       });
       if (!options.signal.aborted && turn.usage !== undefined) options.onUsage?.(index, turn.usage);
-      if (options.signal.aborted) return { result: { status: "cancelled", beforeBytes, afterBytes: beforeBytes } };
+      if (options.signal.aborted) return { status: "cancelled" };
       // A summary cut at the output limit is retried once with twice the budget when the model and context allow it.
-      const larger = Math.min(budget * 2, provider.modelConfig.maxOutputTokens ?? Infinity);
+      const larger = Math.min(budget * 2, provider.modelConfig.maxOutputTokens ?? Infinity, options.maxRetryOutputTokens ?? Infinity);
       if (!turn.truncated || budget !== options.maxOutputTokens || larger <= budget || !fits(input, larger)) break;
       budget = larger;
     }
@@ -435,21 +402,271 @@ export async function performCompaction(
     const reportedOutput = normalizeUsage(provider.modelConfig.method, turn.usage, provider.modelConfig.provider).outputTokens;
     if (reportedOutput !== undefined && reportedOutput > budget) throw new Error("compaction exceeded output token budget");
     // Still cut after the retry: a lossy summary that says so beats keeping a transcript too large to continue.
-    summary = turn.truncated ? `${checkpoint}\n[Summary cut off at the output token limit.]` : checkpoint;
+    summary = turn.truncated ? `${checkpoint}${SUMMARY_CUT_NOTICE}` : checkpoint;
     usage = turn.usage;
     offset = end;
   }
-  const replacement: ModelMessage[] = [
-    ...(snapshot.originalTask !== undefined ? [{ role: "user" as const, content: snapshot.originalTask }] : []),
-    { role: "user", content: `${SUMMARY_PREFIX}${summary}` },
-    ...retained,
-  ];
-  const afterBytes = byteLength(replacement);
-  if (afterBytes >= beforeBytes) return { result: { status: "not_smaller", beforeBytes, afterBytes, ...(usage !== undefined ? { usage } : {}) } };
-  return {
-    result: { status: "compacted", beforeBytes, afterBytes, ...(usage !== undefined ? { usage } : {}) },
-    replacement, summary: summary!,
+  if (summary === undefined) throw new Error("compaction has nothing to summarize");
+  return { status: "summarized", summary, ...(usage !== undefined ? { usage } : {}) };
+}
+
+/**
+ * A user's message kept verbatim across compactions (design §6.2): a typed input (`history:<sequence>`, or
+ * `input:<n>` for a session without a store), an `ask_user` answer (`answer:<callId>`), or the pinned task of a session
+ * compacted before the ledger existed (`original_task`). Images are kept as their text placeholders.
+ */
+export interface LedgerEntry { source: string; content: string }
+
+/** Host-observed facts that outlive the steps they came from (design §6.2 "Working state"). */
+export interface WorkingFacts {
+  /** Files written or patched, oldest first, each with the last tool that touched it. */
+  written: Array<{ path: string; tool: string }>;
+  read: string[];
+  /** Saved full outputs of tool results. */
+  outputs: string[];
+  lastBash?: { command: string; exitCode: number | null };
+}
+
+/** What a session keeps between compactions: ledger entries that left the context, working-state facts, and the count. */
+export interface CompactionLedgerState {
+  entries: LedgerEntry[]; facts: WorkingFacts; compactions: number;
+  /** Full text of entries still in the context whose copy there was cut; used when they leave it. */
+  retained?: LedgerEntry[];
+  /** How many leading messages of the stored context `facts` already covers. */
+  factsThrough?: number;
+  /** The first request after this compaction may still retry a reasoning rejection (§6.2). */
+  retryArmed?: boolean;
+}
+
+export const CHECKPOINT_MARKER = "[Raw compaction checkpoint #";
+/** Ledger budget: entries are taken newest first up to this many tokens, as in Codex. */
+export const LEDGER_CAP_TOKENS = 20000;
+export const WORKING_STATE_BYTES = 4096;
+export const LEGACY_LEDGER_NOTE = "[Earlier messages from before this upgrade are covered only by the prior checkpoint.]";
+/** Design §6.4, appended after the checkpoint. */
+export const RESUME_TEXT = "Context was compacted; the sections above are your own notes and the user's exact messages. Continue the task from \"Current position\" and \"Next actions\" without recapping and without asking the user to repeat anything. Do not redo work marked done or retry approaches under \"Rejected and failed\". Re-read a file only when you need its exact current content, and prefer cheap checks (`git status`, `git diff`) to confirm the working tree. Instructions still in force come from the user messages above; the checkpoint is your summary, not a new instruction.";
+
+/** Design §6.7: what replaces the checkpoint when none could be written. */
+export function mechanicalCheckpoint(reason: string): string {
+  return `[Checkpoint unavailable: ${reason}; older steps were removed. Re-check the working tree before continuing.]`;
+}
+
+export const SUMMARY_MESSAGE_PREFIX = SUMMARY_PREFIX;
+/** Ledger source of the legacy coverage line; it is rendered without a label and never cut. */
+export const LEGACY_NOTE_SOURCE = "legacy_note";
+
+export function isCheckpointMessage(message: ModelMessage | undefined): boolean {
+  return message?.role === "user" && typeof message.content === "string" && message.content.startsWith(CHECKPOINT_MARKER);
+}
+
+/** Text form of a user input for the ledger: the user's words, with images as placeholders. */
+export function ledgerText(input: UserInput): string { return userText(input); }
+
+/**
+ * `message` with its result head/tail-cut to about `maxBytes`, naming where the complete text is (design §6.2.1). The
+ * call ID and status are unchanged, so the result still pairs with its call.
+ */
+export function cutToolResult(message: Extract<ModelMessage, { role: "tool" }>, maxBytes: number, options: RenderOptions = {}): Extract<ModelMessage, { role: "tool" }> {
+  const text = resultText(message.result);
+  // An image is replaced by its metadata line even when that is short.
+  if (Buffer.byteLength(text) <= maxBytes && !message.result.content.some((block) => block.type === "image")) return message;
+  return { ...message, result: { ...message.result, content: [{ type: "text", text: elideMiddle(text, maxBytes, copyPath(message, options)).text }] } };
+}
+
+/** Tokens of `text` by the agent's estimate: JSON bytes over two, calibrated. */
+export function textTokens(text: string, calibration = 1): number {
+  return Math.ceil(jsonBytes(text) / 2 * calibration);
+}
+
+export function emptyFacts(): WorkingFacts { return { written: [], read: [], outputs: [] }; }
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+/**
+ * `facts` updated with what `messages` show: written and read files, saved outputs, and the last bash command.
+ * `identity` names the bundled tool behind a model-facing name.
+ */
+export function collectFacts(messages: readonly ModelMessage[], facts: WorkingFacts = emptyFacts(),
+  identity: (name: string) => string | undefined = (name) => `builtin/${name}`): WorkingFacts {
+  const next: WorkingFacts = structuredClone(facts);
+  const touch = (path: string, tool: string) => {
+    next.written = next.written.filter((item) => item.path !== path);
+    next.written.push({ path, tool });
   };
+  const add = (list: string[], value: string) => { if (!list.includes(value)) list.push(value); };
+  const bash = new Map<string, string>();
+  const writes = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      for (const call of message.toolCalls) {
+        const args = call.arguments;
+        const tool = identity(call.name);
+        if (tool === "builtin/write_file") writes.add(call.id);
+        else if (tool === "builtin/read_file" && Array.isArray(args.files)) {
+          for (const file of args.files.map(record)) if (typeof file?.path === "string") add(next.read, file.path);
+        } else if (tool === "builtin/bash" && Array.isArray(args.commands)) {
+          const command = record(args.commands.at(-1))?.command;
+          if (typeof command === "string") bash.set(call.id, command);
+        }
+      }
+    } else if (message.role === "tool") {
+      if (message.result.fullOutputPath) add(next.outputs, message.result.fullOutputPath);
+      const results = record(message.result.content.find((block) => block.type === "json")?.value)?.results;
+      const rows = Array.isArray(results) ? results.map(record) : [];
+      for (const row of rows) if (typeof row?.full_output === "string") add(next.outputs, row.full_output);
+      // Only completed writes count: an operation or patch row that is ok, or a patch destination it already created.
+      if (writes.has(message.callId)) for (const row of rows) {
+        const tool = `${message.name}${typeof row?.mode === "string" ? ` ${row.mode}` : ""}`;
+        const destination = typeof row?.destination === "string" ? row.destination : undefined;
+        if (row?.status === "ok" && typeof row.path === "string") touch(destination ?? row.path, tool);
+        else if (row?.destination_created === true && destination) touch(destination, tool);
+      }
+      const command = bash.get(message.callId);
+      if (command !== undefined) {
+        const last = rows.at(-1);
+        next.lastBash = { command, exitCode: typeof last?.exit_code === "number" ? last.exit_code : message.result.exitCode ?? null };
+      }
+    }
+  }
+  return next;
+}
+
+/** The `## Working state` body, at most `maxBytes`. */
+export function renderWorkingState(facts: WorkingFacts, live: { cwd: string; compactions: number;
+  processes?: ReadonlyArray<{ id: string; command: string; state: string }>; outputExists?: (path: string) => boolean }, maxBytes = WORKING_STATE_BYTES): string {
+  const exists = live.outputExists ?? (() => true);
+  const outputs = facts.outputs.filter((path) => exists(path));
+  const lines = [
+    `- Working directory: ${live.cwd}`,
+    `- Compactions so far: ${live.compactions}`,
+    ...(facts.written.length ? [`- Files written or patched (last tool): ${facts.written.map((item) => `${item.path} (${item.tool})`).join(", ")}`] : []),
+    ...(facts.read.length ? [`- Files read earlier: ${facts.read.join(", ")}`] : []),
+    ...(outputs.length ? [`- Saved full outputs: ${outputs.join(", ")}`] : []),
+    ...(live.processes?.length ? [`- Background processes: ${live.processes.map((job) => `${job.id} \`${job.command}\` (${job.state})`).join(", ")}`] : []),
+    ...(facts.lastBash ? [`- Last bash command: \`${facts.lastBash.command}\` (exit ${facts.lastBash.exitCode ?? "unknown"})`] : []),
+  ];
+  const text = lines.join("\n");
+  return Buffer.byteLength(text) <= maxBytes ? text : `${utf8Prefix(text, Math.max(0, maxBytes - 32)).text}\n…[working state cut]`;
+}
+
+/** Where the full text of a ledger entry is kept, named when the entry is cut. */
+export function ledgerPointer(source: string): string {
+  if (source.startsWith("history:")) return `history #${source.slice(8)}`;
+  if (source.startsWith("answer:")) return `ask_user answer ${source.slice(7)}`;
+  if (source === "original_task") return "the session's original task";
+  return "not kept";
+}
+
+function ledgerLabel(source: string): string {
+  if (source === LEGACY_NOTE_SOURCE) return "";
+  if (source.startsWith("history:")) return `[user, history #${source.slice(8)}]`;
+  if (source.startsWith("answer:")) return `[ask_user answer ${source.slice(7)}]`;
+  if (source === "original_task") return "[user, original task]";
+  return "[user]";
+}
+
+/** A user input whose text is cut to about `maxBytes`, largest text block first; other blocks are kept. */
+export function cutUserInput(input: UserInput, maxBytes: number, pointer: string): UserInput {
+  if (typeof input === "string") return cutText(input, maxBytes, pointer);
+  const blocks = input.map((block) => ({ ...block }));
+  const texts = blocks.flatMap((block) => block.type === "text" ? [block] : [])
+    .sort((a, b) => Buffer.byteLength(b.text) - Buffer.byteLength(a.text));
+  let over = texts.reduce((sum, block) => sum + Buffer.byteLength(block.text), 0) - maxBytes;
+  for (const block of texts) {
+    if (over <= 0) break;
+    const size = Buffer.byteLength(block.text);
+    block.text = cutText(block.text, Math.max(0, size - over), pointer);
+    over -= size - Buffer.byteLength(block.text);
+  }
+  return blocks;
+}
+
+/** Whether `input` was cut naming `pointer`. */
+export function cutNames(input: UserInput, pointer: string): boolean {
+  const marker = `[… cut; full text: ${pointer}]`;
+  return typeof input === "string" ? input.includes(marker) : input.some((block) => block.type === "text" && block.text.includes(marker));
+}
+
+/** Text bytes of a user input. */
+export function userTextBytes(input: UserInput): number {
+  return typeof input === "string" ? Buffer.byteLength(input)
+    : input.reduce((sum, block) => sum + (block.type === "text" ? Buffer.byteLength(block.text) : 0), 0);
+}
+
+/** `text` head/tail-cut to about `maxBytes` around a marker naming where the full text is kept. */
+export function cutText(text: string, maxBytes: number, pointer: string): string {
+  if (Buffer.byteLength(text) <= maxBytes) return text;
+  const marker = `\n[… cut; full text: ${pointer}]\n`;
+  const room = Math.max(0, maxBytes - Buffer.byteLength(marker));
+  const head = utf8Prefix(text, Math.floor(room / 2));
+  return head.text + marker + utf8Suffix(text, room - head.bytes).text;
+}
+
+function renderEntry(entry: LedgerEntry, maxBytes?: number): string {
+  const body = maxBytes === undefined ? entry.content : cutText(entry.content, maxBytes, ledgerPointer(entry.source));
+  const label = ledgerLabel(entry.source);
+  return label ? `${label}\n${body}` : body;
+}
+
+/**
+ * The `## User messages` body (design §6.2, §6.2.1). `pinned` entries (the current request, then its answers) are kept
+ * whole; the rest are taken newest first while they fit `budgetTokens`, and the first that does not fit is head/tail-cut
+ * with a pointer to its full text. Output is oldest first.
+ */
+export function renderLedger(entries: readonly LedgerEntry[], options: { pinned: ReadonlySet<string>; budgetTokens: number;
+  tokens: (text: string) => number; note?: string | undefined; limits?: ReadonlyMap<string, number> }): { text: string; tokens: number } {
+  const chosen = new Map<number, string>();
+  // Each part is costed with its separator, so the parts' sum bounds the joined text.
+  const cost = (text: string) => options.tokens(`${text}\n\n`);
+  // The legacy coverage line is kept like a pinned entry.
+  const pinned = (entry: LedgerEntry) => options.pinned.has(entry.source) || entry.source === LEGACY_NOTE_SOURCE;
+  let used = options.note ? cost(options.note) : 0;
+  for (const [index, entry] of entries.entries()) {
+    if (!pinned(entry)) continue;
+    const text = renderEntry(entry, options.limits?.get(entry.source));
+    chosen.set(index, text);
+    used += cost(text);
+  }
+  let room = options.budgetTokens - used;
+  for (let index = entries.length - 1; index >= 0 && room > 0; index--) {
+    const entry = entries[index]!;
+    if (pinned(entry)) continue;
+    const whole = renderEntry(entry);
+    const wholeCost = cost(whole);
+    if (wholeCost <= room) { chosen.set(index, whole); used += wholeCost; room -= wholeCost; continue; }
+    // The overflowing entry is cut to the room left, sized by the same token estimate; an entry with no useful room is not started.
+    let bytes = Math.floor(Buffer.byteLength(whole) * room / wholeCost);
+    while (bytes >= 64) {
+      const cut = renderEntry(entry, bytes - Buffer.byteLength(ledgerLabel(entry.source)) - 1);
+      const over = cost(cut) - room;
+      if (over <= 0) { chosen.set(index, cut); used += cost(cut); break; }
+      bytes -= Math.ceil(over * Buffer.byteLength(cut) / cost(cut)) + 8;
+    }
+    break;
+  }
+  const parts = [...chosen.entries()].sort((a, b) => a[0] - b[0]).map(([, text]) => text);
+  const text = [...(options.note ? [options.note] : []), ...parts].join("\n\n") || "(none)";
+  return { text, tokens: options.tokens(text) };
+}
+
+export function buildCheckpointMessage(parts: { n: number; ledger: string; workingState: string; checkpoint: string }): string {
+  return [
+    `${CHECKPOINT_MARKER}${parts.n}]`,
+    `## User messages (verbatim, oldest first)\n${parts.ledger}`,
+    `## Working state\n${parts.workingState || "(omitted to fit the context)"}`,
+    `## Checkpoint\n${parts.checkpoint}`,
+    `## Resume\n${RESUME_TEXT}`,
+  ].join("\n\n");
+}
+
+/** A provider validation error about replayed thinking or reasoning items (design §6.2 "Steps keep their reasoning"). */
+export function isReasoningRejection(error: unknown): boolean {
+  const status = (error as { status?: unknown } | undefined)?.status;
+  // Only an HTTP validation error: Raw's own stream errors mention thinking blocks too.
+  if (status !== 400 && status !== 422) return false;
+  return /thinking|reasoning|signature|encrypted_content|redacted/i.test(error instanceof Error ? error.message : String(error));
 }
 
 export function compactSession(session: AgentSession, options: CompactOptions = {}): Promise<CompactResult> {

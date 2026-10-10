@@ -9,6 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { readSessionRetentionDays } from "../config.js";
 import type { UsageRecord } from "../llm/cache.js";
+import type { CompactionLedgerState, LedgerEntry, WorkingFacts } from "../compact.js";
 import { renderUserInput, type ModelMessage, type ResolvedModelConfig, type UserInput } from "../llm/types.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import type { SelectedSkill } from "../skills/contract.js";
@@ -110,6 +111,8 @@ export interface StoredAgentState {
   usageEntries: UsageRecord[];
   /** The provider-reported context size at the last response, as stored; validated when an agent restores it. */
   anchor?: unknown;
+  /** Present once a checkpoint compaction committed; absent for new sessions and sessions compacted before the ledger. */
+  ledger?: CompactionLedgerState;
 }
 export interface AgentMetadata {
   originalTask?: UserInput;
@@ -123,6 +126,8 @@ export interface AgentMetadata {
   skillVisibility?: SkillVisibility;
   skillNotice?: string;
   replayBefore?: number;
+  /** Replaces the session's compaction ledger rows and working-state facts. */
+  ledger?: CompactionLedgerState;
 }
 export interface VisibleRecord { kind: string; payload: Record<string, unknown>; status?: string }
 
@@ -131,6 +136,8 @@ interface HistoryOptions { sessionId: string; before?: string; limit?: number; a
 interface AppendHistoryOptions { sessionId: string; kind: string; payload: Record<string, unknown>; status?: string }
 
 type DbRow = Record<string, unknown>;
+/** Reserved ledger row holding the working-state facts, the compaction count, retained full texts and the retry flag. */
+const LEDGER_STATE_SOURCE = "working_state";
 interface StagedPayload { id: string; relativePath: string; byteLength: number }
 interface StagedValue { encoded: string; payloads: StagedPayload[] }
 
@@ -737,7 +744,50 @@ export class SessionStore {
       ...(usage.anchor === undefined ? {} : { anchor: usage.anchor }),
       ...(row.original_task === null ? {} : { originalTask: JSON.parse(String(row.original_task)) as UserInput }),
       ...(row.summary_text === null ? {} : { summaryText: String(row.summary_text) }),
+      ...this.readLedger(sessionId),
     };
+  }
+
+  private readLedger(sessionId: string): { ledger?: CompactionLedgerState } {
+    const rows = this.database.prepare("SELECT source, payload_json FROM compaction_ledger WHERE session_id = ? ORDER BY ordinal").all(sessionId);
+    const state = rows.find((row) => row.source === LEDGER_STATE_SOURCE);
+    if (!state) return {};
+    const { facts, compactions, retained, retryArmed, factsThrough } = JSON.parse(String(state.payload_json)) as
+      { facts: WorkingFacts; compactions: number; retained?: LedgerEntry[]; retryArmed?: boolean; factsThrough?: number };
+    const entries = rows.filter((row) => row.source !== LEDGER_STATE_SOURCE)
+      .map((row): LedgerEntry => ({ source: String(row.source), content: (JSON.parse(String(row.payload_json)) as { content: string }).content }));
+    return { ledger: { entries, facts, compactions, ...(retained?.length ? { retained } : {}), ...(retryArmed ? { retryArmed } : {}),
+      ...(factsThrough !== undefined ? { factsThrough } : {}) } };
+  }
+
+  private writeLedger(sessionId: string, ledger: CompactionLedgerState | null): void {
+    this.database.prepare("DELETE FROM compaction_ledger WHERE session_id = ?").run(sessionId);
+    if (ledger === null) return;
+    const insert = this.database.prepare("INSERT INTO compaction_ledger(session_id, ordinal, source, payload_json) VALUES (?, ?, ?, ?)");
+    for (const [ordinal, entry] of ledger.entries.entries()) insert.run(sessionId, ordinal, entry.source, JSON.stringify({ content: entry.content }));
+    insert.run(sessionId, ledger.entries.length, LEDGER_STATE_SOURCE, JSON.stringify({ facts: ledger.facts, compactions: ledger.compactions,
+      ...(ledger.retained?.length ? { retained: ledger.retained } : {}), ...(ledger.retryArmed ? { retryArmed: true } : {}),
+      ...(ledger.factsThrough !== undefined ? { factsThrough: ledger.factsThrough } : {}) }));
+  }
+
+  /** The newest typed user inputs in visible history, newest first, rendered as text. */
+  recentUserInputs(sessionId: string, limit: number): Array<{ sequence: number; input: UserInput }> {
+    return this.database.prepare("SELECT sequence, payload_json FROM history WHERE session_id = ? AND kind = 'user' ORDER BY sequence DESC LIMIT ?")
+      .all(sessionId, limit).map((row) => ({ sequence: Number(row.sequence),
+        input: (this.decodeStored(String(row.payload_json)) as { input: UserInput }).input }));
+  }
+
+  /**
+   * The typed inputs from the one history row equal to `originalTask` onward, oldest first, for a session compacted before
+   * the ledger existed. Undefined when no row or more than one row matches: the boundary is then unknown.
+   */
+  legacyUserInputs(sessionId: string, originalTask: UserInput): Array<{ sequence: number; input: UserInput }> | undefined {
+    const wanted = JSON.stringify(originalTask);
+    const rows = this.database.prepare("SELECT sequence, payload_json FROM history WHERE session_id = ? AND kind = 'user' ORDER BY sequence")
+      .all(sessionId).map((row) => ({ sequence: Number(row.sequence),
+        input: (this.decodeStored(String(row.payload_json)) as { input: UserInput }).input }));
+    const matches = rows.filter((row) => JSON.stringify(row.input) === wanted);
+    return matches.length === 1 ? rows.filter((row) => row.sequence >= matches[0]!.sequence) : undefined;
   }
 
   private runtimeMetadata(sessionId: string): { replayBefore: number; replaySignature: string; baseSelection?: readonly string[] } | undefined {
@@ -769,6 +819,7 @@ export class SessionStore {
     if (metadata.skillVisibility !== undefined) { fields.push("skill_visibility_json = ?"); values.push(JSON.stringify(metadata.skillVisibility)); }
     if (metadata.skillNotice !== undefined) { fields.push("skill_notice_digest = ?"); values.push(digest(metadata.skillNotice)); }
     if (fields.length) this.database.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values, sessionId);
+    if (metadata.ledger !== undefined) this.writeLedger(sessionId, metadata.ledger);
     if (metadata.replayBefore !== undefined) {
       const current = this.runtimeMetadata(sessionId);
       this.writeRuntimeMetadata(sessionId, { replayBefore: metadata.replayBefore, replaySignature: current?.replaySignature ?? "",
@@ -1093,9 +1144,12 @@ export class SessionStore {
         this.database.prepare("INSERT INTO history(session_id, sequence, created_at, kind, payload_json, status) VALUES (?, ?, ?, ?, ?, ?)")
           .run(sessionId, sequence, this.now(), "skill_notice", JSON.stringify({ text: metadata.skillNotice }), "complete");
       }
-      if (resetContextMetadata) this.database.prepare(`UPDATE sessions SET original_task = NULL, summary_text = NULL,
-        skill_visibility_json = ?, skill_notice_digest = NULL WHERE id = ?`)
-        .run(JSON.stringify({ listed: false, loaded: [] }), sessionId);
+      if (resetContextMetadata) {
+        this.database.prepare(`UPDATE sessions SET original_task = NULL, summary_text = NULL,
+          skill_visibility_json = ?, skill_notice_digest = NULL WHERE id = ?`)
+          .run(JSON.stringify({ listed: false, loaded: [] }), sessionId);
+        this.writeLedger(sessionId, null);
+      }
       this.renewSession(sessionId, owner);
     });
     this.discardDuplicateStages([...staged, ...visible.map((item) => item.stored)]);

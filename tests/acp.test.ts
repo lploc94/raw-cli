@@ -496,7 +496,12 @@ test("T-07d: peer disconnect aborts active Bash before delayed filesystem side e
 });
 
 test("T-07f: compact extension delegates to atomic session compact and returns status/usage", async () => {
-  const runtime = await loadConfig({ flags: { configPath: testConfig("ollama"), autoApprove: true }, env: {}, requireModel: true });
+  // compact.keep_recent_tokens: 1, so this short session has older steps to summarize.
+  const configPath = testConfig("ollama");
+  const config = JSON.parse(await readFile(configPath, "utf8")) as { agents: { fixture: Record<string, unknown> } };
+  config.agents.fixture.compact = { keep_recent_tokens: 1 };
+  await writeFile(configPath, JSON.stringify(config));
+  const runtime = await loadConfig({ flags: { configPath, autoApprove: true }, env: {}, requireModel: true });
   let summaries = 0;
   let summaryText = "Task objective and chosen constraints remain.";
   let postCompactMessages: ProviderRequest["messages"] | undefined;
@@ -524,12 +529,14 @@ test("T-07f: compact extension delegates to atomic session compact and returns s
     assert.equal(compacted.status, "compacted");
     assert.ok(compacted.afterBytes < compacted.beforeBytes);
     assert.deepEqual(compacted.usage, { prompt_tokens: 40, completion_tokens: 10 });
-    assert.equal((await connection.agent.request<{ status: string }>("_raw/session/compact", { sessionId })).status, "noop");
     assert.equal(summaries, 1);
     assert.equal((await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "continue" }] })).stopReason, "end_turn");
-    const pinned = postCompactMessages?.[0];
-    assert.equal(pinned?.role, "user");
-    if (pinned?.role === "user") assert.deepEqual(pinned.content, [{ type: "text", text: "original objective" }, originalLink]);
+    // The checkpoint leads the context and keeps the original prompt, link included, in the user-message ledger.
+    const checkpoint = postCompactMessages?.[0];
+    assert.equal(checkpoint?.role, "user");
+    const text = checkpoint?.role === "user" && typeof checkpoint.content === "string" ? checkpoint.content : "";
+    assert.ok(text.startsWith("[Raw compaction checkpoint #1]"));
+    assert.ok(text.includes(`original objective\n[Resource link] ${JSON.stringify(originalLink)}`));
     const beforeFailed = structuredClone(postCompactMessages);
     summaryText = "";
     await assert.rejects(connection.agent.request("_raw/session/compact", { sessionId }),

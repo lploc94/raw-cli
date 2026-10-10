@@ -33,7 +33,7 @@ function setup(panels: Array<[string, "none" | "summary"]>) {
   const main = provider(async (request) => {
     requests.push({ messages: structuredClone(request.messages), tools: request.tools, system: request.system, cacheKey: request.cacheKey } as ProviderRequest);
     const next = request.messages.at(-1)?.role === "tool" ? undefined : script.shift();
-    return next ? { text: "", toolCalls: next.map((call) => ({ ...call, id: `${call.id}-${++calls}` })), finishReason: "tool_calls" } : { text: `ok ${"x".repeat(300)}`, toolCalls: [], finishReason: "stop" };
+    return next ? { text: "", toolCalls: next.map((call) => ({ ...call, id: `${call.id}-${++calls}` })), finishReason: "tool_calls" } : { text: `ok ${"x".repeat(1500)}`, toolCalls: [], finishReason: "stop" };
   });
   const agent = createAgent({ cwd: root, provider: main, registry, system: "s", whitelist: panels.map(([name]) => name), autoApprove: true, persistence: { store, sessionId: id, surface: "cli" } });
   const turn = (label: string, ...tools: Array<[string, Record<string, unknown>]>) => {
@@ -41,7 +41,7 @@ function setup(panels: Array<[string, "none" | "summary"]>) {
     return agent.run(`${label} ${"y".repeat(400)}`);
   };
   const summarizer = provider(async () => ({ text: "Objective: keep going.", toolCalls: [], finishReason: "stop" }));
-  const compact = () => compactSession(agent, { provider: summarizer, keepRecentTurns: 1, maxOutputTokens: 100 });
+  const compact = () => compactSession(agent, { provider: summarizer, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100 });
   const reminders = () => agent.transcript.flatMap((message) => message.role === "user" && typeof message.content === "string" && message.content.startsWith("[Raw panel state]\n") ? [message.content] : []);
   return { agent, store, id, requests, turn, compact, reminders, close: async () => { await agent.close(); store.close(); } };
 }

@@ -61,6 +61,8 @@ export interface CliArgs {
 
 export interface CompactSettings {
   keepRecentTurns: number;
+  /** Verbatim tail kept after compaction, in estimated tokens; unset means min(20000, 25% of the input budget). */
+  keepRecentTokens?: number;
   maxOutputTokens: number;
   /** maxOutputTokens is Raw's default rather than configured, so a provider may lower it to a model's stated maximum. */
   maxOutputTokensDefaulted?: boolean;
@@ -547,12 +549,13 @@ const MAX_COMPACT_INSTRUCTIONS = 16384;
 
 function compactSpec(raw: unknown, where: string, model: Parameters<typeof defaultCompactOutputTokens>[0] = {}): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
-  keys(value, ["keep_recent_turns", "max_output_tokens", "trigger_tokens", "instructions"], where);
+  keys(value, ["keep_recent_turns", "keep_recent_tokens", "max_output_tokens", "trigger_tokens", "instructions"], where);
   if (value.instructions !== undefined && (typeof value.instructions !== "string" || value.instructions.length > MAX_COMPACT_INSTRUCTIONS)) {
     throw new Error(`${where}.instructions must be a string of at most ${MAX_COMPACT_INSTRUCTIONS} characters`);
   }
   return {
     keepRecentTurns: value.keep_recent_turns === undefined ? 2 : nonnegative(value.keep_recent_turns, where + ".keep_recent_turns"),
+    ...(value.keep_recent_tokens === undefined ? {} : { keepRecentTokens: positive(value.keep_recent_tokens, where + ".keep_recent_tokens") }),
     maxOutputTokens: value.max_output_tokens === undefined ? defaultCompactOutputTokens(model)
       : positive(value.max_output_tokens, where + ".max_output_tokens"),
     ...(value.max_output_tokens === undefined ? { maxOutputTokensDefaulted: true } : {}),

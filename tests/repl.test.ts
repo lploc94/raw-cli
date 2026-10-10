@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 import { testConfig } from "./fixtures/config.js";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 const stateHome = mkdtempSync(join(tmpdir(), "raw-repl-test-state-"));
+
+/** The fixture config with a one-token verbatim tail, so a short conversation still has older steps to compact. */
+function compactingConfig(url: string): string {
+  const path = testConfig("openai", "fixture", url);
+  const config = JSON.parse(readFileSync(path, "utf8")) as { agents: { fixture: Record<string, unknown> } };
+  config.agents.fixture.compact = { keep_recent_tokens: 1 };
+  writeFileSync(path, JSON.stringify(config));
+  return path;
+}
 
 function answer(text: string) { return { frames: [openAiFrame({ content: text }, "stop"), openAiDone] }; }
 
@@ -21,11 +30,11 @@ async function waitFor(read: () => string, token: string, timeoutMs = 10_000): P
 
 test("T-08c: REPL retains turns, compact costs one request, stats/clear cost zero and clear resets history", async () => {
   const fixture = await startMockProvider([
-    answer(`first-${"a".repeat(400)}`), answer(`second-${"b".repeat(400)}`), answer(`third-${"c".repeat(400)}`),
+    answer(`first-${"a".repeat(3000)}`), answer(`second-${"b".repeat(3000)}`), answer(`third-${"c".repeat(3000)}`),
     answer("Objective: continue this task."), answer("fourth-answer"), answer("after-clear"),
   ]);
   const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), "bin/raw.ts",
-    "--config", testConfig("openai", "fixture", fixture.url), "--interactive", "-y"],
+    "--config", compactingConfig(fixture.url), "--interactive", "-y"],
   { cwd: process.cwd(), env: { ...process.env, XDG_STATE_HOME: stateHome, OPENAI_API_KEY: "key" }, stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
@@ -44,7 +53,7 @@ test("T-08c: REPL retains turns, compact costs one request, stats/clear cost zer
     assert.equal(fixture.requests.length, before + 1);
     send("fourth task"); await waitFor(() => stdout, "fourth-answer");
     const fourth = JSON.stringify(fixture.requests[4]?.body);
-    assert.match(fourth, /Conversation summary/);
+    assert.match(fourth, /Raw compaction checkpoint #1/);
     assert.match(fourth, /third task/);
     const beforeClear = fixture.requests.length;
     send("/clear"); await waitFor(() => stderr, "conversation cleared");
@@ -52,7 +61,7 @@ test("T-08c: REPL retains turns, compact costs one request, stats/clear cost zer
     send("after clear task"); await waitFor(() => stdout, "after-clear");
     const last = JSON.stringify(fixture.requests[5]?.body);
     assert.match(last, /after clear task/);
-    assert.doesNotMatch(last, /first task|Conversation summary/);
+    assert.doesNotMatch(last, /first task|Raw compaction checkpoint/);
     send("/exit");
     const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
     assert.equal(code, 0, stderr);

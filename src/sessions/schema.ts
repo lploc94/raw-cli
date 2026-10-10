@@ -148,6 +148,15 @@ export function initializeSessionSchema(database: DatabaseSync): void {
       document_json TEXT NOT NULL,
       PRIMARY KEY (session_id, panel_id)
     )`);
+    // Compaction ledger (docs/compaction-v2-design.md §6.2): the user's messages that left the model context, verbatim,
+    // and the working-state facts, under the reserved source "working_state". Created like session_panels: no version bump.
+    database.exec(`CREATE TABLE IF NOT EXISTS compaction_ledger (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      ordinal INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      PRIMARY KEY (session_id, ordinal)
+    )`);
     // Immutable call-scoped chat snapshots, retained with their session history.
     database.exec(`CREATE TABLE IF NOT EXISTS session_tool_views (
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

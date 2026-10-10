@@ -2,7 +2,7 @@
 
 Design for making compaction lossless where it matters. After a compaction the agent must continue the same step it was on. It must not redo finished work, retry an approach it already rejected, or lose the user's words.
 
-Status: proposed 2026-10-10; Codex (gpt-6-astra) review APPROVE after 4 rounds on 2026-10-10 (15 issues fixed). Phase 1 implemented (checkpoint prompt, rendered transcript, step chunking, `compact.instructions`); phases 2–6 pending. Pilot evidence is in [evidence/compaction-pilot.md](evidence/compaction-pilot.md). Update this file whenever a decision changes. User-facing behavior moves to `context.md` and `configuration.md` as each phase lands.
+Status: proposed 2026-10-10; Codex (gpt-6-astra) review APPROVE after 4 rounds on 2026-10-10 (15 issues fixed). Phase 1 implemented (checkpoint prompt, rendered transcript, step chunking, `compact.instructions`). Phase 2 implemented (checkpoint message layout, user-message ledger, verbatim tail, size allocation, reasoning retry, `compact.keep_recent_tokens`); phases 3–6 pending. Pilot evidence is in [evidence/compaction-pilot.md](evidence/compaction-pilot.md). Update this file whenever a decision changes. User-facing behavior moves to `context.md` and `configuration.md` as each phase lands.
 
 ## Contents
 

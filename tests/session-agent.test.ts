@@ -194,7 +194,7 @@ test("compaction that removes a loaded skill appends one durable tail reminder",
     description: "Example", markdown: body }], system: "system", persistence: { store, sessionId: id, surface: "cli" } });
   try {
     assert.equal((await agent.run("first")).status, "completed");
-    assert.equal((await agent.compact({ keepRecentTurns: 0 })).status, "compacted");
+    assert.equal((await agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 })).status, "compacted");
     assert.doesNotMatch(JSON.stringify(agent.transcript), /SKILL_BODY_TO_RELOAD_/);
     assert.match(JSON.stringify(agent.transcript.at(-1)), /example.*load_skill/);
     const notices = agent.transcript.filter((item) => item.role === "user" && JSON.stringify(item.content).includes("reload notice"));
@@ -483,8 +483,9 @@ test("failed compaction leaves durable context intact and changed tool schema tr
   try {
     agent.setToolView(["selected"]);
     assert.equal((await agent.run("first")).status, "completed");
+    assert.equal((await agent.run("second")).status, "completed");
     const before = structuredClone(agent.transcript);
-    await assert.rejects(agent.compact({ keepRecentTurns: 0 }), /empty summary/i);
+    await assert.rejects(agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 }), /empty summary/i);
     assert.deepEqual(agent.transcript, before);
     await agent.close();
     const changed = createTestToolRegistry();
@@ -591,9 +592,10 @@ test("a failed durable compact checkpoint leaves the previous context on disk", 
   const original = store.replaceAgentContext.bind(store);
   try {
     await agent.run("first");
+    await agent.run("second");
     const before = structuredClone(agent.transcript);
     store.replaceAgentContext = () => { throw new Error("SQLITE_FULL checkpoint"); };
-    await assert.rejects(agent.compact({ keepRecentTurns: 0 }), /SQLITE_FULL checkpoint/);
+    await assert.rejects(agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 }), /SQLITE_FULL checkpoint/);
     assert.deepEqual(agent.transcript, before);
     store.replaceAgentContext = original;
     await agent.close();
@@ -657,10 +659,11 @@ test("nonshrinking and aborted compact leave durable context unchanged", async (
     const agent = createAgent({ cwd: root, provider: runtime, system: "system", persistence: { store, sessionId: id, surface: "cli" } });
     try {
       await agent.run("first");
+      await agent.run("second");
       const before = structuredClone(agent.transcript);
-      if (mode === "not_smaller") assert.equal((await agent.compact({ keepRecentTurns: 0 })).status, "not_smaller");
+      if (mode === "not_smaller") assert.equal((await agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 })).status, "not_smaller");
       else {
-        const compacting = agent.compact({ keepRecentTurns: 0 });
+        const compacting = agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1 });
         await ready;
         agent.abort();
         assert.equal((await compacting).status, "cancelled");

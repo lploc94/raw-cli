@@ -536,6 +536,7 @@ export function createAcpServer(options: AcpServerOptions): AcpServer {
         keepRecentTurns: options.runtime.compact.keepRecentTurns,
         maxOutputTokens: options.runtime.compact.maxOutputTokens,
         ...(options.runtime.compact.maxOutputTokensDefaulted ? { maxOutputTokensDefaulted: true } : {}),
+        ...(options.runtime.compact.keepRecentTokens !== undefined ? { keepRecentTokens: options.runtime.compact.keepRecentTokens } : {}),
         ...(options.runtime.compact.instructions ? { instructions: options.runtime.compact.instructions } : {}) });
     } catch { throw rawError(rawErrors.upstream, "compaction failed"); }
   });

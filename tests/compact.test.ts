@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
 import { CHECKPOINT_MERGE_PREFIX, CHECKPOINT_NO_TOOLS_GUARD, COMPACT_SYSTEM_PROMPT, CompactionOverheadError, checkpointPrompt, checkpointWords,
-  compactSession, estimateRequestTokens, performCompaction, renderTranscript } from "../src/compact.js";
+  compactSession, estimateRequestTokens, renderTranscript, summarizeTranscript } from "../src/compact.js";
 import { createProvider } from "../src/llm/client.js";
 import type { ModelMessage, ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
@@ -13,7 +13,9 @@ import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-prov
 const fake = (generate: (request: ProviderRequest) => Promise<ProviderTurn>): ProviderAdapter => ({
   modelConfig: { agentName: "fake", provider: "ollama", method: "openai-chat-completions", model: "fixture" }, generate,
 });
-const agentOptions = (provider: ProviderAdapter, cwd: string) => ({ provider, cwd, system: "tiny", maxSteps: 5, autoApprove: true });
+// A short verbatim tail, so these small sessions still have steps to summarize; keep_recent_turns then keeps two turns.
+const agentOptions = (provider: ProviderAdapter, cwd: string) => ({ provider, cwd, system: "tiny", maxSteps: 5, autoApprove: true,
+  compact: { keepRecentTurns: 2, keepRecentTokens: 1, maxOutputTokens: 16384 } });
 
 async function seededAgent() {
   const cwd = await mkdtemp(join(tmpdir(), "raw-compact-"));
@@ -24,7 +26,7 @@ async function seededAgent() {
       { id: "c", name: "read_file", arguments: { files: [{ path: "missing" }] } },
       { id: "d", name: "read_file", arguments: { files: [{ path: "also-missing" }] } },
     ] };
-    return { text: `answer ${mainCalls} ${"x".repeat(350)}`, finishReason: "stop", toolCalls: [], usage: { prompt_tokens: mainCalls, completion_tokens: 1 } };
+    return { text: `answer ${mainCalls} ${"x".repeat(2000)}`, finishReason: "stop", toolCalls: [], usage: { prompt_tokens: mainCalls, completion_tokens: 1 } };
   });
   const agent = createAgent(agentOptions(main, cwd));
   await agent.run(`original task ${"A".repeat(900)}`);
@@ -53,11 +55,13 @@ test("manual compact pins original task, retains two complete turns and one summ
   assert.equal(getMainCalls(), mainBefore);
   assert.ok((result.afterBytes ?? Infinity) < (result.beforeBytes ?? 0));
   const after = agent.transcript;
-  assert.equal(after[0]?.role, "user");
-  assert.equal(after[0]?.role === "user" ? after[0].content : "", before[0]?.role === "user" ? before[0].content : "");
-  assert.match(after[1]?.role === "user" && typeof after[1].content === "string" ? after[1].content : "", /Conversation summary/);
+  const checkpoint = after[0]?.role === "user" && typeof after[0].content === "string" ? after[0].content : "";
+  assert.ok(checkpoint.startsWith("[Raw compaction checkpoint #1]"));
+  // The user's messages that left the context are kept verbatim; the retained turns follow unchanged.
+  for (const input of [`original task ${"A".repeat(900)}`, `decision: use local model ${"B".repeat(900)}`]) assert.ok(checkpoint.includes(`${input}\n`));
+  assert.ok(!checkpoint.includes("x".repeat(2000)));
   const retained = before.slice(before.findIndex((message) => message.role === "user" && message.content === "recent tool turn"));
-  assert.deepEqual(after.slice(2), retained);
+  assert.deepEqual(after.slice(1), retained);
   assert.equal(after.filter((message) => message.role === "tool").length, 2);
   assert.match(JSON.stringify(after), /signed/);
   assert.equal((await agent.run("continue")).status, "completed");
@@ -87,7 +91,7 @@ test("next real SDK request after compact contains a valid retained parallel cal
     assert.equal(result.status, "compacted");
     assert.equal((await agent.run("continue")).text, "after compact");
     const messages = (fixture.requests[5]?.body as { messages: { role: string; content?: string; tool_calls?: { id: string }[]; tool_call_id?: string }[] }).messages;
-    assert.match(JSON.stringify(messages), /Conversation summary/);
+    assert.match(JSON.stringify(messages), /Raw compaction checkpoint #1/);
     const calls = messages.find((message) => message.role === "assistant" && message.tool_calls)?.tool_calls?.map((call) => call.id);
     const results = messages.filter((message) => message.role === "tool").map((message) => message.tool_call_id);
     assert.deepEqual(calls, ["a", "b"]);
@@ -158,8 +162,11 @@ test("second compact carries the previous summary as data and pins original task
   assert.equal(result.status, "compacted");
   assert.match(input, /First summary/);
   const transcript = agent.transcript;
-  assert.equal(transcript.filter((message) => message.role === "user" && typeof message.content === "string" && message.content.startsWith("original task")).length, 1);
-  assert.match(transcript[1]?.role === "user" && typeof transcript[1].content === "string" ? transcript[1].content : "", /Second summary/);
+  const checkpoints = transcript.filter((message) => message.role === "user" && typeof message.content === "string" && message.content.startsWith("[Raw compaction checkpoint #"));
+  assert.equal(checkpoints.length, 1);
+  const checkpoint = checkpoints[0]?.role === "user" ? String(checkpoints[0].content) : "";
+  assert.ok(checkpoint.startsWith("[Raw compaction checkpoint #2]") && checkpoint.includes("## Checkpoint\nSecond summary"));
+  assert.equal(checkpoint.split(`original task ${"A".repeat(900)}`).length - 1, 1);
   assert.doesNotMatch(JSON.stringify(transcript), /First summary/);
 });
 
@@ -182,7 +189,7 @@ test("busy compaction rejects run/config mutation and late summarizer output can
   assert.equal(JSON.stringify(agent.transcript), before);
 });
 
-test("repeated user text does not replace the identity of the pinned original task", async () => {
+test("repeated user text keeps each typed input as its own ledger entry across compactions", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-compact-repeat-"));
   const main = fake(async () => ({ text: "old answer ".repeat(80), toolCalls: [], finishReason: "stop" }));
   const agent = createAgent(agentOptions(main, cwd));
@@ -192,8 +199,10 @@ test("repeated user text does not replace the identity of the pinned original ta
   await agent.run("continue");
   assert.equal((await compactSession(agent, { provider: summary })).status, "compacted");
   const messages = agent.transcript;
-  assert.equal(messages[0]?.role === "user" ? messages[0].content : "", "original");
-  assert.equal(messages.filter((message) => message.role === "user" && message.content === "original").length, 1);
+  const checkpoint = messages[0]?.role === "user" && typeof messages[0].content === "string" ? messages[0].content : "";
+  const ledger = checkpoint.slice(checkpoint.indexOf("## User messages"), checkpoint.indexOf("## Working state"));
+  assert.deepEqual([...ledger.matchAll(/\[user\]\n(\w+)/g)].map((match) => match[1]), ["original", "middle", "original", "last", "continue"]);
+  assert.equal(messages.filter((message) => message.role === "user" && message.content === "original").length, 0);
 });
 
 test("unknown-usage requests remain in coverage and rejected summary usage remains billable", async () => {
@@ -353,9 +362,9 @@ test("a single turn larger than the summarizer context compacts in step chunks w
   const requests: ProviderRequest[] = [];
   const provider = fake(async (request) => { requests.push(request); return turn(`checkpoint ${requests.length}`); });
   (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
-  const work = await performCompaction({ messages, originalTask: "one long task" }, provider,
-    { keepRecentTurns: 0, maxOutputTokens: 1500, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
-  assert.equal(work.result.status, "compacted");
+  const work = await summarizeTranscript(messages, provider,
+    { maxOutputTokens: 1500, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+  assert.equal(work.status, "summarized");
   assert.ok(requests.length >= 3, `requests: ${requests.length}`);
   const margin = Math.max(64, Math.ceil(contextWindow * 0.05));
   for (const [index, request] of requests.entries()) {
@@ -368,7 +377,7 @@ test("a single turn larger than the summarizer context compacts in step chunks w
     else assert.ok(!content.includes("<prior-checkpoint>"));
   }
   for (let step = 0; step < 40; step++) assert.equal(requests.filter((request) => userText(request).includes(`RESULT-${step}-a `)).length, 1);
-  assert.equal(work.summary, `checkpoint ${requests.length}`);
+  assert.equal(work.status === "summarized" && work.summary, `checkpoint ${requests.length}`);
 });
 
 test("summarizer overhead lowers the output budget, and throws CompactionOverheadError when even that does not fit", async () => {
@@ -382,13 +391,13 @@ test("summarizer overhead lowers the output budget, and throws CompactionOverhea
     (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
     const messages: ModelMessage[] = [{ role: "user", content: "task" }, { role: "user", content: `[Conversation summary]\n${previousSummary}` },
       { role: "user", content: "next" }, { role: "assistant", text: "done", toolCalls: [] }];
-    const work = await performCompaction({ messages, originalTask: "task", previousSummary }, provider,
-      { keepRecentTurns: 0, maxOutputTokens: 2048, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+    const work = await summarizeTranscript(messages.slice(2), provider,
+      { prior: previousSummary, maxOutputTokens: 2048, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
     return { work, requests };
   };
   // Room for about 1,500 output tokens: the configured 2,048 does not fit, the lowered budget does.
   const { work, requests } = await run(contextWindow - margin - base - 1500 - 60);
-  assert.equal(work.result.status, "compacted");
+  assert.equal(work.status, "summarized");
   assert.equal(requests.length, 1);
   assert.ok(requests[0]!.maxOutputTokens! < 2048 && requests[0]!.maxOutputTokens! >= 1024, `budget ${requests[0]!.maxOutputTokens}`);
   assert.equal(requests[0]!.maxOutputTokensAssumed, true);
@@ -420,9 +429,9 @@ test("a step too large for a chunk is cut to fit, and becomes a one-line record 
     const requests: ProviderRequest[] = [];
     const provider = fake(async (request) => { requests.push(request); return turn(`checkpoint ${requests.length}`); });
     (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
-    const work = await performCompaction({ messages, originalTask: "task" }, provider,
-      { keepRecentTurns: 0, maxOutputTokens: 1024, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
-    assert.equal(work.result.status, "compacted");
+    const work = await summarizeTranscript(messages, provider,
+      { maxOutputTokens: 1024, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+    assert.equal(work.status, "summarized");
     return requests.map(userText);
   };
   const cut = (await compactStep(4)).join("\n");
@@ -445,21 +454,20 @@ test("review fixes: thinking-budget floor, user text that looks like a summary, 
     generate: async (request) => { requests.push(request); return turn("merged"); } };
     const messages: ModelMessage[] = [{ role: "user", content: "task" }, { role: "user", content: `[Conversation summary]\n${previousSummary}` },
       { role: "user", content: "next" }, { role: "assistant", text: "done", toolCalls: [] }];
-    await performCompaction({ messages, originalTask: "task", previousSummary }, provider,
-      { keepRecentTurns: 0, maxOutputTokens: 2048, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+    await summarizeTranscript(messages.slice(2), provider,
+      { prior: previousSummary, maxOutputTokens: 2048, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
     return requests;
   };
   const fitting = await lowered(1950);
   assert.ok(fitting[0]!.maxOutputTokens! > 1800 && fitting[0]!.maxOutputTokens! < 2048, `budget ${fitting[0]!.maxOutputTokens}`);
   await assert.rejects(lowered(1500), CompactionOverheadError);
 
-  // Only the synthetic summary message is merged as <prior-checkpoint>; a later user message with the same opening stays.
+  // The prior checkpoint is merged as <prior-checkpoint>; a user message with the old summary's opening stays a user message.
   const requests: ProviderRequest[] = [];
   const provider = fake(async (request) => { requests.push(request); return turn("merged"); });
   const echoed = `[Conversation summary]\nuser-pasted-${Math.random()}`;
-  await performCompaction({ messages: [{ role: "user", content: "task" }, { role: "user", content: "[Conversation summary]\nold summary" },
-    { role: "user", content: echoed }, { role: "assistant", text: "noted", toolCalls: [] }], originalTask: "task", previousSummary: "old summary" }, provider,
-  { keepRecentTurns: 0, maxOutputTokens: 1000, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
+  await summarizeTranscript([{ role: "user", content: echoed }, { role: "assistant", text: "noted", toolCalls: [] }], provider,
+  { prior: "old summary", maxOutputTokens: 1000, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test" });
   const sent = userText(requests[0]!);
   assert.ok(sent.includes(`USER:\n${echoed}`));
   assert.equal(sent.split("old summary").length - 1, 1);
@@ -474,8 +482,8 @@ test("review fixes: thinking-budget floor, user text that looks like a summary, 
   const oneLine: ProviderRequest[] = [];
   const small = fake(async (request) => { oneLine.push(request); return turn("checkpoint"); });
   (small.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
-  await performCompaction({ messages: step, originalTask: "task" }, small, { keepRecentTurns: 0, maxOutputTokens: 1024, timeoutMs: 1000,
-    signal: new AbortController().signal, cacheKey: "test", saveCopy: (text) => { copies.push(text); return `/copies/${copies.length}`; } });
+  await summarizeTranscript(step, small, { maxOutputTokens: 1024, timeoutMs: 1000,
+    signal: new AbortController().signal, cacheKey: "test", saveCopy: (text: string) => { copies.push(text); return `/copies/${copies.length}`; } });
   const record = oneLine.map(userText).join("\n");
   assert.match(record, /\[Step shortened to fit the summarizer: /);
   assert.equal(copies.length, 60);
@@ -494,7 +502,7 @@ test("a one-line record whose saved paths are longer than sized is never sent ov
     const provider = fake(async (request) => { requests.push(request); return turn("checkpoint"); });
     (provider.modelConfig as { contextWindow?: number }).contextWindow = contextWindow;
     let saved = 0;
-    const work = performCompaction({ messages: step, originalTask: "task" }, provider, { keepRecentTurns: 0, maxOutputTokens: 1024,
+    const work = summarizeTranscript(step, provider, { maxOutputTokens: 1024,
       timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "test", saveCopy: () => `/ü${saved++}/${"ü".repeat(300)}` });
     const margin = Math.max(64, Math.ceil(contextWindow * 0.05));
     try { await work; } catch (error) { assert.ok(error instanceof CompactionOverheadError, String(error)); }

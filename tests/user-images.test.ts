@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createAgent } from "../src/agent.js";
-import { estimateRequestTokens, performCompaction, USER_IMAGE_TOKEN_ESTIMATE } from "../src/compact.js";
+import { estimateRequestTokens, summarizeTranscript, USER_IMAGE_TOKEN_ESTIMATE } from "../src/compact.js";
 import { nativeUserContent } from "../src/llm/content.js";
 import { createProvider } from "../src/llm/client.js";
 import { projectImageLimits, projectVisionMessages, requestImageLimits } from "../src/llm/replay.js";
@@ -268,10 +268,10 @@ test("image blocks never leak base64 into rendered text, history views, terminal
     async generate(request) { requests.push(JSON.stringify(request.messages)); return { text: "summary", toolCalls: [], finishReason: "stop" }; } };
   const history: ModelMessage[] = [{ role: "user", content: input }, { role: "assistant", text: "seen", toolCalls: [] },
     { role: "user", content: "next" }, { role: "assistant", text: "ok", toolCalls: [] }];
-  const work = await performCompaction({ messages: history, originalTask: input }, provider,
-    { keepRecentTurns: 1, maxOutputTokens: 100, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "k" });
+  const work = await summarizeTranscript(history.slice(0, 2), provider,
+    { maxOutputTokens: 100, timeoutMs: 1000, signal: new AbortController().signal, cacheKey: "k" });
   assert.equal(requests.length, 1);
-  assert.ok(work.result.status === "compacted" || work.result.status === "not_smaller");
+  assert.equal(work.status, "summarized");
   assert.match(requests[0]!, /\[Image: image\/png/);
   assert.ok(!requests[0]!.includes(png.toString("base64").slice(0, 60)));
 });
