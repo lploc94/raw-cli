@@ -328,6 +328,104 @@ Order on a failed or stuck tier 1:
   - behavior when the session switches provider or model (the native item cannot be replayed elsewhere, so fall back to the last tier-1 checkpoint or a projection);
   - fallback to tier 1 on errors.
 
+  §6.9.1 is that addendum.
+
+#### 6.9.1 Addendum: provider-native compaction
+
+Sources, checked 2026-10-11:
+
+- Anthropic: [Compaction on demand](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand), [Compaction that keeps recent turns](https://platform.claude.com/docs/en/build-with-claude/compaction-keep-recent-turns), [Compaction and preserved thinking](https://platform.claude.com/docs/en/build-with-claude/compaction-thinking-blocks), and the SDK types `BetaCompactionConfig` and `BetaCompactionBlock` (`@anthropic-ai/sdk` 0.128.0).
+- OpenAI: the [Compaction guide](https://developers.openai.com/api/docs/guides/compaction), the [`/responses/compact` reference](https://developers.openai.com/api/reference/resources/responses/methods/compact), and the SDK types `ResponseCompactParams`, `CompactedResponse` and `ResponseCompactionItem` (`openai` 7.23.0).
+
+**What native replaces.** Only the checkpoint body of a tier-1 compaction. Everything else stays as in §6.2–§6.8:
+
+- the choice of the verbatim tail and the budget allocation;
+- the ledger, working state, resume text, skill notice and panel reminders;
+- the thrash guard and the fallback chain.
+
+The mechanical fallback (§6.7) never uses native.
+
+Raw uses the on-demand forms: Anthropic's `compaction` parameter and OpenAI's `/responses/compact`. In both, Raw decides when to compact, and the result is a value Raw stores. Threshold forms (Anthropic `context_management` and OpenAI `context_management.compact_threshold`) compact inside an ordinary request. They would bypass the ledger and the thrash guard, so they are not used.
+
+**When native is tried.** With `compact.strategy` `"checkpoint"` (the default) native is never considered and nothing new is emitted. With `"native"`, all of these must hold, otherwise the compaction is a normal tier-1 checkpoint:
+
+- the compaction runs on the agent's own provider (not `compact.model` or another provider passed to a manual compaction);
+- the adapter offers native compaction (Anthropic Messages or OpenAI Responses);
+- no step of the verbatim tail is replayed as projected text (§6.2: after a model switch or a reasoning rejection, until those steps leave the tail);
+- native has not failed with a permanent error earlier in this process;
+- for Anthropic, when a tail message carries a `thinking` or `redacted_thinking` block, the kept-thinking conditions hold (see below).
+
+When `"native"` is configured, each of these fallbacks emits one `compact_warning` event naming the reason. A reason that cannot change, such as an unsupported adapter, warns once per session.
+
+**Native input.** Raw sends the stored messages before the tail exactly as the last main request sent them (same replay projection, same image projection). That includes a previous native item, an earlier host checkpoint message and earlier reminders. The model, system prompt and tools are the main request's.
+
+**Kept-thinking conditions (Anthropic).** Thinking in the tail stays valid only if the tail directly follows the summarized messages, unchanged, and `system` and `tools` do not change. The native input above meets the second part. The first part is checked when the tail carries thinking:
+
+- **Opposite roles at the cut.** The last summarized message and the first tail message have different Anthropic roles. A tool result counts as `user`. Otherwise the API merges them.
+- **Contiguous tail.** No message inside the tail range is dropped. A panel reminder, skill notice or host checkpoint message there would be replaced, so its presence fails the check.
+- **Unchanged tail.** Only the last step's tool results may be cut (§6.2.1). They follow the last thinking block, so no kept thinking depends on them; every other tail message is kept byte-for-byte.
+
+If a check fails, the compaction is a tier-1 checkpoint, with a warning. If the API still rejects the kept thinking on the next request, the reasoning-rejection retry of §6.2 sends the projection, and the turn continues.
+
+**Anthropic.**
+
+- **Request.** `POST /v1/messages` (`client.beta.messages.create`, not streamed) with:
+  - the beta header `anthropic-beta: compact-2026-09-04`;
+  - `compaction: {type: "summarize", instructions}`;
+  - the main request's model, `system`, `tools`, thinking, effort, service tier and cache settings;
+  - `max_tokens` set to the checkpoint output budget of §6.2.1.
+
+  No `tool_choice`, `stop_sequences`, `output_config.format` or `context_management` is sent; the API rejects them with `compaction`.
+- **Instructions.** The §7.2 checkpoint prompt with `compact.instructions` appended, led by the no-tools guard. The `<analysis>` step is replaced by "go through the checklist in your thinking": the returned block is signed, so Raw cannot strip an analysis section from it. Instructions over the documented 16,384-character limit fall back to tier 1.
+- **Success.** `stop_reason` is `"compaction"` and `content` is exactly one block of type `compaction` with non-empty string `content`. Any other result is a native error. That includes `max_tokens`, `tool_use`, `refusal`, `end_turn` with empty content, and `model_context_window_exceeded`.
+- **Stored layout.** Each line is one message:
+  1. assistant `{text: <block.content>, toolCalls: [], opaque: [<the block exactly as returned>]}`;
+  2. the verbatim tail, unchanged;
+  3. user `[Raw compaction checkpoint #N]` with the ledger, working state, a one-line checkpoint body ("The provider-native summary at the start of the context covers the older steps.") and the resume text;
+  4. the skill notice and panel reminders, if any.
+
+  The block is first, as the API requires. The host message comes after the tail, because a message between the block and the kept turns would break their thinking. The next compaction, of either strategy, treats a host checkpoint message after position 0 like a panel reminder: it is replaced and never kept in the tail. `summaryText` is the block's readable `content`. A later tier-1 compaction uses it as `<prior-checkpoint>`, and a mechanical checkpoint keeps it.
+- **Outgoing.** The adapter sends an assistant message's `opaque` blocks verbatim, as it does for thinking blocks. A request whose messages carry a `compaction` block also gets `anthropic-beta: compact-2026-09-04`; the API rejects the block without it. Exactly one block is ever sent: a later native compaction replaces the first message, and a tier-1 compaction summarizes it away (it is always step 0, so it is never in the tail).
+
+**OpenAI Responses.**
+
+- **Request.** `POST /v1/responses/compact` (`client.responses.compact`) with:
+  - the main request's model, `instructions` (the system prompt), prompt cache key and service tier;
+  - `input`, the native input built by the Responses input mapper.
+
+  The endpoint takes no tools, output limit or summarization prompt. The checkpoint prompt and `compact.instructions` therefore do not apply; OpenAI's own compaction writes the item. No beta header is needed.
+- **Success.** `output` contains exactly one item of type `compaction` with string `encrypted_content`. Anything else, including an HTTP error, is a native error.
+- **Stored layout.** Each line is one message:
+  1. assistant `{text: <portable text>, toolCalls: [], opaque: <output, every item as returned>}`;
+  2. the verbatim tail;
+  3. the host checkpoint message, with the same one-line body;
+  4. the notices and reminders.
+
+  The guide says not to prune the compacted window, so the retained user messages are kept even though the ledger repeats them. The item is encrypted, so the portable text is the previous written checkpoint (if any) followed by `[Earlier steps are summarized in an encrypted OpenAI compaction item that only this provider can read.]`. That text is also `summaryText`.
+- **Outgoing.** The input mapper already spreads an assistant message's `opaque` array as input items, so the compacted window is sent first and as returned, followed by the tail.
+
+**Restoration.** The native message is an ordinary stored message: `opaque` is persisted as JSON in the same atomic context replacement as tier 1. After a restart, it is sent back unchanged, so the bytes of the block or items match what the provider returned.
+
+**Provider, model or tool switch.** A switch already raises `replayBefore` to the end of the context (§6.2). Every message before it, the native one included, is then sent as portable text:
+
+- The native message projects to a user message: `[Earlier conversation summary]` followed by its `text`.
+  - For Anthropic, that is the readable summary.
+  - For Responses, it is the previous written checkpoint and the note above.
+  - It becomes a user message, not an assistant one, so the new provider never receives an assistant-first request.
+- The ledger and working state in the host message are provider-independent, so the deterministic part survives every switch.
+- The same projection applies when a provider rejects replayed reasoning (§6.2), for example Anthropic thinking in the tail that no longer satisfies the kept-thinking conditions. One retry sends the summary as text, and the turn continues.
+
+**Errors.**
+
+- Any native failure falls back to a tier-1 checkpoint in the same compaction and emits `compact_warning`. Failures include:
+  - an HTTP error, a stop reason other than success, or a malformed result;
+  - a summary whose placement would overflow the input budget (the signed block cannot be shortened).
+- Permanent request errors disable native for the rest of the process: HTTP 400, 404 and 422, or an adapter `invalid_request`. Every other error (rate limit, overload, timeout, `529 compaction_unavailable`) only affects that one compaction.
+- Manual `/compact` follows the same rule. Its result is the tier-1 result.
+- A cancelled compaction is cancelled, not a native error.
+
+**Not covered.** Background compaction, threshold compaction, Anthropic `tool_changes` handling beyond sending the block back unchanged, and `previous_response_id` chaining (Raw sends `store: false` and full input).
+
 ### 6.10 Configuration
 
 New keys under `compact` (all optional):
