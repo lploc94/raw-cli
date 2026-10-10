@@ -148,6 +148,9 @@ export async function performCompaction(
         tools: [],
         timeoutMs: options.timeoutMs,
         maxOutputTokens: budget,
+        // The default summary cap, or the doubled retry, is Raw's guess; the model's stated maximum may lower it.
+        ...(budget !== options.maxOutputTokens || options.maxOutputTokens === defaultCompactOutputTokens(provider.modelConfig)
+          ? { maxOutputTokensAssumed: true } : {}),
         signal: options.signal,
         cacheKey: options.cacheKey,
         onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(index, raw); },

@@ -47,7 +47,8 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         const cache = cacheSettings(modelConfig, request.cacheKey);
         const configured = modelConfig.request?.kind === "anthropic" ? modelConfig.request : undefined;
         // Anthropic requires max_tokens; an assumed default that an older model rejects is lowered to its stated maximum.
-        const assumed = request.maxOutputTokens === undefined && modelConfig.request?.maxOutputTokens === undefined && modelConfig.maxOutputTokens === undefined;
+        const assumed = request.maxOutputTokens !== undefined ? request.maxOutputTokensAssumed === true
+          : modelConfig.request?.maxOutputTokens === undefined && modelConfig.maxOutputTokens === undefined;
         let outputLimit = request.maxOutputTokens ?? effectiveOutputTokens(modelConfig);
         const checkThinking = () => {
           if (configured?.thinking?.type === "enabled" && configured.thinking.budgetTokens >= outputLimit) {

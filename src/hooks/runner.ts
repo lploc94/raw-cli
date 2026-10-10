@@ -6,7 +6,9 @@ const MAX_IO = 1024 * 1024;
 const MAX_INPUT = 64 * 1024 * 1024;
 
 export async function runHook(hook: SelectedHook, request: HookRequest,
-  options: { signal?: AbortSignal; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<HookExecution> {
+  options: { signal?: AbortSignal; timeoutMs?: number; env?: NodeJS.ProcessEnv;
+    /** When this signal aborts mid-run, the hook keeps at most `graceMs` more instead of its full timeout. */
+    hurry?: { signal: AbortSignal; graceMs: number } } = {}): Promise<HookExecution> {
   const fail = (code: string): never => { throw new HookError(code, hook.id); };
   if (options.signal?.aborted) fail("aborted");
   const input = JSON.stringify(request) + "\n";
@@ -54,15 +56,25 @@ export async function runHook(hook: SelectedHook, request: HookRequest,
     });
   }
   const onAbort = () => stop("aborted");
-  const deadline = setTimeout(() => stop("timeout"), Math.min(hook.timeoutMs, options.timeoutMs ?? hook.timeoutMs));
+  const limit = Math.min(hook.timeoutMs, options.timeoutMs ?? hook.timeoutMs);
+  let deadline = setTimeout(() => stop("timeout"), limit);
+  const onHurry = () => {
+    const remaining = limit - (performance.now() - started);
+    if (remaining <= options.hurry!.graceMs) return;
+    clearTimeout(deadline);
+    deadline = setTimeout(() => stop("timeout"), options.hurry!.graceMs);
+  };
   options.signal?.addEventListener("abort", onAbort, { once: true });
   if (options.signal?.aborted) onAbort();
+  options.hurry?.signal.addEventListener("abort", onHurry, { once: true });
+  if (options.hurry?.signal.aborted) onHurry();
   try {
     if (!failure) child.stdin.end(input);
     await completed;
   } finally {
     clearTimeout(deadline); clearTimeout(escalation); clearTimeout(watchdog);
     options.signal?.removeEventListener("abort", onAbort);
+    options.hurry?.signal.removeEventListener("abort", onHurry);
     child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
   }
   if (failure) fail(failure);

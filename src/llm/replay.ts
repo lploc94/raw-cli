@@ -35,47 +35,102 @@ export function projectVisionMessages(messages: readonly ModelMessage[], vision:
     : message);
 }
 
-/** Image limits of one request, measured in base64 characters because that is what the request body carries. */
-export interface RequestImageLimits { perImage?: number; total: number; count: number }
+/**
+ * Image limits of one request. Sizes are bytes of the request body, where an image travels as base64 text;
+ * `request` bounds the whole body, so text, system prompt and tool schemas count against it too.
+ */
+export interface RequestImageLimits {
+  perImage?: number; request: number; count: number;
+  /** Largest width or height in pixels, and the stricter bound that applies once a request carries many images. */
+  maxDimension?: number; manyImages?: { above: number; maxDimension: number };
+}
 
 const MiB = 1024 * 1024;
 /**
- * Documented API limits with headroom for the rest of the request: Anthropic rejects an image over 5 MB and a
- * request over 32 MB, OpenAI a request over 50 MB, and Google inline data past a 20 MB request.
+ * Documented API limits with headroom for request framing: Anthropic rejects an image over 5 MB or 8000 px (2000 px
+ * when a request has more than 20 images) and a request over 32 MB, OpenAI a request over 50 MB, Google one over 20 MB.
  */
 export function requestImageLimits(method: ApiMethod): RequestImageLimits {
-  if (method === "anthropic-messages") return { perImage: 5 * MiB, total: 24 * MiB, count: 100 };
-  if (method === "google-generate-content") return { total: 18 * MiB, count: 3000 };
-  return { total: 40 * MiB, count: 500 };
+  if (method === "anthropic-messages") return { perImage: 5 * MiB, request: 30 * MiB, count: 100, maxDimension: 8000, manyImages: { above: 20, maxDimension: 2000 } };
+  if (method === "google-generate-content") return { request: 18 * MiB, count: 3000 };
+  return { request: 45 * MiB, count: 500 };
 }
 
 type ImageBlock = Extract<ToolContent, { type: "image" }> | { type: "image"; mimeType: string; data: string; name?: string };
-const megabytes = (characters: number) => `${(characters / MiB).toFixed(1)} MiB`;
+const megabytes = (bytes: number) => `${(bytes / MiB).toFixed(1)} MiB`;
+
+const dimensionCache = new WeakMap<object, { width: number; height: number } | null>();
+/** Pixel size from the PNG header or the first JPEG frame header; null when it cannot be read. */
+function imageDimensions(block: ImageBlock): { width: number; height: number } | null {
+  const cached = dimensionCache.get(block);
+  if (cached !== undefined) return cached;
+  let found: { width: number; height: number } | null = null;
+  if (block.mimeType === "image/png") {
+    const head = Buffer.from(block.data.slice(0, 32), "base64");
+    if (head.length >= 24) found = { width: head.readUInt32BE(16), height: head.readUInt32BE(20) };
+  } else {
+    const data = Buffer.from(block.data, "base64");
+    for (let offset = 2; offset + 9 <= data.length;) {
+      if (data[offset] !== 0xff) break;
+      const marker = data[offset + 1]!;
+      if (marker === 0xff) { offset++; continue; }
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { offset += 2; continue; }
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        found = { height: data.readUInt16BE(offset + 5), width: data.readUInt16BE(offset + 7) };
+        break;
+      }
+      offset += 2 + data.readUInt16BE(offset + 2);
+    }
+  }
+  dimensionCache.set(block, found);
+  return found;
+}
+
+const imageBlocks = (message: ModelMessage): readonly { type: string }[] => message.role === "user"
+  ? (typeof message.content === "string" ? [] : message.content) : message.role === "tool" ? message.result.content : [];
 
 /**
- * Request-time size degradation: an image the provider would reject, or one past the request's image allowance once
- * newer images are counted, is sent as a text note instead of failing the whole request. The stored context keeps
- * the original, so a later request or another provider can still send it.
+ * Request-time degradation: an image the provider would reject (too large, too many pixels), or one past the request
+ * allowance once newer images and the rest of the request are counted, is sent as a text note instead of failing the
+ * whole request. Newest images are admitted first. The stored context keeps every original.
+ * `reservedBytes` measures the part of the request outside `messages` (system prompt, tool schemas); it runs only when images are present.
  */
-export function projectImageLimits(messages: readonly ModelMessage[], limits: RequestImageLimits): ModelMessage[] {
+export function projectImageLimits(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number = () => 0): ModelMessage[] {
+  if (!messages.some((message) => imageBlocks(message).some((block) => block.type === "image"))) return [...messages];
   const omitted = new Map<object, string>();
-  let total = 0;
-  let count = 0;
+  const textBytes = Buffer.byteLength(JSON.stringify(messages, (key, value) =>
+    key === "data" && typeof value === "string" ? "" : value), "utf8");
+  let budget = limits.request - reservedBytes() - textBytes;
+  const admitted: ImageBlock[] = [];
+  const label = (image: ImageBlock) => `${image.mimeType}${"path" in image && image.path ? `, ${JSON.stringify(image.path)}`
+    : "name" in image && image.name ? `, ${JSON.stringify(image.name)}` : ""}`;
+  const smaller = "The original stays in the conversation. If you need to see it, make a smaller copy (downscale it or convert it to JPEG with a shell tool) and view that copy.";
+  const tooLarge = (image: ImageBlock, maxDimension: number) => {
+    const size = imageDimensions(image);
+    return size !== null && Math.max(size.width, size.height) > maxDimension ? size : undefined;
+  };
   for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]!;
-    const blocks: readonly { type: string }[] = message.role === "user" ? (typeof message.content === "string" ? [] : message.content)
-      : message.role === "tool" ? message.result.content : [];
+    const blocks = imageBlocks(messages[index]!);
     for (let at = blocks.length - 1; at >= 0; at--) {
       const block = blocks[at]!;
       if (block.type !== "image") continue;
       const image = block as ImageBlock;
       const size = image.data.length;
-      const source = "path" in image && image.path ? `, ${JSON.stringify(image.path)}` : "name" in image && image.name ? `, ${JSON.stringify(image.name)}` : "";
+      const pixels = limits.maxDimension !== undefined ? tooLarge(image, limits.maxDimension) : undefined;
       if (limits.perImage !== undefined && size > limits.perImage) {
-        omitted.set(block, `[Image omitted from this request: ${image.mimeType}${source}, ${megabytes(size)} encoded, over the provider's ${megabytes(limits.perImage)} per-image limit. The original stays in the conversation. If you need to see it, make a smaller copy (downscale it or convert it to JPEG with a shell tool) and view that copy.]`);
-      } else if (count + 1 > limits.count || total + size > limits.total) {
-        omitted.set(block, `[Image omitted from this request: ${image.mimeType}${source}, ${megabytes(size)} encoded. Newer images already use the provider's per-request allowance (${limits.count} images, ${megabytes(limits.total)} encoded); view it again if you need it.]`);
-      } else { count++; total += size; }
+        omitted.set(block, `[Image omitted from this request: ${label(image)}, ${megabytes(size)} encoded, over the provider's ${megabytes(limits.perImage)} per-image limit. ${smaller}]`);
+      } else if (pixels) {
+        omitted.set(block, `[Image omitted from this request: ${label(image)}, ${pixels.width}x${pixels.height} px, over the provider's ${limits.maxDimension} px limit. ${smaller}]`);
+      } else if (admitted.length + 1 > limits.count || size > budget) {
+        omitted.set(block, `[Image omitted from this request: ${label(image)}, ${megabytes(size)} encoded. Newer images and the rest of the conversation already use the provider's request allowance (${limits.count} images, ${megabytes(limits.request)} per request); view it again if you need it.]`);
+      } else { admitted.push(image); budget -= size; }
+    }
+  }
+  // Past the many-images threshold every image in the request must meet the stricter dimension bound.
+  if (limits.manyImages && admitted.length > limits.manyImages.above) {
+    for (const image of admitted) {
+      const pixels = tooLarge(image, limits.manyImages.maxDimension);
+      if (pixels) omitted.set(image, `[Image omitted from this request: ${label(image)}, ${pixels.width}x${pixels.height} px, over the provider's ${limits.manyImages.maxDimension} px limit for requests with more than ${limits.manyImages.above} images. ${smaller}]`);
     }
   }
   if (!omitted.size) return [...messages];

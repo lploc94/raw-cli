@@ -16,18 +16,25 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
 var SPILL_MAX_BYTES = 64 * 1024 * 1024;
+var SPILL_TOTAL_BYTES = 1024 * 1024 * 1024;
 var SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+var SWEEP_INTERVAL_MS = 60 * 60 * 1e3;
 var PREFIX = "raw-output-";
 var directory;
-var SPILL_PATH_RESERVE = tmpdir().length + 64;
-function spillDirectory() {
-  if (directory) return directory;
-  const root = tmpdir();
+var lastSweep = 0;
+var saved = [];
+var savedBytes = 0;
+var totalLimit = SPILL_TOTAL_BYTES;
+var SPILL_PATH_RESERVE = tmpdir().length + 96;
+function sweep(root) {
+  if (Date.now() - lastSweep < SWEEP_INTERVAL_MS) return;
+  lastSweep = Date.now();
   try {
     const cutoff = Date.now() - SPILL_RETENTION_MS;
     for (const name of readdirSync(root)) {
       if (!name.startsWith(PREFIX)) continue;
       const path = join(root, name);
+      if (path === directory) continue;
       try {
         if (statSync(path).mtimeMs < cutoff) rmSync(path, { recursive: true, force: true });
       } catch {
@@ -35,8 +42,26 @@ function spillDirectory() {
     }
   } catch {
   }
-  directory = mkdtempSync(join(root, PREFIX));
+}
+function spillDirectory() {
+  const root = tmpdir();
+  sweep(root);
+  directory ??= mkdtempSync(join(root, PREFIX));
   return directory;
+}
+function reserve(bytes, keep) {
+  savedBytes += bytes;
+  keep.bytes += bytes;
+  while (savedBytes > totalLimit) {
+    const oldest = saved.find((entry) => entry !== keep);
+    if (!oldest) break;
+    saved.splice(saved.indexOf(oldest), 1);
+    savedBytes -= oldest.bytes;
+    try {
+      rmSync(oldest.path, { force: true });
+    } catch {
+    }
+  }
 }
 var OutputSpill = class {
   constructor(label) {
@@ -45,6 +70,7 @@ var OutputSpill = class {
   label;
   fd;
   failed = false;
+  entry;
   path;
   bytes = 0;
   capped = false;
@@ -56,11 +82,14 @@ var OutputSpill = class {
         const path = join(spillDirectory(), `${this.label}-${randomUUID().slice(0, 8)}.log`);
         this.fd = openSync(path, "wx", 384);
         this.path = path;
+        this.entry = { path, bytes: 0 };
+        saved.push(this.entry);
       }
       const room = SPILL_MAX_BYTES - this.bytes;
       const slice = buffer.length > room ? buffer.subarray(0, room) : buffer;
       writeSync(this.fd, slice);
       this.bytes += slice.length;
+      reserve(slice.length, this.entry);
       if (slice.length < buffer.length) this.capped = true;
     } catch {
       this.failed = true;
@@ -81,7 +110,10 @@ function spillText(label, text) {
   const spill = new OutputSpill(label);
   spill.write(text);
   spill.close();
-  return spill.path;
+  return { ...spill.path ? { path: spill.path } : {}, capped: spill.capped };
+}
+function savedLabel(path, capped = false) {
+  return path && capped ? `${path} (first ${SPILL_MAX_BYTES} bytes only)` : path;
 }
 
 // src/tools/results.ts
@@ -325,7 +357,7 @@ async function runBashDetailed(options) {
   spill?.close();
   if (killTimer) clearTimeout(killTimer);
   if (spawnError) return { result: errorResult("bash_spawn_error", `cannot start Bash: ${spawnError.message}`) };
-  const render = (limit, fullOutputPath = spill?.path) => {
+  const render = (limit, fullOutputPath = savedLabel(spill?.path, spill?.capped)) => {
     const small = captures.stdout.total <= captures.stderr.total ? "stdout" : "stderr";
     const smallBudget = Math.min(captures[small].total, Math.floor(limit / 2));
     const largeBudget = limit - smallBudget;
@@ -354,7 +386,7 @@ async function runBashDetailed(options) {
 
 // src/tools/primitives.ts
 async function bashTool(args, context) {
-  const reserve = (index) => ({
+  const reserve2 = (index) => ({
     index,
     status: "error",
     exit_code: 2147483647,
@@ -366,7 +398,7 @@ async function bashTool(args, context) {
     observed_bytes: 2147483647,
     error: "x".repeat(80)
   });
-  const rows = args.commands.map((_, index) => reserve(index));
+  const rows = args.commands.map((_, index) => reserve2(index));
   if (!indexedResultFits(rows, context.maxOutputBytes)) {
     return errorResult("output_budget_too_small", "bash batch outcomes exceed output budget");
   }
@@ -427,6 +459,7 @@ async function bashTool(args, context) {
     let stderr = result.content.flatMap((item) => item.type === "text" && item.channel === "stderr" ? [item.text] : []).join("");
     const status = result.code === "aborted" || context.signal?.aborted ? "aborted" : result.code === "timeout" || result.timedOut ? "timeout" : result.isError ? "error" : "ok";
     let fullOutput = result.fullOutputPath;
+    let fullOutputCapped = result.fullOutputCapped === true;
     const candidate = () => ({
       index,
       status,
@@ -449,15 +482,16 @@ async function bashTool(args, context) {
       return addedBytes <= share && indexedResultFits(check, context.maxOutputBytes);
     };
     if (!fits() && !fullOutput) {
-      fullOutput = spillText("bash", `${originalStdout}${originalStderr ? `${originalStdout ? "\n" : ""}[stderr]
-${originalStderr}` : ""}`);
+      ({ path: fullOutput, capped: fullOutputCapped } = spillText("bash", `${originalStdout}${originalStderr ? `${originalStdout ? "\n" : ""}[stderr]
+${originalStderr}` : ""}`));
     }
     for (let limit = Buffer.byteLength(stdout) + Buffer.byteLength(stderr); !fits() && limit > 0; ) {
       limit = Math.floor(limit * 3 / 4);
-      if (render) ({ stdout, stderr } = render(limit, fullOutput));
+      const saved2 = savedLabel(fullOutput, fullOutputCapped);
+      if (render) ({ stdout, stderr } = render(limit, saved2));
       else {
-        stdout = elideMiddle(stdout, Math.floor(limit / 2), fullOutput).text;
-        stderr = elideMiddle(stderr, limit - Buffer.byteLength(stdout), fullOutput).text;
+        stdout = elideMiddle(stdout, Math.floor(limit / 2), saved2).text;
+        stderr = elideMiddle(stderr, limit - Buffer.byteLength(stdout), saved2).text;
       }
     }
     if (!fits() && fullOutput) fullOutput = void 0;

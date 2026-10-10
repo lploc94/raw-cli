@@ -312,7 +312,8 @@ export class AgentSession {
   /** What the provider actually receives: replay projection plus text placeholders for images the model cannot read or the API would reject. */
   private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
     const modelConfig = this.options.provider.modelConfig;
-    return projectImageLimits(projectVisionMessages(messages, modelConfig.vision === true), requestImageLimits(modelConfig.method));
+    return projectImageLimits(projectVisionMessages(messages, modelConfig.vision === true), requestImageLimits(modelConfig.method),
+      () => Buffer.byteLength(this.options.system, "utf8") + Buffer.byteLength(JSON.stringify(this.schemaView), "utf8"));
   }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
@@ -643,7 +644,8 @@ export class AgentSession {
         ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) =>
           this.options.hooks!.run(event, { ...hookRequest(), tool: { identity, name, source: "user_action", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
             // Observing hooks get their own timeout_ms; only an interrupted run hurries them (HOOK_TEARDOWN_MS).
-            { ...(event === "PreToolUse" ? { signal: controller.signal } : controller.signal.aborted ? { deadline: Date.now() + HOOK_TEARDOWN_MS } : {}),
+            { ...(event === "PreToolUse" ? { signal: controller.signal } : { hurry: { signal: controller.signal, graceMs: HOOK_TEARDOWN_MS },
+              ...(controller.signal.aborted ? { deadline: Date.now() + HOOK_TEARDOWN_MS } : {}) }),
               onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
         onStart: () => { started = true; },
       });
@@ -735,7 +737,8 @@ export class AgentSession {
         let finalResult = result;
         try {
           await this.options.hooks?.run("Stop", { ...hookRequest(), run: result },
-            { ...(terminalDeadline !== undefined || result.status === "cancelled" ? { deadline: terminalDeadline ?? Date.now() + HOOK_TEARDOWN_MS } : {}),
+            { hurry: { signal: controller.signal, graceMs: HOOK_TEARDOWN_MS },
+              ...(terminalDeadline !== undefined || result.status === "cancelled" ? { deadline: terminalDeadline ?? Date.now() + HOOK_TEARDOWN_MS } : {}),
               onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
         } catch (error) {
           finalResult = { status: "error", steps, code: "hook_event_error", message: String(error) };
@@ -966,8 +969,8 @@ export class AgentSession {
               ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
                 name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>) => this.options.hooks!.run(event,
                 { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
-                { ...(event === "PreToolUse" ? { signal: controller.signal }
-                  : controller.signal.aborted ? { deadline: terminalDeadline ??= Date.now() + HOOK_TEARDOWN_MS } : {}),
+                { ...(event === "PreToolUse" ? { signal: controller.signal } : { hurry: { signal: controller.signal, graceMs: HOOK_TEARDOWN_MS },
+                  ...(controller.signal.aborted ? { deadline: terminalDeadline ??= Date.now() + HOOK_TEARDOWN_MS } : {}) }),
                   onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
               onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
             });

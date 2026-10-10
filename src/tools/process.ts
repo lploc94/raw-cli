@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { ToolResult } from "./types.js";
 import { elideMiddle, elideParts, errorResult, utf8Prefix } from "./results.js";
-import { OutputSpill } from "./spill.js";
+import { OutputSpill, savedLabel } from "./spill.js";
 
 /** One channel's start and a rolling window of its end; the middle of an oversized stream is dropped. */
 class ChannelCapture {
@@ -66,7 +66,8 @@ export async function runBash(options: BashOptions): Promise<ToolResult> {
 }
 
 /** Output of a finished command rebuilt for a smaller byte budget, for callers whose framing adds overhead. */
-export type BashRender = (limit: number, fullOutputPath?: string) => { stdout: string; stderr: string; truncated: boolean };
+/** Rebuilds both channels for `limit` bytes; omission markers name `saved`, the label of the full copy. */
+export type BashRender = (limit: number, saved?: string) => { stdout: string; stderr: string; truncated: boolean };
 
 export async function runBashDetailed(options: BashOptions): Promise<{ result: ToolResult; render?: BashRender }> {
   if (options.signal?.aborted) return { result: errorResult("aborted", "bash aborted before execution") };
@@ -151,7 +152,7 @@ export async function runBashDetailed(options: BashOptions): Promise<{ result: T
   spill?.close();
   if (killTimer) clearTimeout(killTimer);
   if (spawnError) return { result: errorResult("bash_spawn_error", `cannot start Bash: ${spawnError.message}`) };
-  const render: BashRender = (limit, fullOutputPath = spill?.path) => {
+  const render: BashRender = (limit, fullOutputPath = savedLabel(spill?.path, spill?.capped)) => {
     // A channel smaller than half the budget keeps all of it; the larger channel gets the rest.
     const small = captures.stdout.total <= captures.stderr.total ? "stdout" : "stderr";
     const smallBudget = Math.min(captures[small].total, Math.floor(limit / 2));

@@ -43,6 +43,16 @@ function inputContents(request: ProviderRequest): Content[] {
   return contents;
 }
 
+/** Gemini errors carry the server's retry delay in the body (google.rpc.RetryInfo); expose it as retry-after. */
+async function withRetryDelay<T>(work: Promise<T>): Promise<T> {
+  try { return await work; }
+  catch (error) {
+    const delay = error instanceof Error ? /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(error.message)?.[1] : undefined;
+    if (delay !== undefined && !(error as { headers?: unknown }).headers) (error as { headers?: Record<string, string> }).headers = { "retry-after": delay };
+    throw error;
+  }
+}
+
 export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const client = new GoogleGenAI({
     apiKey: modelConfig.apiKey ?? "",
@@ -54,13 +64,14 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
       return withProviderAbort(request, async (signal, touch) => {
         cacheSettings(modelConfig, request.cacheKey);
         const configured = modelConfig.request?.kind === "google" ? modelConfig.request : undefined;
-        const stream = await client.models.generateContentStream({
+        const stream = await withRetryDelay(client.models.generateContentStream({
           model: modelConfig.model,
           contents: inputContents(request),
           config: {
             systemInstruction: request.system,
             abortSignal: signal,
-            httpOptions: { timeout: request.timeoutMs, retryOptions: { attempts: 1 } },
+            // No SDK timeout: it would bound the whole streamed body, while the shared timer bounds only silence.
+            httpOptions: { retryOptions: { attempts: 1 } },
             ...(request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens
               ? { maxOutputTokens: request.maxOutputTokens ?? modelConfig.request?.maxOutputTokens ?? modelConfig.maxOutputTokens } : {}),
             ...(configured?.thinkingLevel ? { thinkingConfig: { thinkingLevel: {
@@ -71,7 +82,7 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
               name: tool.name, description: tool.description, parametersJsonSchema: tool.inputSchema,
             })) }] } : {}),
           },
-        });
+        }));
         let text = "";
         let finishReason: string | undefined;
         let usage: unknown;

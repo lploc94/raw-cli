@@ -33,22 +33,27 @@ export class HookDispatcher {
   }
 
   async run(event: HookEventName, request: Omit<HookRequest, "protocol_version" | "event">,
-    options: { signal?: AbortSignal; deadline?: number; onReceipt?: (receipt: HookReceipt) => void } = {}): Promise<HookDispatchResult> {
+    options: { signal?: AbortSignal; deadline?: number; onReceipt?: (receipt: HookReceipt) => void;
+      /** An interruption: once it aborts, the remaining hooks of this event share `graceMs` instead of their own timeouts. */
+      hurry?: { signal: AbortSignal; graceMs: number } } = {}): Promise<HookDispatchResult> {
     const gate = event === "UserPromptSubmit" || event === "PreToolUse";
+    let deadline = options.deadline;
     for (const hook of this.selected) {
       if (gate && hook.events.some(item => item.when?.source === "effects"
         && matchesHookSubscription({ name: item.name, ...(item.match ? { match: item.match } : {}) }, event, request.tool?.identity))
         && request.tool?.effects === undefined) return { blocked: "error", reason: `hook ${hook.id}: effects inspection unavailable` };
       if (!hook.events.some((item) => matchesHookSubscription(item, event, request.tool?.identity, request.tool?.arguments, request.tool?.effects))) continue;
       if (options.signal?.aborted) return gate ? { blocked: "error", reason: "hook aborted" } : {};
-      if (options.deadline !== undefined && Date.now() >= options.deadline) break;
+      if (options.hurry?.signal.aborted) deadline = Math.min(deadline ?? Infinity, Date.now() + options.hurry.graceMs);
+      if (deadline !== undefined && Date.now() >= deadline) break;
       const started = performance.now();
       let receipt: HookReceipt;
       let denial: string | undefined;
       try {
         const response = await runHook(hook, { protocol_version: 2, event, ...request }, {
           ...(options.signal ? { signal: options.signal } : {}),
-          ...(options.deadline !== undefined ? { timeoutMs: Math.max(1, options.deadline - Date.now()) } : {}),
+          ...(deadline !== undefined ? { timeoutMs: Math.max(1, deadline - Date.now()) } : {}),
+          ...(options.hurry ? { hurry: options.hurry } : {}),
           ...(this.env ? { env: this.env } : {}),
         });
         receipt = { id: hook.id, event, outcome: response.decision === "deny" ? "denied" : "continued",

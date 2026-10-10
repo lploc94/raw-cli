@@ -189,22 +189,40 @@ test("projectVisionMessages replaces only user images and never mutates its inpu
 test("images the API would reject become text notes, newest images keep the request allowance, input is not mutated", () => {
   const image = (characters: number, name: string) => ({ type: "image" as const, mimeType: "image/png" as const, data: "A".repeat(characters), name });
   const messages: ModelMessage[] = [
-    { role: "user", content: [image(30, "old.png")] },
-    { role: "tool", callId: "c", name: "view_image", result: { isError: false, content: [{ type: "image", mimeType: "image/jpeg", data: "B".repeat(30), path: "/tmp/shot.jpg" }] } },
-    { role: "user", content: [{ type: "text", text: "look" }, image(80, "huge.png"), image(40, "new.png")] },
+    { role: "user", content: [image(3000, "old.png")] },
+    { role: "tool", callId: "c", name: "view_image", result: { isError: false, content: [{ type: "image", mimeType: "image/jpeg", data: "B".repeat(3000), path: "/tmp/shot.jpg" }] } },
+    { role: "user", content: [{ type: "text", text: "look" }, image(8000, "huge.png"), image(4000, "new.png")] },
   ];
   const before = structuredClone(messages);
-  const projected = projectImageLimits(messages, { perImage: 50, total: 75, count: 3 });
+  // About 400 bytes of the 7600-byte request are the messages' own text; the images get the rest.
+  const projected = projectImageLimits(messages, { perImage: 5000, request: 7600, count: 3 });
   assert.deepEqual(messages, before);
   const latest = (projected[2] as unknown as { content: UserBlock[] }).content;
   assert.equal(latest[0], (messages[2] as unknown as { content: UserBlock[] }).content[0]);
   assert.match((latest[1] as { text: string }).text, /"huge\.png".*over the provider's 0\.0 MiB per-image limit.*smaller copy/);
   assert.equal(latest[2]!.type, "image");
-  // The tool image (30) still fits after the newest (40); the oldest would pass the 75-character allowance.
-  assert.equal((projected[1] as unknown as { result: { content: Array<{ type: string }> } }).result.content[0]!.type, "image");
-  assert.match(((projected[0] as unknown as { content: UserBlock[] }).content[0] as { text: string }).text, /"old\.png".*per-request allowance/);
-  assert.deepEqual(projectImageLimits(messages, { total: 1000, count: 10 }), messages);
-  assert.deepEqual(requestImageLimits("anthropic-messages"), { perImage: 5 * 1024 * 1024, total: 24 * 1024 * 1024, count: 100 });
+  // The tool image still fits after the newest; the oldest would pass the request allowance.
+  const toolBlock = (projection: ModelMessage[]) => (projection[1] as unknown as { result: { content: Array<{ type: string }> } }).result.content[0]!.type;
+  assert.equal(toolBlock(projected), "image");
+  assert.match(((projected[0] as unknown as { content: UserBlock[] }).content[0] as { text: string }).text, /"old\.png".*request allowance/);
+  // The system prompt and tool schemas count against the same request.
+  assert.equal(toolBlock(projectImageLimits(messages, { perImage: 5000, request: 7600, count: 3 }, () => 3000)), "text");
+  assert.deepEqual(projectImageLimits(messages, { request: 100_000, count: 10 }), messages);
+});
+
+test("images over the provider's pixel limits become notes, with the stricter bound for many images", () => {
+  const wide = imageBlock(makePng(9000, 1), "image/png", "wide.png");
+  const photo = imageBlock(jpeg, "image/jpeg", "photo.jpg");
+  const limits = requestImageLimits("anthropic-messages");
+  const projected = projectImageLimits([{ role: "user", content: [wide, imageBlock(png, "image/png", "small.png")] }], limits);
+  const blocks = (projected[0] as unknown as { content: UserBlock[] }).content;
+  assert.match((blocks[0] as { text: string }).text, /"wide\.png", 9000x1 px, over the provider's 8000 px limit/);
+  assert.equal(blocks[1]!.type, "image");
+  assert.match((((projectImageLimits([{ role: "user", content: [photo] }], { request: 100 * 1024 * 1024, count: 10, maxDimension: 1 })[0] as unknown as
+    { content: UserBlock[] }).content[0]) as { text: string }).text, /"photo\.jpg", 2x2 px, over the provider's 1 px limit/);
+  const many = Array.from({ length: 3 }, (_, i) => imageBlock(makePng(30, 30), "image/png", `${i}.png`));
+  const crowded = (projectImageLimits([{ role: "user", content: many }], { request: 100 * 1024 * 1024, count: 10, manyImages: { above: 2, maxDimension: 20 } })[0] as unknown as { content: UserBlock[] }).content;
+  assert.ok(crowded.every((block) => block.type === "text" && /more than 2 images/.test(block.text)));
 });
 
 test("an Anthropic request carries a note instead of an image over 5 MB, and the stored turn keeps the image", async () => {

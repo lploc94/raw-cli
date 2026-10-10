@@ -13,8 +13,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
 var SPILL_MAX_BYTES = 64 * 1024 * 1024;
+var SPILL_TOTAL_BYTES = 1024 * 1024 * 1024;
 var SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
-var SPILL_PATH_RESERVE = tmpdir().length + 64;
+var SWEEP_INTERVAL_MS = 60 * 60 * 1e3;
+var SPILL_PATH_RESERVE = tmpdir().length + 96;
 
 // src/tools/results.ts
 var DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -421,14 +423,26 @@ var PANEL_LIMITS = {
 // src/tools/line-diff.ts
 var CONTEXT_LINES = 3;
 var MAX_CELLS = 1e6;
-var MAX_LINE_CHARS = 500;
+var NO_EOL = "\0";
 function lines(text) {
   if (!text) return [];
   const split = text.split("\n");
   if (split.at(-1) === "") split.pop();
+  else split[split.length - 1] += NO_EOL;
   return split;
 }
-function operations(before, after) {
+function nextAt(positions, from) {
+  if (!positions) return Infinity;
+  let low = 0;
+  let high = positions.length;
+  while (low < high) {
+    const mid = low + high >> 1;
+    if (positions[mid] < from) low = mid + 1;
+    else high = mid;
+  }
+  return low < positions.length ? positions[low] : Infinity;
+}
+function operations(before, after, emit) {
   let start = 0;
   while (start < before.length && start < after.length && before[start] === after[start]) start++;
   let endOld = before.length;
@@ -437,76 +451,126 @@ function operations(before, after) {
     endOld--;
     endNew--;
   }
-  const ops = [];
-  for (let index = Math.max(0, start - CONTEXT_LINES); index < start; index++) ops.push({ kind: " ", text: before[index], oldAt: index, newAt: index });
-  const removed = before.slice(start, endOld);
-  const added = after.slice(start, endNew);
-  const n = removed.length;
-  const m = added.length;
+  for (let index = Math.max(0, start - CONTEXT_LINES); index < start; index++) if (!emit({ kind: " ", text: before[index], oldAt: index, newAt: index })) return;
+  const n = endOld - start;
+  const m = endNew - start;
+  const old = (i2) => before[start + i2];
+  const neu = (j2) => after[start + j2];
+  let i = 0;
+  let j = 0;
+  const step = (kind) => {
+    const op = { kind, text: kind === "+" ? neu(j) : old(i), oldAt: start + i, newAt: start + j };
+    if (kind !== "+") i++;
+    if (kind !== "-") j++;
+    return emit(op);
+  };
   if (n && m && n * m <= MAX_CELLS) {
     const width = m + 1;
     const common = new Uint32Array((n + 1) * width);
-    for (let i2 = n - 1; i2 >= 0; i2--) for (let j2 = m - 1; j2 >= 0; j2--) {
-      common[i2 * width + j2] = removed[i2] === added[j2] ? common[(i2 + 1) * width + j2 + 1] + 1 : Math.max(common[(i2 + 1) * width + j2], common[i2 * width + j2 + 1]);
+    for (let a = n - 1; a >= 0; a--) for (let b = m - 1; b >= 0; b--) {
+      common[a * width + b] = old(a) === neu(b) ? common[(a + 1) * width + b + 1] + 1 : Math.max(common[(a + 1) * width + b], common[a * width + b + 1]);
     }
-    let i = 0;
-    let j = 0;
     while (i < n || j < m) {
-      const at = { oldAt: start + i, newAt: start + j };
-      if (i < n && j < m && removed[i] === added[j]) {
-        ops.push({ kind: " ", text: removed[i], ...at });
-        i++;
-        j++;
-      } else if (i < n && (j === m || common[(i + 1) * width + j] >= common[i * width + j + 1])) {
-        ops.push({ kind: "-", text: removed[i], ...at });
-        i++;
-      } else {
-        ops.push({ kind: "+", text: added[j], ...at });
-        j++;
-      }
+      const kind = i < n && j < m && old(i) === neu(j) ? " " : i < n && (j === m || common[(i + 1) * width + j] >= common[i * width + j + 1]) ? "-" : "+";
+      if (!step(kind)) return;
     }
   } else {
-    removed.forEach((text, index) => ops.push({ kind: "-", text, oldAt: start + index, newAt: start }));
-    added.forEach((text, index) => ops.push({ kind: "+", text, oldAt: endOld, newAt: start + index }));
+    const index = (count, line) => {
+      const positions = /* @__PURE__ */ new Map();
+      for (let k = 0; k < count; k++) {
+        const list = positions.get(line(k));
+        if (list) list.push(k);
+        else positions.set(line(k), [k]);
+      }
+      return positions;
+    };
+    const inOld = index(n, old);
+    const inNew = index(m, neu);
+    while (i < n && j < m) {
+      if (old(i) === neu(j)) {
+        if (!step(" ")) return;
+        continue;
+      }
+      const added = nextAt(inNew.get(old(i)), j) - j;
+      const removed = nextAt(inOld.get(neu(j)), i) - i;
+      if (added === Infinity && removed === Infinity) {
+        if (!step("-") || !step("+")) return;
+      } else if (added <= removed) {
+        for (let k = 0; k < added; k++) if (!step("+")) return;
+      } else for (let k = 0; k < removed; k++) if (!step("-")) return;
+    }
+    while (i < n) if (!step("-")) return;
+    while (j < m) if (!step("+")) return;
   }
   for (let index = 0; index < Math.min(CONTEXT_LINES, before.length - endOld); index++) {
-    ops.push({ kind: " ", text: before[endOld + index], oldAt: endOld + index, newAt: endNew + index });
+    if (!emit({ kind: " ", text: before[endOld + index], oldAt: endOld + index, newAt: endNew + index })) return;
   }
-  return ops;
 }
 function unifiedDiff(before, after, budgetBytes, indent = "") {
-  const ops = operations(lines(before), lines(after));
-  const changed = ops.flatMap((op, index) => op.kind === " " ? [] : [index]);
-  const hunks = [];
-  for (const index of changed) {
-    const from = Math.max(0, index - CONTEXT_LINES);
-    const to = Math.min(ops.length - 1, index + CONTEXT_LINES);
-    const last = hunks.at(-1);
-    if (last && from <= last[1] + 1) last[1] = Math.max(last[1], to);
-    else hunks.push([from, to]);
-  }
   const out = [];
   let bytes = 0;
+  let truncated = false;
   const push = (line) => {
     const size = Buffer.byteLength(line, "utf8") + 1;
-    if (bytes + size > budgetBytes) return false;
-    out.push(line);
-    bytes += size;
+    if (bytes + size <= budgetBytes) {
+      out.push(line);
+      bytes += size;
+      return true;
+    }
+    const cut = utf8Prefix(line, budgetBytes - bytes - Buffer.byteLength("\u2026", "utf8") - 1).text;
+    if (cut.length > indent.length + 1) {
+      out.push(`${cut}\u2026`);
+      bytes += Buffer.byteLength(`${cut}\u2026`, "utf8") + 1;
+    }
+    truncated = true;
+    return false;
+  };
+  const render = (hunk2) => {
+    const oldCount = hunk2.filter((op) => op.kind !== "+").length;
+    const newCount = hunk2.filter((op) => op.kind !== "-").length;
+    const first = hunk2[0];
+    if (!push(`${indent}@@ -${first.oldAt + (oldCount ? 1 : 0)},${oldCount} +${first.newAt + (newCount ? 1 : 0)},${newCount} @@`)) return false;
+    for (const op of hunk2) {
+      const ending = op.text.endsWith(NO_EOL);
+      if (!push(`${indent}${op.kind}${ending ? op.text.slice(0, -1) : op.text}`)) return false;
+      if (ending && !push(`${indent}\\ No newline at end of file`)) return false;
+    }
     return true;
   };
-  for (const [from, to] of hunks) {
-    const slice = ops.slice(from, to + 1);
-    const oldCount = slice.filter((op) => op.kind !== "+").length;
-    const newCount = slice.filter((op) => op.kind !== "-").length;
-    const first = slice[0];
-    if (!push(`${indent}@@ -${first.oldAt + (oldCount ? 1 : 0)},${oldCount} +${first.newAt + (newCount ? 1 : 0)},${newCount} @@`)) return { text: out.join("\n"), truncated: true };
-    for (const op of slice) {
-      const chars = [...op.text];
-      const text = chars.length > MAX_LINE_CHARS ? `${chars.slice(0, MAX_LINE_CHARS).join("")}\u2026` : op.text;
-      if (!push(`${indent}${op.kind}${text}`)) return { text: out.join("\n"), truncated: true };
+  let leading = [];
+  let hunk;
+  let hunkBytes = 0;
+  let trailing = 0;
+  operations(lines(before), lines(after), (op) => {
+    if (op.kind === " ") {
+      if (!hunk) {
+        leading.push(op);
+        if (leading.length > CONTEXT_LINES) leading.shift();
+        return true;
+      }
+      hunk.push(op);
+      if (++trailing <= 2 * CONTEXT_LINES) return true;
+      const closed = hunk.splice(0, hunk.length - trailing + CONTEXT_LINES);
+      leading = hunk.slice(-CONTEXT_LINES);
+      hunk = void 0;
+      return render(closed);
     }
-  }
-  return { text: out.join("\n"), truncated: false };
+    if (!hunk) {
+      hunk = leading;
+      leading = [];
+      hunkBytes = 0;
+    }
+    hunk.push(op);
+    trailing = 0;
+    hunkBytes += Buffer.byteLength(op.text, "utf8") + indent.length + 2;
+    if (bytes + hunkBytes <= budgetBytes) return true;
+    render(hunk);
+    hunk = void 0;
+    truncated = true;
+    return false;
+  });
+  if (hunk && !truncated) render(hunk.slice(0, hunk.length - Math.max(0, trailing - CONTEXT_LINES)));
+  return { text: out.join("\n"), truncated };
 }
 
 // src/tools/write-changes.ts
@@ -516,11 +580,10 @@ var DIFF_PREVIEW_BYTES = 6144;
 var MAX_DIFF_SOURCE_BYTES = 8 * 1024 * 1024;
 function diffPreview(change) {
   const sides = [change.before, change.after];
-  if (sides.some((bytes) => bytes && bytes.length > MAX_DIFF_SOURCE_BYTES)) {
-    return `[file too large to diff: ${change.before?.length ?? 0} \u2192 ${change.after?.length ?? 0} bytes]
+  const size = (bytes) => (bytes?.length ?? 0) > MAX_DIFF_SOURCE_BYTES ? `more than ${MAX_DIFF_SOURCE_BYTES}` : String(bytes?.length ?? 0);
+  if (sides.some((bytes) => bytes && bytes.length > MAX_DIFF_SOURCE_BYTES)) return `[file too large to diff: ${size(change.before)} \u2192 ${size(change.after)} bytes]
 `;
-  }
-  if (sides.some((bytes) => bytes?.subarray(0, 8192).includes(0))) return `[binary content: ${change.before?.length ?? 0} \u2192 ${change.after?.length ?? 0} bytes]
+  if (sides.some((bytes) => bytes?.subarray(0, 8192).includes(0))) return `[binary content: ${size(change.before)} \u2192 ${size(change.after)} bytes]
 `;
   const diff = unifiedDiff(clean(change.before?.toString("utf8") ?? ""), clean(change.after?.toString("utf8") ?? ""), DIFF_PREVIEW_BYTES, "    ");
   return `${diff.text}

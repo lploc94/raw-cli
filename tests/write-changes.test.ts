@@ -148,3 +148,22 @@ test("an overwrite deep inside a large file shows that change in Recent diff", a
     assert.match(diffText(document!), /    @@ -3497,7 \+3497,7 @@[\s\S]*    -row 3500\n    \+edited row 3500/);
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
+
+test("unified diff keeps sparse edits apart in large files, marks a missing final newline and never hides part of a line silently", () => {
+  const rows = Array.from({ length: 20000 }, (_, i) => `row ${i}`);
+  const edited = [...rows];
+  edited[10] = "first edit";
+  edited[19000] = "second edit";
+  const sparse = unifiedDiff(rows.join("\n") + "\n", edited.join("\n") + "\n", 6000);
+  assert.equal(sparse.truncated, false);
+  assert.deepEqual(sparse.text.match(/^@@.*@@$/gm), ["@@ -8,7 +8,7 @@", "@@ -18998,7 +18998,7 @@"]);
+  assert.match(sparse.text, /-row 19000\n\+second edit/);
+  assert.equal(unifiedDiff("a\nb\n", "a\nb", 1000).text, "@@ -1,2 +1,2 @@\n a\n-b\n+b\n\\ No newline at end of file");
+  const long = unifiedDiff("x\n", `${"y".repeat(2000)}\n`, 1000);
+  assert.equal(long.truncated, true);
+  assert.ok(Buffer.byteLength(long.text) <= 1000);
+  assert.match(long.text, /\+y+…$/);
+  const everything = unifiedDiff(Array.from({ length: 300000 }, (_, i) => `a${i}`).join("\n"), Array.from({ length: 300000 }, (_, i) => `b${i}`).join("\n"), 6144);
+  assert.equal(everything.truncated, true);
+  assert.ok(Buffer.byteLength(everything.text) <= 6144);
+});

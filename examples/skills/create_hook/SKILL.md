@@ -16,7 +16,7 @@ Events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostTo
 
 ## Manifest and script
 
-`hook.json` requires `name` (string), `events` (nonempty array), and `command` (nonempty PATH command or a contained `./` executable). Optional `args` is a string array; `./` args resolve inside the hook folder. Optional `timeout_ms` is an integer 1..30000, default 5000. Each event entry requires `name`; tool events may add `match` (canonical tool-ID glob with `*` and `?`) and `when:{"any":"schema.path[*].field","regex":"RE2 pattern"}`. Both filters must match before Raw spawns the script. `when` must identify a string field in the selected tool's input schema; `commands[*].command` is valid for `builtin/bash`. `match`/`when` on non-tool events are invalid. Unknown fields are invalid. No shell expansion occurs in command or args.
+`hook.json` requires `name` (string), `events` (nonempty array), and `command` (nonempty PATH command or a contained `./` executable). Optional `args` is a string array; `./` args resolve inside the hook folder. Optional `timeout_ms` is an integer 1..600000, default 60000; interrupting the run cuts a running observing hook to a 2-second cleanup window. Each event entry requires `name`; tool events may add `match` (canonical tool-ID glob with `*` and `?`) and `when:{"any":"schema.path[*].field","regex":"RE2 pattern"}`. Both filters must match before Raw spawns the script. `when` must identify a string field in the selected tool's input schema; `commands[*].command` is valid for `builtin/bash`. `match`/`when` on non-tool events are invalid. Unknown fields are invalid. No shell expansion occurs in command or args.
 
 <!-- example:manifest -->
 ```json

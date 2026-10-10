@@ -10,8 +10,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
 var SPILL_MAX_BYTES = 64 * 1024 * 1024;
+var SPILL_TOTAL_BYTES = 1024 * 1024 * 1024;
 var SPILL_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
-var SPILL_PATH_RESERVE = tmpdir().length + 64;
+var SWEEP_INTERVAL_MS = 60 * 60 * 1e3;
+var SPILL_PATH_RESERVE = tmpdir().length + 96;
 
 // src/tools/results.ts
 var DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;

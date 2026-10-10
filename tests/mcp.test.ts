@@ -185,21 +185,25 @@ test("T-06c: abort during a slow MCP call settles linked result and ignores late
 });
 
 test("a server's own timeoutMs overrides the connection default", async () => {
-  const connection = await connectMcpServers({ servers: { timed: { ...stdio("timed"), timeoutMs: 500 } }, cwd: process.cwd(), timeoutMs: 60000 });
+  // An in-process server connects well within the short timeout even on a loaded machine.
+  const http = await startMcpHttp("streamable-http", "timed");
+  const connection = await connectMcpServers({ servers: { timed: { url: http.url, transport: "streamable-http", tools: ["selected"], timeoutMs: 800 } },
+    cwd: process.cwd(), timeoutMs: 60000 });
   try {
     const timeout = await connection.registry.dispatch(connection.exposed[0]!.alias, { value: "timeout" }, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });
     assert.equal(timeout.code, "mcp_call_error");
     assert.match(JSON.stringify(timeout), /timed out/);
-  } finally { await connection.close(); }
+  } finally { await connection.close(); await http.close(); }
 });
 
 test("a tool call that keeps reporting progress outlives the request timeout", async () => {
-  const connection = await connectMcpServers({ servers: { busy: stdio("busy") }, cwd: process.cwd(), timeoutMs: 1000 });
+  const http = await startMcpHttp("streamable-http", "busy");
+  const connection = await connectMcpServers({ servers: { busy: { url: http.url, transport: "streamable-http", tools: ["selected"] } }, cwd: process.cwd(), timeoutMs: 1000 });
   try {
     const result = await connection.registry.dispatch(connection.exposed[0]!.alias, { value: "progress" }, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });
     assert.equal(result.isError, false, JSON.stringify(result));
     assert.match(JSON.stringify(result), /busy:selected:progress/);
-  } finally { await connection.close(); }
+  } finally { await connection.close(); await http.close(); }
 });
 
 test("T-06c: SDK tool request deadline returns an explicit error and leaves connection usable", async () => {

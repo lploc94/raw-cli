@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { runBashDetailed, type BashRender } from "./process.js";
 import { elideMiddle, errorResult, indexedResult, indexedResultFits, utf8Prefix, type IndexedResult } from "./results.js";
-import { spillText } from "./spill.js";
+import { savedLabel, spillText } from "./spill.js";
 import type { ToolResult } from "./types.js";
 import type { PanelContext } from "../panels/contract.js";
 import type { ToolContentPanel } from "./types.js";
@@ -361,6 +361,7 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
     const status = result.code === "aborted" || context.signal?.aborted ? "aborted"
       : result.code === "timeout" || result.timedOut ? "timeout" : result.isError ? "error" : "ok";
     let fullOutput = result.fullOutputPath;
+    let fullOutputCapped = result.fullOutputCapped === true;
     const candidate = (): IndexedResult => ({ index, status, exit_code: result.exitCode ?? null,
       signal: result.signal ?? null, timed_out: result.timedOut ?? false,
       truncated: Boolean(result.truncated || stdout !== originalStdout || stderr !== originalStderr),
@@ -377,14 +378,15 @@ export async function bashTool(args: { commands: Array<{ command: string; timeou
     };
     // JSON escaping can still overflow the share: rebuild both channels for a smaller budget, keeping start and end.
     if (!fits() && !fullOutput) {
-      fullOutput = spillText("bash", `${originalStdout}${originalStderr ? `${originalStdout ? "\n" : ""}[stderr]\n${originalStderr}` : ""}`);
+      ({ path: fullOutput, capped: fullOutputCapped } = spillText("bash", `${originalStdout}${originalStderr ? `${originalStdout ? "\n" : ""}[stderr]\n${originalStderr}` : ""}`));
     }
     for (let limit = Buffer.byteLength(stdout) + Buffer.byteLength(stderr); !fits() && limit > 0;) {
       limit = Math.floor(limit * 3 / 4);
-      if (render) ({ stdout, stderr } = render(limit, fullOutput));
+      const saved = savedLabel(fullOutput, fullOutputCapped);
+      if (render) ({ stdout, stderr } = render(limit, saved));
       else {
-        stdout = elideMiddle(stdout, Math.floor(limit / 2), fullOutput).text;
-        stderr = elideMiddle(stderr, limit - Buffer.byteLength(stdout), fullOutput).text;
+        stdout = elideMiddle(stdout, Math.floor(limit / 2), saved).text;
+        stderr = elideMiddle(stderr, limit - Buffer.byteLength(stdout), saved).text;
       }
     }
     // A budget too small for the saved-output path still reports the command; the path is the first thing dropped.

@@ -126,13 +126,16 @@ export function capResult(result: ToolHandlerResult, maxOutputBytes: number): To
   }
   remaining += noticeReserve;
   let fullOutputPath = result.fullOutputPath;
+  let fullOutputCapped = result.fullOutputCapped === true;
   if (truncated) {
-    fullOutputPath ??= spillText("tool", result.content.flatMap((block) => block.type === "text" ? [block.text]
-      : block.type === "json" ? [JSON.stringify(block.value, null, 2)] : []).join("\n"));
-    const notice = utf8Prefix(truncationNotice(maxOutputBytes - remaining, textual, fullOutputPath), remaining);
+    if (fullOutputPath === undefined) {
+      ({ path: fullOutputPath, capped: fullOutputCapped } = spillText("tool", result.content.flatMap((block) => block.type === "text" ? [block.text]
+        : block.type === "json" ? [JSON.stringify(block.value, null, 2)] : []).join("\n")));
+    }
+    const notice = utf8Prefix(truncationNotice(maxOutputBytes - remaining, textual, fullOutputPath, fullOutputCapped), remaining);
     if (notice.text) { content.push({ type: "text", text: notice.text }); remaining -= notice.bytes; }
   }
   const retained = maxOutputBytes - remaining + content.reduce((sum, block) => sum + (block.type === "image" ? Buffer.byteLength(block.data) : 0), 0);
   return { ...result, content, truncated: result.truncated || truncated, retainedBytes: retained, observedBytes: result.observedBytes ?? observed,
-    ...(truncated && fullOutputPath ? { fullOutputPath } : {}) };
+    ...(truncated && fullOutputPath ? { fullOutputPath, ...(fullOutputCapped ? { fullOutputCapped } : {}) } : {}) };
 }

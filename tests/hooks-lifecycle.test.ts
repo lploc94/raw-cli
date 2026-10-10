@@ -143,3 +143,22 @@ test("observing hooks get their own timeout_ms instead of a fixed two-second bud
   assert.deepEqual(outcomes, ["continued"]);
   assert.equal((await readFile(f.log, "utf8")).trim(), "PostToolUse");
 });
+
+test("interrupting a run while an observing hook works cuts the hook to the cleanup window", async () => {
+  const f = await setup(`let input=""; process.stdin.on("data", c => input += c); process.stdin.on("end", () => { setTimeout(() => {}, 20000); });`);
+  f.hook.timeoutMs = 30000;
+  f.hook.events = [{ name: "PostToolUse" }];
+  let calls = 0;
+  const provider: ProviderAdapter = { modelConfig: { agentName: "raw", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+    generate: async () => ++calls === 1
+      ? { text: "", finishReason: "tool_calls", toolCalls: [{ id: "c", name: "doit", arguments: { value: "ok" } }] }
+      : { text: "done", finishReason: "stop", toolCalls: [] } };
+  const agent = createAgent({ provider, registry: f.registry, cwd: f.cwd, hooks: new HookDispatcher([f.hook]) });
+  const started = Date.now();
+  const interrupt = setTimeout(() => agent.abort(), 500);
+  const result = await agent.run("do it");
+  clearTimeout(interrupt);
+  await agent.close();
+  assert.equal(result.status, "cancelled");
+  assert.ok(Date.now() - started < 6000, `took ${Date.now() - started}ms`);
+});

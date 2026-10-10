@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createProvider } from "../src/llm/client.js";
-import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
+import { googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 const provider = (baseUrl: string) => createProvider({ agentName: "fixture", provider: "openai", method: "openai-chat-completions",
   model: "fixture", baseUrl, apiKey: "fixture" });
@@ -47,4 +47,27 @@ test("the timeout bounds silence: a slow but steady stream finishes, a stalled o
     await assert.rejects(provider(stalled.url).generate(request(300)), /timed out/);
     assert.equal(stalled.requests.length, 1);
   } finally { await stalled.close(); }
+});
+
+const gemini = (baseUrl: string) => createProvider({ agentName: "fixture", provider: "google", method: "google-generate-content",
+  model: "fixture", baseUrl, apiKey: "fixture" });
+const geminiText = (text: string, finishReason?: string) => googleFrame({ candidates: [{ content: { role: "model", parts: [{ text }] }, ...(finishReason ? { finishReason } : {}) }] });
+
+test("Gemini: a steady stream longer than the timeout finishes, and a 429 waits for the body's retryDelay", async () => {
+  const frames = [..."abcde"].map((letter) => geminiText(letter)).concat(geminiText("f", "STOP"));
+  const steady = await startMockProvider([{ frames, frameDelayMs: 150 }]);
+  try {
+    assert.equal((await gemini(steady.url).generate(request(600))).text, "abcdef");
+  } finally { await steady.close(); }
+  const limited = await startMockProvider([
+    { status: 429, body: { error: { code: 429, status: "RESOURCE_EXHAUSTED", details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "0.4s" }] } } },
+    { frames: [geminiText("ok", "STOP")] },
+  ]);
+  try {
+    const started = Date.now();
+    assert.equal((await gemini(limited.url).generate(request())).text, "ok");
+    const waited = Date.now() - started;
+    assert.ok(waited >= 350 && waited < 700, `waited ${waited}ms`);
+    assert.equal(limited.requests.length, 2);
+  } finally { await limited.close(); }
 });

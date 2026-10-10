@@ -14,10 +14,10 @@ export const MAX_DIFF_SOURCE_BYTES = 8 * 1024 * 1024;
 /** The changed regions of one write with surrounding context, not the start of the file. */
 function diffPreview(change: CompletedWriteChange): string {
   const sides = [change.before, change.after];
-  if (sides.some((bytes) => bytes && bytes.length > MAX_DIFF_SOURCE_BYTES)) {
-    return `[file too large to diff: ${change.before?.length ?? 0} → ${change.after?.length ?? 0} bytes]\n`;
-  }
-  if (sides.some((bytes) => bytes?.subarray(0, 8192).includes(0))) return `[binary content: ${change.before?.length ?? 0} → ${change.after?.length ?? 0} bytes]\n`;
+  // A write snapshot stops one byte past the limit, so a longer side is only known to be larger than it.
+  const size = (bytes: Buffer | undefined) => (bytes?.length ?? 0) > MAX_DIFF_SOURCE_BYTES ? `more than ${MAX_DIFF_SOURCE_BYTES}` : String(bytes?.length ?? 0);
+  if (sides.some((bytes) => bytes && bytes.length > MAX_DIFF_SOURCE_BYTES)) return `[file too large to diff: ${size(change.before)} → ${size(change.after)} bytes]\n`;
+  if (sides.some((bytes) => bytes?.subarray(0, 8192).includes(0))) return `[binary content: ${size(change.before)} → ${size(change.after)} bytes]\n`;
   // Indented code avoids treating any file bytes (including Markdown fences) as active markup.
   const diff = unifiedDiff(clean(change.before?.toString("utf8") ?? ""), clean(change.after?.toString("utf8") ?? ""), DIFF_PREVIEW_BYTES, "    ");
   return `${diff.text}\n${diff.truncated ? "\n[diff truncated]" : ""}`;
