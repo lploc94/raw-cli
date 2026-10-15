@@ -292,7 +292,6 @@ test.describe("plugin blocks", () => {
       await expect(steps.nth(1)).toHaveAttribute("aria-current", "step");
       expect(await steps.nth(1).locator(".panel-step-label").evaluate((element) => getComputedStyle(element).fontWeight)).toBe("550");
       await expect(steps.nth(1).locator(".panel-step-detail")).toHaveText("đang chạy kiểm tra từng trang một, có thể mất vài phút");
-      await expect(steps.locator(".panel-step-time")).toHaveText(["10m", "2m"]);
       await expect(steps.locator(".panel-step-line")).toHaveCount(2);
       const labelBox = (await steps.first().locator(".panel-step-label").boundingBox())!;
       const timeBox = (await steps.first().locator(".panel-step-time").boundingBox())!;

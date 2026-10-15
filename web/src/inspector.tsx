@@ -249,6 +249,7 @@ export function Inspector({
             context={state?.metrics?.context}
             commands={state?.commands ?? []}
             commandsOmitted={state?.commandsOmitted}
+            approvals={state?.approvals ?? []}
             sessionCwd={state?.session.cwd}
             sessionId={id}
             details={<Details id={id} state={state} bootstrap={bootstrap} compact={compact} />}

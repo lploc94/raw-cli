@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- The dashboard's side panel has a second host-owned tab, **Approvals**: while
+  a tool call waits for permission it lists the call's intended files with the
+  lines each one would write (`apply_patch` shows every file of the patch,
+  `edit_file` the replaced text, `write_file` the content it will write and
+  says its previous content is not read), and answers it with Deny or Allow
+  once. The chat's approval card gains one **Review** control that opens the
+  tab; a pending call never opens the panel or takes a tab you chose, and the
+  preview is built from the request rather than by reading files before the
+  gate.
+- Approvals review keeps the context-use badge visible in narrow side panels,
+  matches editing tools by exact name, and preserves diff content that looks
+  like a file header. The README overview image uses the existing neutral
+  capture rather than a contributor's local filesystem path.
+
 ## [0.1.5] - 2026-10-13
 
 - Raw runs natively on Windows 10/11 without WSL. The `bash` tool finds Git

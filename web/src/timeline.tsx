@@ -22,6 +22,8 @@ import { Receipt } from "./panels/Receipt.js";
 import { PanelGlyph } from "./panels/Tabs.js";
 import { receiptPanel } from "./panels/panel-state.js";
 import { COMMANDS_ID } from "./panels/commands-state.js";
+import { APPROVALS_ID } from "./panels/approvals-state.js";
+import { answerApproval } from "./approvals.js";
 import { HistoryAttachments } from "./composer/HistoryAttachments.js";
 import { ToolRow } from "./tool-cards/ToolRow.js";
 import { ToolIcon } from "./tool-cards/ToolIcon.js";
@@ -51,10 +53,11 @@ function addedLines(args: Record<string, unknown>): number | undefined {
 
 /**
  * A call waiting for approval (docs/chat-design.md §7): one card after its group. The chip, the tool and when the
- * approval expires; the call's headline and the lines it writes; a preview of its main text; Arguments, Deny and Allow
- * once. Allow once and Deny answer only this call.
+ * approval expires; the call's headline and the lines it writes; a preview of its main text; Review, Arguments, Deny
+ * and Allow once. Allow once and Deny answer only this call; Review opens the side panel's Approvals tab, where the
+ * intended files and their proposed content are readable in full.
  */
-export function ApprovalCard({ approval, call }: { approval: Approval; call?: VisibleToolCall | undefined }) {
+export function ApprovalCard({ approval, call, onOpenPanel }: { approval: Approval; call?: VisibleToolCall | undefined; onOpenPanel?: ((panel: string) => void) | undefined }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showArguments, setShowArguments] = useState(false);
@@ -62,11 +65,7 @@ export function ApprovalCard({ approval, call }: { approval: Approval; call?: Vi
     setBusy(true);
     setError("");
     try {
-      await api(`/permissions/${approval.id}`, "POST", {
-        operationId: approval.operationId,
-        callId: approval.callId,
-        allow,
-      });
+      await answerApproval(approval, allow);
     } catch (cause) {
       setError(errorText(cause));
       setBusy(false);
@@ -83,6 +82,11 @@ export function ApprovalCard({ approval, call }: { approval: Approval; call?: Vi
           <ShieldAlert size={11} aria-hidden="true" />
           Needs approval
         </span>
+        {onOpenPanel && (
+          <button type="button" className="foot-button" title="Review the intended change in the side panel" onClick={() => onOpenPanel(APPROVALS_ID)}>
+            Review
+          </button>
+        )}
         <span className="tool-spacer" />
         <span className="approval-meta" title={`Expires ${deadline.toLocaleString()}`}>
           {approval.name} · expires {deadline.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -527,7 +531,7 @@ const TurnView = memo(function TurnView({
         const approval = pendingApprovals.find((pending) => pending.operationId === entry.operationId && pending.callId === entry.callId);
         const badge = statusBadge({ result: pair.result, lifecycle: pair.status, approval: !!approval, started: !!pair.call?.started });
         if (badge.tone === "error") failed++;
-        if (approval) approvals.push(<ApprovalCard key={approval.id} approval={approval} call={pair.call} />);
+        if (approval) approvals.push(<ApprovalCard key={approval.id} approval={approval} call={pair.call} onOpenPanel={onOpenPanel} />);
         if (pair.result) results.push(pair.result);
         // A call that asked you something: its question cards are the only place the questions and answers show. A
         // call may ask several in turn; it waits for you while any of them is pending.

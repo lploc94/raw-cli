@@ -7,20 +7,28 @@ import type { ToolResultType } from "../../../src/tools/display.js";
 export const textOf = (segments: PreviewSegment[]) => segments.map((segment) => segment.text).join("\n");
 
 /**
- * Each line's class in a unified diff. File headers are recognized only outside a hunk; inside one, the line counts of
- * its `@@` header decide where it ends, so a changed line whose text starts with `--` or `++` stays a change.
+ * Each line's class in a unified diff. File headers are recognized only as an un-hunked `---`/`+++` pair; inside a
+ * hunk, the line counts of its `@@` header decide where it ends, so a changed line whose text starts with `--` or
+ * `++` stays a change. Approval previews also use the patch dialect's bare `@@` marker without counts; its
+ * following header-looking content remains inside the hunk.
  */
 export function diffKinds(lines: string[]): string[] {
   let oldLeft = 0;
   let newLeft = 0;
-  return lines.map((line) => {
+  let bareHunk = false;
+  return lines.map((line, index) => {
     const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
     if (hunk) {
       oldLeft = Number(hunk[1] ?? 1);
       newLeft = Number(hunk[2] ?? 1);
+      bareHunk = false;
       return "diff-hunk";
     }
-    if (oldLeft > 0 || newLeft > 0) {
+    if (line === "@@") {
+      bareHunk = true;
+      return "diff-hunk";
+    }
+    if (oldLeft > 0 || newLeft > 0 || bareHunk) {
       if (line.startsWith("+")) { newLeft--; return "diff-add"; }
       if (line.startsWith("-")) { oldLeft--; return "diff-remove"; }
       if (line.startsWith("\\")) return "diff-meta";
@@ -28,8 +36,10 @@ export function diffKinds(lines: string[]): string[] {
       newLeft--;
       return "diff-context";
     }
-    // File headers: a tool card's footer names the file, so the card hides them (docs/chat-design.md §6).
-    return /^(diff |index |--- |\+\+\+ )/.test(line) ? "diff-meta diff-file" : line.startsWith("@@") ? "diff-meta" : line.startsWith("+") ? "diff-add"
+    // Only a paired file header is metadata. A lone `--- text` or `+++ text` is content.
+    const fileHeader = (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ "))
+      || (line.startsWith("+++ ") && lines[index - 1]?.startsWith("--- "));
+    return fileHeader || /^(diff |index )/.test(line) ? "diff-meta diff-file" : line.startsWith("@@") ? "diff-meta" : line.startsWith("+") ? "diff-add"
       : line.startsWith("-") ? "diff-remove" : "diff-context";
   });
 }

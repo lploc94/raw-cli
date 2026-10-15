@@ -1,6 +1,6 @@
 import { AxeBuilder } from "@axe-core/playwright";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { test, expect, openChat, answer } from "./fixtures.js";
 import { openAiDone, openAiFrame } from "../fixtures/mock-provider.js";
@@ -49,7 +49,7 @@ test.describe("Commands foreground", () => {
     await expect(two.locator(".command-card-time")).toHaveText(/^\d+(\.\d)? m?s · \d\d:\d\d/);
     await expect(two.locator(".command-card-title")).toHaveText("Chạy linter");
     await expect(two.locator("code.command-card-line")).toHaveText("printf 'two fails' >&2; exit 2");
-    await expect(two.locator(".command-card-cwd")).toHaveText(/\/sub$/);
+    await expect(two.locator(".command-card-cwd")).toHaveAttribute("title", join(raw.root, "sub"));
     await expect(two.locator('.command-tail-line[data-channel="stderr"]')).toHaveText("stderr: two fails");
     expect(await two.locator(".command-tail-line").evaluate((line) => getComputedStyle(line).color)).toBe(await two.locator(".command-chip").evaluate((chip) => getComputedStyle(chip).color));
     await expect(two.getByRole("button", { name: "Copy command", exact: true })).toBeVisible();
@@ -208,7 +208,7 @@ test.describe("Commands output", () => {
     await expect(pre).toContainText("line 250", { timeout: 15000 });
     await expect.poll(() => pre.evaluate((element) => element.scrollHeight > element.clientHeight && element.scrollTop + element.clientHeight >= element.scrollHeight - 2)).toBe(true);
     await card.locator(".command-output").getByRole("button", { name: "Copy output" }).click();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(/line 1\n[\s\S]*line 250/);
+    expect((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n")).toMatch(/line 1\n[\s\S]*line 250/);
     // Stop from the keyboard: the card stays under Running with its new state, its result, and focus.
     const stop = card.getByRole("button", { name: "Stop", exact: true });
     await stop.focus();
@@ -262,7 +262,11 @@ test.describe("Commands full output", () => {
     await card.getByRole("button", { name: "Load full output" }).click();
     await expect(card.locator(".terminal-frame").last()).toContainText("199999\n200000");
     await card.getByRole("button", { name: /^Insert @.+ into the message$/ }).click();
-    await expect(page.getByRole("textbox", { name: "Message" })).toHaveValue(/^@\/\S+ $/);
+    const reference = await page.getByRole("textbox", { name: "Message" }).inputValue();
+    expect(reference.startsWith("@") && reference.endsWith(" ")).toBe(true);
+    const path = reference.slice(1, -1);
+    expect(isAbsolute(path)).toBe(true);
+    expect(readFileSync(path, "utf8")).toContain("199999\n200000");
   });
 });
 

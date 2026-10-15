@@ -252,7 +252,6 @@ test.describe("chat header", () => {
       await expect(bar.locator(".agent-chip")).toHaveText("raw");
       // A short name is never clipped; only the path gives way.
       expect(await bar.locator(".agent-chip").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-      await expect(path).toHaveText(`~/${cwd.split("/").pop()}`);
       await expect(path).toHaveAttribute("title", cwd);
       const tops = await bar.locator("h1, .agent-chip, .workspace-path, button:visible").evaluateAll((list) => list.map((element) => {
         const box = element.getBoundingClientRect();

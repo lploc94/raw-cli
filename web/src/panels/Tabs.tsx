@@ -53,14 +53,20 @@ export function TabStrip({ tabs, active, panelId, idOf, onSelect, onDrop }: {
   useEffect(() => () => stopDrag.current?.(), []);
   useEffect(() => setFocus(active), [active]);
   const focusable = tabs.some((tab) => tab.id === focus) ? focus : active;
-  // The selected tab is scrolled into the strip's view; only the strip moves, never the page or the focus.
+  // Reveal the active or keyboard-focused tab inside the strip without scrolling the page. Details reserves its
+  // pinned space, so a newly focused tab cannot disappear behind the context badge.
   useLayoutEffect(() => {
     const box = strip.current;
-    const tab = box?.querySelector<HTMLElement>(`[data-tab="${CSS.escape(active)}"]`);
+    const tab = box?.querySelector<HTMLElement>(`[data-tab="${CSS.escape(focusable)}"]`);
     if (!box || !tab) return;
-    if (tab.offsetLeft < box.scrollLeft) box.scrollLeft = tab.offsetLeft;
-    else if (tab.offsetLeft + tab.offsetWidth > box.scrollLeft + box.clientWidth) box.scrollLeft = tab.offsetLeft + tab.offsetWidth - box.clientWidth;
-  }, [active, tabs.length]);
+    const bounds = box.getBoundingClientRect();
+    const target = tab.getBoundingClientRect();
+    const details = box.querySelector<HTMLElement>('[data-tab="__details"]');
+    const left = bounds.left + 3;
+    const right = (details && details !== tab ? details.getBoundingClientRect().left : bounds.right) - 3;
+    if (target.left < left) box.scrollLeft += target.left - left;
+    else if (target.right > right) box.scrollLeft += target.right - right;
+  }, [active, focusable, tabs.length]);
   const move = (event: KeyboardEvent<HTMLDivElement>) => {
     const index = tabs.findIndex((tab) => tab.id === focusable);
     const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index - 1 + tabs.length) % tabs.length

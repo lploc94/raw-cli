@@ -2380,6 +2380,166 @@ code.tool-summary {
 .approval-actions .foot-button:hover:not(:disabled) {
   background: var(--panel-hover);
 }
+.approval-top button {
+  flex: none;
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.approval-top .foot-button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+.approval-top .foot-button:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+/* The side panel's Approvals tab (docs/side-panel-design.md §3.3): one review card per call waiting for permission. */
+.approvals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.review-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--warning-border);
+  border-radius: 12px;
+  background: var(--sp-card);
+  font-size: 13px;
+}
+.review-top,
+.review-headline,
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+}
+.review-top .sp-chip {
+  flex: none;
+}
+.review-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+.review-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 550;
+}
+.review-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-ligatures: none;
+}
+.review-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.review-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.review-file-row:hover {
+  background: var(--panel-hover);
+}
+.review-file-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.review-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+.review-file-folder,
+.review-file-operation {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+.review-file-operation,
+.review-file-stats {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.review-file-added {
+  color: var(--success);
+}
+.review-file-removed {
+  margin-left: 4px;
+  color: var(--error);
+}
+.review-file-row[aria-expanded="true"] .panel-chevron {
+  transform: rotate(90deg);
+}
+.review-note {
+  margin: 2px 6px 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.review-arguments .code-block {
+  margin: 0;
+}
+.review-effects {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.review-actions button {
+  flex: none;
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.review-actions .foot-button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+.review-actions .foot-button:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+.review-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
 .compaction {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -4603,6 +4763,7 @@ code.tool-summary {
 .sp-tabs {
   display: flex;
   flex: none;
+  min-width: 0;
   gap: 2px;
   padding: 3px;
   border-radius: 10px;
@@ -4620,7 +4781,8 @@ code.tool-summary {
   flex: none;
   align-items: center;
   gap: 5px;
-  min-height: 0;
+  min-width: 32px;
+  min-height: 32px;
   padding: 5px 8px;
   border: 0;
   border-radius: 7px;
@@ -4644,6 +4806,21 @@ code.tool-summary {
   box-shadow: var(--seg-on-shadow);
 }
 .sp-tab.active:hover:not(:disabled) {
+  background: var(--seg-on);
+}
+
+/* Details is always last in document order, but its context badge remains visible while earlier tabs scroll. */
+.sp-tab[data-tab="__details"] {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--seg);
+}
+.sp-tab[data-tab="__details"]:hover:not(:disabled) {
+  background: var(--seg);
+}
+.sp-tab[data-tab="__details"].active,
+.sp-tab[data-tab="__details"].active:hover:not(:disabled) {
   background: var(--seg-on);
 }
 .sp-tab:focus-visible {

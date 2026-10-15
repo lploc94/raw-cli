@@ -3,6 +3,7 @@ import type { ChecklistItem, FileEntry, PanelBlock, PanelDocument, StepItem } fr
 import { derivedProgress, derivedSummary } from "../../../src/panels/render.js";
 import type { PanelStackItem } from "../../../src/panels/stack.js";
 import type { UsageSummary } from "../../../src/llm/cache.js";
+import type { Approval } from "../../../src/dashboard/approvals.js";
 import type { CommandRecord } from "../../../src/processes/presentation.js";
 import { contextUsage, type ContextUsageInput } from "../composer/context-usage.js";
 import { commandFailed, commandRunning } from "./commands-state.js";
@@ -106,6 +107,17 @@ export function summarizeCommands(items: readonly CommandRecord[], now: number):
   if (!lines.length) lines.push({ text: "No commands yet" });
   const summary = items.length ? `${running.length} running · ${failed.length} failed · ${items.length} total` : undefined;
   return { ...(badge ? { badge } : {}), chips, lines, ...(summary ? { summary } : {}) };
+}
+
+/** The Approvals tab's badge and Overview card (docs/side-panel-design.md §3.3): how many wait, newest first. */
+export function summarizeApprovals(items: readonly Approval[], now: number): PanelSummary {
+  const waiting = [...items].sort((a, b) => b.createdAt - a.createdAt);
+  const badge: PanelSummary["badge"] = waiting.length ? { text: String(waiting.length), tone: "warning", label: `${waiting.length} waiting for approval` } : undefined;
+  const chips: PanelSummary["chips"] = waiting.length ? [{ text: `${waiting.length} waiting`, tone: "warning" }] : [];
+  // The time left, never negative: an approval whose deadline passed reads `0s`, not a minus sign.
+  const lines: SummaryLine[] = waiting.slice(0, 2).map((item) => ({ text: item.title || item.name, meta: formatDuration(Math.max(0, item.deadline - now)) }));
+  if (!lines.length) lines.push({ text: "Nothing waits for approval" });
+  return { ...(badge ? { badge } : {}), chips, lines, ...(waiting.length ? { summary: `${waiting.length} waiting for approval` } : {}) };
 }
 
 /** `950`, `6.9k`, `128k`, `1.3M`. */

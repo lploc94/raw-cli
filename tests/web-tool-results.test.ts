@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { VisibleToolResult } from "../src/sessions/visible.js";
-import { diffCountable, diffFileCount, resultCopy } from "../web/src/tool-cards/result-data.js";
+import { diffCountable, diffFileCount, diffKinds, diffStats, resultCopy } from "../web/src/tool-cards/result-data.js";
 import { diffTotals } from "../web/src/tool-cards/diff-totals.js";
 
 // What a work group counts and copies from tool results (docs/chat-design.md §6).
@@ -36,6 +36,15 @@ test("a removed line that starts with `-- ` is a change, not a new file", () => 
   assert.equal(diffCountable(sql), true);
   assert.deepEqual(diffTotals([result({ host: { diff: sql } })]), { added: 1, removed: 1 });
   assert.equal(diffFileCount(result({ host: { diff: sql } })), 1);
+});
+
+test("a bare patch hunk keeps header-like removed and added content as changes", () => {
+  const preview = "--- a/src/a.ts\n+++ b/src/a.ts\n@@\n--- old header\n+++ new header";
+  assert.deepEqual(diffKinds(preview.split("\n")), [
+    "diff-meta diff-file", "diff-meta diff-file", "diff-hunk", "diff-remove", "diff-add",
+  ]);
+  assert.equal(diffCountable(preview), true);
+  assert.deepEqual(diffStats(preview), { added: 1, removed: 1 });
 });
 
 test("the file count comes from host files, else from the diff's headers", () => {

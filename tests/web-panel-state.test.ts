@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PanelStackItem } from "../src/panels/stack.js";
+import type { Approval } from "../src/dashboard/approvals.js";
 import { reduceEvent } from "../web/src/session.js";
 import { dashboardFixture } from "./fixtures/dashboard.js";
 import type { SessionSnapshot } from "../src/dashboard/sessions.js";
@@ -296,6 +297,35 @@ test("host Commands has independent layout identity and terminal output is inert
   assert.deepEqual(layout([host, tool], prefs, "raw").visible.map(entry => entry.panel), [tool.panel]);
   assert.deepEqual(layout([host, tool], prefs, "raw").hidden.map(entry => entry.panel), [host.panel]);
   assert.equal(terminalText("\u001b[31mred\u001b[0m\u001b]8;;https://invalid\u0007link\u001b]8;;\u0007\u0000\n"), "redlink\n");
+});
+
+test("host Approvals has its own layout identity and a revision that follows the newest request", async () => {
+  const { approvalsSection, APPROVALS_ID } = await import("../web/src/panels/approvals-state.js");
+  const request = (id: string, createdAt: number) => ({ id, sessionId: "s", operationId: "op", callId: "call", name: "builtin/write_file",
+    title: "Write file", summary: "reports/links.md", arguments: { path: "reports/links.md", content: "x" }, createdAt, deadline: createdAt + 600_000 }) as Approval;
+  const empty = approvalsSection([]);
+  assert.equal(empty.panel, APPROVALS_ID);
+  assert.equal(empty.owner, "");
+  assert.equal(empty.revision, 0);
+  assert.equal(empty.document, null);
+  assert.equal(empty.closed, false);
+  assert.equal(empty.stale, false);
+  // A host tab is never opened by the stack's first-update rule and offers no panel action.
+  assert.equal(empty.declaration.open, "never");
+  assert.deepEqual(empty.declaration.actions, []);
+  const one = approvalsSection([request("a", 100)]);
+  assert.equal(one.revision, 100);
+  assert.equal(one.updatedAt, 100);
+  assert.match(one.document?.summary ?? "", /1 waiting for approval/);
+  assert.equal(one.document?.subtitle, "Tool calls waiting for your answer");
+  // Answering one request and asking again later must look new again: seen compares revisions, not counts.
+  const seen = markSeen(emptyPrefs(), "s", APPROVALS_ID, approvalsSection([request("a", 100), request("b", 250)]).revision);
+  assert.equal(unseen(seen, "s", approvalsSection([request("a", 100), request("b", 250)])), false);
+  assert.equal(unseen(seen, "s", approvalsSection([request("a", 100), request("b", 250), request("c", 300)])), true);
+  const tool = item("builtin/write_file#files", 1);
+  const prefs = setHidden(setOrder(emptyPrefs(), "raw", [tool.panel, APPROVALS_ID]), "raw", APPROVALS_ID, true);
+  assert.deepEqual(layout([one, tool], prefs, "raw").visible.map(entry => entry.panel), [tool.panel]);
+  assert.deepEqual(layout([one, tool], prefs, "raw").hidden.map(entry => entry.panel), [APPROVALS_ID]);
 });
 
 test("command snapshots replace the host projection without mutating concurrent tool panels", async () => {

@@ -3,7 +3,8 @@ import { test } from "node:test";
 import type { PanelDocument } from "../src/panels/contract.js";
 import type { PanelStackItem } from "../src/panels/stack.js";
 import type { CommandRecord } from "../src/processes/presentation.js";
-import { compactTokens, reportsTokens, summarizeCommands, summarizeContext, summarizePanel } from "../web/src/panels/summaries.js";
+import type { Approval } from "../src/dashboard/approvals.js";
+import { compactTokens, reportsTokens, summarizeApprovals, summarizeCommands, summarizeContext, summarizePanel } from "../web/src/panels/summaries.js";
 
 const item = (document: PanelDocument | null, extra: Partial<PanelStackItem> = {}): PanelStackItem => ({
   panel: "x#p", owner: "x", title: "Panel", icon: "panel", revision: document ? 1 : 0, updatedAt: document ? 1 : null, closed: false, stale: false,
@@ -108,6 +109,28 @@ test("commands report running first, then failed, newest first", () => {
   assert.deepEqual(stopped.chips, []);
   assert.deepEqual(stopped.lines, [{ text: "cmd-x", meta: "stopped" }]);
   assert.deepEqual(summarizeCommands([], now).lines, [{ text: "No commands yet" }]);
+});
+
+test("approvals report how many wait, newest first, with the time left", () => {
+  const now = 1_000_000;
+  const pending = (id: string, title: string, createdAt: number, deadline: number) => ({ id, sessionId: "s", operationId: "op", callId: "call",
+    name: "builtin/write_file", title, summary: "src/a.ts", arguments: {}, createdAt, deadline }) as Approval;
+  const summary = summarizeApprovals([pending("a", "Write file", now - 90_000, now + 120_000), pending("b", "Edit src/app.ts", now - 10_000, now + 30_000)], now);
+  assert.deepEqual(summary.badge, { text: "2", tone: "warning", label: "2 waiting for approval" });
+  assert.deepEqual(summary.chips, [{ text: "2 waiting", tone: "warning" }]);
+  assert.deepEqual(summary.lines, [
+    { text: "Edit src/app.ts", meta: "30s" },
+    { text: "Write file", meta: "2m" },
+  ]);
+  assert.equal(summary.status, undefined);
+  assert.equal(summary.summary, "2 waiting for approval");
+  // Only the two newest requests earn a line, and a deadline already past is not shown as negative time.
+  const late = summarizeApprovals([pending("c", "Write file", now - 5_000, now - 1_000), pending("d", "Edit src/app.ts", now - 4_000, now + 1_000), pending("e", "Third", now - 3_000, now + 2_000)], now);
+  assert.deepEqual(late.lines, [{ text: "Third", meta: "2s" }, { text: "Edit src/app.ts", meta: "1s" }]);
+  assert.deepEqual(summarizeApprovals([pending("f", "Write file", now - 5_000, now - 1_000)], now).lines, [{ text: "Write file", meta: "0s" }]);
+  assert.deepEqual(summarizeApprovals([], now).lines, [{ text: "Nothing waits for approval" }]);
+  assert.equal(summarizeApprovals([], now).badge, undefined);
+  assert.deepEqual(summarizeApprovals([], now).chips, []);
 });
 
 test("context use is measured against the compact trigger or the window, coloured by fill", () => {

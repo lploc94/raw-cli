@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { PanelStackItem } from "../../../src/panels/stack.js";
 import { COMMANDS_ID, commandsSection } from "./commands-state.js";
+import { APPROVALS_ID, approvalsSection } from "./approvals-state.js";
 import { api } from "../api.js";
 import type { ChatState } from "../session.js";
 import { OVERVIEW_ID, activeTab, firstOpenTarget, mergeStack, hasOpened, layout, loadPrefs, markOpened, savePrefs, setHidden, setTab, type PanelPrefs } from "./panel-state.js";
@@ -61,7 +62,11 @@ export function usePanelStack(opts: {
   const livePanels = state?.panels;
   // Another agent's stack comes from the server, but a panel's content is the session's: newer streamed revisions win.
   const toolItems = useMemo(() => (foreign ? (fetched && livePanels ? mergeStack(livePanels, fetched, []).items : NONE) : (livePanels ?? NONE)), [foreign, fetched, livePanels]);
-  const items = useMemo(() => state?.commands?.length ? [...toolItems, commandsSection(state.commands)] : toolItems, [toolItems, state?.commands]);
+  // The host's own tabs come last: Commands while any command is listed, Approvals while any call waits for permission.
+  const items = useMemo(() => {
+    const withCommands = state?.commands?.length ? [...toolItems, commandsSection(state.commands)] : toolItems;
+    return state?.approvals.length ? [...withCommands, approvalsSection(state.approvals)] : withCommands;
+  }, [toolItems, state?.commands, state?.approvals]);
   const stackAgent = agent || saved;
 
   /**
