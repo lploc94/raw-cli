@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- The dashboard has a **Files** tab beside Chat, Agents and Library: a read-only
+  tree of the selected workspace (the same git-aware view the agent's `@`
+  references use) with a filter, and a viewer for code, Markdown (Source and
+  Preview) and raster images. It never writes, a path that leaves the workspace
+  stays unreachable, and the open file lives in the address so a reload keeps
+  the place.
+- Files reads and browser caches now follow the selected workspace. Reload
+  immediately refreshes both the listing and open text or image, Retry
+  rereads failed files, and direct reads refuse `.git` / `node_modules`
+  paths and symlink targets. Phone-width navigation keeps visible labels,
+  and management page identity no longer includes URL query parameters.
+- Files deep links remain readable when the tree has no listed files.
+  Raw image reads accept only declared raster extensions and enforce the
+  16 MiB limit during the read, including when another process grows the file.
+
 ## [0.1.5] - 2026-10-13
 
 - Raw runs natively on Windows 10/11 without WSL. The `bash` tool finds Git

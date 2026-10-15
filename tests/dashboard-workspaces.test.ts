@@ -227,7 +227,7 @@ test("browse caps a huge directory at 500 entries and says so", async () => {
 test("workspace routes require the dashboard token", async () => {
   const f = await dashboardFixture({ responses: [reply] });
   try {
-    for (const path of ["/workspaces", "/workspaces/browse"]) {
+    for (const path of ["/workspaces", "/workspaces/browse", "/workspaces/files", "/workspaces/file?path=x", "/workspaces/file?path=x&raw=1"]) {
       const response = await fetch(`${f.server.url}/api${path}`);
       assert.equal(response.status, 401, path);
     }

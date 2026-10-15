@@ -30,6 +30,23 @@ const pointAt = async (page: Page, locator: Locator, click = false) => {
 const nav = (page: Page, name: string) => page.getByRole("navigation", { name });
 const count = (page: Page, label: string) =>
   nav(page, "Library categories").getByRole("link", { name: label, exact: true }).locator(".nav-count");
+test("management route pages ignore unrelated query parameters", async ({ page, raw }) => {
+  await seedLibrary(raw);
+  const launch = raw.server.launchUrl;
+  await page.goto(launch);
+  const origin = new URL(launch).origin;
+  await page.goto(`${origin}/settings/models?from=palette`);
+  await expect(page.getByRole("heading", { name: "Models & connections", exact: true })).toBeVisible();
+  await page.goto(`${origin}/settings/models/fixture?from=palette`);
+  await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("fixture");
+  await page.goto(`${origin}/agents/raw?from=palette`);
+  await expect(page.getByLabel("System prompt", { exact: true })).toBeVisible();
+  await page.goto(`${origin}/library/tools/local%2Fprobe?from=palette`);
+  await expect(page.getByRole("heading", { name: "local/probe", exact: true })).toBeVisible();
+  await page.goto(`${origin}/library/packages/shared?from=palette`);
+  await expect(page.getByRole("heading", { name: "shared", exact: true })).toBeVisible();
+});
+
 
 test.describe("navigation rows", () => {
   test("navigation rows fill on hover and are never underlined", async ({ page, raw }) => {

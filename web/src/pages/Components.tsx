@@ -12,9 +12,9 @@ export function ComponentsPage({
   kind: ComponentKind;
   changed: () => Promise<void>;
 }) {
-  const { path } = useRouter();
-  const id = path.split("/")[3]
-    ? decodeURIComponent(path.split("/")[3]!)
+  const { route } = useRouter();
+  const id = route.split("/")[3]
+    ? decodeURIComponent(route.split("/")[3]!)
     : undefined;
   const {
     data: loaded,

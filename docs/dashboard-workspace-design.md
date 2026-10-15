@@ -12,7 +12,7 @@ Status: design accepted 2026-09-29; implemented across the three phases of the p
 ## Non-goals
 
 - Remembering the selected workspace across a reload (it still starts at the directory `raw dashboard` was launched in).
-- Multi-folder projects, renaming or relocating workspaces, cloning repositories, opening files.
+- Multi-folder projects, renaming or relocating workspaces, cloning repositories, opening files outside the selected workspace.
 - Storing anything on the server or in config. Creating, renaming or deleting directories.
 
 ## Industry pattern
@@ -39,6 +39,10 @@ Recent is the server's recently used workspaces plus the folders opened from thi
 ### D6. A server-side, read-only folder listing
 A browser cannot list the filesystem, so "Open folder…" is backed by `GET /api/workspaces/browse`. It returns directory names only, never files, sizes, times or contents, never writes, is capped at 500 entries, and uses the same Bearer token as every other route; it therefore reveals nothing the dashboard's own user account could not already read. Hidden folders are opt-in, and symbolic links that resolve to folders are listed and marked (a link to a file or a broken link is omitted). Choosing is always re-validated by `POST /api/workspaces/validate`, so the listing is a convenience and never an authority.
 
+The **Files** tab extends this deliberately, and the reasoning above is why: the dashboard may also list the selected workspace's files (`GET /api/workspaces/files`) and read one for display (`GET /api/workspaces/file`, `?raw=1` for raster images), because that is the same user reading their own files. Those routes stay inside the selected workspace by the same rules `workspaceFileLink` applies, never write, and are host reads rather than tool dispatches: no policy rule, hook or approval runs for them, since the agent's rules govern the agent, not the person looking at a file. Nothing outside the selected workspace becomes reachable, and the switcher remains the only way to change what is.
+The client sends the selected `cwd` with every Files listing, text and image read, and includes it in the browser cache keys. The server validates it as for `/api/sessions`; omitting it preserves the invoking-directory default. Reload uses `refresh=1` to bypass the short listing cache and explicitly re-reads the selected file. The reader refuses `.git` and `node_modules` segments in both the requested path and canonical symlink target. Other ignored files, such as `.env`, remain readable through an explicit in-workspace path: ignore rules curate the tree, not the dashboard user's filesystem permissions.
+
+
 ### D7. The typed path is the fallback
 **Open this folder** validates the text in the path field, not the last listing, so a failing `browse` (network, permission, oversized directory) never blocks choosing a folder. Errors stay inline; a slower earlier listing never overwrites a newer one, and a listing that arrives after the user typed never replaces what was typed.
 
@@ -58,4 +62,5 @@ A browser cannot list the filesystem, so "Open folder…" is backed by `GET /api
 | D4 | `tests/dashboard-ui/workspace.spec.ts` (keyboard, focus return, axe) |
 | D5 | `tests/web-workspace-state.test.ts`, `tests/dashboard-ui/workspace.spec.ts` |
 | D6 | `tests/dashboard-workspaces.test.ts` (directories only, no file names, caps, errors), `tests/dashboard-ui/workspace.spec.ts` (folder browser) |
+| D6 (files) | `tests/dashboard-workspace-files.test.ts` (workspace-relative paths, ignore rules, caps and totals, confinement, binary and image rules), `tests/dashboard-ui/files.spec.ts` (the tab) |
 | D7 | `tests/dashboard-ui/workspace.spec.ts` (browse failing, removed before Open, stale listing) |

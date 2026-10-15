@@ -2900,25 +2900,214 @@ code.tool-summary {
     inset: 0;
   }
 }
-@media (max-width: 380px) {
+@media (max-width: 420px) {
+  /* Keep the complete mobile rail readable at phone widths; the rail itself, not the page, may scroll if needed. */
   .rail {
     gap: 2px;
-    padding-inline: 5px;
+    justify-content: flex-start;
+    padding-inline: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .rail::-webkit-scrollbar {
+    display: none;
   }
   .rail a {
+    width: auto;
+    min-width: 32px;
+    flex: 0 1 auto;
     gap: 3px;
-    padding-inline: 4px;
-    flex-shrink: 0;
+    padding-inline: 3px;
+    font-size: 10px;
+    white-space: nowrap;
   }
   .rail a svg {
     width: 15px;
   }
   .rail .brand {
     min-width: 32px;
-    margin: 0 3px 0 0;
-    padding-inline: 4px;
+    margin-right: 1px;
+    padding-inline: 2px;
   }
 }
+/* Read-only Files page for the selected workspace. */
+.files-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+}
+.files-page-hint,
+.files-nav-path {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.files-filter {
+  max-width: 360px;
+}
+.files-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.files-tree {
+  min-width: 0;
+  overflow: auto;
+}
+.files-tree-list {
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+.files-page > .files-tree > .files-tree-list {
+  padding-left: 0;
+}
+.files-tree-item {
+  min-width: 0;
+}
+.files-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.files-tree-row:hover {
+  background: var(--panel-hover);
+}
+.files-tree-row[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.files-tree-chevron {
+  flex: none;
+  transition: transform 120ms ease;
+}
+.files-tree-row[aria-expanded="true"] .files-tree-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .files-tree-chevron {
+    transition: none;
+  }
+}
+.files-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.files-panes {
+  display: grid;
+  grid-template-columns: minmax(200px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  min-width: 0;
+}
+.files-pane {
+  min-width: 0;
+}
+.files-viewer-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 240px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.files-viewer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.files-viewer-head button {
+  flex: none;
+  min-height: 32px;
+}
+.files-viewer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+.files-viewer-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.files-modes {
+  display: flex;
+  gap: 6px;
+}
+.files-view-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.files-view-tools button {
+  flex: none;
+  min-height: 32px;
+}
+.files-modes .foot-button {
+  min-height: 32px;
+}
+.files-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: var(--code);
+}
+.files-plain {
+  max-height: 60vh;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--code);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-ligatures: none;
+  line-height: 1.6;
+  white-space: pre;
+}
+.files-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.files-view-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+@media (max-width: 899px) {
+  .files-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 
 /* Resource editors keep actions visible while long source content scrolls. */
 .editor-actions {

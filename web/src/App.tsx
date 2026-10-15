@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   Command,
+  FolderTree,
   Library,
   Menu,
   MessageSquare,
@@ -54,6 +55,7 @@ import { PackagesPage } from "./pages/Packages.js";
 import { ComponentsPage } from "./pages/Components.js";
 import { DefinitionsPage } from "./pages/Definitions.js";
 import { SettingsPage, SettingsSearch } from "./pages/Settings.js";
+import { FilesNav, FilesPage } from "./pages/Files.js";
 import { FolderBrowser } from "./workspace/FolderBrowser.js";
 import { WorkspaceSwitcher } from "./workspace/WorkspaceSwitcher.js";
 import { loadState, recordOpened, relativeTime, saveState, type WorkspaceState } from "./workspace/workspace-state.js";
@@ -147,9 +149,10 @@ function AgentsNav({ bootstrap, current }: { bootstrap: DashboardBootstrap | und
 }
 
 export function App() {
-  const { path, navigate } = useRouter();
+  const { path, navigate, route } = useRouter();
+  // A page's own state can live in the query (the Files tab's open file), so page identity reads the pathname alone.
   const currentAgent = (() => {
-    const segment = path.split("/")[1] === "agents" ? path.split("/")[2] : undefined;
+    const segment = route.split("/")[1] === "agents" ? route.split("/")[2] : undefined;
     try {
       return segment ? decodeURIComponent(segment) : undefined;
     } catch {
@@ -183,8 +186,8 @@ export function App() {
   const [command, setCommand] = useState("");
   const [activityOpen, setActivityOpen] = useState(false);
   const drafts = useRef(new Map<string, string>());
-  const page = path.split("/")[1] || "chat";
-  const librarySection = page === "library" ? path.split("/")[2] || "tools" : undefined;
+  const page = route.split("/")[1] || "chat";
+  const librarySection = page === "library" ? route.split("/")[2] || "tools" : undefined;
   const main = useRef<HTMLElement>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
   const shownPage = useRef<string | undefined>(undefined);
@@ -205,7 +208,7 @@ export function App() {
     );
   }, [page]);
   const previousActivity = useRef("[]");
-  const sessionId = page === "chat" ? path.split("/")[2] : undefined;
+  const sessionId = page === "chat" ? route.split("/")[2] : undefined;
   /** Management pages call this after a write: refresh bootstrap plus the shared `/config`. */
   const refreshBootstrap = useCallback(async () => {
     await Promise.all([mutateBootstrap(), globalMutate(keys.config())]);
@@ -468,7 +471,7 @@ export function App() {
             <Link
               key={name}
               href={`/settings/${name}`}
-              aria-current={path.endsWith(`/${name}`) ? "page" : undefined}
+              aria-current={route.endsWith(`/${name}`) ? "page" : undefined}
             >
               {name === "models"
                 ? "Models & connections"
@@ -480,6 +483,8 @@ export function App() {
         </nav>
       ) : page === "library" ? (
         <LibraryNav current={librarySection} />
+      ) : page === "files" ? (
+        <FilesNav workspace={workspace} />
       ) : (
         <AgentsNav bootstrap={bootstrap} current={currentAgent} />
       )}
@@ -504,6 +509,7 @@ export function App() {
               { id: "chat", label: "Chat", Icon: MessageSquare },
               { id: "agents", label: "Agents", Icon: Bot },
               { id: "library", label: "Library", Icon: Library },
+              { id: "files", label: "Files", Icon: FolderTree },
             ] as const
           ).map(({ id, label, Icon }) => (
             <Link
@@ -511,6 +517,7 @@ export function App() {
               href={`/${id}`}
               className={page === id ? "active" : ""}
               aria-current={page === id ? "page" : undefined}
+              title={label}
               onPointerEnter={id === "chat" ? undefined : prefetchConfig}
               onFocus={id === "chat" ? undefined : prefetchConfig}
             >
@@ -522,6 +529,7 @@ export function App() {
             href="/settings/general"
             className={`settings-link ${page === "settings" ? "active" : ""}`}
             aria-current={page === "settings" ? "page" : undefined}
+            title="Settings"
             onPointerEnter={prefetchConfig}
             onFocus={prefetchConfig}
           >
@@ -683,10 +691,12 @@ export function App() {
                       : `Choose an agent and work on a task in ${workspace}.`}
                 </Empty>
               )
+            ) : page === "files" ? (
+              <FilesPage workspace={workspace} />
             ) : page === "settings" &&
-              (path.endsWith("/appearance") || path.endsWith("/chat")) ? (
+              (route.endsWith("/appearance") || route.endsWith("/chat")) ? (
               <PreferencesPage
-                kind={path.endsWith("/chat") ? "chat" : "appearance"}
+                kind={route.endsWith("/chat") ? "chat" : "appearance"}
                 value={preferences}
                 setValue={setPreferences}
               />
@@ -763,6 +773,7 @@ export function App() {
               { label: "Chat", path: "/chat" },
               { label: "Agents", path: "/agents" },
               { label: "Library", path: "/library" },
+              { label: "Files", path: "/files" },
               { label: "Settings", path: "/settings/general" },
               { label: "Appearance", path: "/settings/appearance" },
               { label: "Chat preferences", path: "/settings/chat" },

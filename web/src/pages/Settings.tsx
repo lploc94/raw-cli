@@ -97,8 +97,8 @@ export function SettingsPage({
   changed: () => Promise<void>;
   createChat: (name?: string) => Promise<void>;
 }) {
-  const { path } = useRouter(),
-    category = path.split("/")[2] || "general";
+  const { route } = useRouter(),
+    category = route.split("/")[2] || "general";
   const { data: config, error: configError } = useConfig();
   const [error, setError] = useState(""),
     [status, setStatus] = useState("");
@@ -373,9 +373,9 @@ function ModelsPage({
   changed: () => Promise<void>;
   createChat: (name?: string) => Promise<void>;
 }) {
-  const { path, navigate } = useRouter();
-  const name = path.split("/")[3]
-    ? decodeURIComponent(path.split("/")[3]!)
+  const { route, navigate } = useRouter();
+  const name = route.split("/")[3]
+    ? decodeURIComponent(route.split("/")[3]!)
     : undefined;
   const { data: config, error: configError } = useConfig();
   const [creating, setCreating] = useState(false),

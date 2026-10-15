@@ -11,9 +11,9 @@ export function AgentsPage({
   changed: () => Promise<void>;
   createChat: (name?: string) => Promise<void>;
 }) {
-  const { path } = useRouter();
-  const name = path.split("/")[2]
-    ? decodeURIComponent(path.split("/")[2]!)
+  const { route } = useRouter();
+  const name = route.split("/")[2]
+    ? decodeURIComponent(route.split("/")[2]!)
     : undefined;
   const { data: config, error: configError } = useConfig();
   const gate = usePageGate({ ready: !!config, error: configError, onRetry: () => void changed(), label: "Loading agents" });

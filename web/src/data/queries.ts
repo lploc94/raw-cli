@@ -1,6 +1,7 @@
 import useSWR, { preload } from "swr";
 import useSWRInfinite, { type SWRInfiniteKeyedMutator } from "swr/infinite";
 import type { DashboardBootstrap } from "../../../src/dashboard/contract.js";
+import type { WorkspaceFileListing } from "../../../src/dashboard/files.js";
 import type { ConfigView } from "../../../src/dashboard/management.js";
 import type { PackageStageView, PackageView } from "../../../src/dashboard/packages.js";
 import type { ComponentInfo } from "../../../src/management/components.js";
@@ -54,6 +55,14 @@ export function usePackageStages() {
 
 export function useComponents(kind: string) {
   return useSWR<ComponentInfo[]>(keys.components(kind));
+}
+
+/** The selected workspace's files, as the Files tab's tree reads them. */
+export function useWorkspaceFiles(cwd: string) {
+  return useSWR<WorkspaceFileListing>(cwd ? keys.workspaceFiles(cwd) : null, {
+    keepPreviousData: false,
+    shouldRetryOnError: false,
+  });
 }
 
 /** The server's home directory, from the workspace listing; empty until it is known. Paths under it show as `~/…`. */

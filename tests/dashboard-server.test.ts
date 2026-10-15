@@ -50,7 +50,7 @@ test("loopback dashboard boots without config/credentials and authenticates ever
 test("known page refresh serves bundled entry but unknown assets/traversal never do", async () => {
   const f = fixture(); const server = await startDashboard(f.options);
   try {
-    for (const path of ["/", "/chat/some-session", "/settings/appearance", "/agents/raw", "/library/tools/agent%2Fexample", "/library/hooks", "/library/hooks/local%2Fguard", "/library/typo", "/library/typo/x"]) {
+    for (const path of ["/", "/chat/some-session", "/settings/appearance", "/agents/raw", "/files", "/library/tools/agent%2Fexample", "/library/hooks", "/library/hooks/local%2Fguard", "/library/typo", "/library/typo/x"]) {
       const response = await fetch(server.url + path); assert.equal(response.status, 200, path); assert.match(await response.text(), /Raw fixture/);
       assert.match(response.headers.get("content-security-policy")!, /frame-ancestors 'none'/);
     }

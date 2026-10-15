@@ -19,8 +19,8 @@ export function PackagesPage({
   changed: () => Promise<void>;
   createChat: (agent?: string) => Promise<void>;
 }) {
-  const { path } = useRouter();
-  const alias = path.split("/")[3] ? decodeURIComponent(path.split("/")[3]!) : undefined;
+  const { route } = useRouter();
+  const alias = route.split("/")[3] ? decodeURIComponent(route.split("/")[3]!) : undefined;
   const { data: packages, error: packagesError, mutate: mutatePackages } = usePackages();
   const { data: stages = [], error: stagesError, mutate: mutateStages } = usePackageStages();
   const { data: config } = useConfig();
