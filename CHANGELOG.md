@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- New shipped example `examples/packages/coding-kit/`: a `goal` panel tool with
+  acceptance criteria, steps and panel actions, a `goal` skill (which the
+  dashboard offers as `/goal`), a `coding-workflow` skill and a `coder` agent.
+  It is the reference for a package tool that declares a panel.
+
 ## [0.1.5] - 2026-10-13
 
 - Raw runs natively on Windows 10/11 without WSL. The `bash` tool finds Git

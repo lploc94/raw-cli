@@ -1,0 +1,42 @@
+{
+  "system_prompt_file": "prompts/coder.md",
+  "tools": {
+    "use": [
+      "builtin/read_file",
+      "builtin/write_file",
+      "builtin/edit_file",
+      "builtin/apply_patch",
+      "builtin/bash",
+      "builtin/powershell",
+      "builtin/list_skills",
+      "builtin/load_skill",
+      "#tools/goal"
+    ],
+    "rules": [
+      {
+        "match": "builtin/bash",
+        "effect": "ask",
+        "when": {
+          "any": "command",
+          "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)",
+          "source": "arguments"
+        }
+      },
+      {
+        "match": "builtin/powershell",
+        "effect": "ask",
+        "when": {
+          "any": "command",
+          "regex": "(^|[;&|()\\n])\\s*rm(\\s|$)",
+          "source": "arguments"
+        }
+      }
+    ]
+  },
+  "skills": {
+    "use": [
+      "#skills/goal",
+      "#skills/coding-workflow"
+    ]
+  }
+}

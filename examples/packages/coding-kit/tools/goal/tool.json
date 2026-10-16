@@ -1,0 +1,180 @@
+{
+  "api_version": 2,
+  "id": "goal",
+  "version": "1.0.0",
+  "name": "goal",
+  "description": "Tracks what the user wants and how they will judge it done, with acceptance criteria and steps, in a panel the user can see. Use it when a request has a completion condition you can check and needs three or more steps. Set the goal before starting, keep exactly one goal per session, and update criteria as evidence appears; only use outcome achieved when every criterion is met. Do not use it for a single trivial step, and do not restate a todo list in it: criteria are the definition of done, steps are the order of the work.",
+  "display": {
+    "title": "Goal",
+    "kind": "think",
+    "summary": "[{goal}]"
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "enum": [
+          "set",
+          "update"
+        ],
+        "default": "set",
+        "description": "set replaces the goal, its criteria and its steps; update changes the existing goal and its items by id."
+      },
+      "goal": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "description": "What the user wants, in one line: the panel shows it as the header. Required with mode set."
+      },
+      "done_when": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120,
+        "description": "How the user will judge it done, stated so it can be checked: the panel shows it as the subtitle. Required with mode set."
+      },
+      "criteria": {
+        "type": "array",
+        "maxItems": 200,
+        "description": "Acceptance criteria: statements that are either met or not. In mode set every item needs a label; in mode update an item with an id changes that criterion, and a label without an id adds one.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$",
+              "description": "Stable item id from an earlier result. Omit to add a new criterion."
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "The criterion or, in update mode, its new text."
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "in_progress",
+                "done",
+                "blocked",
+                "skipped"
+              ]
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 300,
+              "description": "Evidence for the status, such as the command and its result."
+            }
+          }
+        }
+      },
+      "steps": {
+        "type": "array",
+        "maxItems": 200,
+        "description": "The order of the work, when it is worth showing. At most one step may be in_progress.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$",
+              "description": "Stable item id from an earlier result. Omit to add a new step."
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "in_progress",
+                "done",
+                "blocked",
+                "skipped"
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "One line of detail; the panel shows at most 200 characters."
+            }
+          }
+        }
+      },
+      "outcome": {
+        "enum": [
+          "achieved",
+          "abandoned"
+        ],
+        "description": "Closes the goal: achieved marks the panel done, abandoned marks it failed. Use achieved only when every criterion is met; use abandoned when the user stops the work."
+      },
+      "clear": {
+        "const": "done",
+        "description": "update mode only: remove criteria that are done or skipped."
+      }
+    }
+  },
+  "entry": "./index.mjs",
+  "panels": [
+    {
+      "id": "goal",
+      "title": "Goal",
+      "icon": "flag",
+      "open": "first_update",
+      "context": "summary",
+      "acp_plan": true,
+      "actions": [
+        {
+          "id": "continue",
+          "label": "Continue",
+          "scope": "panel",
+          "kind": "prompt",
+          "send": false,
+          "text": "Continue working toward the current goal and report progress against its criteria."
+        },
+        {
+          "id": "achieve",
+          "label": "Mark achieved",
+          "scope": "panel",
+          "kind": "tool",
+          "arguments": {
+            "mode": "update",
+            "outcome": "achieved"
+          }
+        },
+        {
+          "id": "abandon",
+          "label": "Abandon goal",
+          "scope": "panel",
+          "kind": "tool",
+          "confirm": "Abandon this goal? The panel keeps its state; nothing else changes.",
+          "arguments": {
+            "mode": "update",
+            "outcome": "abandoned"
+          }
+        },
+        {
+          "id": "explain",
+          "label": "Explain blocker",
+          "scope": "item",
+          "blocks": [
+            "criteria"
+          ],
+          "kind": "prompt",
+          "text": "Explain why \"{{item.label}}\" is blocked and what you need from me to unblock it.",
+          "when": {
+            "status": [
+              "blocked"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "condition_sources": [
+    "arguments"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "@raw/coding-kit",
+  "version": "1.0.0",
+  "description": "A portable coding kit: a goal panel tool, a goal skill and a coding workflow skill",
+  "files": [
+    "agents/coder.json",
+    "prompts/coder.md",
+    "skills/coding-workflow/SKILL.md",
+    "skills/coding-workflow/references/verification.md",
+    "skills/goal/SKILL.md",
+    "tools/goal/index.mjs",
+    "tools/goal/tool.json"
+  ],
+  "exports": {
+    "agents": {
+      "coder": "agents/coder.json"
+    },
+    "tools": {
+      "goal": "tools/goal"
+    },
+    "skills": {
+      "goal": "skills/goal",
+      "coding-workflow": "skills/coding-workflow"
+    }
+  },
+  "requires": [
+    "raw.agent/1",
+    "raw.tool-api/2",
+    "raw.skill/1",
+    "raw.panel/2"
+  ]
+}
