@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Tool handlers (including package tools) receive `context.sessionId`, the persisted session the call runs in; it is absent when the runtime has no session store. A tool that ignores it behaves as before, so a package can keep per-session state.
 - New shipped example `examples/packages/goal-kit/`: a portable goal package
   with a `goal` tool and panel, a `Stop` hook using `raw.stop-continue/1` to
   keep a run going while the goal is active, a `SessionStart` hook that pauses

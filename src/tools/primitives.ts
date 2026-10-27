@@ -44,6 +44,8 @@ export interface ToolContext {
   autoApprove?: boolean;
   approve?: (request: ToolApprovalRequest) => boolean | Promise<boolean>;
   toolCallId?: string;
+  /** The persisted session the call runs in; absent when the runtime has no session store. Forwarded to plugin handlers. */
+  sessionId?: string;
   onStart?: (name: string, args: Record<string, unknown>) => void;
   /** `raw` is the call as the model sent it, present only when normalization changed it. */
   onHook?: (event: HookEventName, identity: string, name: string, args: Record<string, unknown>,

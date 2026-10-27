@@ -7,6 +7,19 @@ import { test } from "node:test";
 import { BUILTIN_TOOL_DEFINITIONS, createTestToolRegistry, ToolRegistry } from "./fixtures/registry.js";
 import { loadBundledTools } from "../src/tools/plugins/loader.js";
 
+test("a delegated call keeps the session id of the call that delegated", async () => {
+  const registry = new ToolRegistry();
+  const seen: Array<string | undefined> = [];
+  registry.register({ name: "target", canonicalName: "agent/target", description: "target", inputSchema: { type: "object" },
+    handler: async (_args, context) => { seen.push(context.sessionId); return { isError: false, content: [] }; } });
+  registry.register({ name: "outer", description: "outer", inputSchema: { type: "object" },
+    delegate: () => ({ identity: "agent/target", arguments: {}, finish: (result) => result }),
+    handler: async () => { throw new Error("must delegate"); } });
+  await registry.dispatch("outer", {}, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true, sessionId: "session-7" });
+  await registry.dispatch("outer", {}, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });
+  assert.deepEqual(seen, ["session-7", undefined]);
+});
+
 test("the bundled powershell tool takes bash's arguments under its own name and description", async () => {
   const [bash, powershell] = await loadBundledTools(["bash", "powershell"]);
   assert.equal(powershell!.name, "powershell");

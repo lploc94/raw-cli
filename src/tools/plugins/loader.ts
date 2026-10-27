@@ -167,6 +167,7 @@ export async function loadToolPlugins(options: LoadToolPluginsOptions): Promise<
           ...((options.vars ?? context.vars) ? { vars: options.vars ?? context.vars } : {}),
           ...(context.signal ? { signal: context.signal } : {}),
           ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
+          ...(context.sessionId ? { sessionId: context.sessionId } : {}),
           ...(context.bashPath ? { bashPath: context.bashPath } : {}),
           ...(context.panels ? { panels: context.panels } : {}), // onPanelUpdates stays host-only
           ...(context.effects ? { effects: context.effects } : {}),

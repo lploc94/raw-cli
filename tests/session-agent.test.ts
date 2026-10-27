@@ -21,6 +21,23 @@ function provider(generate: (request: ProviderRequest) => Promise<ProviderTurn>,
   return { modelConfig: { agentName: "test", provider: "ollama", method: "openai-chat-completions", model: "fixture", vision }, generate };
 }
 
+test("tools learn the persisted session id, and nothing without a store", async () => {
+  const { root, store, id } = setup();
+  const seen: Array<string | undefined> = [];
+  const registry = createTestToolRegistry();
+  registry.register({ name: "who", description: "Who", inputSchema: { type: "object" },
+    handler: async (_args, context) => { seen.push(context.sessionId); return { isError: false, content: [{ type: "text", text: "ok" }] }; } });
+  const script = () => { let turn = 0; return provider(async () => ++turn === 1
+    ? { text: "", toolCalls: [{ id: "c", name: "who", arguments: {} }], finishReason: "tool_calls" as const }
+    : { text: "done", toolCalls: [], finishReason: "stop" as const }); };
+  const durable = createAgent({ cwd: root, provider: script(), registry, system: "system", whitelist: ["who"],
+    persistence: { store, sessionId: id, surface: "cli" } });
+  try { assert.equal((await durable.run("go")).status, "completed"); } finally { await durable.close(); }
+  const volatile = createAgent({ cwd: root, provider: script(), registry, system: "system", whitelist: ["who"] });
+  try { assert.equal((await volatile.run("go")).status, "completed"); } finally { await volatile.close(); }
+  assert.deepEqual(seen, [id, undefined]);
+});
+
 test("durable agent restores exact model messages, selected tools, and cache key", async () => {
   const { root, store, id } = setup();
   const registry = createTestToolRegistry();
