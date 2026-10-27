@@ -1,14 +1,16 @@
 # Dashboard HTTP contract
 
-The dashboard serves a bundled application and a small local API. Every `/api` route requires `Authorization: Bearer TOKEN`. Host must match the actual `127.0.0.1:PORT` listener; a browser Origin must exactly match its HTTP origin. Missing or foreign authorization/origin is rejected. Query-string tokens are never accepted. Responses do not permit cross-origin reading or embedding.
+The dashboard serves a bundled application and a small local API. Every `/api` route requires `Authorization: Bearer TOKEN`. Host must match the actual `127.0.0.1:PORT` listener; a browser Origin must exactly match its HTTP origin. Missing or foreign authorization/origin is rejected. Query-string tokens are never accepted. Responses do not permit cross-origin reading or embedding. Wrong or missing tokens are throttled per client: after 10 in 60 seconds the next ones answer 429 `rate_limited` with `Retry-After` until the window ends. A request with the valid token is never throttled, and Host/Origin rejections (403) and static assets are not counted.
 
 Ordinary JSON requests are at most 1 MiB and use `Content-Type: application/json`. Errors have `{ "error": { "code": "...", "message": "...", "details": ... } }`. Statuses distinguish malformed input (400), missing authentication (401), forbidden origin/host (403), missing resources (404), state/revision conflicts (409), oversized bodies (413), invalid candidates (422), unavailable capabilities (503) and internal failures (500).
 
-`GET /api/bootstrap` returns `apiVersion`, `version`, `instanceId`, `cwd`, `configPath`, optional `preferredAgent`, safe config metadata (`exists`, `revision`, `canonical`, `valid`, optional `diagnostic`, agent/model alias lists and `defaultAgent`) and store readiness/diagnostic. It does not return credentials, raw config, conversation text or lease tokens and does not instantiate a runtime.
+`GET /api/bootstrap` returns `apiVersion`, `version`, `instanceId`, `cwd`, `configPath`, optional `preferredAgent`, safe config metadata (`exists`, `revision`, `canonical`, `valid`, optional `diagnostic`, agent/model alias lists and `defaultAgent`) and store readiness/diagnostic. `remote` is true while a public quick-tunnel origin is registered (`raw dashboard --remote`) and false otherwise. It does not return credentials, raw config, conversation text or lease tokens and does not instantiate a runtime.
 
 Only defined browser routes return the application entrypoint on refresh. Unknown API paths, missing static assets and unknown page routes return their actual errors. Static files are contained in the installed `dist/dashboard` directory; config/source files are never served through static routes.
 
 The entrypoint receives a fresh style nonce matching its response CSP. This permits styles created by the bundled dialog/editor libraries while inline scripts and unrelated inline styles remain blocked. The nonce is independent of the access token; all scripts and network connections remain restricted to this origin.
+
+`GET /api/sessions/:id/events` is the session event stream (`text/event-stream`, resumable with `Last-Event-ID`). It also accepts `POST` with the same authentication, frames and cursor, because proxies such as Cloudflare quick tunnels buffer `GET` event streams; the bundled client uses `POST` only when bootstrap reports `remote: true`.
 
 Further session, stream and management schemas are specified alongside their adapters in the shared TypeScript contract. API versioning is separate from session persistence compatibility.
 

@@ -15,6 +15,8 @@ export interface DashboardBootstrap {
     diagnostic?: string; agents: string[]; models: string[]; defaultAgent?: string;
   };
   store: { available: boolean; diagnostic?: string };
+  /** True while a public tunnel origin is registered; the bundled client then streams events with POST (see docs/dashboard-api.md). */
+  remote: boolean;
 }
 export function isDashboardPage(path: string): boolean {
   return path === "/" || /^\/chat(?:\/[^/]+)?\/?$/.test(path)
