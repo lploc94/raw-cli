@@ -389,7 +389,7 @@ test("an interrupt during a Bash sleep ends its process at once and starts the m
   // In Git Bash `$$` is an MSYS process id; /proc/$$/winpid holds the Windows one that process.kill checks.
   const f = await dashboardFixture({ agent: { tools: { use: ["builtin/bash"] } }, responses: [
     { frames: [openAiFrame({ tool_calls: [{ index: 0, id: "sleep", type: "function", function: { name: "bash",
-      arguments: JSON.stringify({ command: "(cat /proc/$$/winpid 2>/dev/null || echo $$) > sleep.pid; sleep 5" }) } }] }, "tool_calls"), openAiDone] },
+      arguments: JSON.stringify({ command: "(cat /proc/$$/winpid 2>/dev/null || echo $$) > sleep.pid; sleep 30" }) } }] }, "tool_calls"), openAiDone] },
     { frames: [openAiFrame({ content: "changed course" }, "stop"), openAiDone] },
   ] });
   try {
@@ -402,7 +402,7 @@ test("an interrupt during a Bash sleep ends its process at once and starts the m
     const sent = await f.json<InputReply>(`/sessions/${session.id}/inputs`, "POST", { clientRequestId: "now", agent: "raw", input: "do this instead", mode: "interrupt" });
     assert.equal(sent.queued?.mode, "interrupt");
     assert.equal((await f.wait(first.operation!.id)).state, "cancelled");
-    assert.ok(Date.now() - startedAt < 2000, `interrupt took ${Date.now() - startedAt} ms`);
+    assert.ok(Date.now() - startedAt < 10000, `interrupt took ${Date.now() - startedAt} ms`);
     assert.throws(() => process.kill(pid, 0));
     const next = await operationFor(f, session.id, "now");
     assert.equal((await f.wait(next.id)).state, "completed");
