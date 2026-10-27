@@ -1,4 +1,5 @@
 import type { DashboardEvent } from "../../src/dashboard/streams.js";
+import { eventsRequest } from "./stream-request.js";
 
 let accessToken = "";
 export function initializeToken(): void {
@@ -136,17 +137,10 @@ export async function subscribe(
   signal: AbortSignal,
   receive: (event: DashboardEvent) => void,
   connected: () => void,
+  remote?: boolean,
 ): Promise<void> {
-  const response = await fetch(
-    `/api/sessions/${encodeURIComponent(sessionId)}/events`,
-    {
-      signal,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...(cursor ? { "Last-Event-ID": cursor } : {}),
-      },
-    },
-  );
+  const request = eventsRequest({ sessionId, cursor, token: accessToken, remote });
+  const response = await fetch(request.path, { ...request.init, signal });
   if (!response.ok) {
     await decode(response);
     return;
