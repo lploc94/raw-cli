@@ -38,7 +38,8 @@ function ptyRaw(args: string[], env: NodeJS.ProcessEnv) {
 }
 
 // Generous: a cold tsx compile on a loaded CI runner can take seconds before the first output.
-async function waitFor(read: () => string, token: string, timeoutMs = 10000): Promise<void> {
+// A cold `node --import tsx bin/raw.ts` compiles the whole CLI; on a loaded Windows runner that alone can pass 10 s. A match returns at once.
+async function waitFor(read: () => string, token: string, timeoutMs = 60000): Promise<void> {
   const until = Date.now() + timeoutMs;
   while (!read().includes(token)) {
     if (Date.now() > until) throw new Error(`missing ${token}: ${read().slice(-500)}`);
@@ -298,7 +299,7 @@ test("T-08 review: piped REPL executes a tool without approval", async () => {
     await waitFor(() => stdout, "completed");
     child.stdin.write("/exit\n");
     const code = await Promise.race([new Promise<number | null>((resolve) => child.once("exit", resolve)),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("REPL did not exit")), 3000))]);
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("REPL did not exit")), 15000))]);
     assert.equal(code, 0, stderr);
     assert.equal(await readFile(join(root, "written.txt"), "utf8"), "created");
     assert.doesNotMatch(stderr, /approval|allow .+\?/i);
