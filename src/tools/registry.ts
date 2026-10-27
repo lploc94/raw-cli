@@ -294,6 +294,7 @@ export class ToolRegistry {
       result = delegated
         ? delegation.finish(await this.dispatch(targetName, delegation.arguments, { cwd: context.cwd, maxOutputBytes: context.maxOutputBytes,
           ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}), ...(context.signal ? { signal: context.signal } : {}),
+          ...(context.sessionId ? { sessionId: context.sessionId } : {}),
           ...(context.whitelist ? { whitelist: context.whitelist } : {}), ...(context.approve ? { approve: context.approve } : {}),
           ...(context.autoApprove !== undefined ? { autoApprove: context.autoApprove } : {}), ...(context.onHook ? { onHook: context.onHook } : {}),
           ...(context.processes ? { processes: context.processes } : {}), ...(context.vars ? { vars: context.vars } : {}),

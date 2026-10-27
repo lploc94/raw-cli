@@ -15,6 +15,29 @@ const declaration: PanelDeclaration = { id: "view", title: "View", placement: "c
 const info = { owner: "agent/report", declarations: [declaration], implicit: false };
 const update = (text: string) => ({ op: "replace" as const, document: { blocks: [{ id: "body", kind: "markdown", text }] } });
 
+test("a panel action reaches the tool with the same session id as a model call", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-view-action-session-"));
+  const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
+  const sessionId = store.createSession({ cwd: root, title: "action session" }).id;
+  const registry = new ToolRegistry();
+  const seen: Array<string | undefined> = [];
+  registry.register({ name: "report", canonicalName: info.owner, description: "report", inputSchema: { type: "object" },
+    panels: [{ ...declaration, placement: "sidebar", actions: [{ id: "run", label: "Run", scope: "panel", kind: "tool", arguments: {} }] }],
+    handler: async (_args, context) => { seen.push(context.sessionId); await context.panels!.update("view", update("state"));
+      return { isError: false, content: [] }; } });
+  let generated = 0;
+  const provider: ProviderAdapter = { modelConfig: { agentName: "a", provider: "ollama", method: "openai-chat-completions", model: "fixture" },
+    generate: async () => ++generated === 1
+      ? { text: "", toolCalls: [{ id: "seed", name: "report", arguments: {} }], finishReason: "tool_calls" }
+      : { text: "done", toolCalls: [], finishReason: "stop" } };
+  const agent = createAgent({ provider, registry, cwd: root, persistence: { store, sessionId, surface: "cli" } });
+  try {
+    assert.equal((await agent.run("seed")).status, "completed");
+    assert.equal((await agent.runPanelAction({ panel: "agent/report#view", action: "run" })).status, "completed");
+    assert.deepEqual(seen, [sessionId, sessionId]);
+  } finally { await agent.close(); store.close(); }
+});
+
 test("chat instances are call-scoped, provisional and outside the sidebar budget", async () => {
   const host = new PanelHost();
   const ids = new Set<string>();

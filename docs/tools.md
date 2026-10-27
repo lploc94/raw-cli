@@ -129,7 +129,9 @@ The entry exports `handler(args, context)` and may export synchronous
 `validateArgs(args)`, which returns an error string or `undefined`. Raw runs
 semantic validation and the declared JSON Schema before permission or any
 side effect. The context gives the session cwd, abort signal, result byte cap,
-tool-call ID, and available host options; callbacks for approval stay in Raw.
+tool-call ID, the persisted session ID as `context.sessionId` (absent when the runtime has no
+session store, so a tool must cope with `undefined`), and available host options; callbacks for
+approval stay in Raw.
 The result uses Raw's text, JSON, and image blocks and is capped by the host.
 Local modules run with the invoking OS account's full permissions. No plugin
 sandbox is implied.

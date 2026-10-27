@@ -91,6 +91,18 @@ test("editing an imported helper changes the next same-process tool snapshot onl
   assert.notEqual(first.sourceDigest, second.sourceDigest);
 });
 
+test("a plugin handler sees the session id only when the host has one", async () => {
+  const options = await workspace();
+  await plugin(join(dirname(options.configPath), "tools", "who_am_i"), "who_am_i", "who_am_i",
+    `export async function handler(args, context) { return { isError: false, content: [{ type: "text", text: String(context.sessionId) }] }; }`);
+  const tool = (await loadToolPlugins({ ...options, selectedIds: ["agent/who_am_i"] }))[0]!;
+  const registry = new ToolRegistry(); registry.register(tool.registration);
+  const call = async (extra: { sessionId?: string }) => JSON.stringify(await registry.dispatch("who_am_i", { payload: { value: "x" } },
+    { cwd: options.cwd, maxOutputBytes: 8192, autoApprove: true, ...extra }));
+  assert.match(await call({ sessionId: "session-42" }), /session-42/);
+  assert.match(await call({}), /undefined/);
+});
+
 test("tool version label alone does not change selected behavioral source identity", async () => {
   const options = await workspace();
   const folder = join(dirname(options.configPath), "tools", "label_only");
