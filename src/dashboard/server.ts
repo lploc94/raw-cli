@@ -174,7 +174,8 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
       const candidate = quickTunnelOrigin(value);
       if (publicOrigin) throw new DashboardError(409, "origin_registered", "A public origin is already registered");
       publicOrigin = candidate; allowedOrigins.add(candidate);
-      return () => { if (publicOrigin === candidate) { allowedOrigins.delete(candidate); publicOrigin = undefined; } };
+      let registered = true; // each revoker works once, so a late repeat cannot remove a newer registration of the same origin
+      return () => { if (!registered) return; registered = false; allowedOrigins.delete(candidate); publicOrigin = undefined; };
     };
     return { url: origin, launchUrl: `${origin}/#token=${token}`, token, port: address.port, context, allowPublicOrigin, close };
   } catch (error) { await close(); throw error; }

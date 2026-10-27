@@ -72,7 +72,8 @@ test("allowPublicOrigin accepts only a bare https quick-tunnel origin, one at a 
   try {
     for (const bad of ["http://x.trycloudflare.com", "https://x.example.com", "https://x.trycloudflare.com:8443", "https://user:pw@x.trycloudflare.com",
       "https://x.trycloudflare.com/path", "https://x.trycloudflare.com/?q=1", "https://x.trycloudflare.com/#frag", "https://a.b.trycloudflare.com",
-      "https://trycloudflare.com", "https://x.trycloudflare.com.evil.example", "not a url", ""]) {
+      "https://trycloudflare.com", "https://x.trycloudflare.com.evil.example", "not a url", "",
+      "https://x.trycloudflare.com:443", "https://x.trycloudflare.com/x/..", "https://x.trycloudflare.com/?", "https://x.trycloudflare.com/#", "https://x.trycloudflare.com//", " https://x.trycloudflare.com"]) {
       assert.throws(() => server.allowPublicOrigin(bad), /origin|quick tunnel/i, JSON.stringify(bad));
     }
     const revoke = server.allowPublicOrigin(`${PUBLIC}/`); // a trailing slash is the same origin
@@ -82,6 +83,20 @@ test("allowPublicOrigin accepts only a bare https quick-tunnel origin, one at a 
     again();
     await server.close();
     assert.throws(() => server.allowPublicOrigin(PUBLIC), /stopping|closed/i);
+  } finally { await server.close(); f.cleanup(); }
+});
+
+test("a stale revoker cannot remove a newer registration of the same origin", async () => {
+  const f = fixture(); const server = await startDashboard(f.options);
+  try {
+    const old = server.allowPublicOrigin(PUBLIC); old();
+    const current = server.allowPublicOrigin(PUBLIC);
+    old();
+    const bootstrap = await fetch(`${server.url}/api/bootstrap`, { headers: { Authorization: `Bearer ${server.token}` } });
+    assert.equal(((await bootstrap.json()) as { remote: boolean }).remote, true);
+    current(); current();
+    const after = await fetch(`${server.url}/api/bootstrap`, { headers: { Authorization: `Bearer ${server.token}` } });
+    assert.equal(((await after.json()) as { remote: boolean }).remote, false);
   } finally { await server.close(); f.cleanup(); }
 });
 

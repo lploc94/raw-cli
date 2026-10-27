@@ -19,13 +19,9 @@ export function responseHeaders(response: ServerResponse, styleNonce: string): v
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("Cache-Control", "no-store");
 }
-const QUICK_TUNNEL_HOST = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/;
-/** The only public origin a dashboard may add: a bare `https://<name>.trycloudflare.com`, so no other host can be registered by mistake. */
+const QUICK_TUNNEL_ORIGIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com\/?$/i;
+/** The only public origin a dashboard may add: a bare `https://<name>.trycloudflare.com` (one optional trailing slash), checked on the text as given so a default port, an empty query or a `..` path cannot be normalized away. */
 export function quickTunnelOrigin(value: string): string {
-  let url: URL;
-  try { url = new URL(value); } catch { throw new DashboardError(400, "invalid_origin", "Public origin must be an https quick tunnel URL"); }
-  if (url.protocol !== "https:" || !QUICK_TUNNEL_HOST.test(url.hostname) || url.port || url.username || url.password
-    || url.pathname !== "/" || url.search || url.hash || /^https:\/\/[^/]*[?#]/.test(value))
-    throw new DashboardError(400, "invalid_origin", "Public origin must be a bare https://<name>.trycloudflare.com quick tunnel origin");
-  return url.origin;
+  if (!QUICK_TUNNEL_ORIGIN.test(value)) throw new DashboardError(400, "invalid_origin", "Public origin must be a bare https://<name>.trycloudflare.com quick tunnel origin");
+  return new URL(value).origin;
 }
