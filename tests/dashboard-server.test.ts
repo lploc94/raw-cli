@@ -6,7 +6,8 @@ import { request } from "node:http";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { listenError, startDashboard } from "../src/dashboard/server.js";
+import { createServer as createNetServer, type Server as NetServer } from "node:net";
+import { DEFAULT_DASHBOARD_PORT, listenError, startDashboard } from "../src/dashboard/server.js";
 import { LiveOutput, removeSpool } from "../src/dashboard/live-output.js";
 import { openSessionStore } from "../src/sessions/store.js";
 
@@ -74,6 +75,45 @@ test("invalid config stays repairable, occupied port fails, and restart rejects 
   const restarted = await startDashboard({ ...f.options, port });
   try { assert.equal((await fetch(`${restarted.url}/api/bootstrap`, { headers: { Authorization: `Bearer ${oldToken}` } })).status, 401); }
   finally { await restarted.close(); f.cleanup(); }
+});
+
+/** Holds the default dashboard port; when something else already owns it, that is the same situation. */
+async function occupyDefaultPort(): Promise<NetServer | undefined> {
+  const holder = createNetServer();
+  try { await new Promise<void>((resolve, reject) => { holder.once("error", reject); holder.listen(DEFAULT_DASHBOARD_PORT, "127.0.0.1", resolve); }); return holder; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") return undefined; throw error; }
+}
+const withoutPort = ({ port: _port, ...rest }: ReturnType<typeof fixture>["options"]) => rest;
+
+test("the default port is uncommon and below the OS ephemeral ranges", () => {
+  assert.equal(DEFAULT_DASHBOARD_PORT, 21517);
+});
+
+test("without --port a busy default port falls back to a free port and leaves the other listener alone", async () => {
+  const f = fixture(); const holder = await occupyDefaultPort();
+  const server = await startDashboard(withoutPort(f.options));
+  try {
+    assert.notEqual(server.port, DEFAULT_DASHBOARD_PORT);
+    assert.equal((await fetch(`${server.url}/api/bootstrap`, { headers: { Authorization: `Bearer ${server.token}` } })).status, 200);
+    if (holder) assert.equal(holder.listening, true);
+  } finally { await server.close(); holder?.close(); f.cleanup(); }
+});
+
+test("without --port a free default port is used", async () => {
+  const f = fixture(); const probe = await occupyDefaultPort();
+  if (!probe) { f.cleanup(); return; } // another process owns it on this machine; the fallback test above covers that
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  const server = await startDashboard(withoutPort(f.options));
+  try { assert.equal(server.port, DEFAULT_DASHBOARD_PORT); } finally { await server.close(); f.cleanup(); }
+});
+
+test("an explicit busy port never falls back", async () => {
+  const f = fixture(); const holder = await occupyDefaultPort();
+  try {
+    if (holder) await assert.rejects(startDashboard({ ...f.options, port: DEFAULT_DASHBOARD_PORT }), /Port 21517 is already in use/);
+    const first = await startDashboard(f.options);
+    try { await assert.rejects(startDashboard({ ...f.options, port: first.port }), /already in use/); } finally { await first.close(); }
+  } finally { holder?.close(); f.cleanup(); }
 });
 
 test("JSON adapter rejects malformed and oversized data before a route mutation", async () => {

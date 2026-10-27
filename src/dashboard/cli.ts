@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { startDashboard } from "./server.js";
+import { DEFAULT_DASHBOARD_PORT, startDashboard } from "./server.js";
 import { onShutdown } from "../platform/signals.js";
 
 export interface DashboardFlags { port?: number; configPath?: string; agent?: string; noOpen?: boolean; help?: boolean }
@@ -32,7 +32,7 @@ export async function openDashboardBrowser(url: string, options: { command?: str
 }
 export async function runDashboardCli(flags: DashboardFlags): Promise<void> {
   if (flags.help) {
-    process.stdout.write("Usage: raw dashboard [--port 8787|0] [--no-open] [--config PATH] [--agent NAME]\nRuns a local browser application until Ctrl-C. Port 0 chooses a free port.\n"); return;
+    process.stdout.write("Usage: raw dashboard [--port 21517|0] [--no-open] [--config PATH] [--agent NAME]\nRuns a local browser application until Ctrl-C. Port 0 chooses a free port.\n"); return;
   }
   const controller = new AbortController();
   let stopped!: () => void; const stopRequested = new Promise<void>((resolve) => { stopped = resolve; });
@@ -42,6 +42,7 @@ export async function runDashboardCli(flags: DashboardFlags): Promise<void> {
   try {
     server = await startDashboard({ ...(flags.port === undefined ? {} : { port: flags.port }),
       ...(flags.configPath ? { configPath: flags.configPath } : {}), ...(flags.agent ? { agent: flags.agent } : {}), signal: controller.signal });
+    if (flags.port === undefined && server.port !== DEFAULT_DASHBOARD_PORT) process.stderr.write(`raw: port ${DEFAULT_DASHBOARD_PORT} is in use; using ${server.port}\n`);
     process.stdout.write(`Raw dashboard: ${server.launchUrl}\nPress Ctrl-C to stop.\n`);
     if (!flags.noOpen && process.stdout.isTTY && !process.env.SSH_CONNECTION && !process.env.SSH_TTY) {
       if (!await openDashboardBrowser(server.launchUrl)) process.stderr.write("raw: browser did not open; use the printed dashboard link\n");

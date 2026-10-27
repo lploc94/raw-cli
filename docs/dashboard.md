@@ -1,6 +1,6 @@
 # Local dashboard
 
-Run `raw dashboard` from the project you want to work on. Raw starts a foreground server at `http://127.0.0.1:8787` and opens your browser when launched interactively. It prints an authenticated launch link. Keep this process running while using the dashboard; Ctrl-C closes its operations, connections and session ownership.
+Run `raw dashboard` from the project you want to work on. Raw starts a foreground server at `http://127.0.0.1:21517` and opens your browser when launched interactively. It prints an authenticated launch link. Keep this process running while using the dashboard; Ctrl-C closes its operations, connections and session ownership.
 
 ```sh
 raw dashboard
@@ -8,7 +8,7 @@ raw dashboard --port 0 --no-open
 raw dashboard --config /path/to/raw.json --agent deepseek
 ```
 
-`--port 0` chooses a free port. An occupied port is an error; Raw never terminates another listener or silently attaches to it. `--no-open`, SSH and noninteractive launches leave a usable printed link. Browser opening failure does not terminate a healthy server.
+`--port 0` chooses a free port. When you do not pass `--port` and 21517 is occupied, Raw picks a free port instead and prints `port 21517 is in use; using N`. An occupied port you asked for with `--port N` is an error; Raw never terminates another listener or silently attaches to it. `--no-open`, SSH and noninteractive launches leave a usable printed link. Browser opening failure does not terminate a healthy server.
 
 One dashboard manages one displayed config file. The invoking directory is its initial workspace. A workspace changes relative runtime paths, not OS filesystem permissions. Missing credentials or missing/invalid config do not prevent the setup/repair interface from loading. No model, tool or MCP connection starts just to display the application.
 

@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- `raw dashboard` now defaults to port 21517 instead of 8787, which other development tools commonly use. When `--port` is not given and the default is busy, Raw uses a free port and prints `port 21517 is in use; using N` instead of failing; an explicit busy `--port` is still an error. Scripts that assume `127.0.0.1:8787` must read the printed link or pass `--port 8787`.
 - Tool handlers (including package tools) receive `context.sessionId`, the persisted session the call runs in; it is absent when the runtime has no session store. A tool that ignores it behaves as before, so a package can keep per-session state.
 - New shipped example `examples/packages/goal-kit/`: a portable goal package
   with a `goal` tool and panel, a `Stop` hook using `raw.stop-continue/1` to

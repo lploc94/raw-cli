@@ -36,6 +36,8 @@ export interface DashboardServer {
   url: string; launchUrl: string; token: string; port: number; context: DashboardContext;
   close(): Promise<void>;
 }
+/** Uncommon on purpose (8787 is common among dev tools) and below the OS ephemeral ranges (Linux 32768+, Windows/macOS 49152+). */
+export const DEFAULT_DASHBOARD_PORT = 21517;
 /** A listen failure the user can act on; Windows reserves port ranges for Hyper-V and answers EACCES inside them. */
 export function listenError(error: NodeJS.ErrnoException, port: number): Error {
   if (error.code === "EADDRINUSE") return new DashboardError(409, "port_in_use", `Port ${port} is already in use; choose --port 0 or another port`);
@@ -45,7 +47,7 @@ export function listenError(error: NodeJS.ErrnoException, port: number): Error {
 
 export async function startDashboard(options: DashboardOptions = {}): Promise<DashboardServer> {
   if (options.signal?.aborted) throw new DashboardError(503, "cancelled", "Dashboard startup cancelled");
-  const port = options.port ?? 8787;
+  const port = options.port ?? DEFAULT_DASHBOARD_PORT;
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new DashboardError(400, "invalid_port", "port must be an integer from 0 to 65535");
   const cwd = realpathSync.native(options.cwd ?? process.cwd());
   if (!statSync(cwd).isDirectory()) throw new DashboardError(400, "invalid_workspace", "workspace must be a directory");
@@ -127,11 +129,18 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
   options.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     if (options.signal?.aborted) throw new DashboardError(503, "cancelled", "Dashboard startup cancelled");
-    await new Promise<void>((resolve, reject) => {
-      const failed = (error: NodeJS.ErrnoException) => { http.off("listening", ready); reject(listenError(error, port)); };
+    const listenOn = (target: number) => new Promise<void>((resolve, reject) => {
+      const failed = (error: NodeJS.ErrnoException) => { http.off("listening", ready); reject(error); };
       const ready = () => { listeningReady = true; http.off("error", failed); resolve(); };
-      http.once("error", failed); http.once("listening", ready); http.listen(port, "127.0.0.1");
+      http.once("error", failed); http.once("listening", ready); http.listen(target, "127.0.0.1");
     });
+    try { await listenOn(port); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // Only the implicit default may move: an explicit port stays an error, and Raw never attaches to another listener.
+      if (options.port !== undefined || (code !== "EADDRINUSE" && code !== "EACCES")) throw listenError(error as NodeJS.ErrnoException, port);
+      try { await listenOn(0); } catch (retry) { throw listenError(retry as NodeJS.ErrnoException, 0); }
+    }
     if (controller.signal.aborted) throw new DashboardError(503, "cancelled", "Dashboard startup cancelled");
     const address = http.address(); if (!address || typeof address === "string") throw new Error("Dashboard listener address unavailable");
     origin = new URL(`http://127.0.0.1:${address.port}`).origin;

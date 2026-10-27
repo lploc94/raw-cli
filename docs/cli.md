@@ -40,7 +40,8 @@ Exit codes are 0 for completed turns and informational commands, 1 for runtime/p
 ## Local browser dashboard
 
 `raw dashboard [--port PORT] [--no-open] [--config PATH] [--agent NAME]` starts a
-foreground server bound to `127.0.0.1`. Default port is 8787; port 0 selects a free
+foreground server bound to `127.0.0.1`. Default port is 21517 (if it is busy and
+`--port` was not given, a free port is used and a notice is printed; an explicit busy `--port` is an error); port 0 selects a free
 port. The printed authenticated launch URL remains usable if browser opening is
 unavailable. Ctrl-C, SIGTERM, SIGHUP and, on Windows, Ctrl+Break or closing the
 console window cancel owned work and close children/connections. A port Windows

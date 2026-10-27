@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+import { createServer as createNetServer } from "node:net";
 import test from "node:test";
 import { parseDashboardArgs, openDashboardBrowser } from "../src/dashboard/cli.js";
 import { posixOnly } from "./fixtures/platform.js";
@@ -38,4 +39,26 @@ test("installed-style CLI prints a usable URL without opening and SIGINT closes 
     const exit = once(child, "exit"); child.kill("SIGINT"); const [code] = await exit; assert.equal(code, 0);
     await assert.rejects(fetch(`${parsed.origin}/api/bootstrap`));
   } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("CLI without --port says so when the default port is busy and still prints a usable link", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-dashboard-cli-"));
+  const holder = createNetServer();
+  await new Promise<void>((resolve) => { holder.once("error", () => resolve()); holder.listen(21517, "127.0.0.1", resolve); }); // busy either way
+  const child = spawn(process.execPath, [join(process.cwd(), "dist/raw.js"), "dashboard", "--no-open"], {
+    cwd: root, env: { ...process.env, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: join(root, "data") },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      let out = ""; const timer = setTimeout(() => reject(new Error("dashboard did not start")), 10_000); timer.unref();
+      // stdout and stderr are separate pipes with no ordering between them: wait for both the link and the notice.
+      const take = (chunk: unknown) => { out += String(chunk);
+        if (/#token=[A-Za-z0-9_-]+/.test(out) && /port 21517 is in use; using \d+/.test(out)) { clearTimeout(timer); resolve(out); } };
+      child.stdout.on("data", take); child.stderr.on("data", take);
+      child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`early dashboard exit ${code}`)); });
+    });
+    assert.match(output, /port 21517 is in use; using \d+/);
+    assert.doesNotMatch(output, /127\.0\.0\.1:21517\//);
+  } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); holder.close(); rmSync(root, { recursive: true, force: true }); }
 });
