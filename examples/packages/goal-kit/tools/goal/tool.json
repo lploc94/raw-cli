@@ -1,0 +1,157 @@
+{
+  "api_version": 2,
+  "id": "goal",
+  "version": "1.0.0",
+  "name": "goal",
+  "description": "Create and track one goal with acceptance criteria and evidence. Use it when a task has a checkable completion condition and needs more than one step. The package Stop hook continues the run while the goal is active; call pause before asking the user for input.",
+  "display": {
+    "title": "Goal",
+    "kind": "think",
+    "summary": "[{action}]"
+  },
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "enum": ["create", "get", "update", "complete", "pause", "resume", "block", "abandon", "clear", "budget"],
+        "description": "create starts a goal; get reads it; update records progress; complete/abandon close it; pause/resume/block control continuation."
+      },
+      "objective": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000,
+        "description": "What the user wants, in one sentence. Required with create."
+      },
+      "doneWhen": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500,
+        "description": "How the user will judge the goal done. Defaults to the objective only when that fits 500 characters; otherwise required with create."
+      },
+      "criteria": {
+        "type": "array",
+        "maxItems": 50,
+        "description": "Acceptance criteria. In create every item needs a label and at least one is required. In update an item with an id changes that criterion; an item without an id adds one.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "status": {
+              "enum": ["pending", "in_progress", "done", "blocked", "skipped"]
+            },
+            "evidence": {
+              "type": "string",
+              "maxLength": 300,
+              "description": "The command and result that proves the status. Required before complete."
+            }
+          }
+        }
+      },
+      "steps": {
+        "type": "array",
+        "maxItems": 30,
+        "description": "The order of the work. At most one step may be in_progress.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}$"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "status": {
+              "enum": ["pending", "in_progress", "done", "blocked", "skipped"]
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        }
+      },
+      "reason": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "nextAction": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "tokenBudget": {
+        "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }],
+        "description": "Cumulative token threshold for continuation. Null removes the cap."
+      },
+      "maxRequests": {
+        "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }],
+        "description": "Cumulative model-request threshold for continuation. Null removes the cap."
+      },
+      "maxContinuations": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": ["action"]
+  },
+  "entry": "./index.mjs",
+  "condition_sources": ["arguments"],
+  "panels": [
+    {
+      "id": "goal",
+      "title": "Goal",
+      "icon": "flag",
+      "open": "first_update",
+      "context": "summary",
+      "acp_plan": true,
+      "actions": [
+        {
+          "id": "pause",
+          "label": "Pause goal",
+          "scope": "panel",
+          "kind": "tool",
+          "arguments": { "action": "pause", "reason": "user_panel" }
+        },
+        {
+          "id": "resume",
+          "label": "Resume goal",
+          "scope": "panel",
+          "kind": "tool",
+          "arguments": { "action": "resume" }
+        },
+        {
+          "id": "complete",
+          "label": "Complete goal",
+          "scope": "panel",
+          "kind": "tool",
+          "arguments": { "action": "complete" }
+        },
+        {
+          "id": "clear",
+          "label": "Clear goal",
+          "scope": "panel",
+          "kind": "tool",
+          "confirm": "Clear this finished goal? The state file is removed and the panel closes.",
+          "arguments": { "action": "clear" }
+        }
+      ]
+    }
+  ]
+}

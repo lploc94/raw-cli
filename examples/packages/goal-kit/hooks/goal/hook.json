@@ -1,0 +1,20 @@
+{
+  "protocol_version": 2,
+  "name": "goal",
+  "events": [
+    {
+      "name": "Stop"
+    },
+    {
+      "name": "SessionStart"
+    },
+    {
+      "name": "UserPromptSubmit"
+    }
+  ],
+  "command": "node",
+  "args": [
+    "./index.mjs"
+  ],
+  "timeout_ms": 5000
+}

@@ -55,6 +55,11 @@ test("seven shipped setup skills link complete package guidance and examples val
   assert.deepEqual(mixed.prerequisites, ["node"]);
   assert.deepEqual((await inspectPackage(join("examples", "packages", "tool-only"))).exports.tools, ["echo"]);
   assert.deepEqual((await inspectPackage(join("examples", "packages", "skill-only"))).exports.skills, ["repo-review"]);
+  const goal = await inspectPackage(join("examples", "packages", "goal-kit"));
+  assert.deepEqual(goal.exports.tools, ["goal"]);
+  assert.deepEqual(goal.exports.hooks, ["goal"]);
+  assert.deepEqual(goal.exports.skills, ["goal"]);
+  assert.ok(goal.requires.includes("raw.stop-continue/1"));
 });
 
 test("create_package example packs and activates with recipient inputs after source removal", () => {

@@ -80,6 +80,8 @@ The shipped `builtin/create_package` skill guides package creation and sharing. 
 
 The shipped `examples/packages/mixed-kit/` is an editable source package with a prompt, helper-backed tool, resource-bearing skill, lazy variable/provider, MCP definition and conditional Bash policy. Its manifest declares every owned file. `examples/packages/tool-only/` and `examples/packages/skill-only/` show exports that an existing direct agent can select without adopting a package agent.
 
+The shipped `examples/packages/goal-kit/` is the goal example: a `goal` tool with a panel, a `goal` hook using `raw.stop-continue/1` to keep a run going while the goal is active, a `goal` skill and a `coder` agent. The package owns the goal state, criteria, budget and commands; the engine has no goal code. See the package README for the state path, limits and the one-goal-per-workspace limitation.
+
 1. Author a folder with `raw-package.json` and all declared files; run `raw package validate DIR` and inspect the reported exports, inputs and executable prerequisites. Or start from a configured agent with `raw package export --agent NAME --name @owner/name --version 1.0.0 --out DIR`.
 2. Run `raw package pack DIR --out FILE.rawpkg` and publish or send that file through an ordinary file channel. Raw v1 does not fetch it from GitHub automatically.
 3. On the recipient, run `raw package install FILE.rawpkg --as kit --config CONFIG`. Add an agent with `raw agent add NAME --from pkg/kit/agents/EXPORT --model LOCAL_MODEL --inputs INPUTS.json --config CONFIG`, or add selected `pkg/kit/tools/EXPORT`/`pkg/kit/skills/EXPORT` IDs to an existing agent.

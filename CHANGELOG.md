@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- New shipped example `examples/packages/goal-kit/`: a portable goal package
+  with a `goal` tool and panel, a `Stop` hook using `raw.stop-continue/1` to
+  keep a run going while the goal is active, a `SessionStart` hook that pauses
+  an interrupted goal, a `UserPromptSubmit` hook that pauses on a new message,
+  a `goal` skill and a `coder` agent. Goal state, criteria, budget and commands
+  stay in the package; Raw has no goal code.
 - A `UserPromptSubmit` or `PreToolUse` hook that denied with an empty `reason`
   (`{"decision":"deny","reason":""}`) was treated as allowing the call. It now
   blocks, with the default reason `hook ID denied`.

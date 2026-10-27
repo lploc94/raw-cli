@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "name": "@raw/goal-kit",
+  "version": "1.0.0",
+  "description": "An opt-in goal package: a goal tool, a panel, and a Stop-hook continuation guard",
+  "files": [
+    "README.md",
+    "agents/coder.json",
+    "prompts/coder.md",
+    "skills/goal/SKILL.md",
+    "tools/goal/tool.json",
+    "tools/goal/index.mjs",
+    "tools/goal/state.mjs",
+    "hooks/goal/hook.json",
+    "hooks/goal/index.mjs",
+    "hooks/goal/state.mjs"
+  ],
+  "exports": {
+    "agents": {
+      "coder": "agents/coder.json"
+    },
+    "tools": {
+      "goal": "tools/goal"
+    },
+    "hooks": {
+      "goal": "hooks/goal"
+    },
+    "skills": {
+      "goal": "skills/goal"
+    }
+  },
+  "requires": [
+    "raw.agent/1",
+    "raw.hook/2",
+    "raw.panel/2",
+    "raw.skill/1",
+    "raw.stop-continue/1",
+    "raw.tool-api/2"
+  ],
+  "metadata": {
+    "external_executables": [
+      "node"
+    ]
+  }
+}
