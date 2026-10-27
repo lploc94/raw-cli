@@ -71,6 +71,23 @@ test("a registration line before any URL does not count, and a URL outside the t
   parser.push(`${REGISTERED_LINE}\r\n`);
   assert.equal(parser.registered, true);
 });
+test("readiness does not depend on where the transport splits a long stream of short lines", () => {
+  const retry = "2026-10-27T07:41:50Z INF Retrying connection in up to 1s connIndex=0 event=0 ip=198.41.200.23";
+  const stream = `${URL_LINES[4]}\n${REGISTERED_LINE}\n${`${retry}\n`.repeat(800)}`; // about 75 KB, every line short
+  assert.ok(stream.length > 70_000);
+  for (const sizes of [[60, 65_536, stream.length], [4096], [1], [65_536, 7], [stream.length]]) {
+    const parser = createTunnelOutputParser(); let at = 0; let index = 0;
+    while (at < stream.length) { const size = sizes[Math.min(index++, sizes.length - 1)]!; parser.push(stream.slice(at, at + size)); at += size; }
+    assert.equal(parser.url, URL, JSON.stringify(sizes)); assert.equal(parser.registered, true, JSON.stringify(sizes));
+  }
+});
+test("an unfinished line longer than 64 KiB is dropped with the rest of that line, and later lines still parse", () => {
+  const parser = createTunnelOutputParser();
+  parser.push("x".repeat(70_000)); parser.push("y".repeat(10) + "\n");
+  assert.equal(parser.url, undefined);
+  parser.push(`${URL_LINES[4]}\n${REGISTERED_LINE}\n`);
+  assert.equal(parser.url, URL); assert.equal(parser.registered, true);
+});
 test("tunnelEnv drops TUNNEL_* variables except the network-shape allowlist and keeps everything else", () => {
   const out = tunnelEnv({ PATH: "/bin", HOME: "/h", HTTPS_PROXY: "http://p", TUNNEL_LOGLEVEL: "error", TUNNEL_TOKEN: "t", TUNNEL_URL: "u", TUNNEL_FOO: "x", tunnel_config: "c",
     TUNNEL_EDGE_IP_VERSION: "6", TUNNEL_TRANSPORT_PROTOCOL: "http2", TUNNEL_REGION: "us", TUNNEL_RETRIES: "3", TUNNEL_EDGE_BIND_ADDRESS: "1.2.3.4", TUNNEL_POST_QUANTUM: "true", NOT_TUNNEL: "1" });
@@ -119,6 +136,11 @@ test("an early exit rejects with the exit code and the last output lines", async
 test("a missing binary rejects with cloudflared_not_found and leaves no temp dir", async () => {
   const before = leftovers().length;
   await assert.rejects(startQuickTunnel({ port: 1, command: join(tmpdir(), "definitely-missing-cloudflared"), timeoutMs: 2_000 }), (error: unknown) => error instanceof TunnelError && error.code === "cloudflared_not_found");
+  assert.equal(leftovers().length, before);
+});
+test("a synchronous spawn failure rejects and leaves no temp dir", async () => {
+  const before = leftovers().length;
+  await assert.rejects(startQuickTunnel({ port: 1, command: `${process.execPath}\0`, timeoutMs: 2_000 }));
   assert.equal(leftovers().length, before);
 });
 test("aborting during startup cancels, kills the child and removes the temp dir", async () => {

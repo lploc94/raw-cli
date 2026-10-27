@@ -48,9 +48,10 @@ export function tunnelConfig(port: number): string { return `ingress:\n  - servi
 
 const URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 const REGISTERED = "Registered tunnel connection";
+const MAX_UNFINISHED_LINE = 65_536;
 /** Line-buffers cloudflared output across chunks; `registered` becomes true only after a registration line follows (or shares) the URL. */
 export function createTunnelOutputParser(): { push(chunk: string): void; url: string | undefined; registered: boolean; tail(): string[] } {
-  let partial = ""; const lines: string[] = [];
+  let partial = ""; let discarding = false; const lines: string[] = [];
   const state = { url: undefined as string | undefined, registered: false };
   const take = (line: string) => {
     lines.push(line); if (lines.length > 20) lines.shift();
@@ -58,7 +59,16 @@ export function createTunnelOutputParser(): { push(chunk: string): void; url: st
     if (state.url && line.includes(REGISTERED)) state.registered = true;
   };
   return {
-    push(chunk) { partial = (partial + chunk).slice(-65_536); for (let end; (end = partial.indexOf("\n")) >= 0; ) { take(partial.slice(0, end).replace(/\r$/, "")); partial = partial.slice(end + 1); } },
+    push(chunk) {
+      partial += chunk;
+      // Complete lines are always parsed first, so readiness never depends on where the transport split the stream.
+      for (let end; (end = partial.indexOf("\n")) >= 0; ) {
+        const line = partial.slice(0, end).replace(/\r$/, ""); partial = partial.slice(end + 1);
+        if (discarding) discarding = false; else take(line);
+      }
+      // Only an unfinished line is bounded: a line this long is not a log line of cloudflared (real ones are under 600 characters), so it and the rest of it are dropped.
+      if (partial.length > MAX_UNFINISHED_LINE) { partial = ""; discarding = true; }
+    },
     get url() { return state.url; },
     get registered() { return state.registered; },
     tail() { return partial ? [...lines, partial].slice(-20) : [...lines]; },
@@ -76,9 +86,12 @@ export async function startQuickTunnel(options: QuickTunnelOptions): Promise<Qui
   try {
     const file = join(dir, "config.yml"); writeFileSync(file, tunnelConfig(options.port), { mode: 0o600 }); args[configIndex] = file;
   } catch (error) { cleanup(); throw error; }
-  const resolved = resolveCommand(options.command ?? "cloudflared", args, { cwd: process.cwd(), env: parentEnv });
-  if (!resolved.ok) { cleanup(); throw new TunnelError("cloudflared_not_found", "cloudflared was not found on PATH"); }
-  const child = spawn(resolved.file, resolved.args, { stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true, env: tunnelEnv(parentEnv) });
+  let child: ChildProcess;
+  try {
+    const resolved = resolveCommand(options.command ?? "cloudflared", args, { cwd: process.cwd(), env: parentEnv });
+    if (!resolved.ok) throw new TunnelError("cloudflared_not_found", "cloudflared was not found on PATH");
+    child = spawn(resolved.file, resolved.args, { stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true, env: tunnelEnv(parentEnv) });
+  } catch (error) { cleanup(); throw error; }
   const exit = new Promise<void>((resolve) => { child.once("close", () => resolve()); child.once("error", () => resolve()); });
   const stop = async (): Promise<void> => {
     if (!exited(child)) {

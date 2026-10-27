@@ -57,7 +57,11 @@ export async function runDashboardCli(flags: DashboardFlags, deps: DashboardCliD
   const serverController = flags.remote ? new AbortController() : controller;
   let stopped!: () => void; const stopRequested = new Promise<void>((resolve) => { stopped = resolve; });
   const stop = () => { controller.abort(); stopped(); };
-  process.once("SIGINT", stop); const offStop = onShutdown(stop);
+  // Remote mode owns a child process: keep the handler until teardown is done so a second Ctrl-C cannot skip it, and a closed pipe stops the run through the same path.
+  if (flags.remote) process.on("SIGINT", stop); else process.once("SIGINT", stop);
+  const outputs = flags.remote ? [deps.stdout ? undefined : process.stdout, deps.stderr ? undefined : process.stderr].filter((stream) => stream !== undefined) : [];
+  for (const stream of outputs) stream.on("error", stop);
+  const offStop = onShutdown(stop);
   let server: Awaited<ReturnType<typeof startDashboard>> | undefined;
   let tunnel: QuickTunnel | undefined;
   try {
@@ -88,5 +92,5 @@ export async function runDashboardCli(flags: DashboardFlags, deps: DashboardCliD
     }
     await stopRequested;
   } catch (error) { if (!controller.signal.aborted) throw error; }
-  finally { await tunnel?.close(); serverController.abort(); await server?.close(); process.off("SIGINT", stop); offStop(); }
+  finally { await tunnel?.close(); serverController.abort(); await server?.close(); process.off("SIGINT", stop); for (const stream of outputs) stream.off("error", stop); offStop(); }
 }
