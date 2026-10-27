@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -14,6 +14,17 @@ test("dashboard flags keep loopback and reject duplicate/unknown/invalid options
   for (const args of [["--host", "0.0.0.0"], ["--port", "65536"], ["--port", "-1"], ["--port", "0", "--port", "1"], ["--agent"]]) {
     assert.throws(() => parseDashboardArgs(args));
   }
+});
+
+test("--remote parses as a boolean, rejects duplicates and is listed in the help texts", async () => {
+  assert.deepEqual(parseDashboardArgs(["--remote", "--no-open"]), { remote: true, noOpen: true });
+  assert.deepEqual(parseDashboardArgs(["--no-open"]), { noOpen: true });
+  assert.throws(() => parseDashboardArgs(["--remote", "--remote"]), /duplicate/);
+  assert.throws(() => parseDashboardArgs(["--remote", "yes"]), /unknown/);
+  const dashboardHelp = spawnSync(process.execPath, [join(process.cwd(), "dist/raw.js"), "dashboard", "--help"], { encoding: "utf8" });
+  assert.match(dashboardHelp.stdout, /--remote/);
+  const rootHelp = spawnSync(process.execPath, [join(process.cwd(), "dist/raw.js"), "--help"], { encoding: "utf8" });
+  assert.match(rootHelp.stdout + rootHelp.stderr, /raw dashboard \[--port PORT\] \[--no-open\] \[--remote\]/);
 });
 
 test("browser opener failure is reported without requiring a shell", async () => {
@@ -61,4 +72,30 @@ test("CLI without --port says so when the default port is busy and still prints 
     assert.match(output, /port 21517 is in use; using \d+/);
     assert.doesNotMatch(output, /127\.0\.0\.1:21517\//);
   } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); holder.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+// The one Node 22 diagnostic that CI prints on stderr and a newer Node does not (same filter as tests/acp-transport.test.ts).
+const withoutSqliteWarning = (stderr: string) => stderr.replace(/\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature[^\n]*\n\(Use `node --trace-warnings[^\n]*\n/g, "");
+
+test("without --remote nothing is spawned and the output is exactly the local launch lines", { skip: posixOnly("signals") }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-dashboard-cli-"));
+  const bin = join(root, "bin"); mkdirSync(bin);
+  const marker = join(root, "cloudflared-ran");
+  writeFileSync(join(bin, "cloudflared"), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o755 });
+  const child = spawn(process.execPath, [join(process.cwd(), "dist/raw.js"), "dashboard", "--port", "0", "--no-open"], {
+    cwd: root, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: join(root, "data") },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    let stdout = ""; let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); }); child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("dashboard did not start")), 10_000); timer.unref();
+      const poll = setInterval(() => { if (stdout.includes("Press Ctrl-C to stop.\n")) { clearInterval(poll); clearTimeout(timer); resolve(); } }, 20); poll.unref();
+    });
+    const exit = once(child, "exit"); child.kill("SIGINT"); const [code] = await exit; assert.equal(code, 0);
+    assert.equal(existsSync(marker), false);
+    assert.equal(withoutSqliteWarning(stderr), "");
+    assert.equal(stdout.replace(/http:\/\/127\.0\.0\.1:\d+\/#token=[A-Za-z0-9_-]+/, "http://127.0.0.1:<PORT>/#token=<TOKEN>"), "Raw dashboard: http://127.0.0.1:<PORT>/#token=<TOKEN>\nPress Ctrl-C to stop.\n");
+  } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); rmSync(root, { recursive: true, force: true }); }
 });

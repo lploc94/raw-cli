@@ -26,7 +26,7 @@ async function inputAsync<T>(read: () => Promise<T>): Promise<T> {
 function help(): string {
   return `raw-cli ${version}
 Usage: raw [options] [task]
-       raw dashboard [--port PORT] [--no-open] [--config PATH] [--agent NAME]
+       raw dashboard [--port PORT] [--no-open] [--remote] [--config PATH] [--agent NAME]
        raw vars list|get NAME
        raw config init|list
        raw package list|inspect|validate|pack|export|install|update|remove|link|fork
