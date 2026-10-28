@@ -15,7 +15,7 @@ export async function dashboardFixture(options: { responses?: MockResponse[]; ag
   const provider = await startMockProvider(options.responses ?? [{ frames: [openAiFrame({ content: "answer" }, "stop"), openAiDone] }]);
   const config = { default_agent: "raw", models: { fixture: { provider: "openai", method: "openai-chat-completions", model_id: "fixture",
     api_key: "fixture-key", base_url: provider.url, context_window_tokens: 8192, ...options.model } },
-  agents: { raw: { model: "fixture", system_prompt: "Original prompt", tools: { use: [] }, request_timeout_ms: 5000, ...options.agent,
+  agents: { raw: { model: "fixture", system_prompt: "Original prompt", tools: { use: [] }, request_timeout_ms: 60000, ...options.agent,
     // The small fixture window would otherwise trigger default auto-compaction against scripted responses.
     compact: { trigger_tokens: false, ...(options.agent?.compact as Record<string, unknown> | undefined) } }, ...options.extraAgents },
   ...options.config };

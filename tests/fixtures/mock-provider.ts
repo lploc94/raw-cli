@@ -32,6 +32,8 @@ export async function startMockProvider(responses: MockResponse[]) {
       res.end(JSON.stringify(response.body ?? { error: "fixture error" }));
     }
   });
+  // Node closes an idle keep-alive socket after 5 s; a slow runner (a package tool or hook between two requests) lets the client reuse a socket the server just dropped, which surfaces as a provider error.
+  server.keepAliveTimeout = 120_000;
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("fixture address unavailable");
