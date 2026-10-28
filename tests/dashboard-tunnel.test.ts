@@ -112,7 +112,7 @@ for (const mode of ["ok", "split"]) test(`the tunnel resolves after the registra
     assert.equal(seen.config, "ingress:\n  - service: http://127.0.0.1:4321\n");
     for (const name of ["TUNNEL_LOGLEVEL", "TUNNEL_TOKEN", "TUNNEL_URL", "TUNNEL_FOO", "OPENAI_API_KEY"]) assert.equal(seen.env[name], undefined, name);
     assert.equal(seen.env.TUNNEL_EDGE_IP_VERSION, "6"); assert.equal(seen.env.TUNNEL_TRANSPORT_PROTOCOL, "http2");
-    assert.equal(seen.env.HTTPS_PROXY, "http://proxy"); assert.ok(seen.env.PATH);
+    assert.equal(seen.env.HTTPS_PROXY, "http://proxy"); assert.ok(Object.keys(seen.env).some((name) => name.toUpperCase() === "PATH")); // Windows spells it Path
     assert.ok(existsSync(seen.configPath), "config exists while the tunnel runs");
     await tunnel.close();
     assert.equal(existsSync(seen.configPath), false, "temp dir removed after close");

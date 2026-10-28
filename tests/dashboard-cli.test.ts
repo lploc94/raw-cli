@@ -71,7 +71,10 @@ test("CLI without --port says so when the default port is busy and still prints 
     });
     assert.match(output, /port 21517 is in use; using \d+/);
     assert.doesNotMatch(output, /127\.0\.0\.1:21517\//);
-  } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); holder.close(); rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) { const exit = once(child, "exit"); child.kill("SIGKILL"); await exit; } // Windows cannot remove a directory a live process still holds
+    holder.close(); rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // The one Node 22 diagnostic that CI prints on stderr and a newer Node does not (same filter as tests/acp-transport.test.ts).
