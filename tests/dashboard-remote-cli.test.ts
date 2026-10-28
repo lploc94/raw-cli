@@ -137,7 +137,7 @@ test("cancelling while the tunnel starts leaves no listener and nothing pending"
 const FAKE_CLOUDFLARED = `#!/usr/bin/env node
 const fs = require("node:fs"); const dir = require("node:path").dirname(__dirname); // the fixture root; the parent environment is filtered, so nothing is passed by variable
 const at = (flag) => process.argv[process.argv.indexOf(flag) + 1];
-fs.writeFileSync(dir + "/pid", String(process.pid)); fs.writeFileSync(dir + "/saw-secret", process.env.OPENAI_API_KEY ? "yes" : "no"); fs.writeFileSync(dir + "/config-path", at("--config"));
+fs.writeFileSync(dir + "/saw-secret", process.env.OPENAI_API_KEY ? "yes" : "no"); fs.writeFileSync(dir + "/config-path", at("--config")); fs.writeFileSync(dir + "/pid", String(process.pid)); // pid goes last: its presence means the others exist
 process.on("SIGTERM", () => { fs.writeFileSync(dir + "/term", "term"); if (!fs.existsSync(dir + "/ignore-term")) process.exit(0); });
 console.error("2026-10-27T07:41:46Z INF |  https://carol-engineering-robot-remedies.trycloudflare.com                                |");
 setTimeout(() => console.error("2026-10-27T07:41:47Z INF Registered tunnel connection connIndex=0 connection=1666b405 event=0 ip=198.41.200.23 location=sin02 protocol=quic"), 100);
