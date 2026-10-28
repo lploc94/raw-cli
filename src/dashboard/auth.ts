@@ -3,9 +3,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { DashboardError } from "./errors.js";
 
 export function createDashboardToken(): string { return randomBytes(32).toString("base64url"); }
-export function verifyDashboardRequest(request: IncomingMessage, origin: string, token: string, api: boolean): void {
-  if (request.headers.host !== new URL(origin).host) throw new DashboardError(403, "foreign_host", "Dashboard Host must match its loopback listener");
-  if (request.headers.origin !== undefined && request.headers.origin !== origin) throw new DashboardError(403, "foreign_origin", "Dashboard Origin must match its loopback listener");
+export function verifyDashboardRequest(request: IncomingMessage, origins: ReadonlySet<string>, token: string, api: boolean): void {
+  const host = request.headers.host;
+  if (host === undefined || ![...origins].some((origin) => new URL(origin).host === host)) throw new DashboardError(403, "foreign_host", "Dashboard Host must match its registered listener");
+  if (request.headers.origin !== undefined && !origins.has(request.headers.origin)) throw new DashboardError(403, "foreign_origin", "Dashboard Origin must match its registered listener");
   if (!api) return;
   const value = request.headers.authorization ?? "";
   const expected = Buffer.from(`Bearer ${token}`); const actual = Buffer.from(value);
@@ -17,4 +18,10 @@ export function responseHeaders(response: ServerResponse, styleNonce: string): v
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("Cache-Control", "no-store");
+}
+const QUICK_TUNNEL_ORIGIN = /^https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com\/?$/i;
+/** The only public origin a dashboard may add: a bare `https://<name>.trycloudflare.com` (one optional trailing slash), checked on the text as given so a default port, an empty query or a `..` path cannot be normalized away. */
+export function quickTunnelOrigin(value: string): string {
+  if (!QUICK_TUNNEL_ORIGIN.test(value)) throw new DashboardError(400, "invalid_origin", "Public origin must be a bare https://<name>.trycloudflare.com quick tunnel origin");
+  return new URL(value).origin;
 }

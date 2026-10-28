@@ -234,7 +234,7 @@ export function forgetSession(sessionId: string): void {
 }
 /** The titles the server gives a chat before its first message (src/sessions/store.ts setTitleFromPrompt). */
 const placeholderTitle = (title: string | undefined): boolean => title === "New chat" || title === "New session";
-export function useSession(sessionId: string | undefined) {
+export function useSession(sessionId: string | undefined, remote?: boolean) {
   const [state, setState] = useState<ChatState | undefined>(() =>
     sessionId ? remembered.get(sessionId) : undefined,
   );
@@ -321,6 +321,7 @@ export function useSession(sessionId: string | undefined) {
             showConnection("Connected");
             showError("");
           },
+          remote,
         );
       } catch (cause) {
         if (controller.signal.aborted) return;
@@ -338,7 +339,7 @@ export function useSession(sessionId: string | undefined) {
       batcher.dispose();
       if (timer) clearTimeout(timer);
     };
-  }, [sessionId]);
+  }, [sessionId, remote]);
   /** Loads the previous history page. `beforeApply` runs once the page has arrived, right before it joins the state. */
   const earlier = async (beforeApply?: () => void) => {
     if (!state?.history.nextCursor || !sessionId) return;

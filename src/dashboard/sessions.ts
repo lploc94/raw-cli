@@ -478,7 +478,7 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         catch (error) { if (error instanceof DashboardError) throw error; throw new DashboardError(400, "invalid_cursor", String(error)); }
       }
       if (action === "metrics" && method === "GET") return reply(metrics(id));
-      if (action === "events" && method === "GET") { await streams.subscribe(id, response, typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined); return true; }
+      if (action === "events" && (method === "GET" || method === "POST")) { await streams.subscribe(id, response, typeof request.headers["last-event-id"] === "string" ? request.headers["last-event-id"] : undefined); return true; }
       if (action === "output" && method === "GET") {
         const op = requireOperation(textField(url.searchParams.get("operationId"), "operationId"));
         if (op.sessionId !== id) throw new DashboardError(404, "not_found", "Output not found in this session");

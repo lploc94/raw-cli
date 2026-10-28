@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- `raw dashboard --remote` opens the dashboard on a phone: it starts a Cloudflare quick tunnel (`cloudflared` on `PATH`, no account or domain) and prints the public link and a QR code. Opt-in; if `cloudflared` is missing or fails, Raw warns and keeps the local dashboard. The dashboard accepts one registered `*.trycloudflare.com` address as Host/Origin, throttles wrong tokens (10 per 60 s per client, then 429), reports `remote` in `/api/bootstrap`, answers `/events` on `POST` as well as `GET` (a quick tunnel buffers `GET` streams; the bundled client uses `POST` when remote) and stops the tunnel before the server. Cloudflare terminates TLS and can see the traffic; the address changes every run. See [docs/dashboard.md](docs/dashboard.md#open-it-on-your-phone---remote).
+- `raw dashboard` now defaults to port 21517 instead of 8787, which other development tools commonly use. When `--port` is not given and the default is busy, Raw uses a free port and prints `port 21517 is in use; using N` instead of failing; an explicit busy `--port` is still an error. Scripts that assume `127.0.0.1:8787` must read the printed link or pass `--port 8787`.
 - Tool handlers (including package tools) receive `context.sessionId`, the persisted session the call runs in; it is absent when the runtime has no session store. A tool that ignores it behaves as before, so a package can keep per-session state.
 - New shipped example `examples/packages/goal-kit/`: a portable goal package
   with a `goal` tool and panel, a `Stop` hook using `raw.stop-continue/1` to

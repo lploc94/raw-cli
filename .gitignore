@@ -11,3 +11,7 @@ video/*/out/
 # Local planning notes (kept out of the public tree)
 *-plan.md
 raw-cli-implementation-handoff.md
+
+# Product intro video and article (local only)
+video/
+gioi-thieu-raw-cli.md

@@ -39,12 +39,18 @@ Exit codes are 0 for completed turns and informational commands, 1 for runtime/p
 
 ## Local browser dashboard
 
-`raw dashboard [--port PORT] [--no-open] [--config PATH] [--agent NAME]` starts a
-foreground server bound to `127.0.0.1`. Default port is 8787; port 0 selects a free
+`raw dashboard [--port PORT] [--no-open] [--remote] [--config PATH] [--agent NAME]` starts a
+foreground server bound to `127.0.0.1`. Default port is 21517 (if it is busy and
+`--port` was not given, a free port is used and a notice is printed; an explicit busy `--port` is an error); port 0 selects a free
 port. The printed authenticated launch URL remains usable if browser opening is
 unavailable. Ctrl-C, SIGTERM, SIGHUP and, on Windows, Ctrl+Break or closing the
 console window cancel owned work and close children/connections. A port Windows
 reserves (Hyper-V ranges) fails with `Port N is reserved or not permitted; try --port 0`.
+
+`--remote` also opens the dashboard through a Cloudflare quick tunnel (`cloudflared` on
+`PATH`, not installed by Raw) and prints a link and, on a terminal, a QR code for a phone;
+see [Dashboard](dashboard.md#open-it-on-your-phone---remote) for the trade-offs. Without
+it nothing is exposed and nothing is started.
 
 The browser creates and resumes the same stored session IDs as CLI/ACP. Refresh or
 closing a tab leaves a server-owned run active; Stop cancels it explicitly. A

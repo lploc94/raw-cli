@@ -184,7 +184,7 @@ export function Chat({
     error: streamError,
     earlier,
     receipt,
-  } = useSession(id);
+  } = useSession(id, bootstrap.remote);
   const { navigate } = useRouter();
   const store = useMemo(() => createDraftStore(id, drafts), [id, drafts]);
   const [agent, setAgent] = useState(() =>

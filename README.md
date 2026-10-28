@@ -41,6 +41,7 @@ raw sessions show SESSION_ID
 raw --acp --stdio           # IDE/parent agent transport
 raw dashboard              # local browser chat and setup
 raw dashboard --port 0 --no-open
+raw dashboard --remote     # also open it on your phone through a Cloudflare quick tunnel
 ```
 
 `raw dashboard` serves the bundled browser app locally. Create or continue sessions,

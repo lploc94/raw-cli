@@ -18,4 +18,7 @@ sandbox. Behaviour that follows from an agent's configured tools and `tools.rule
 expected. Reports are in scope when Raw bypasses an explicit `ask` or `deny` rule, leaks
 credentials (for example into logs, sessions or packages), lets a package or dashboard
 request act outside its documented contract, or exposes the dashboard or ACP WebSocket
-beyond the local host without being told to.
+beyond the local host without being told to. `raw dashboard --remote` is being told to:
+it publishes the dashboard through a Cloudflare quick tunnel, Cloudflare terminates TLS and can
+see the traffic, and the launch link is the only credential. Shared or leaked links are out of
+scope; see [the dashboard guide](docs/dashboard.md#open-it-on-your-phone---remote).

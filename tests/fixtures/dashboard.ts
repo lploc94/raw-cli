@@ -41,9 +41,9 @@ export async function dashboardFixture(options: { responses?: MockResponse[]; ag
     async close() { await server.close(); await provider.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
-export async function eventStream(server: Awaited<ReturnType<typeof startDashboard>>, sessionId: string, cursor?: string) {
+export async function eventStream(server: Awaited<ReturnType<typeof startDashboard>>, sessionId: string, cursor?: string, method: "GET" | "POST" = "GET") {
   const controller = new AbortController();
-  const response = await fetch(`${server.url}/api/sessions/${sessionId}/events`, { headers: { Authorization: `Bearer ${server.token}`,
+  const response = await fetch(`${server.url}/api/sessions/${sessionId}/events`, { method, headers: { Authorization: `Bearer ${server.token}`,
     ...(cursor ? { "Last-Event-ID": cursor } : {}) }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) });
   assert.equal(response.status, 200); const reader = response.body!.getReader(); const decoder = new TextDecoder();
   let buffer = "";

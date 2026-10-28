@@ -129,3 +129,28 @@ test("two tabs converge after disconnecting during a real tool with one sentinel
     assert.deepEqual(left!.history, right!.history); assert.equal(left!.history.items.filter((item) => item.kind === "user").length, 1);
   } finally { await f.close(); }
 });
+
+test("the events route answers GET and POST with the same frames, including resume from a cursor", async () => {
+  const f = await dashboardFixture();
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "raw" });
+    const open = async (method: "GET" | "POST", cursor?: string) => eventStream(f.server, session.id, cursor, method);
+    const [getFirst, postFirst] = await Promise.all([open("GET"), open("POST")]);
+    const getSnapshot = await getFirst.next(); const postSnapshot = await postFirst.next();
+    assert.equal(getSnapshot.type, "snapshot"); assert.equal(postSnapshot.type, "snapshot");
+    assert.equal(postSnapshot.id, getSnapshot.id); assert.deepEqual(postSnapshot.data, getSnapshot.data);
+    getFirst.close(); postFirst.close();
+    const created = await f.json<{ id: string }>(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "resume", kind: "turn", agent: "raw", input: "go" });
+    await f.wait(created.id);
+    const [getResume, postResume] = await Promise.all([open("GET", getSnapshot.id), open("POST", getSnapshot.id)]);
+    const fromGet = await getResume.next(); const fromPost = await postResume.next();
+    assert.notEqual(fromGet.type, "snapshot", "a valid cursor replays instead of restarting");
+    assert.equal(fromGet.sequence, getSnapshot.sequence + 1);
+    assert.equal(fromPost.sequence, fromGet.sequence); assert.equal(fromPost.type, fromGet.type); assert.equal(fromPost.id, fromGet.id);
+    getResume.close(); postResume.close();
+    for (const method of ["GET", "POST"]) {
+      const unauthenticated = await fetch(`${f.server.url}/api/sessions/${session.id}/events`, { method });
+      assert.equal(unauthenticated.status, 401, method);
+    }
+  } finally { await f.close(); }
+});

@@ -1,18 +1,35 @@
 # Local dashboard
 
-Run `raw dashboard` from the project you want to work on. Raw starts a foreground server at `http://127.0.0.1:8787` and opens your browser when launched interactively. It prints an authenticated launch link. Keep this process running while using the dashboard; Ctrl-C closes its operations, connections and session ownership.
+Run `raw dashboard` from the project you want to work on. Raw starts a foreground server at `http://127.0.0.1:21517` and opens your browser when launched interactively. It prints an authenticated launch link. Keep this process running while using the dashboard; Ctrl-C closes its operations, connections and session ownership.
 
 ```sh
 raw dashboard
 raw dashboard --port 0 --no-open
+raw dashboard --remote
 raw dashboard --config /path/to/raw.json --agent deepseek
 ```
 
-`--port 0` chooses a free port. An occupied port is an error; Raw never terminates another listener or silently attaches to it. `--no-open`, SSH and noninteractive launches leave a usable printed link. Browser opening failure does not terminate a healthy server.
+`--port 0` chooses a free port. When you do not pass `--port` and 21517 is occupied, Raw picks a free port instead and prints `port 21517 is in use; using N`. An occupied port you asked for with `--port N` is an error; Raw never terminates another listener or silently attaches to it. `--no-open`, SSH and noninteractive launches leave a usable printed link. Browser opening failure does not terminate a healthy server.
 
 One dashboard manages one displayed config file. The invoking directory is its initial workspace. A workspace changes relative runtime paths, not OS filesystem permissions. Missing credentials or missing/invalid config do not prevent the setup/repair interface from loading. No model, tool or MCP connection starts just to display the application.
 
-The launch token is in the URL fragment. The browser keeps it in tab session storage, removes the fragment from the address bar and authenticates API/stream requests through an Authorization header. A server restart creates a new token; reopen the new launch link. Do not publish a launch link to others. The server binds only IPv4 loopback and does not provide accounts, LAN sharing or a public listener.
+The launch token is in the URL fragment. The browser keeps it in tab session storage, removes the fragment from the address bar and authenticates API/stream requests through an Authorization header. A server restart creates a new token; reopen the new launch link. Do not publish a launch link to others. The server binds only IPv4 loopback and does not provide accounts or LAN sharing. A public address exists only while you run it with `--remote` (below); without that flag nothing leaves your machine.
+
+## Open it on your phone (`--remote`)
+
+`raw dashboard --remote` also publishes the dashboard through a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) (`cloudflared tunnel --url`): no account, domain or router setup. Raw prints `Raw dashboard (remote): https://<name>.trycloudflare.com/#token=...` and, on a terminal, a QR code of that link; scan it with the phone camera. The local link is printed too, but the browser does not open while the tunnel is up (you are going to use the phone); if the tunnel fails, Raw opens the local link as usual.
+
+```sh
+brew install cloudflared      # Raw does not install it; other systems: Cloudflare's download page
+raw dashboard --remote
+```
+
+- **Opt-in.** Without `--remote` Raw never starts `cloudflared` and prints exactly what it printed before. Raw does not install cloudflared; it must be on `PATH`. If it is missing, exits or does not register a tunnel within 45 seconds, Raw prints one warning (with an install hint when it is missing) and keeps the local dashboard running.
+- **The link is a secret.** The token in the link is the only credential; anyone who has the link can use the dashboard, including its tools, until you stop it. Raw does not make tokens expire or one-time. Wrong tokens are throttled per client (10 in 60 seconds, then HTTP 429).
+- **Cloudflare sees the traffic.** Cloudflare terminates TLS at its edge and relays requests to your machine, so it can see them. The `trycloudflare.com` address changes every run, and quick tunnels carry no uptime guarantee; some networks block `trycloudflare.com`.
+- **Your machine stays the host.** Keep the computer awake and `raw dashboard` running; the phone talks to it through the tunnel. Only the registered tunnel address is accepted as Host/Origin besides the loopback address, and cloudflared runs with an isolated config so a `~/.cloudflared/config.yml` of yours cannot reroute it.
+- **Streaming.** A quick tunnel buffers `GET` event streams, so the bundled client opens the stream with `POST` while the dashboard reports `remote: true` ([API](dashboard-api.md)).
+- **Stopping.** Ctrl-C (or SIGTERM) stops `cloudflared` first, then the dashboard. If the tunnel exits by itself, remote access turns off with one warning and the local dashboard continues.
 
 Browser tabs observe server-owned operations. Closing or refreshing a tab does not cancel a run. Stop cancels an operation explicitly. CLI and browser use the same saved sessions; a session executing in another process remains readable, and becomes runnable in the dashboard after its writer releases it.
 
