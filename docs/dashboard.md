@@ -17,7 +17,7 @@ The launch token is in the URL fragment. The browser keeps it in tab session sto
 
 ## Open it on your phone (`--remote`)
 
-`raw dashboard --remote` also publishes the dashboard through a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) (`cloudflared tunnel --url`): no account, domain or router setup. Raw prints `Raw dashboard (remote): https://<name>.trycloudflare.com/#token=...` and, on a terminal, a QR code of that link; scan it with the phone camera. The local link is printed too and the browser still opens the local one.
+`raw dashboard --remote` also publishes the dashboard through a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) (`cloudflared tunnel --url`): no account, domain or router setup. Raw prints `Raw dashboard (remote): https://<name>.trycloudflare.com/#token=...` and, on a terminal, a QR code of that link; scan it with the phone camera. The local link is printed too, but the browser does not open while the tunnel is up (you are going to use the phone); if the tunnel fails, Raw opens the local link as usual.
 
 ```sh
 brew install cloudflared      # Raw does not install it; other systems: Cloudflare's download page

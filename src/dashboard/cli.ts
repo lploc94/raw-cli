@@ -87,7 +87,7 @@ export async function runDashboardCli(flags: DashboardFlags, deps: DashboardCliD
       if (stdout.isTTY) { try { stdout.write(`${renderQr(remoteLink)}\n`); } catch { /* the link alone is enough */ } }
       stdout.write(`Raw dashboard: ${server.launchUrl}\n${REMOTE_NOTICE}\nPress Ctrl-C to stop.\n`);
     } else stdout.write(`Raw dashboard: ${server.launchUrl}\nPress Ctrl-C to stop.\n`);
-    if (!flags.noOpen && stdout.isTTY && !process.env.SSH_CONNECTION && !process.env.SSH_TTY) {
+    if (!flags.noOpen && !remoteLink && stdout.isTTY && !process.env.SSH_CONNECTION && !process.env.SSH_TTY) {
       if (!await openDashboardBrowser(server.launchUrl)) stderr.write("raw: browser did not open; use the printed dashboard link\n");
     }
     await stopRequested;
