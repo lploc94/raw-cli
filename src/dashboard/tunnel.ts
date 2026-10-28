@@ -27,20 +27,32 @@ export interface QuickTunnelOptions {
   command?: string;
   /** Arguments placed before `tunnel ...` (tests run a script through `node`). */
   commandArgs?: readonly string[];
-  /** The parent environment; default `process.env`. */
+  /** The parent environment, filtered by `tunnelEnv`; default `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /** Variables added after filtering (tests only). */
+  extraEnv?: NodeJS.ProcessEnv;
   /** Deadline from spawn to the first registered connection. */
   timeoutMs?: number;
 }
 
 const KEPT_TUNNEL_VARIABLES = new Set(["TUNNEL_EDGE_IP_VERSION", "TUNNEL_EDGE_BIND_ADDRESS", "TUNNEL_REGION", "TUNNEL_TRANSPORT_PROTOCOL", "TUNNEL_RETRIES", "TUNNEL_POST_QUANTUM"]);
+/** What a child process needs to start and reach the network: executable lookup, home and temp directories, locale, proxies, extra CA certificates and the Windows system variables. */
+const PASSED_VARIABLES = new Set([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "TZ", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR",
+  "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "HOMEDRIVE", "HOMEPATH",
+]);
 /**
- * The child's environment: everything of the parent except `TUNNEL_*` settings that could redirect it (token, URL,
- * log file, config, ...). Only the network-shape settings in the allowlist survive.
+ * The child's environment: an allowlist, so API keys and other secrets of the parent never reach it. Besides the
+ * plain variables above, only the `TUNNEL_*` network-shape settings survive; the other `TUNNEL_*` ones (token, URL,
+ * log file, config, ...) could redirect the tunnel. Names compare case-insensitively (Windows).
  */
 export function tunnelEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(parent)) if (!/^TUNNEL_/i.test(name) || KEPT_TUNNEL_VARIABLES.has(name.toUpperCase())) env[name] = value;
+  for (const [name, value] of Object.entries(parent)) {
+    const key = name.toUpperCase();
+    if (PASSED_VARIABLES.has(key) || KEPT_TUNNEL_VARIABLES.has(key)) env[name] = value;
+  }
   return env;
 }
 /** The config file passed with `--config`: one catch-all ingress, so a user's `~/.cloudflared/config.yml` cannot reroute the tunnel. */
@@ -90,7 +102,7 @@ export async function startQuickTunnel(options: QuickTunnelOptions): Promise<Qui
   try {
     const resolved = resolveCommand(options.command ?? "cloudflared", args, { cwd: process.cwd(), env: parentEnv });
     if (!resolved.ok) throw new TunnelError("cloudflared_not_found", "cloudflared was not found on PATH");
-    child = spawn(resolved.file, resolved.args, { stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true, env: tunnelEnv(parentEnv) });
+    child = spawn(resolved.file, resolved.args, { stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true, env: { ...tunnelEnv(parentEnv), ...options.extraEnv } });
   } catch (error) { cleanup(); throw error; }
   const exit = new Promise<void>((resolve) => { child.once("close", () => resolve()); child.once("error", () => resolve()); });
   const stop = async (): Promise<void> => {

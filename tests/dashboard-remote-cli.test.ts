@@ -135,20 +135,21 @@ test("cancelling while the tunnel starts leaves no listener and nothing pending"
 // ---- child process: dist/raw.js with a fake cloudflared first on PATH ----
 
 const FAKE_CLOUDFLARED = `#!/usr/bin/env node
-const fs = require("node:fs"); const dir = process.env.FAKE_DIR;
+const fs = require("node:fs"); const dir = require("node:path").dirname(__dirname); // the fixture root; the parent environment is filtered, so nothing is passed by variable
 const at = (flag) => process.argv[process.argv.indexOf(flag) + 1];
-fs.writeFileSync(dir + "/pid", String(process.pid)); fs.writeFileSync(dir + "/config-path", at("--config"));
-process.on("SIGTERM", () => { fs.writeFileSync(dir + "/term", "term"); if (!process.env.FAKE_IGNORE_TERM) process.exit(0); });
+fs.writeFileSync(dir + "/pid", String(process.pid)); fs.writeFileSync(dir + "/saw-secret", process.env.OPENAI_API_KEY ? "yes" : "no"); fs.writeFileSync(dir + "/config-path", at("--config"));
+process.on("SIGTERM", () => { fs.writeFileSync(dir + "/term", "term"); if (!fs.existsSync(dir + "/ignore-term")) process.exit(0); });
 console.error("2026-10-27T07:41:46Z INF |  https://carol-engineering-robot-remedies.trycloudflare.com                                |");
 setTimeout(() => console.error("2026-10-27T07:41:47Z INF Registered tunnel connection connIndex=0 connection=1666b405 event=0 ip=198.41.200.23 location=sin02 protocol=quic"), 100);
 setInterval(() => {}, 1000);
 `;
-function childFixture(withFake: boolean, extraEnv: Record<string, string> = {}) {
+function childFixture(withFake: boolean, options: { ignoreTerm?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "raw-remote-cli-")); const bin = join(root, "bin"); mkdirSync(bin);
   if (withFake) writeFileSync(join(bin, "cloudflared"), FAKE_CLOUDFLARED, { mode: 0o755 });
+  if (options.ignoreTerm) writeFileSync(join(root, "ignore-term"), "");
   const child = spawn(process.execPath, [join(process.cwd(), "dist/raw.js"), "dashboard", "--remote", "--no-open", "--port", "0"], {
     cwd: root, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PATH: withFake ? `${bin}:${process.env.PATH}` : bin, FAKE_DIR: root, ...extraEnv, XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: join(root, "data") },
+    env: { ...process.env, PATH: withFake ? `${bin}:${process.env.PATH}` : bin, OPENAI_API_KEY: "sk-must-not-reach-cloudflared", XDG_CONFIG_HOME: join(root, "config"), XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: join(root, "data") },
   });
   let stdout = ""; let stderr = "";
   child.stdout!.on("data", (c) => { stdout += c; }); child.stderr!.on("data", (c) => { stderr += c; });
@@ -168,6 +169,7 @@ test("installed CLI with a fake cloudflared prints the remote link, authenticate
     assert.equal(via.status, 200); assert.equal(JSON.parse(via.body).remote, true);
     const pid = Number(readFileSync(join(f.root, "pid"), "utf8")); const configPath = readFileSync(join(f.root, "config-path"), "utf8");
     assert.equal(alive(pid), true); assert.equal(existsSync(configPath), true);
+    assert.equal(readFileSync(join(f.root, "saw-secret"), "utf8"), "no", "API keys of the parent do not reach cloudflared");
     assert.equal(await f.stop("SIGINT"), 0);
     assert.equal(alive(pid), false, "the fake child is gone before the CLI exits");
     assert.equal(existsSync(configPath), false, "its temp config is gone");
@@ -202,7 +204,7 @@ test("a closed stdout pipe stops the run through the normal teardown: the tunnel
 });
 
 test("a second Ctrl-C during teardown does not skip it: a child that ignores SIGTERM is still killed", { skip: posixOnly("signals") }, async () => {
-  const f = childFixture(true, { FAKE_IGNORE_TERM: "1" });
+  const f = childFixture(true, { ignoreTerm: true });
   try {
     await f.waitFor(() => f.out().includes("Press Ctrl-C to stop."));
     const pid = Number(readFileSync(join(f.root, "pid"), "utf8")); const configPath = readFileSync(join(f.root, "config-path"), "utf8");

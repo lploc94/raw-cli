@@ -45,7 +45,8 @@ function fixture() {
   const record = join(dir, "record.json");
   const run = (mode: string, extra: Partial<Parameters<typeof startQuickTunnel>[0]> & { env?: NodeJS.ProcessEnv } = {}) => startQuickTunnel({
     port: 4321, command: process.execPath, commandArgs: [script], timeoutMs: 5_000, ...extra,
-    env: { ...process.env, FAKE_MODE: mode, FAKE_RECORD: record, FAKE_URL_LINES: JSON.stringify(URL_LINES), FAKE_REGISTERED: REGISTERED_LINE, ...extra.env },
+    env: { ...process.env, ...extra.env },
+    extraEnv: { FAKE_MODE: mode, FAKE_RECORD: record, FAKE_URL_LINES: JSON.stringify(URL_LINES), FAKE_REGISTERED: REGISTERED_LINE },
   });
   const recorded = () => JSON.parse(readFileSync(record, "utf8")) as { argv: string[]; env: Record<string, string>; config: string | null; configPath: string };
   return { run, recorded, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
@@ -88,10 +89,12 @@ test("an unfinished line longer than 64 KiB is dropped with the rest of that lin
   parser.push(`${URL_LINES[4]}\n${REGISTERED_LINE}\n`);
   assert.equal(parser.url, URL); assert.equal(parser.registered, true);
 });
-test("tunnelEnv drops TUNNEL_* variables except the network-shape allowlist and keeps everything else", () => {
-  const out = tunnelEnv({ PATH: "/bin", HOME: "/h", HTTPS_PROXY: "http://p", TUNNEL_LOGLEVEL: "error", TUNNEL_TOKEN: "t", TUNNEL_URL: "u", TUNNEL_FOO: "x", tunnel_config: "c",
-    TUNNEL_EDGE_IP_VERSION: "6", TUNNEL_TRANSPORT_PROTOCOL: "http2", TUNNEL_REGION: "us", TUNNEL_RETRIES: "3", TUNNEL_EDGE_BIND_ADDRESS: "1.2.3.4", TUNNEL_POST_QUANTUM: "true", NOT_TUNNEL: "1" });
-  assert.deepEqual(out, { PATH: "/bin", HOME: "/h", HTTPS_PROXY: "http://p", TUNNEL_EDGE_IP_VERSION: "6", TUNNEL_TRANSPORT_PROTOCOL: "http2", TUNNEL_REGION: "us", TUNNEL_RETRIES: "3", TUNNEL_EDGE_BIND_ADDRESS: "1.2.3.4", TUNNEL_POST_QUANTUM: "true", NOT_TUNNEL: "1" });
+test("tunnelEnv is an allowlist: secrets and hazardous TUNNEL_* variables are dropped, what a child needs is kept", () => {
+  const out = tunnelEnv({ PATH: "/bin", HOME: "/h", https_proxy: "http://p", HTTPS_PROXY: "http://P", NO_PROXY: "x", SSL_CERT_FILE: "/ca.pem", TMPDIR: "/t", LANG: "C", SystemRoot: "C:\\Windows",
+    TUNNEL_EDGE_IP_VERSION: "6", TUNNEL_TRANSPORT_PROTOCOL: "http2", TUNNEL_REGION: "us", TUNNEL_RETRIES: "3", TUNNEL_EDGE_BIND_ADDRESS: "1.2.3.4", TUNNEL_POST_QUANTUM: "true",
+    OPENAI_API_KEY: "sk-secret", ANTHROPIC_API_KEY: "k", GITHUB_TOKEN: "g", AWS_SECRET_ACCESS_KEY: "a", NODE_OPTIONS: "--require x", TUNNEL_LOGLEVEL: "error", TUNNEL_TOKEN: "t", TUNNEL_URL: "u", TUNNEL_FOO: "x", tunnel_config: "c" });
+  assert.deepEqual(out, { PATH: "/bin", HOME: "/h", https_proxy: "http://p", HTTPS_PROXY: "http://P", NO_PROXY: "x", SSL_CERT_FILE: "/ca.pem", TMPDIR: "/t", LANG: "C", SystemRoot: "C:\\Windows",
+    TUNNEL_EDGE_IP_VERSION: "6", TUNNEL_TRANSPORT_PROTOCOL: "http2", TUNNEL_REGION: "us", TUNNEL_RETRIES: "3", TUNNEL_EDGE_BIND_ADDRESS: "1.2.3.4", TUNNEL_POST_QUANTUM: "true" });
 });
 test("tunnelConfig is one catch-all ingress to the dashboard port", () => {
   assert.equal(tunnelConfig(21517), "ingress:\n  - service: http://127.0.0.1:21517\n");
@@ -99,7 +102,7 @@ test("tunnelConfig is one catch-all ingress to the dashboard port", () => {
 
 for (const mode of ["ok", "split"]) test(`the tunnel resolves after the registration line (${mode}), with an isolated config and a filtered env`, async () => {
   const f = fixture();
-  const tunnel = await f.run(mode, { env: { TUNNEL_LOGLEVEL: "error", TUNNEL_TOKEN: "secret", TUNNEL_URL: "http://elsewhere", TUNNEL_FOO: "1", TUNNEL_EDGE_IP_VERSION: "6", TUNNEL_TRANSPORT_PROTOCOL: "http2", HTTPS_PROXY: "http://proxy" } });
+  const tunnel = await f.run(mode, { env: { TUNNEL_LOGLEVEL: "error", TUNNEL_TOKEN: "secret", TUNNEL_URL: "http://elsewhere", TUNNEL_FOO: "1", TUNNEL_EDGE_IP_VERSION: "6", TUNNEL_TRANSPORT_PROTOCOL: "http2", HTTPS_PROXY: "http://proxy", OPENAI_API_KEY: "sk-secret" } });
   try {
     assert.equal(tunnel.url, URL);
     const seen = f.recorded();
@@ -107,7 +110,7 @@ for (const mode of ["ok", "split"]) test(`the tunnel resolves after the registra
     assert.equal(seen.argv.at(-1), "http://127.0.0.1:4321");
     assert.equal(seen.argv[seen.argv.indexOf("--loglevel") + 1], "info");
     assert.equal(seen.config, "ingress:\n  - service: http://127.0.0.1:4321\n");
-    for (const name of ["TUNNEL_LOGLEVEL", "TUNNEL_TOKEN", "TUNNEL_URL", "TUNNEL_FOO"]) assert.equal(seen.env[name], undefined, name);
+    for (const name of ["TUNNEL_LOGLEVEL", "TUNNEL_TOKEN", "TUNNEL_URL", "TUNNEL_FOO", "OPENAI_API_KEY"]) assert.equal(seen.env[name], undefined, name);
     assert.equal(seen.env.TUNNEL_EDGE_IP_VERSION, "6"); assert.equal(seen.env.TUNNEL_TRANSPORT_PROTOCOL, "http2");
     assert.equal(seen.env.HTTPS_PROXY, "http://proxy"); assert.ok(seen.env.PATH);
     assert.ok(existsSync(seen.configPath), "config exists while the tunnel runs");
