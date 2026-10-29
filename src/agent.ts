@@ -1,4 +1,5 @@
 import type { ProcessSupervisor } from "./processes/supervisor.js";
+import type { SessionAgent } from "./backends/types.js";
 import { FILES_CHANGED_OWNER } from "./tools/write-changes.js";
 import { InteractionError, type InteractionContext, type InteractionAdapter } from "./interactions/contract.js";
 import { InteractionService } from "./interactions/service.js";
@@ -1584,3 +1585,6 @@ const nativeDisabled = new Map<string, string>();
 const nativeWarned = new Set<string>();
 
 export function createAgent(options: AgentOptions): AgentSession { return new AgentSession(options); }
+
+// Raw's own loop is one implementation of the host's session-agent interface (src/backends/types.ts).
+null as unknown as AgentSession satisfies SessionAgent;

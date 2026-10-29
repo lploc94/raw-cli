@@ -1,5 +1,6 @@
 import { fstatSync } from "node:fs";
-import type { AgentSession, RunEvent, RunResult } from "../agent.js";
+import type { RunEvent, RunResult } from "../agent.js";
+import type { SessionAgent } from "../backends/types.js";
 import type { ToolApprovalRequest } from "../tools/primitives.js";
 import type { RuntimeConfig } from "../config.js";
 import { toolArguments } from "../sessions/display.js";
@@ -61,7 +62,7 @@ export class TerminalRenderer {
   get elapsedMs(): number { return Math.max(0, performance.now() - this.startedAt); }
   get firstTextMs(): number | undefined { return this.firstTextAt === undefined ? undefined : Math.max(0, this.firstTextAt - this.startedAt); }
 
-  constructor(private readonly session: AgentSession, private readonly runtime: RuntimeConfig,
+  constructor(private readonly session: SessionAgent, private readonly runtime: RuntimeConfig,
     private readonly cwd: string, private readonly showHeader: boolean, private readonly resumed = false) {
     this.caps = terminalCapabilities(Boolean(process.stdout.isTTY), process.env, runtime.ui);
     this.stderrCaps = terminalCapabilities(Boolean(process.stderr.isTTY), process.env, runtime.ui);
@@ -77,7 +78,8 @@ export class TerminalRenderer {
     this.startedAt = performance.now();
     if ((this.rich || this.decoratedPlain) && this.showHeader) {
       const agent = this.runtime.modelConfig?.agentName ?? this.runtime.agentName ?? "raw";
-      const model = this.runtime.modelConfig?.model ?? "unknown";
+      const backend = this.runtime.backend;
+      const model = this.runtime.modelConfig?.model ?? (backend ? `${backend.model ?? "default"} via ${backend.kind}` : "unknown");
       process.stderr.write(`${paint("accent", `${icon("brand", this.runtime.ui, this.caps)} raw`, this.runtime.ui, this.caps)}${decor(" · ", this.caps)}agent ${agent}${decor(" · ", this.caps)}model ${model}`
         + `${this.resumed ? decor(" · Resumed", this.caps) : ""}\n`
         + (this.runtime.ui.density === "compact" ? "\n" : `${paint("muted", this.cwd, this.runtime.ui, this.caps)}\n\n`));

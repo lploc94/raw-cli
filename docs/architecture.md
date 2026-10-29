@@ -45,6 +45,10 @@ Event payloads are detached snapshots. A renderer cannot mutate authorized argum
 
 `raw` has full permissions of its invoking OS account. Session cwd resolves relative file paths and shell working directories, without limiting access to absolute paths. Approval and whitelists decide which registered handlers raw will dispatch; they are not OS isolation mechanisms.
 
+## Session agents
+
+The hosts (dashboard operations, the CLI and the REPL) run turns through one narrow interface, `SessionAgent` (`src/backends/types.ts`): start, run, run a panel action, compact, abort, close, usage stats, context size and tool identity/display. `AgentSession` (Raw's own loop) is one implementation; an agent with a `backend` block is run by an external CLI backend that implements the same interface ([backends](backends.md)). `createSessionAgent` (`src/backends/factory.ts`) picks the implementation; a session runtime without a Raw model config supplies its own `measure` for the dashboard metrics.
+
 ## Runtime variables
 
 Variable definitions are validated config; the runtime-tools instance owns its resolver and TTL cache. CLI and ACP use the same plugin context service. Session storage owns history but never stores a separate variable cache or expanded env bindings. Definitions remain fixed within a runtime; restart/resume loads current definitions. File/env/provider values are read lazily. This adds no session schema revision.

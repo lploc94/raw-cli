@@ -1,11 +1,12 @@
 import { ProcessSupervisor } from "./processes/supervisor.js";
 import { terminalInteractionAdapter } from "./interactions/terminal.js";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import { createAgent, type AgentSession, type RunResult } from "./agent.js";
+import type { RunResult } from "./agent.js";
+import { createSessionAgent, sessionIdentity, type SessionAgentFactory } from "./backends/factory.js";
+import type { SessionAgent } from "./backends/types.js";
 import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { createRuntimeTools } from "./tools/plugins/runtime.js";
-import { runtimeAgentOptions } from "./sessions/runtime.js";
 import { renderTerminalHistory } from "./terminal/history.js";
 import { terminalCapabilities } from "./terminal/options.js";
 import { formatResumeCommand, formatStats, formatTurnFooter } from "./terminal/footer.js";
@@ -22,7 +23,7 @@ import { panelTitle, renderPanelsText, selectPanels } from "./panels/render.js";
 import { effectiveOutputTokens } from "./llm/output.js";
 import { onShutdown } from "./platform/signals.js";
 
-async function textRun(session: AgentSession, task: string, renderer: TerminalRenderer): Promise<RunResult> {
+async function textRun(session: SessionAgent, task: string, renderer: TerminalRenderer): Promise<RunResult> {
   renderer.start();
   try {
     const result = await session.run(task, renderer.event);
@@ -83,11 +84,19 @@ async function askPermission(lines: ReturnType<typeof lineQueue>, request: ToolA
   return answer !== undefined && /^(?:y|yes)$/i.test(answer.trim());
 }
 
+export interface RunCliDeps {
+  /** Builds the session agent; tests inject a fake that is not Raw's own loop. */
+  createSessionAgent?: SessionAgentFactory;
+}
+
 export async function runCli(runtime: RuntimeConfig, task: string | undefined,
-  store: SessionStore, selected?: SessionSummary): Promise<number> {
-  if (!runtime.modelConfig) throw new Error("provider and model are required");
+  store: SessionStore, selected?: SessionSummary, deps: RunCliDeps = {}): Promise<number> {
+  const factory = deps.createSessionAgent ?? createSessionAgent;
+  if (!deps.createSessionAgent) {
+    if (runtime.backend) throw new Error("external backends are not available yet");
+    if (!runtime.modelConfig) throw new Error("provider and model are required");
+  }
   const cwd = selected?.cwd ?? process.cwd();
-  const provider = createProvider(runtime.modelConfig);
   const startupController = new AbortController();
   let startupCancelled = false;
   const cancelStartup = () => { startupCancelled = true; startupController.abort(); };
@@ -119,9 +128,9 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     process.stderr.write(`${paint("warning", icon("attention", runtime.ui, caps), runtime.ui, caps)} ${safeTerminalText(warning)}\n`);
   }
   const formatFooter = (result: RunResult, renderer: TerminalRenderer, id: string, resumable: boolean, repl = false) => {
-    const window = runtime.modelConfig!.contextWindow;
-    const reserve = effectiveOutputTokens(runtime.modelConfig!);
     const context = session.contextUsage();
+    const window = runtime.modelConfig?.contextWindow ?? context.window;
+    const reserve = runtime.modelConfig ? effectiveOutputTokens(runtime.modelConfig) : 0;
     return formatTurnFooter({ status: result.status, ...(result.code ? { code: result.code } : {}),
       elapsedMs: renderer.elapsedMs, startedToolCalls: renderer.startedToolCalls, notRunToolCalls: renderer.notRunToolCalls,
       stats: session.stats(), contextTokens: context.tokens, contextReported: context.source === "provider",
@@ -129,13 +138,10 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       ...(runtime.compact.triggerTokens === undefined ? {} : { compactTrigger: runtime.compact.triggerTokens }),
       sessionId: id, resumable, repl, ui: runtime.ui, caps });
   };
-  const createSavedSession = (title: string) => store.createSession({ cwd, title,
-    agentName: runtime.modelConfig!.agentName, configPath: runtime.configPath, modelId: runtime.modelConfig!.model,
-    provider: runtime.modelConfig!.provider, method: runtime.modelConfig!.method,
-    ...(runtime.modelConfig!.baseUrl ? { endpoint: runtime.modelConfig!.baseUrl } : {}),
-    systemPrompt: runtime.systemPrompt });
+  const createSavedSession = (title: string) => store.createSession({ cwd, title, ...sessionIdentity(runtime),
+    configPath: runtime.configPath, systemPrompt: runtime.systemPrompt });
   const processes = new ProcessSupervisor({ store });
-  const createRuntimeAgent = (id: string) => createAgent({ ...runtimeAgentOptions(runtime, tools, provider, cwd),
+  const createRuntimeAgent = (id: string) => factory({ runtime, tools, cwd, host: {
     processes, persistence: { store, sessionId: id, surface: "cli" },
     ...(process.stdin.isTTY && lines ? { interactionAdapter: (request, signal) => {
       currentRenderer?.beforeInput();
@@ -143,12 +149,12 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     }, approve: (request: ToolApprovalRequest) => {
       if (request.effects) process.stderr.write(`raw: intended effects ${JSON.stringify(request.effects)}\n`);
       return askPermission(lines, request, currentRenderer);
-    } } : {}) });
+    } } : {}) } });
   const hookEvent = (event: import("./agent.js").RunEvent) => {
     if (currentRenderer) currentRenderer.event(event);
     else if (event.type === "hook_event") process.stderr.write(`${decor(safeTerminalText(`raw: hook ${event.id} ${event.event} ${event.outcome}${event.message ? ` · ${event.message}` : ""}`), caps)}\n`);
   };
-  let session: AgentSession;
+  let session: SessionAgent;
   let record: SessionSummary;
   try {
     record = selected ?? createSavedSession(task?.trim().replace(/\s+/g, " ").slice(0, 80) || "New session");

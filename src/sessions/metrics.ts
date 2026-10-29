@@ -1,4 +1,4 @@
-import type { AgentSession } from "../agent.js";
+import type { SessionAgent } from "../backends/types.js";
 import type { CompactSettings } from "../config.js";
 import type { UsageSummary } from "../llm/cache.js";
 import { effectiveInputBudget } from "../llm/context.js";
@@ -28,10 +28,12 @@ export interface SessionMetrics {
   };
 }
 
-export function measureSession(agent: AgentSession, model: Readonly<ResolvedModelConfig>, options: {
+export interface MeasureOptions {
   startedAt: number; firstRequest: number; startedTools: number; failedTools: number;
   compact?: Readonly<CompactSettings>;
-}): SessionMetrics {
+}
+
+export function measureSession(agent: SessionAgent, model: Readonly<ResolvedModelConfig>, options: MeasureOptions): SessionMetrics {
   const { tokens: estimatedTokens, source } = agent.contextUsage();
   const outputReserve = effectiveOutputTokens(model);
   return { measuredAt: Date.now(), elapsedMs: Math.max(0, Math.round(performance.now() - options.startedAt)),

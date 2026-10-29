@@ -1,13 +1,14 @@
 import type { ProcessSupervisor } from "../processes/supervisor.js";
 import type { InteractionService } from "../interactions/service.js";
-import type { AgentSession, RunEvent, RunResult } from "../agent.js";
+import type { RunEvent, RunResult } from "../agent.js";
+import type { SessionAgent } from "../backends/types.js";
 import type { CompactOptions, CompactResult } from "../compact.js";
 import type { CompactSettings } from "../config.js";
 import type { ResolvedModelConfig } from "../llm/types.js";
 import type { RequestOverride } from "../request-controls.js";
 import type { ToolContext } from "../tools/primitives.js";
 import type { UserInput } from "../llm/types.js";
-import { measureSession, type SessionMetrics } from "./metrics.js";
+import { measureSession, type MeasureOptions, type SessionMetrics } from "./metrics.js";
 import { approvalTimeoutMs, SessionOperationError, terminalOperationStates, type OperationIntent, type OperationState, type SessionOperation } from "./operation-types.js";
 import { attachSessionRuntime } from "./runtime.js";
 import type { QueuedIntent, SessionOwner, SessionStore, SessionSummary } from "./store.js";
@@ -19,9 +20,11 @@ export { SessionOperationError } from "./operation-types.js";
 
 export interface SessionRuntime {
   capabilities?: SessionMetrics["capabilities"];
-  agent: AgentSession;
-  modelConfig: Readonly<ResolvedModelConfig>;
-  compactOptions: CompactOptions;
+  agent: SessionAgent;
+  /** Raw's loop measures against its model config; a backend without one supplies `measure`. */
+  modelConfig?: Readonly<ResolvedModelConfig>;
+  measure?: (options: MeasureOptions) => SessionMetrics;
+  compactOptions?: CompactOptions;
   compact?: Readonly<CompactSettings>;
   close(): Promise<void>;
 }
@@ -48,7 +51,7 @@ interface ActiveOperation {
   request?: RequestOverride;
   controller: AbortController;
   done: Promise<SessionOperation>;
-  agent?: AgentSession;
+  agent?: SessionAgent;
   measure?: () => SessionMetrics;
 }
 
@@ -202,7 +205,9 @@ export class SessionOperations {
       active.agent = runtime.agent;
       firstRequest = runtime.agent.stats().requests;
       const attached = runtime;
-      active.measure = () => ({ ...measureSession(attached.agent, attached.modelConfig, { startedAt, firstRequest, startedTools, failedTools,
+      const measure = (options: MeasureOptions) => attached.measure ? attached.measure(options)
+        : measureSession(attached.agent, attached.modelConfig!, options);
+      active.measure = () => ({ ...measure({ startedAt, firstRequest, startedTools, failedTools,
         ...(attached.compact ? { compact: attached.compact } : {}) }), historyWatermark: store.historyWatermark(operation.sessionId),
         ...(attached.capabilities ? { capabilities: attached.capabilities } : {}) });
       if (active.controller.signal.aborted) throw new Error("operation cancelled");
@@ -214,7 +219,7 @@ export class SessionOperations {
         result = run; state = run.status;
         if (run.status === "error") error = { code: run.code ?? "action_error", message: run.message ?? "the action failed" };
       } else {
-        result = await runtime.agent.compact(runtime.compactOptions, event);
+        result = await runtime.agent.compact(runtime.compactOptions ?? {}, event);
         state = result.status === "cancelled" ? "cancelled" : "completed";
       }
     } catch (cause) {
