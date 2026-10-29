@@ -54,15 +54,17 @@ function selectedInputs(definition: unknown, schemaValue: unknown, supplied: Jso
   return applyPackageInputs(definition, projected, selected, sites, dirname(configPath)) as JsonObject;
 }
 
-export function validatePackageAgentBinding(binding: unknown): JsonObject & { from: string; model: string } {
+export function validatePackageAgentBinding(binding: unknown): JsonObject & { from: string; model?: string; backend?: JsonObject } {
   const local = record(binding, "package agent binding");
-  for (const key of Object.keys(local)) if (!["from", "model", "inputs", "overrides"].includes(key)) {
+  for (const key of Object.keys(local)) if (!["from", "model", "backend", "inputs", "overrides"].includes(key)) {
     throw new Error(`unknown package agent binding field: ${key}`);
   }
   if (typeof local.from !== "string") throw new Error("package agent binding requires from");
   const parsed = parseComponentReference(local.from);
   if (parsed.source !== "installed" || parsed.kind !== "agents") throw new Error(`invalid package agent binding: ${local.from}`);
-  if (typeof local.model !== "string" || !local.model.trim()) throw new Error("package agent binding requires model");
+  if (local.model !== undefined && local.backend !== undefined) throw new Error("package agent binding must choose model or backend");
+  if (local.backend !== undefined) record(local.backend, "package agent binding backend");
+  else if (typeof local.model !== "string" || !local.model.trim()) throw new Error("package agent binding requires model or backend");
   if (local.inputs !== undefined) record(local.inputs, "package agent inputs");
   if (local.overrides !== undefined) {
     for (const key of Object.keys(record(local.overrides, "package agent overrides"))) {
@@ -71,7 +73,7 @@ export function validatePackageAgentBinding(binding: unknown): JsonObject & { fr
       }
     }
   }
-  return local as JsonObject & { from: string; model: string };
+  return local as JsonObject & { from: string; model?: string; backend?: JsonObject };
 }
 
 export async function resolvePackageAgentBinding(binding: unknown, options: PackageStoreOptions,
@@ -79,7 +81,6 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
   const local = validatePackageAgentBinding(binding);
   const parsed = parseComponentReference(local.from);
   if (parsed.source !== "installed") throw new Error("expected installed package reference");
-  const model = local.model;
   const selected = await installed(options, parsed.alias, context);
   for (const capability of selected.manifest.requires ?? []) if (!hostCapabilities.has(capability)) {
     throw new Error(`${local.from} requires unsupported host capability ${capability}`);
@@ -88,6 +89,7 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
   if (!path) throw new Error(`unknown package agent export: ${local.from}`);
   const source = record(JSON.parse(await readJsonText(join(selected.root, path))), `package agent ${local.from}`);
   if (source.model !== undefined) throw new Error(`package agent must not define recipient model: ${local.from}`);
+  if (source.backend !== undefined) throw new Error(`package agent must not define recipient backend: ${local.from}`);
   const inputs = local.inputs === undefined ? {} : record(local.inputs, "package agent inputs");
   const definition = selectedInputs(source, selected.manifest.inputs, inputs, options.configPath,
     new Set(["system_prompt", "system_prompt_file", "request", "max_steps", "max_output_bytes",
@@ -113,7 +115,7 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
   const overrides = local.overrides === undefined ? {} : record(local.overrides, "package agent overrides");
   if (Object.hasOwn(overrides, "system_prompt")) delete definition.system_prompt_file;
   if (Object.hasOwn(overrides, "system_prompt_file")) delete definition.system_prompt;
-  return { ...definition, ...overrides, model };
+  return { ...definition, ...overrides, ...(local.backend === undefined ? { model: local.model } : { backend: local.backend }) };
 }
 
 export async function resolvePackageSelections(agent: unknown, options: PackageStoreOptions,

@@ -20,6 +20,7 @@ import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePack
 import { parseSelectionReference } from "./packages/references.js";
 import { parseUiDocument, resolveUiOptions, validateUiFlag, type UiOptions, type Density, type ReasoningDisplay, type ColorDisplay, type IconsDisplay, type ThemeName } from "./terminal/options.js";
 import { stripBom } from "./platform/fs.js";
+import { parseBackendSpec, type BackendSpec } from "./backends/config.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -82,6 +83,10 @@ export interface RuntimeConfig {
   readonly ui: UiOptions;
   readonly agentName?: string;
   readonly modelConfig?: Readonly<ResolvedModelConfig>;
+  /** Set when the agent runs an external coding CLI instead of Raw's loop; `modelConfig` is then undefined. */
+  readonly backend?: BackendSpec;
+  /** Configured agent keys the backend does not use (`request`, `cache`, `compact`, `max_steps`). */
+  readonly backendIgnoredSettings?: readonly string[];
   readonly systemPrompt: string;
   readonly maxSteps: number;
   readonly maxOutputBytes: number;
@@ -290,7 +295,11 @@ interface ModelSpec {
 }
 
 interface AgentSpec {
-  modelAlias: string;
+  /** Unset for an agent that runs an external backend. */
+  modelAlias?: string;
+  backend?: BackendSpec;
+  /** Configured keys a backend agent does not use (they configure Raw's loop only). */
+  backendIgnoredSettings?: readonly string[];
   toolIds: readonly string[];
   skillIds: readonly string[];
   hookIds: readonly string[];
@@ -584,10 +593,15 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
   };
 }
 
+/** Every key a direct agent definition may carry. */
+export const AGENT_KEYS: readonly string[] = Object.freeze(["model", "backend", "request", "max_steps", "max_output_bytes",
+  "request_timeout_ms", "cache", "compact", "tools", "skills", "hooks", "system_prompt", "system_prompt_file", "vars"]);
+
 function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): AgentSpec {
   const where = "agent " + name;
   const value = object(raw, where);
-  keys(value, ["model", "request", "max_steps", "max_output_bytes", "request_timeout_ms", "cache", "compact", "tools", "skills", "hooks", "system_prompt", "system_prompt_file", "vars"], where);
+  keys(value, AGENT_KEYS, where);
+  if (value.backend !== undefined) return backendAgentSpec(where, value);
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
@@ -633,6 +647,27 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
   return result;
 }
 
+/** An agent run by an external CLI: Raw's model and loop settings do not apply, so they are kept only to be reported. */
+function backendAgentSpec(where: string, value: JsonObject): AgentSpec {
+  if (value.model !== undefined) throw new Error(where + " must choose model or backend");
+  const backend = parseBackendSpec(value.backend, where + ".backend");
+  const tools = toolSpec(value.tools, where + ".tools");
+  const skillIds = skillSpec(value.skills, where + ".skills");
+  const hookIds = hookSpec(value.hooks, where + ".hooks");
+  if (skillIds.length && (!["builtin/list_skills", "builtin/load_skill"].every((id) => tools.ids.includes(id)))) {
+    throw new Error(where + " with skills.use requires builtin/list_skills and builtin/load_skill in tools.use");
+  }
+  if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
+  const ignored = ["request", "cache", "compact", "max_steps"].filter((key) => value[key] !== undefined);
+  const result: AgentSpec = { backend, backendIgnoredSettings: Object.freeze(ignored), compact: compactSpec(undefined, where + ".compact"),
+    toolIds: tools.ids, skillIds, hookIds, toolRules: tools.rules,
+    ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
+    ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
+  if (value.max_output_bytes !== undefined) result.maxOutputBytes = positive(value.max_output_bytes, where + ".max_output_bytes");
+  if (value.request_timeout_ms !== undefined) result.requestTimeoutMs = positive(value.request_timeout_ms, where + ".request_timeout_ms");
+  return result;
+}
+
 function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; agents: Map<string, AgentSpec>; servers: Map<string, McpServerConfig>; defaultName?: string } {
   const varDefinitions = parseVariableDefinitions(root.vars, root.var_providers, ".");
   const servers = mcpServersSpec(root.mcp);
@@ -656,7 +691,9 @@ function validateDocument(root: JsonObject): void {
   for (const [name, value] of Object.entries(agents)) {
     if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "from")) {
       const binding = validatePackageAgentBinding(value);
-      if (!Object.hasOwn(object(root.models ?? {}, "models"), binding.model)) throw new Error(`agent ${name} references unknown model: ${binding.model}`);
+      if (binding.model !== undefined && !Object.hasOwn(object(root.models ?? {}, "models"), binding.model)) {
+        throw new Error(`agent ${name} references unknown model: ${binding.model}`);
+      }
     }
   }
   const direct = Object.fromEntries(Object.entries(agents).filter(([, value]) =>
@@ -813,9 +850,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const parsed = parseDocument(effectiveDocument.data);
   const selectedName = selectAgentName(parsed, flags, env);
   const selectedSpec = selectedName === undefined ? undefined : parsed.agents.get(selectedName);
-  const model = selectedSpec === undefined ? undefined : parsed.models.get(selectedSpec.modelAlias);
+  const model = selectedSpec?.modelAlias === undefined ? undefined : parsed.models.get(selectedSpec.modelAlias);
   let selected: ResolvedModelConfig | undefined;
-  if (selectedName !== undefined && selectedSpec && model) {
+  if (selectedName !== undefined && selectedSpec?.modelAlias !== undefined && model) {
     const spec: ResolvedModelConfig = {
       agentName: selectedName,
       modelAlias: selectedSpec.modelAlias,
@@ -832,7 +869,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
       ...(selectedSpec.request !== undefined ? { request: selectedSpec.request } : {}),
     };
     selected = freezeModelConfig(options.requireModel === false ? spec : resolveKey(spec, env));
-  } else if (options.requireModel !== false) {
+  } else if (options.requireModel !== false && selectedSpec?.backend === undefined) {
     throw new Error("agent is required");
   }
   const compact = Object.freeze(selectedSpec?.compact ?? compactSpec(undefined, "compact"));
@@ -867,6 +904,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     ui,
     ...(selectedName === undefined ? {} : { agentName: selectedName }),
     ...(selected === undefined ? {} : { modelConfig: selected }),
+    ...(selectedSpec?.backend === undefined ? {} : { backend: selectedSpec.backend,
+      backendIgnoredSettings: selectedSpec.backendIgnoredSettings ?? [] }),
     systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? agentPrompt ?? resolveSystemPrompt(undefined, undefined),
     maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, selectedSpec?.maxSteps, 10000, "max-steps"),
     maxOutputBytes: numberOption(flags.maxOutputBytes, env.RAW_MAX_OUTPUT_BYTES, selectedSpec?.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, "max-output-bytes"),

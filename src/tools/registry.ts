@@ -81,6 +81,9 @@ function matcher(pattern: string): RE2JS {
   return RE2JS.compile(source, RE2JS.DOTALL);
 }
 
+/** Whether a `tools.rules` glob matches a canonical tool identity. */
+export function ruleMatches(pattern: string, identity: string): boolean { return matcher(pattern).matches(identity); }
+
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object") {
     for (const child of Object.values(value)) deepFreeze(child);

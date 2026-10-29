@@ -40,6 +40,9 @@ export function editAgent(options: ConfigEditOptions, edit: ResourceEdit) {
     // Setting one prompt source drops the other; a null only removes its own key.
     if (edit.value.system_prompt != null) delete patched.system_prompt_file;
     if (edit.value.system_prompt_file != null) delete patched.system_prompt;
+    // An agent runs either a Raw model or an external backend; choosing one drops the other.
+    if (edit.value.backend != null) delete patched.model;
+    if (edit.value.model != null) delete patched.backend;
   });
 }
 export function patchRecord(current: Record<string, unknown>, fields: Record<string, unknown>): Record<string, unknown> {

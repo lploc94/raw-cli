@@ -20,6 +20,7 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
   const runtime = await loadConfig({ configPath: operation.configPath, flags: { agent: operation.agentName },
     cwd: session.cwd, requireModel: true, ...(options.env ? { env: options.env } : {}) });
   if (signal.aborted) throw new Error("startup aborted");
+  if (runtime.backend) throw new Error("external backends are not available yet");
   const modelConfig = applyRequestOverride(runtime.modelConfig!, options.request ?? {});
   const provider = createProvider(modelConfig);
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
