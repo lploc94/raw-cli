@@ -12,7 +12,7 @@ import type { ExternalSession, SessionOwner, SessionStore } from "../sessions/st
 import type { MeasureOptions, SessionMetrics } from "../sessions/metrics.js";
 import type { ToolDisplay } from "../tools/display.js";
 import type { ToolApprovalRequest } from "../tools/primitives.js";
-import { AcpUpdateMapper, cliToolIdentity, isBridgeCall, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
+import { AcpUpdateMapper, cliToolIdentity, bridgeToolName, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
 import { bridgeProxyServer } from "./bridge/proxy.js";
 import { startBridge, type RawBridge } from "./bridge/server.js";
 import type { ToolDefinition } from "../tools/registry.js";
@@ -513,8 +513,9 @@ export class AcpBackendProvider implements ProviderAdapter {
       : { outcome: { outcome: "cancelled" as const } };
     const title = params.toolCall.title ?? "a tool";
     if (!turn || turn.request.signal?.aborted) return choose(reject);
-    // Raw's own rules and approvals apply when the bridge runs the call.
-    if (isBridgeCall(params.toolCall)) return choose(allow);
+    // A call of a tool Raw offers this session: Raw's own rules and approvals apply when the bridge runs it.
+    const bridged = bridgeToolName(params.toolCall);
+    if (bridged !== undefined && this.tools.some((tool) => tool.name === bridged)) return choose(allow);
     if (!this.config.approve) {
       if (this.config.autoApprove) return choose(allow);
       turn.request.onExternal?.({ type: "notice", message: `${this.label} asked to run ${title}; no approval channel` });

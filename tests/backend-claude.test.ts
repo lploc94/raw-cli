@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { CLAUDE_ADAPTER, adapterDirectory, findExecutable, installedAdapter } from "../src/backends/adapters.js";
-import { CLAUDE_MISSING, claudeLaunch, claudeSessionMeta } from "../src/backends/claude.js";
+import { CLAUDE_EMPTY_PROMPT, CLAUDE_MISSING, claudeLaunch, claudeSessionMeta } from "../src/backends/claude.js";
 import { createAcpSessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { openSessionStore } from "../src/sessions/store.js";
@@ -68,6 +68,69 @@ test("the launch installs the pinned adapter once, without optional binaries, an
     await resolve({ notify: (message) => notices.push(message) });
     assert.equal(calls.length, 1);
     assert.equal(notices.length, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("an explicit empty prompt Claude Code cannot take warns; no prompt or an appended one does not", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
+  try {
+    const env = { PATH: fakeClaude(root), XDG_DATA_HOME: join(root, "data") };
+    const warned = async (agent: Record<string, unknown>) => {
+      const notices: string[] = [];
+      await claudeLaunch(await runtimeFor(root, agent), root, { env, npm: fakeNpm([]) })({ notify: (message) => notices.push(message) });
+      return notices.includes(CLAUDE_EMPTY_PROMPT);
+    };
+    assert.equal(await warned({ backend: { kind: "claude" }, system_prompt: "" }), true);
+    assert.equal(await warned({ backend: { kind: "claude" } }), false);
+    assert.equal(await warned({ backend: { kind: "claude" }, system_prompt: "Be RAW." }), false);
+    assert.equal(await warned({ backend: { kind: "claude", system_prompt_mode: "append" }, system_prompt: "" }), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("PATH lookup resolves relative entries against the working directory, and an empty POSIX entry is it", () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
+  try {
+    const bin = fakeClaude(root);
+    const name = process.platform === "win32" ? "claude.exe" : "claude";
+    assert.equal(findExecutable("claude", { PATH: "bin" }, root), join(bin, name));
+    assert.equal(findExecutable("claude", { PATH: "elsewhere" }, root), undefined);
+    if (process.platform !== "win32") assert.equal(findExecutable("claude", { PATH: ":" }, bin), join(bin, name));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+/** A stand-in `npm` on PATH: a shell script, so the real runner (process group, stderr tail) is what runs. */
+function npmScript(root: string, body: string): string {
+  const bin = join(root, "npm-bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "npm"), `#!/bin/sh\n${body}\n`);
+  chmodSync(join(bin, "npm"), 0o755);
+  return bin;
+}
+
+test("a failed npm keeps only the last 64 KiB of its stderr, marked as truncated", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
+  try {
+    const PATH = npmScript(root, `/usr/bin/head -c 200000 /dev/zero | /usr/bin/tr '\\0' x >&2; echo LAST-LINE >&2; exit 3`);
+    const error = await installedAdapter(CLAUDE_ADAPTER, { env: { PATH, XDG_DATA_HOME: join(root, "data") }, notify: () => {} })
+      .then(() => undefined, (failure: Error) => failure);
+    assert.ok(/failed \(code 3\): \[stderr truncated\]\nx+LAST-LINE$/.test(error!.message), error!.message.slice(0, 200));
+    assert.ok(error!.message.length < 70 * 1024);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("cancelling the install stops npm and what it started", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
+  try {
+    const pidFile = join(root, "worker.pid");
+    const PATH = npmScript(root, `/bin/sleep 60 & echo $! > "${pidFile}"; wait`);
+    const controller = new AbortController();
+    const install = installedAdapter(CLAUDE_ADAPTER, { env: { PATH, XDG_DATA_HOME: join(root, "data") }, notify: () => {}, signal: controller.signal });
+    while (!existsSync(pidFile) || !readFileSync(pidFile, "utf8").trim()) await new Promise((resolve) => setTimeout(resolve, 20));
+    const worker = Number(readFileSync(pidFile, "utf8"));
+    controller.abort();
+    await assert.rejects(install, /install cancelled/);
+    const alive = () => { try { process.kill(worker, 0); return true; } catch { return false; } };
+    assert.equal(alive(), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

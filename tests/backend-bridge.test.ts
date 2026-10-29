@@ -6,6 +6,7 @@ import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { createAgent, type RunEvent } from "../src/agent.js";
+import { AcpUpdateMapper, bridgeToolName } from "../src/backends/acp-events.js";
 import { CLAUDE_ADAPTER, adapterDirectory } from "../src/backends/adapters.js";
 import { startBridge } from "../src/backends/bridge/server.js";
 import { createAcpSessionAgent, sessionIdentity } from "../src/backends/factory.js";
@@ -72,6 +73,43 @@ async function backendTurn(root: string, agent: Record<string, unknown>, inputs:
 
 const panelShape = (events: RunEvent[]) => events.filter((event) => event.type === "panel_update")
   .map(({ turnId: _turn, segmentId: _segment, view: _view, ...event }) => event);
+
+test("only a call of Raw's own MCP server counts as a bridge call, so only that one is hidden and auto-allowed", () => {
+  // As claude-agent-acp names a bridge call, and as codex-acp titles one (`mcp.<server>.<tool>`, rawInput {server, tool}).
+  assert.equal(bridgeToolName({ name: "mcp__raw__todo" }), "todo");
+  assert.equal(bridgeToolName({ title: "mcp.raw.todo", rawInput: { server: "raw", tool: "todo", arguments: {} } }), "todo");
+  // Another server's call whose arguments merely look like a bridge call's.
+  assert.equal(bridgeToolName({ name: "mcp__other__invoke", rawInput: { server: "raw", tool: "todo" } }), undefined);
+  assert.equal(bridgeToolName({ title: "mcp.other.todo", rawInput: { server: "raw", tool: "todo" } }), undefined);
+  assert.equal(bridgeToolName({ title: "mcp.raw.todo", rawInput: { server: "other", tool: "todo" } }), undefined);
+  assert.equal(bridgeToolName({ title: "mcp.raw.todo" }), undefined);
+  assert.equal(bridgeToolName({ name: "Bash", title: "Run ls", rawInput: { server: "raw", tool: "todo" } }), undefined);
+  const mapper = new AcpUpdateMapper();
+  const start = (toolCallId: string, extra: Record<string, unknown>) => mapper.map({ sessionUpdate: "tool_call", toolCallId,
+    title: "t", kind: "other", status: "pending", ...extra } as never);
+  assert.deepEqual(start("a", { name: "mcp__raw__todo", status: "in_progress" }), []);
+  assert.deepEqual(start("b", { name: "mcp__other__invoke", status: "in_progress", rawInput: { server: "raw", tool: "todo" } })
+    .map((event) => event.type), ["tool_start"]);
+});
+
+test("a backend skips a selected tool that cannot load, with a warning, and keeps the rest; Raw's loop still fails on it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-bridge-"));
+  try {
+    const configPath = join(root, "config.json");
+    const write = (agent: Record<string, unknown>) => writeFileSync(configPath, JSON.stringify({ default_agent: "c",
+      models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "test", base_url: "http://127.0.0.1:1/v1" } },
+      agents: { c: { tools: { use: ["builtin/todo", "agent/missing"] }, ...agent } } }));
+    write({ backend: { kind: "claude" } });
+    const tools = await createRuntimeTools({ runtime: await loadConfig({ configPath, env: { XDG_CONFIG_HOME: root } }), cwd: root });
+    try {
+      assert.deepEqual(tools.selectedNames, ["todo"]);
+      assert.equal(tools.warnings.filter((warning) => /claude agent "c" skips agent\/missing: missing or escaping selected tool agent\/missing/.test(warning)).length, 1);
+    } finally { await tools.mcp.close(); }
+    write({ model: "local" });
+    await assert.rejects(createRuntimeTools({ runtime: await loadConfig({ configPath, env: { XDG_CONFIG_HOME: root } }), cwd: root }),
+      /missing or escaping selected tool agent\/missing/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("the bridge binds loopback and refuses requests without the exact token, with a browser origin, or off its path", async () => {
   const bridge = await startBridge({ tools: () => [], call: async () => assert.fail("no call expected") });

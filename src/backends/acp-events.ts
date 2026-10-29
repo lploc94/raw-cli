@@ -51,13 +51,16 @@ const bounded = (text: string) => {
 };
 
 /**
- * Whether a CLI tool call is a call of the Raw bridge's MCP server `raw`: Claude names it `mcp__raw__<tool>`, Codex titles
- * it `mcp.raw.<tool>` with `rawInput.server` "raw".
+ * The Raw tool a CLI tool call runs through the Raw bridge's MCP server `raw`, from what each adapter itself writes for an
+ * MCP call: claude-agent-acp names it `mcp__raw__<tool>`; codex-acp titles it `mcp.raw.<tool>` with `rawInput {server,
+ * tool}` (`McpToolReporter`). Tool arguments alone never make a call a bridge call.
  */
-export function isBridgeCall(update: { name?: string | null; title?: string | null; rawInput?: unknown }): boolean {
+export function bridgeToolName(update: { name?: string | null; title?: string | null; rawInput?: unknown }): string | undefined {
+  const claude = /^mcp__raw__(.+)$/.exec(update.name ?? "");
+  if (claude) return claude[1];
   const input = record(update.rawInput);
-  return /^mcp__raw__./.test(update.name ?? "") || /^mcp\.raw\./.test(update.title ?? "")
-    || (input.server === "raw" && typeof input.tool === "string");
+  const codex = /^mcp\.raw\.(.+)$/.exec(update.title ?? "");
+  return codex && input.server === "raw" && input.tool === codex[1] ? codex[1] : undefined;
 }
 
 /** The identity a CLI's own tool gets in Raw's records: never a Raw tool, so no Raw rule or display applies to it. */
@@ -104,7 +107,7 @@ export class AcpUpdateMapper {
     const id = update.toolCallId;
     if (this.bridged.has(id)) return [];
     let call = this.calls.get(id);
-    if (!call && isBridgeCall(update)) { this.bridged.add(id); return []; }
+    if (!call && bridgeToolName(update) !== undefined) { this.bridged.add(id); return []; }
     if (!call) {
       const title = update.title ?? "Tool";
       call = { name: update.name ?? title, title, kind: KINDS[update.kind ?? ""] ?? "other", arguments: {}, started: false,

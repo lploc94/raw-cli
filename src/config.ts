@@ -87,6 +87,8 @@ export interface RuntimeConfig {
   readonly backend?: BackendSpec;
   /** Configured agent keys the backend does not use (`request`, `cache`, `compact`, `max_steps`). */
   readonly backendIgnoredSettings?: readonly string[];
+  /** For a backend: whether a prompt was given at all, so an explicit `""` differs from none (`systemPrompt` is `""` for both). */
+  readonly backendPromptGiven?: boolean;
   readonly systemPrompt: string;
   readonly maxSteps: number;
   readonly maxOutputBytes: number;
@@ -907,7 +909,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     ...(selectedName === undefined ? {} : { agentName: selectedName }),
     ...(selected === undefined ? {} : { modelConfig: selected }),
     ...(selectedSpec?.backend === undefined ? {} : { backend: selectedSpec.backend,
-      backendIgnoredSettings: selectedSpec.backendIgnoredSettings ?? [] }),
+      backendIgnoredSettings: selectedSpec.backendIgnoredSettings ?? [],
+      backendPromptGiven: (flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? agentPrompt) !== undefined }),
     // A backend agent without a prompt of its own runs the CLI's prompt untouched, not Raw's default.
     systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? agentPrompt ?? (selectedSpec?.backend ? "" : resolveSystemPrompt(undefined, undefined)),
     maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, selectedSpec?.maxSteps, 10000, "max-steps"),

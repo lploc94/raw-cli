@@ -64,8 +64,27 @@ export async function createRuntimeTools(options: {
     cwd, globalConfigRoot: runtime.globalConfigRoot, packageSkills: runtime.packageSkills,
     onSkip: (message) => warnings.push(message) });
   const vars = createVariableResolver({ config: runtime.variableConfig, ...(options.env ? { env: options.env } : {}) });
-  const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills, vars,
+  const load = (selectedIds: string[]) => loadToolPlugins({ selectedIds, configPath: runtime.configPath, cwd, skills, vars,
     globalConfigRoot: runtime.globalConfigRoot, packageTools: runtime.packageTools });
+  // For a backend, a tool that cannot load is skipped with a warning and the CLI runs with the rest (Invariant 5).
+  // An error no single tool causes (a duplicate id or name) is a configuration error and still fails.
+  let loadable = toolIds;
+  let plugins: Awaited<ReturnType<typeof loadToolPlugins>>;
+  try { plugins = await load(localIds); }
+  catch (error) {
+    if (!runtime.backend) throw error;
+    const failed = new Set<string>();
+    for (const id of localIds) {
+      try { await load([id]); }
+      catch (single) {
+        failed.add(id);
+        warnings.push(`${runtime.backend.kind} agent "${runtime.agentName ?? ""}" skips ${id}: ${single instanceof Error ? single.message : String(single)}`);
+      }
+    }
+    if (!failed.size) throw error;
+    loadable = toolIds.filter((id) => !failed.has(id));
+    plugins = await load(localIds.filter((id) => !failed.has(id)));
+  }
   // An external backend runs no Raw hooks (its selection is reported as skipped, src/backends/compat.ts), so none load.
   const selectedHooks = await loadSelectedHooks({ selectedIds: runtime.backend ? [] : runtime.hookIds, configPath: runtime.configPath,
     cwd, globalConfigRoot: runtime.globalConfigRoot, packageHooks: runtime.packageHooks,
@@ -94,7 +113,7 @@ export async function createRuntimeTools(options: {
   try {
     const names: string[] = [];
     const kept: string[] = [];
-    for (const id of toolIds) {
+    for (const id of loadable) {
       if (id.startsWith("mcp/")) {
         const [, server, originalName] = id.split("/");
         const item = mcp.catalog.find((tool) => tool.server === server && tool.originalName === originalName);
