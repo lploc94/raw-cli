@@ -81,8 +81,9 @@ export function spawnAcpPeer(options: AcpPeerOptions): AcpPeer {
   const signal = (name: NodeJS.Signals) => {
     if (!posix) { terminateTree(child, { jobbed: prepared.jobbed }); return; }
     // The group outlives a leader that already exited, so it is signalled whenever the child was started.
+    // macOS answers EPERM for a group whose members have all exited but are not yet reaped: nothing is left to signal.
     try { if (child.pid) process.kill(-child.pid, name); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    catch (error) { if (!["ESRCH", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error; }
   };
   const waitForExit = (timeoutMs: number) => new Promise<boolean>((resolve) => {
     if (exited()) { resolve(true); return; }
@@ -93,7 +94,7 @@ export function spawnAcpPeer(options: AcpPeerOptions): AcpPeer {
   const groupAlive = () => {
     if (!posix || !child.pid) return false;
     try { process.kill(-child.pid, 0); return true; }
-    catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+    catch { return false; }
   };
   // What the child started outlives it in its group: once the child is gone (stopped, or crashed between turns),
   // the rest of the group gets SIGTERM and, after a second, SIGKILL.

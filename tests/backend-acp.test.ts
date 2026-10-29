@@ -299,8 +299,8 @@ test("cancel stops the adapter and its descendants, also when the CLI ignores th
       const result = await running;
       assert.equal(result.status, "cancelled", input);
       const tree = [...h.pids("adapter"), ...h.pids("grandchild")];
-      assert.ok(await gone(tree), `${input}: ${tree.filter(alive).join(",")} still alive`);
-      assert.ok(Date.now() - started < 8000);
+      assert.ok(await gone(tree, 8000), `${input}: ${tree.filter(alive).join(",")} still alive`);
+      assert.ok(Date.now() - started < 8000, "the cancel grace (5 s) plus the stop");
       assert.equal(h.store.getSessionHistory({ sessionId: h.session.id }).items.at(-1)?.kind, "run_end");
     } finally { await agent.close(); h.cleanup(); }
   }
@@ -410,8 +410,12 @@ test("compaction and panel actions are reported as unsupported for a backend", a
   } finally { await agent.close(); h.cleanup(); }
 });
 
-test("a cancelled turn's input is not sent again, in the same runtime or a reopened one", async () => {
-  const h = await harness();
+test("a cancelled turn's input is not sent again, in the same runtime, a reopened one, or a fresh CLI conversation", async () => {
+  for (const load of ["1", "0"]) await cancelledInputOnce(load);
+});
+
+async function cancelledInputOnce(load: string): Promise<void> {
+  const h = await harness({ kind: "claude" }, {}, { FAKE_ACP_LOAD: load });
   let agent = h.agent();
   const prompts = () => h.calls().filter((call) => call.method === "session/prompt").map((call) => call.input);
   try {
@@ -422,10 +426,10 @@ test("a cancelled turn's input is not sent again, in the same runtime or a reope
       assert.equal((await waiting).status, "cancelled");
       if (reopen) { await agent.close(); h.reopen(); agent = h.agent(); }
       assert.equal((await ask(agent, "recall")).text, "nonce:none");
-      assert.equal(prompts().at(-1), "recall");
+      assert.equal(prompts().at(-1), "recall", `load=${load}`);
     }
   } finally { await agent.close(); h.cleanup(); }
-});
+}
 
 test("a cancelled turn's open CLI calls end before run_end, and what the CLI sends while it stops is dropped", async () => {
   const h = await harness();
@@ -488,8 +492,8 @@ test("a CLI call's result is the content it set last, also when that came before
   const agent = h.agent();
   try {
     const turn = await ask(agent, "early-content");
-    const result = turn.events.find((event) => event.type === "tool_result") as { result: { content: Array<{ text?: string }> } } | undefined;
-    assert.equal(result?.result.content[0]?.text, "file text");
+    const results = turn.events.filter((event) => event.type === "tool_result") as unknown as Array<{ result: { content: Array<{ text?: string }> } }>;
+    assert.deepEqual(results.map((result) => result.result.content[0]?.text), ["file text", "raw text"]);
   } finally { await agent.close(); h.cleanup(); }
 });
 

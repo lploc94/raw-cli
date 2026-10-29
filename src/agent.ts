@@ -1320,6 +1320,8 @@ export class AgentSession {
     // as model messages, since the backend keeps its own conversation (src/backends).
     let externalFlushed = false;
     const external = (event: ExternalTurnEvent) => {
+      // Once the run is ending nothing more belongs to it, whatever the CLI still reports.
+      if (ended) return;
       try {
         if (event.type === "notice") {
           this.recordVisible("backend_notice", { text: event.message });

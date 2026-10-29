@@ -34,6 +34,7 @@ interface OpenCall {
   exitCode?: number | null;
   /** The latest `content` an update set; ACP replaces it with each update that carries it. */
   content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]>;
+  rawOutput?: unknown;
 }
 
 const TITLE_CHARS = 120;
@@ -98,7 +99,9 @@ export class AcpUpdateMapper {
     }
     if (update.title) call.title = update.title;
     if (update.kind) call.kind = KINDS[update.kind] ?? "other";
+    // An update carries only the fields that changed (ACP `ToolCallUpdate`); the others keep their last value.
     if (update.content) call.content = update.content;
+    if (update.rawOutput !== undefined) call.rawOutput = update.rawOutput;
     const input = record(update.rawInput);
     if (Object.keys(input).length) call.arguments = input;
     const meta = record(update._meta);
@@ -115,7 +118,7 @@ export class AcpUpdateMapper {
     }
     if (terminal) {
       this.calls.delete(id);
-      events.push(this.result(id, call, this.toolResult(call, update.status === "failed", call.content, update.rawOutput)));
+      events.push(this.result(id, call, this.toolResult(call, update.status === "failed", call.content, call.rawOutput)));
     }
     return events;
   }

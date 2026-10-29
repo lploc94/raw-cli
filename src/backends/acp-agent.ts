@@ -153,7 +153,8 @@ export class AcpBackendProvider implements ProviderAdapter {
     if (this.closed) throw new BackendError("backend_closed", `${this.label} runtime is closed`);
     let lastAnswer = request.messages.length - 1;
     while (lastAnswer >= 0 && request.messages[lastAnswer]!.role !== "assistant") lastAnswer--;
-    const notify = (message: string) => request.onExternal?.({ type: "notice", message });
+    // A startup the user cancelled has no turn left to report to.
+    const notify = (message: string) => { if (!request.signal?.aborted) request.onExternal?.({ type: "notice", message }); };
     const override = this.override;
     this.override = undefined;
     await this.startup(request, async (live) => {
@@ -295,8 +296,10 @@ export class AcpBackendProvider implements ProviderAdapter {
       if (option && typeof option.currentValue === "string") baseline[key] = option.currentValue;
     }
     this.baseline = baseline;
-    this.delivered = undefined;
-    const external: ExternalSession = { kind: this.config.spec.kind, cliSessionId: created.sessionId, profileDigest: this.profileDigest, baseline };
+    // What an earlier CLI conversation of this session was sent, a cancelled turn's input too, is not sent to this one.
+    this.delivered = stored?.delivered ?? this.delivered;
+    const external: ExternalSession = { kind: this.config.spec.kind, cliSessionId: created.sessionId, profileDigest: this.profileDigest, baseline,
+      ...(this.delivered !== undefined ? { delivered: this.delivered } : {}) };
     if (binding) binding.store.writeExternal(binding.sessionId, binding.owner, external);
     if (hadTurns || stored) notify(`This ${this.label} conversation starts here; it does not see earlier turns`);
   }

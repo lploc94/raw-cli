@@ -111,6 +111,9 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     await update(id, { sessionUpdate: "tool_call", toolCallId: "read-1", name: "Read", title: "Read a.txt", kind: "read", status: "in_progress", rawInput: { path: "a.txt" } });
     await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-1", content: [{ type: "content", content: { type: "text", text: "file text" } }] });
     await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-1", status: "completed" });
+    await update(id, { sessionUpdate: "tool_call", toolCallId: "read-2", name: "Read", title: "Read b.txt", kind: "read", status: "in_progress", rawInput: { path: "b.txt" } });
+    await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-2", rawOutput: "raw text" });
+    await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-2", status: "completed" });
     await text(id, "read");
     return { stopReason: "end_turn", usage };
   }
