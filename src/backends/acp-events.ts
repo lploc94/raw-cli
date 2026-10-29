@@ -50,6 +50,16 @@ const bounded = (text: string) => {
   return [...line].length <= TITLE_CHARS ? line : `${[...line].slice(0, TITLE_CHARS - 1).join("")}…`;
 };
 
+/**
+ * Whether a CLI tool call is a call of the Raw bridge's MCP server `raw`: Claude names it `mcp__raw__<tool>`, Codex titles
+ * it `mcp.raw.<tool>` with `rawInput.server` "raw".
+ */
+export function isBridgeCall(update: { name?: string | null; title?: string | null; rawInput?: unknown }): boolean {
+  const input = record(update.rawInput);
+  return /^mcp__raw__./.test(update.name ?? "") || /^mcp\.raw\./.test(update.title ?? "")
+    || (input.server === "raw" && typeof input.tool === "string");
+}
+
 /** The identity a CLI's own tool gets in Raw's records: never a Raw tool, so no Raw rule or display applies to it. */
 export const cliToolIdentity = (kind: ToolKind, name: string) => `cli:${kind}/${name}`;
 
@@ -59,6 +69,8 @@ export const cliToolIdentity = (kind: ToolKind, name: string) => `cli:${kind}/${
  */
 export class AcpUpdateMapper {
   private readonly calls = new Map<string, OpenCall>();
+  /** Calls of Raw's own bridge tools: the bridge records them, so the CLI's report of them is not shown twice. */
+  private readonly bridged = new Set<string>();
 
   map(update: SessionUpdate): AcpTurnEvent[] {
     switch (update.sessionUpdate) {
@@ -90,7 +102,9 @@ export class AcpUpdateMapper {
 
   private tool(update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>): AcpTurnEvent[] {
     const id = update.toolCallId;
+    if (this.bridged.has(id)) return [];
     let call = this.calls.get(id);
+    if (!call && isBridgeCall(update)) { this.bridged.add(id); return []; }
     if (!call) {
       const title = update.title ?? "Tool";
       call = { name: update.name ?? title, title, kind: KINDS[update.kind ?? ""] ?? "other", arguments: {}, started: false,

@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import { relative, sep } from "node:path";
 import { loadSelectedHooks } from "../../hooks/loader.js";
 import { HookDispatcher } from "../../hooks/dispatcher.js";
+import { classifyForBackend } from "../../backends/compat.js";
 
 async function mcpSource(runtime: RuntimeConfig, serverName: string): Promise<unknown> {
   const server = runtime.availableMcpServers[serverName];
@@ -51,11 +52,14 @@ export async function createRuntimeTools(options: {
 }): Promise<RuntimeTools> {
   const { runtime, cwd, signal } = options;
   if (signal?.aborted) throw new Error("tool startup aborted");
-  if (runtime.toolIds.includes("builtin/view_image") && runtime.modelConfig?.vision !== true) {
+  // An external backend gets only the tools Raw offers it through the bridge; what it skips is reported once, here.
+  const compatibility = runtime.backend ? classifyForBackend(runtime) : undefined;
+  const toolIds = compatibility ? compatibility.bridged : runtime.toolIds;
+  if (toolIds.includes("builtin/view_image") && runtime.modelConfig?.vision !== true) {
     throw new Error("builtin/view_image requires a vision model");
   }
-  const localIds = runtime.toolIds.filter((id) => !id.startsWith("mcp/"));
-  const warnings: string[] = [];
+  const localIds = toolIds.filter((id) => !id.startsWith("mcp/"));
+  const warnings: string[] = [...compatibility?.warnings ?? []];
   const skills = await loadSelectedSkills({ selectedIds: runtime.skillIds, configPath: runtime.configPath,
     cwd, globalConfigRoot: runtime.globalConfigRoot, packageSkills: runtime.packageSkills,
     onSkip: (message) => warnings.push(message) });
@@ -72,10 +76,10 @@ export async function createRuntimeTools(options: {
   const specs: Record<string, McpServerConfig> = Object.assign(Object.create(null), runtime.mcpServers);
   for (const [name, source] of Object.entries(options.discoverableMcp ?? {})) {
     if (Object.hasOwn(runtime.availableMcpServers, name)) throw new Error(`duplicate MCP server: ${name}`);
-    const selected = runtime.toolIds.filter((id) => id.startsWith(`mcp/${name}/`)).map((id) => id.slice(`mcp/${name}/`.length));
+    const selected = toolIds.filter((id) => id.startsWith(`mcp/${name}/`)).map((id) => id.slice(`mcp/${name}/`.length));
     specs[name] = { ...source, tools: selected };
   }
-  for (const id of runtime.toolIds) {
+  for (const id of toolIds) {
     if (id.startsWith("mcp/") && !Object.hasOwn(specs, id.split("/")[1]!)) throw new Error(`unknown MCP server: ${id.split("/")[1]}`);
   }
   const hooks = selectedHooks.length ? new HookDispatcher(selectedHooks, options.env) : undefined;
@@ -90,7 +94,7 @@ export async function createRuntimeTools(options: {
   try {
     const names: string[] = [];
     const kept: string[] = [];
-    for (const id of runtime.toolIds) {
+    for (const id of toolIds) {
       if (id.startsWith("mcp/")) {
         const [, server, originalName] = id.split("/");
         const item = mcp.catalog.find((tool) => tool.server === server && tool.originalName === originalName);

@@ -71,6 +71,11 @@ Exit: 0 complete, 1 runtime error, 2 invalid input, 3 max steps, 130 cancelled
 }
 
 async function run(): Promise<void> {
+  // Started by a backend CLI as its stdio MCP server (src/backends/bridge); not a user command.
+  if (process.argv[2] === "__bridge-proxy") {
+    const { runBridgeProxy } = await import("../src/backends/bridge/proxy.js");
+    await runBridgeProxy(); return;
+  }
   if (process.argv[2] === "dashboard") {
     const { parseDashboardArgs, runDashboardCli } = await import("../src/dashboard/cli.js");
     await runDashboardCli(input(() => parseDashboardArgs(process.argv.slice(3)))); return;

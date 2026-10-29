@@ -1361,9 +1361,10 @@ export class SessionStore {
 
   /**
    * One committed panel action: the updated panels, its receipts and the note for the model, in one transaction. Nothing
-   * is added to the model context here; the note travels with the next user message (docs/panels-design.md §10).
+   * is added to the model context here; the note travels with the next user message (docs/panels-design.md §10). Without a
+   * note it records a tool call an external backend made through the Raw bridge (src/backends/bridge).
    */
-  commitPanelAction(sessionId: string, owner: SessionOwner, commit: { panels?: PanelWrites; display: readonly VisibleRecord[]; note: string }): void {
+  commitPanelAction(sessionId: string, owner: SessionOwner, commit: { panels?: PanelWrites; display: readonly VisibleRecord[]; note?: string }): void {
     this.ownerRow(sessionId, owner);
     const visible = commit.display.map((item) => ({ item, stored: this.stageStored(item.payload, owner) }));
     this.transaction(() => {
@@ -1375,8 +1376,10 @@ export class SessionStore {
           .run(sessionId, sequence, this.now(), item.kind, stored.encoded, item.status ?? "complete");
       }
       if (commit.panels) this.writePanels(sessionId, commit.panels);
-      const next = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM session_pending_notes WHERE session_id = ?").get(sessionId)?.next);
-      this.database.prepare("INSERT INTO session_pending_notes(session_id, sequence, text, created_at) VALUES (?, ?, ?, ?)").run(sessionId, next, commit.note, this.now());
+      if (commit.note !== undefined) {
+        const next = Number(this.database.prepare("SELECT coalesce(max(sequence), 0) + 1 AS next FROM session_pending_notes WHERE session_id = ?").get(sessionId)?.next);
+        this.database.prepare("INSERT INTO session_pending_notes(session_id, sequence, text, created_at) VALUES (?, ?, ?, ?)").run(sessionId, next, commit.note, this.now());
+      }
       this.database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(this.now(), sessionId);
       this.renewSession(sessionId, owner);
     });

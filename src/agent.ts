@@ -1238,6 +1238,10 @@ export class AgentSession {
         onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
     const finish = async (result: RunResult): Promise<RunResult> => {
       if (!ended) {
+        for (const call of openBridged.values()) {
+          try { recordBridged(call, cancelled(call)); } catch { /* a persistence failure already ended the run */ }
+        }
+        openBridged.clear();
         ended = true;
         this.panels.setListener(undefined);
         let finalResult = result;
@@ -1272,7 +1276,9 @@ export class AgentSession {
     const completedWriteCalls = new Set<string>();
     // Normalized arguments of calls whose normalization changed them; the raw call stays in the assistant message (§4.3).
     const normalizedCalls = new Map<string, Record<string, unknown>>();
-    const appendResult = (call: ModelToolCall, dispatchedResult: ToolResult, panelCall?: PanelCall) => {
+    // A settled call's panel writes and receipts, and the records and event that show it (the same for Raw's own calls and
+    // calls an external backend makes through the Raw bridge).
+    const settleResult = (call: ModelToolCall, dispatchedResult: ToolResult, panelCall?: PanelCall) => {
       let result = dispatchedResult;
       let panelWrites: PanelWrites | undefined;
       let panelRecords: VisibleRecord[] = [];
@@ -1305,20 +1311,90 @@ export class AgentSession {
       const display = presentation.result({ type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected,
         ...(normalized ? { arguments: normalized } : {}) },
         startedCalls.has(call.id), this.callDisplay(call.name, normalized ?? call.arguments, false), projected);
+      const event: RunEvent = { type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected,
+        ...(normalized ? { arguments: structuredClone(normalized) } : {}),
+        ...(panelRecords.length ? { panelReceipts: panelRecords.map((record) => structuredClone(record.payload) as unknown as PanelReceipt) } : {}) };
+      return { result, normalized, visibility, records: [...display, ...panelRecords], panelWrites, event };
+    };
+    const appendResult = (call: ModelToolCall, dispatchedResult: ToolResult, panelCall?: PanelCall) => {
+      const { result, normalized, visibility, records, panelWrites, event } = settleResult(call, dispatchedResult, panelCall);
       try {
         this.commitMessage({ role: "tool", callId: call.id, name: call.name, result: structuredClone(result),
           ...(normalized ? { arguments: structuredClone(normalized) } : {}) },
-          visibility ? { skillVisibility: visibility } : {}, [...display, ...panelRecords], false, panelWrites);
+          visibility ? { skillVisibility: visibility } : {}, records, false, panelWrites);
         panelCall?.commit();
       } catch (error) { panelCall?.rollback(); throw error; }
       if (visibility) this.skillVisibility = visibility;
-      emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected,
-        ...(normalized ? { arguments: structuredClone(normalized) } : {}),
-        ...(panelRecords.length ? { panelReceipts: panelRecords.map((record) => structuredClone(record.payload) as unknown as PanelReceipt) } : {}) });
+      emit(event);
+    };
+    let externalFlushed = false;
+    const openBridged = new Map<string, ModelToolCall>();
+    // One call through the registry with this turn's panels, interactions, processes, approvals and hooks.
+    const dispatchTool = async (call: ModelToolCall, signal: AbortSignal) => {
+      const panelInfo = call.argumentError ? undefined : this.options.registry.panelDeclarations(call.name);
+      const panelCall = panelInfo ? this.panels.begin(call.id, panelInfo, "tool", this.panelScope()) : undefined;
+      dispatchedAt.set(call.id, performance.now());
+      const dispatched = call.argumentError
+        ? capResult(errorResult("invalid_arguments", call.argumentError), this.options.maxOutputBytes)
+        : await this.options.registry.dispatch(call.name, call.arguments, {
+          cwd: this.options.cwd,
+          maxOutputBytes: this.options.maxOutputBytes,
+          autoApprove: this.options.autoApprove,
+          ...(this.options.approve ? { approve: this.options.approve } : {}),
+          ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
+          signal,
+          toolCallId: call.id,
+          ...(this.persistence ? { sessionId: this.persistence.sessionId } : {}),
+          ...(this.options.registry.panelDeclarations(call.name)?.owner === FILES_CHANGED_OWNER ? { onWriteCompleted: () => { completedWriteCalls.add(call.id); } } : {}),
+          ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId), commandActivity: this.options.processes.commands.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
+          interactions: this.interactionContext(call.id, panelInfo?.owner ?? call.name, panelCall, signal),
+          onHandlerSettled: () => this.settleHandler(call.id, panelCall),
+          ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates) } : {}),
+          onNormalized: (args) => { normalizedCalls.set(call.id, structuredClone(args)); },
+          ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
+            name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>, raw?: Record<string, unknown>) => this.options.hooks!.run(event,
+            { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(raw ? { raw_arguments: raw } : {}),
+              ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
+            { ...(event === "PreToolUse" ? { signal } : { hurry: { signal, graceMs: HOOK_TEARDOWN_MS },
+              ...(signal.aborted ? { deadline: terminalDeadline ??= Date.now() + HOOK_TEARDOWN_MS } : {}) }),
+              onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
+          onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
+        });
+      return { dispatched, panelCall };
+    };
+    // A Raw tool an external backend calls through the Raw bridge (src/backends/bridge): dispatched as Raw's own calls are,
+    // recorded and shown the same way, and answered to the CLI; the backend keeps its own conversation, so no model message.
+    // Calls run one at a time; a call still open when the turn ends gets its cancelled result before the run's end.
+    let bridged = Promise.resolve();
+    const recordBridged = (call: ModelToolCall, dispatched: ToolResult, panelCall?: PanelCall): ToolResult => {
+      const { result, records, panelWrites, event } = settleResult(call, dispatched, panelCall);
+      try {
+        this.durable((store, sessionId, owner) => store.commitPanelAction(sessionId, owner, {
+          ...(panelWrites ? { panels: panelWrites } : {}), display: records.map((item) => ({ ...item, payload: this.visiblePayload(item.payload) })) }));
+        panelCall?.commit();
+      } catch (error) { panelCall?.rollback(); throw error; }
+      emit(event);
+      return result;
+    };
+    const runTool = (request: { id: string; name: string; arguments: Record<string, unknown> }, signal: AbortSignal): Promise<ToolResult> => {
+      const run = bridged.then(async (): Promise<ToolResult> => {
+        if (ended || controller.signal.aborted) return errorResult("no_active_turn", "no Raw turn is running");
+        const call: ModelToolCall = { id: request.id, name: request.name, arguments: request.arguments };
+        const callSignal = AbortSignal.any([controller.signal, signal]);
+        for (const item of visibleMessage("", "complete")) this.recordVisible(item.kind, item.payload, item.status);
+        externalFlushed = true;
+        openBridged.set(call.id, call);
+        const { dispatched, panelCall } = await dispatchTool(call, callSignal);
+        // Already recorded as cancelled by the turn's end.
+        if (!openBridged.delete(call.id)) { panelCall?.rollback(); return dispatched; }
+        if (callSignal.aborted) { panelCall?.rollback(); return recordBridged(call, dispatched); }
+        return recordBridged(call, dispatched, panelCall);
+      });
+      bridged = run.then(() => undefined, () => undefined);
+      return run;
     };
     // An external backend's own tool calls and notices: recorded in visible history in the order they happened, never
     // as model messages, since the backend keeps its own conversation (src/backends).
-    let externalFlushed = false;
     const external = (event: ExternalTurnEvent) => {
       // Once the run is ending nothing more belongs to it, whatever the CLI still reports.
       if (ended) return;
@@ -1485,7 +1561,7 @@ export class AgentSession {
             onReasoningDelta: (text) => { if (!controller.signal.aborted) emit({ type: "reasoning_delta", text }); },
             onUsage: recordUsage,
             // Only an external CLI runs tools of its own; other providers' requests stay as they were.
-            ...(this.options.provider.modelConfig.method === "acp" ? { onExternal: external } : {}),
+            ...(this.options.provider.modelConfig.method === "acp" ? { onExternal: external, runTool } : {}),
           }), aborted]);
           const retry = this.replayRetryArmed;
           if (retry) {
@@ -1560,35 +1636,7 @@ export class AgentSession {
             for (const remaining of turn.toolCalls.slice(index)) appendResult(remaining, cancelled(remaining));
             return finish(interrupted());
           }
-          const panelInfo = call.argumentError ? undefined : this.options.registry.panelDeclarations(call.name);
-          const panelCall = panelInfo ? this.panels.begin(call.id, panelInfo, "tool", this.panelScope()) : undefined;
-          dispatchedAt.set(call.id, performance.now());
-          const dispatched = call.argumentError
-            ? capResult(errorResult("invalid_arguments", call.argumentError), this.options.maxOutputBytes)
-            : await this.options.registry.dispatch(call.name, call.arguments, {
-              cwd: this.options.cwd,
-              maxOutputBytes: this.options.maxOutputBytes,
-              autoApprove: this.options.autoApprove,
-              ...(this.options.approve ? { approve: this.options.approve } : {}),
-              ...(this.options.whitelist !== undefined ? { whitelist: this.options.whitelist } : {}),
-              signal: controller.signal,
-              toolCallId: call.id,
-              ...(this.persistence ? { sessionId: this.persistence.sessionId } : {}),
-              ...(this.options.registry.panelDeclarations(call.name)?.owner === FILES_CHANGED_OWNER ? { onWriteCompleted: () => { completedWriteCalls.add(call.id); } } : {}),
-              ...(this.options.processes ? { processes: this.options.processes.forSession(this.persistence?.sessionId ?? this.processSessionId), commandActivity: this.options.processes.commands.forSession(this.persistence?.sessionId ?? this.processSessionId) } : {}),
-              interactions: this.interactionContext(call.id, panelInfo?.owner ?? call.name, panelCall, controller.signal),
-              onHandlerSettled: () => this.settleHandler(call.id, panelCall),
-              ...(panelCall ? { panels: panelCall.context, onPanelUpdates: (updates) => panelCall.collect(updates) } : {}),
-              onNormalized: (args) => { normalizedCalls.set(call.id, structuredClone(args)); },
-              ...(this.options.hooks ? { onHook: (event: HookEventName, identity: string,
-                name: string, args: Record<string, unknown>, result?: ToolResult, effects?: Record<string, unknown>, raw?: Record<string, unknown>) => this.options.hooks!.run(event,
-                { ...hookRequest(), tool: { identity, name, source: "model", arguments: args, ...(raw ? { raw_arguments: raw } : {}),
-                  ...(effects ? { effects } : {}), ...(result ? { result } : {}) } },
-                { ...(event === "PreToolUse" ? { signal: controller.signal } : { hurry: { signal: controller.signal, graceMs: HOOK_TEARDOWN_MS },
-                  ...(controller.signal.aborted ? { deadline: terminalDeadline ??= Date.now() + HOOK_TEARDOWN_MS } : {}) }),
-                  onReceipt: (receipt) => this.hookReceipt(receipt, emit) }) } : {}),
-              onStart: (name, args) => emit({ type: "tool_start", id: call.id, name, arguments: args }),
-            });
+          const { dispatched, panelCall } = await dispatchTool(call, controller.signal);
           const result = this.options.provider.modelConfig.vision !== true && dispatched.content.some((block) => block.type === "image")
             ? capResult(errorResult("vision_disabled", "this model cannot receive image content; use a text-description tool"), this.options.maxOutputBytes)
             : dispatched;

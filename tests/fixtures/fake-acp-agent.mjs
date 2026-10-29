@@ -6,6 +6,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { agent, ndJsonStream, RequestError } from "@agentclientprotocol/sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const stateDir = process.env.FAKE_ACP_STATE;
 mkdirSync(stateDir, { recursive: true });
@@ -32,6 +34,22 @@ function configOptions(state) {
 }
 
 const sessions = new Map();
+// The MCP servers each session was given, and the client connected to the first one (the Raw bridge), as a CLI keeps them.
+const mcpServers = new Map();
+const mcpClients = new Map();
+async function mcp(sessionId) {
+  if (mcpClients.has(sessionId)) return mcpClients.get(sessionId);
+  const server = mcpServers.get(sessionId)?.[0];
+  if (!server) throw new Error("no MCP server");
+  // As a CLI starts a stdio MCP server: its own environment plus the server's `env`.
+  log({ method: "mcp/spawn", name: server.name, command: server.command, args: server.args, envNames: server.env.map((item) => item.name) });
+  const transport = new StdioClientTransport({ command: server.command, args: server.args, stderr: "pipe",
+    env: { ...process.env, ...Object.fromEntries(server.env.map((item) => [item.name, item.value])) } });
+  const mcpClient = new Client({ name: "fake-cli", version: "1" });
+  await mcpClient.connect(transport);
+  mcpClients.set(sessionId, mcpClient);
+  return mcpClient;
+}
 const cancels = new Map();
 let client;
 const app = agent({ name: "fake-acp" });
@@ -47,7 +65,8 @@ app.onRequest("session/new", ({ params }) => {
   const id = `fake-${process.pid}-${sessions.size + 1}`;
   const state = { model: process.env.FAKE_ACP_MODEL ?? "small", effort: undefined, mode: "ask", nonce: undefined, meta: params._meta ?? null };
   sessions.set(id, state); saveSession(id, state);
-  log({ method: "session/new", meta: params._meta ?? null });
+  mcpServers.set(id, params.mcpServers ?? []);
+  log({ method: "session/new", meta: params._meta ?? null, mcpServers: (params.mcpServers ?? []).map((server) => server.name) });
   return { sessionId: id, configOptions: configOptions(state) };
 });
 app.onRequest("session/load", async ({ params, client: peer }) => {
@@ -56,6 +75,8 @@ app.onRequest("session/load", async ({ params, client: peer }) => {
   log({ method: "session/load", sessionId: params.sessionId, found: Boolean(state) });
   if (!state) throw new Error("Resource not found");
   sessions.set(params.sessionId, state);
+  mcpServers.set(params.sessionId, params.mcpServers ?? []);
+  mcpClients.delete(params.sessionId);
   // Real adapters replay the conversation as updates before answering.
   await text(params.sessionId, "REPLAYED");
   return { configOptions: configOptions(state) };
@@ -117,6 +138,40 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-2", rawOutput: "raw text" });
     await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-2", status: "completed" });
     await text(id, "read");
+    return { stopReason: "end_turn", usage };
+  }
+  if (newest === "bridge-list") {
+    const { tools } = await (await mcp(id)).listTools();
+    await text(id, `tools:${tools.map((tool) => tool.name).join(",")}`);
+    return { stopReason: "end_turn", usage };
+  }
+  if (newest === "bridge-late") {
+    // A call made after the prompt was answered, as a CLI's background work may.
+    const late = await mcp(id);
+    setTimeout(() => { void late.callTool({ name: "todo", arguments: { todos: [] } }).then((result) => log({ method: "mcp/late", result })); }, 100);
+    await text(id, "answered");
+    return { stopReason: "end_turn", usage };
+  }
+  const bridge = /^bridge (\S+) (.*)$/s.exec(newest);
+  if (bridge) {
+    // As Claude reports a call of an MCP tool it is about to make, then makes it over MCP.
+    const callId = `mcp-${Date.now()}`;
+    await update(id, { sessionUpdate: "tool_call", toolCallId: callId, name: `mcp__raw__${bridge[1]}`, title: `mcp__raw__${bridge[1]}`,
+      kind: "other", status: "pending", rawInput: JSON.parse(bridge[2]) });
+    // Claude Code in its default mode asks before an MCP tool runs.
+    const permission = await client.request("session/request_permission", { sessionId: id,
+      toolCall: { toolCallId: callId, name: `mcp__raw__${bridge[1]}`, title: `mcp__raw__${bridge[1]}`, kind: "other", rawInput: JSON.parse(bridge[2]) },
+      options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
+    if (permission.outcome.outcome !== "selected" || permission.outcome.optionId !== "yes") {
+      await text(id, "permission refused");
+      return { stopReason: "end_turn", usage };
+    }
+    const call = (await mcp(id)).callTool({ name: bridge[1], arguments: JSON.parse(bridge[2]) }, undefined, { timeout: 600000 });
+    const result = await Promise.race([call, cancelled.then(() => "cancelled")]);
+    if (result === "cancelled") return { stopReason: "cancelled" };
+    await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, status: result.isError ? "failed" : "completed",
+      content: result.content.map((block) => ({ type: "content", content: block })) });
+    await text(id, `result:${JSON.stringify(result)}`);
     return { stopReason: "end_turn", usage };
   }
   const pause = /pause (\d+)/.exec(input);

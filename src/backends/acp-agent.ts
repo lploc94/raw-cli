@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { client, PROTOCOL_VERSION, type AnyMessage, type ClientConnection, type ContentBlock, type RequestPermissionRequest,
+import { createHash, randomUUID } from "node:crypto";
+import { client, PROTOCOL_VERSION, type AnyMessage, type ClientConnection, type ContentBlock, type McpServerStdio, type RequestPermissionRequest,
   type RequestPermissionResponse, type SessionConfigOption, type SessionNotification } from "@agentclientprotocol/sdk";
 import type { AgentSession, AgentState, RunEvent, RunResult } from "../agent.js";
 import type { CompactResult } from "../compact.js";
@@ -12,7 +12,11 @@ import type { ExternalSession, SessionOwner, SessionStore } from "../sessions/st
 import type { MeasureOptions, SessionMetrics } from "../sessions/metrics.js";
 import type { ToolDisplay } from "../tools/display.js";
 import type { ToolApprovalRequest } from "../tools/primitives.js";
-import { AcpUpdateMapper, cliToolIdentity, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
+import { AcpUpdateMapper, cliToolIdentity, isBridgeCall, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
+import { bridgeProxyServer } from "./bridge/proxy.js";
+import { startBridge, type RawBridge } from "./bridge/server.js";
+import type { ToolDefinition } from "../tools/registry.js";
+import type { ToolResult } from "../tools/types.js";
 import { BACKEND_LABELS, type BackendKind, type BackendSpec } from "./config.js";
 import type { PanelActionRequest, SessionAgent } from "./types.js";
 
@@ -102,6 +106,8 @@ interface ActiveTurn {
   resume(): void;
 }
 
+type McpServers = McpServerStdio[];
+
 interface Live { peer: AcpPeer; connection: ClientConnection; died: Promise<never>; loadSession: boolean; images: boolean; ready: Promise<void> }
 
 /**
@@ -125,6 +131,9 @@ export class AcpBackendProvider implements ProviderAdapter {
   private previous: Promise<void> = Promise.resolve();
   /** `ExternalSession.delivered` of the open CLI conversation. */
   private delivered: number | undefined;
+  /** Raw's tools offered to the CLI (the agent's bridged selection), and the bridge serving them once started. */
+  private tools: readonly ToolDefinition[] = [];
+  private bridge: Promise<RawBridge | undefined> | undefined;
   /** The model the CLI reported for the last prompt (`_meta.quota.model_usage`), when it reports one. */
   usedModel: string | undefined;
   /** The CLI's latest report of its context: tokens used and the window. */
@@ -168,6 +177,7 @@ export class AcpBackendProvider implements ProviderAdapter {
     const notify = (message: string) => { if (!request.signal?.aborted) request.onExternal?.({ type: "notice", message }); };
     const override = this.override;
     this.override = undefined;
+    this.tools = request.tools;
     try { return await this.runPrompt(request, notify, override, lastAnswer); }
     catch (error) {
       // A JSON-RPC error answer from the CLI (numeric code): its details say what went wrong, e.g. that the CLI exited.
@@ -182,8 +192,9 @@ export class AcpBackendProvider implements ProviderAdapter {
   private async runPrompt(request: ProviderRequest, notify: (message: string) => void, override: BackendOptions | undefined,
     lastAnswer: number): Promise<ProviderTurn> {
     await this.resolveLaunch(request, notify);
+    const mcpServers = await this.mcpServers(notify);
     await this.startup(request, async (live) => {
-      await this.open(live, notify, lastAnswer >= 0);
+      await this.open(live, notify, lastAnswer >= 0, mcpServers);
       const desired: BackendOptions = {};
       for (const [key] of CATEGORIES) {
         const value = override?.[key] ?? this.baseline[key];
@@ -309,7 +320,7 @@ export class AcpBackendProvider implements ProviderAdapter {
   }
 
   /** Continues the stored CLI conversation when it is the same profile and the CLI can load it; otherwise starts one. */
-  private async open(live: Live, notify: (message: string) => void, hadTurns: boolean): Promise<void> {
+  private async open(live: Live, notify: (message: string) => void, hadTurns: boolean, mcpServers: McpServers): Promise<void> {
     if (this.cliSessionId) return;
     const binding = this.config.binding?.();
     const stored = binding?.store.readExternal(binding.sessionId, binding.owner);
@@ -318,7 +329,7 @@ export class AcpBackendProvider implements ProviderAdapter {
       try {
         // Updates that replay the conversation arrive before this answer; with no active turn they are not recorded again.
         const loaded = await live.connection.agent.request("session/load", { sessionId: stored.cliSessionId, cwd: this.config.cwd,
-          mcpServers: [], ...meta });
+          mcpServers, ...meta });
         this.options = loaded.configOptions ?? [];
         this.cliSessionId = stored.cliSessionId;
         this.baseline = { ...stored.baseline };
@@ -329,7 +340,7 @@ export class AcpBackendProvider implements ProviderAdapter {
         if (live.peer.exited()) throw error;
       }
     }
-    const created = await live.connection.agent.request("session/new", { cwd: this.config.cwd, mcpServers: [], ...meta });
+    const created = await live.connection.agent.request("session/new", { cwd: this.config.cwd, mcpServers, ...meta });
     this.cliSessionId = created.sessionId;
     this.options = created.configOptions ?? [];
     const { model, effort, mode } = this.config.spec;
@@ -347,6 +358,30 @@ export class AcpBackendProvider implements ProviderAdapter {
       ...(this.delivered !== undefined ? { delivered: this.delivered } : {}) };
     if (binding) binding.store.writeExternal(binding.sessionId, binding.owner, external);
     if (hadTurns || stored) notify(`This ${this.label} conversation starts here; it does not see earlier turns`);
+  }
+
+  /**
+   * The Raw bridge as the CLI's MCP server `raw`, started once per runtime when the agent has bridged tools. A bridge that
+   * cannot start leaves the session without Raw's tools and says so (Invariant 5).
+   */
+  private async mcpServers(notify: (message: string) => void): Promise<McpServers> {
+    if (!this.tools.length) return [];
+    this.bridge ??= startBridge({ tools: () => this.tools, call: (name, args, signal) => this.bridgeCall(name, args, signal) })
+      .catch((error: unknown) => {
+        notify(`Raw tools are unavailable in this session: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
+      });
+    const bridge = await this.bridge;
+    return bridge ? [bridgeProxyServer(bridge)] : [];
+  }
+
+  /** A bridged tool call from the CLI: run by the active turn; the inactivity watchdog waits while Raw runs it. */
+  private async bridgeCall(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
+    const turn = this.turn;
+    if (!turn?.request.runTool) throw new Error("no active turn");
+    turn.pause();
+    try { return await turn.request.runTool({ id: `bridge-${randomUUID()}`, name, arguments: args }, signal); }
+    finally { turn.resume(); }
   }
 
   /** Sets model, effort and mode in that order, each checked against the options the CLI lists at that moment. */
@@ -478,6 +513,8 @@ export class AcpBackendProvider implements ProviderAdapter {
       : { outcome: { outcome: "cancelled" as const } };
     const title = params.toolCall.title ?? "a tool";
     if (!turn || turn.request.signal?.aborted) return choose(reject);
+    // Raw's own rules and approvals apply when the bridge runs the call.
+    if (isBridgeCall(params.toolCall)) return choose(allow);
     if (!this.config.approve) {
       if (this.config.autoApprove) return choose(allow);
       turn.request.onExternal?.({ type: "notice", message: `${this.label} asked to run ${title}; no approval channel` });
@@ -505,10 +542,12 @@ export class AcpBackendProvider implements ProviderAdapter {
   async close(): Promise<void> {
     this.closed = true;
     const live = this.live;
-    if (!live) return;
     this.live = undefined;
-    live.connection.close();
-    await live.peer.stop(CLOSE_GRACE_MS);
+    if (live) {
+      live.connection.close();
+      await live.peer.stop(CLOSE_GRACE_MS);
+    }
+    await (await this.bridge)?.close();
   }
 }
 
@@ -526,8 +565,9 @@ export class AcpBackendAgent implements SessionAgent {
   run(input: UserInput, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     return this.session.run(input, onEvent).finally(() => this.provider.setTurnOverride(undefined));
   }
-  async runPanelAction(_request: PanelActionRequest): Promise<RunResult> {
-    return { status: "error", steps: 0, code: "unsupported_backend", message: "panel actions of this backend are not available" };
+  /** A panel action of a bridged tool runs in Raw; its note reaches the CLI with the next prompt. */
+  runPanelAction(request: PanelActionRequest, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+    return this.session.runPanelAction(request, onEvent);
   }
   compact(): Promise<CompactResult> {
     return Promise.reject(Object.assign(new Error("compaction is not supported by this backend: the CLI keeps its own context"),

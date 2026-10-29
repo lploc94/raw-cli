@@ -13,13 +13,13 @@ const RAW = join(import.meta.dirname, "..", "bin", "raw.ts");
 
 interface Live { root: string; work: string; env: NodeJS.ProcessEnv; config: string }
 
-function live(kind: string, backend: Record<string, unknown>, tag: string): Live {
+function live(kind: string, backend: Record<string, unknown>, tag: string, tools: string[] = []): Live {
   const root = mkdtempSync(join(tmpdir(), `raw-live-${kind}-`));
   const work = join(root, "work");
   mkdirSync(work);
   const config = join(root, "config.json");
   writeFileSync(config, JSON.stringify({ default_agent: `${kind}-live`, agents: { [`${kind}-live`]: { backend,
-    system_prompt: `You are ${tag}. Begin every reply with the exact text ${tag}. Use your own tools for file work.`, tools: { use: [] } } } }));
+    system_prompt: `You are ${tag}. Begin every reply with the exact text ${tag}. Use your own tools for file work.`, tools: { use: tools } } } }));
   // Adapters are installed into the user's data directory once, as a real first use would; sessions stay in the temp root.
   const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
   return { root, work, config, env: { ...process.env, XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: data } };
@@ -59,5 +59,27 @@ test("claude: the agent's prompt replaces Claude Code's, its own tools write the
     const third = raw(target, ["--continue", "What code did I ask you to remember? Reply with the code only."]);
     assert.equal(third.status, 0, third.stderr);
     assert.ok(third.stdout.includes(nonce), third.stdout);
+  } finally { rmSync(target.root, { recursive: true, force: true }); }
+});
+
+test("claude: bridge todo: a Raw todo call from Claude Code fills the session's todo panel",
+  { skip: !LIVE.has("claude") && "set RAW_LIVE_BACKENDS=claude" }, () => {
+  const tag = `RAW-TAG-${randomBytes(3).toString("hex").toUpperCase()}`;
+  const target = live("claude", { kind: "claude", model: "haiku" }, tag, ["builtin/todo"]);
+  try {
+    const run = raw(target, ["Use the todo tool from the raw MCP server to make a todo list with two items, alpha and beta, with alpha done. Then reply done."]);
+    assert.equal(run.status, 0, run.stderr);
+    assert.ok(run.session);
+    const store = openSessionStore({ env: target.env });
+    try {
+      const panel = store.listSessionPanels(run.session!).find((item) => item.panelId === "builtin/todo#todo");
+      const text = JSON.stringify(panel?.document ?? null);
+      assert.match(text, /alpha/i, text);
+      assert.match(text, /beta/i, text);
+      const calls = store.getSessionHistory({ sessionId: run.session!, limit: 100 }).items.filter((item) => item.kind === "tool_call")
+        .map((item) => (item.payload.display as { name?: string; identity?: string } | undefined) ?? {});
+      assert.deepEqual(calls.filter((call) => call.name === "todo").map((call) => call.identity), ["builtin/todo"], "shown once, as Raw's tool");
+      assert.ok(!calls.some((call) => call.name?.startsWith("mcp__raw__")), JSON.stringify(calls));
+    } finally { store.close(); }
   } finally { rmSync(target.root, { recursive: true, force: true }); }
 });

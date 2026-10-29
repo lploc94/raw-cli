@@ -401,12 +401,13 @@ test("runtime metadata keeps external through other writers and removes it on re
   } finally { await agent.close(); h.cleanup(); }
 });
 
-test("compaction and panel actions are reported as unsupported for a backend", async () => {
+test("compaction is reported as unsupported for a backend; a panel action runs in Raw (here: no tool offers that panel)", async () => {
   const h = await harness();
   const agent = h.agent();
   try {
     await assert.rejects(agent.compact(), /not supported by this backend/);
-    assert.equal((await agent.runPanelAction({ panel: "builtin/todo#main", action: "check" })).code, "unsupported_backend");
+    // Bridged tools' panel actions: tests/backend-bridge.test.ts.
+    assert.equal((await agent.runPanelAction({ panel: "builtin/todo#main", action: "check" })).code, "stale_panel");
   } finally { await agent.close(); h.cleanup(); }
 });
 

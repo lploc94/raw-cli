@@ -54,7 +54,7 @@ async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<
   for (const warning of tools.warnings) process.stderr.write(`raw: ${warning}\n`);
   try {
     if (signal.aborted) throw new Error("startup aborted");
-    const agent = createSessionAgent({ runtime, tools, cwd: session.cwd, host: {
+    const agent = createSessionAgent({ runtime, tools, cwd: session.cwd, ...(options.env ? { env: options.env } : {}), host: {
       ...(options.approve ? { approve: options.approve } : {}),
       ...(options.processes ? { processes: options.processes } : {}),
       ...(options.interactions ? { interactions: options.interactions } : {}), deliverQueuedInputs: true,

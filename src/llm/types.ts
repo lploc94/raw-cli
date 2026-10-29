@@ -109,6 +109,8 @@ export interface ProviderRequest {
   onUsage?: (raw: unknown) => void;
   /** Tool calls the provider ran itself and notices about the run; only an external backend sends them. */
   onExternal?: (event: ExternalTurnEvent) => void;
+  /** Runs one of `tools` for an external backend (the Raw bridge) inside this turn, recorded as Raw's own calls are. */
+  runTool?: (call: { id: string; name: string; arguments: Record<string, unknown> }, signal: AbortSignal) => Promise<ToolResult>;
   cacheKey?: string;
 }
 

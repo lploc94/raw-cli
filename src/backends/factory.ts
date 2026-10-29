@@ -14,18 +14,20 @@ export interface SessionAgentContext {
   tools: RuntimeTools;
   cwd: string;
   host: Pick<AgentOptions, "persistence" | "processes" | "interactions" | "interactionAdapter" | "approve" | "deliverQueuedInputs">;
+  /** The environment a backend CLI starts with; the process environment by default. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export type SessionAgentFactory = (context: SessionAgentContext) => SessionAgent;
 
 /** How each ACP backend kind starts; a kind without one is not available yet. */
-const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig, cwd: string) => AcpLaunchResolver>> = { claude: claudeLaunch };
+const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig, cwd: string, deps: { env?: NodeJS.ProcessEnv }) => AcpLaunchResolver>> = { claude: claudeLaunch };
 
 /** Raw's own loop for an agent with a model; an external CLI for an agent with a `backend`. */
 export const createSessionAgent: SessionAgentFactory = (context) => {
   const { runtime, tools, cwd, host } = context;
   if (runtime.backend) {
-    const launch = ACP_LAUNCHES[runtime.backend.kind]?.(runtime, cwd);
+    const launch = ACP_LAUNCHES[runtime.backend.kind]?.(runtime, cwd, context.env ? { env: context.env } : {});
     if (!launch) throw new Error(`the ${BACKEND_LABELS[runtime.backend.kind]} backend is not available yet`);
     return createAcpSessionAgent(context, launch);
   }
@@ -35,16 +37,18 @@ export const createSessionAgent: SessionAgentFactory = (context) => {
 
 /**
  * An ACP backend session: Raw's loop keeps history, operations and turn state, and its provider runs the CLI. The CLI
- * owns its tools and context, so no Raw tool, hook, compaction or step limit is configured on the loop.
+ * owns its tools and context; Raw's loop gets only the tools offered through the bridge, and no hook, compaction or step limit.
  */
-export function createAcpSessionAgent({ runtime, cwd, host }: SessionAgentContext, launch: AcpLaunch | AcpLaunchResolver): AcpBackendAgent {
+export function createAcpSessionAgent({ runtime, tools, cwd, host }: SessionAgentContext, launch: AcpLaunch | AcpLaunchResolver): AcpBackendAgent {
   const spec = runtime.backend!;
   let session: AgentSession | undefined;
   const provider = new AcpBackendProvider({ agentName: runtime.agentName ?? spec.kind, spec, cwd, launch,
     ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}),
     autoApprove: runtime.autoApprove, ...(host.approve ? { approve: host.approve } : {}),
     binding: () => session?.persistenceBinding });
+  // The registry holds only the bridged tools (createRuntimeTools); the CLI reaches them through the Raw bridge.
   session = createAgent({ provider, cwd, system: runtime.systemPrompt ?? "", configPath: runtime.configPath,
+    ...(tools ? { registry: tools.registry, toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills } : {}),
     maxOutputBytes: runtime.maxOutputBytes, requestTimeoutMs: runtime.requestTimeoutMs, autoApprove: runtime.autoApprove, ...host });
   return new AcpBackendAgent(session, provider);
 }

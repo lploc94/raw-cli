@@ -14,6 +14,14 @@ Cancelling a turn asks the CLI to stop, waits up to 5 s, then stops the adapter 
 
 What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, hooks and native tool rules. The CLI keeps its own context and tools.
 
+## Raw tools in a backend
+
+The CLI keeps its own file, edit and shell tools; Raw's built-ins that do the same job (`read_file`, `write_file`, `edit_file`, `apply_patch`, `bash`, `powershell`, `view_image`) are skipped, each with a warning at startup such as `claude agent "review" skips builtin/bash: Claude Code uses its own shell tool`. The other tools the agent selects are offered to the CLI as one MCP server named `raw`: `builtin/todo`, `builtin/ask_user`, `builtin/list_vars`, `builtin/read_var`, `builtin/list_skills`, `builtin/load_skill`, `builtin/process`, `local/*`, `agent/*`, package tools and `mcp/<server>/<tool>`. Claude Code calls them `mcp__raw__<tool>` (for example `mcp__raw__todo`).
+
+A call runs in Raw, as it does in Raw's own loop: `tools.rules` apply (`deny` hides the tool from the CLI, `ask` uses Raw's approval prompt or card), panels such as the todo list update the side panel, `ask_user` shows its form and the call waits for the answer, panel actions run in Raw and the CLI hears of them with the next prompt, and results are capped by `max_output_bytes`. The chat shows the call once, as Raw's tool, not also as the CLI's MCP call. Raw does not ask again for the CLI's own permission prompt for a `raw` tool. Cancelling the turn cancels the call; a call the CLI makes when no turn is running is refused.
+
+The server listens on `127.0.0.1` only, with a random token per session runtime, and refuses browser origins. The CLI starts `raw __bridge-proxy` as a stdio MCP server; the address and token reach it in its environment, never on a command line, in history or in logs. When the server cannot start, the turn says "Raw tools are unavailable in this session: <reason>" and runs without them.
+
 ## Claude Code
 
 Requirements: Claude Code installed (`claude` on `PATH`, or `backend.executable`) and logged in.
