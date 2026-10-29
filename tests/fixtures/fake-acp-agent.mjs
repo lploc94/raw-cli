@@ -12,7 +12,9 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const stateDir = process.env.FAKE_ACP_STATE;
 mkdirSync(stateDir, { recursive: true });
 writeFileSync(join(stateDir, `adapter-${process.pid}.pid`), String(process.pid));
-const log = (entry) => writeFileSync(join(stateDir, `calls-${process.pid}.jsonl`), `${JSON.stringify(entry)}\n`, { flag: "a" });
+// Named by start time, so sorting the names gives the adapters in the order they started (pids are not ordered on Windows).
+const callsFile = join(stateDir, `calls-${String(Date.now()).padStart(15, "0")}-${process.pid}.jsonl`);
+const log = (entry) => writeFileSync(callsFile, `${JSON.stringify(entry)}\n`, { flag: "a" });
 
 // Claude-agent-acp's effort list depends on the model: here `small` has none, `big` offers low/high, `mid` low/medium.
 const EFFORTS = { small: undefined, big: ["low", "high"], mid: ["low", "medium"] };

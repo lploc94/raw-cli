@@ -100,7 +100,8 @@ test("the real codex-acp hands Codex exactly the agent's prompt settings, from a
       { CODEX_CONFIG: JSON.stringify({ model_reasoning_summary: "none", developer_instructions: "theirs" }) });
     assert.equal(inherited.config.model_reasoning_summary, "none");
     assert.equal(inherited.config.developer_instructions, "Be RAW.");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  // On Windows the fake Codex the stopped job held may still be closing its working directory.
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }
 });
 
 test("the prompt file holds the prompt byte for byte while the runtime lives, and each runtime has its own", async () => {
