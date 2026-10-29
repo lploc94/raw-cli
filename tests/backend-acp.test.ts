@@ -306,6 +306,26 @@ test("cancel stops the adapter and its descendants, also when the CLI ignores th
   }
 });
 
+test("a failed turn stops the adapter and its descendants also when saving the CLI's new lists fails", async () => {
+  const h = await harness();
+  const write = h.store.writeExternal.bind(h.store);
+  h.store.writeExternal = (sessionId, owner, external) => {
+    if (external?.offered?.effort) throw new Error("simulated SQLITE_FULL");
+    write(sessionId, owner, external);
+  };
+  const agent = h.agent();
+  try {
+    const result = await agent.run("grandchild\n\nswitch-then-fail");
+    assert.equal(result.status, "error");
+    assert.doesNotMatch(String(result.message), /SQLITE_FULL/);
+    const tree = [...h.pids("adapter"), ...h.pids("grandchild")];
+    assert.equal(tree.length, 2);
+    // Before the fix the store error left the catch early: the turn ended with it and the tree kept running.
+    assert.ok(await gone(tree, 5000), `${tree.filter(alive).join(",")} still alive`);
+    assert.ok(h.diagnostics.some((line) => line.includes("options not saved: simulated SQLITE_FULL")), h.diagnostics.join(""));
+  } finally { await agent.close(); h.cleanup(); }
+});
+
 test("a crashed adapter ends the turn backend_exited with its stderr, its descendants stop, and the next turn resumes", async () => {
   const h = await harness();
   const agent = h.agent();

@@ -512,7 +512,9 @@ export class AcpBackendProvider implements BackendProvider {
       return { text: turn.text, toolCalls: [], finishReason: answer.stopReason, ...(usage ? { usage } : {}) };
     } catch (error) {
       // Saved before the adapter stops: the conversation stays the session's, and the next turn loads it with these.
-      this.saveOffered();
+      // A store failure here is reported and does not keep the cleanup below from running.
+      try { this.saveOffered(); }
+      catch (saveError) { (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} options not saved: ${(saveError as Error).message}\n`); }
       const cancelled = error instanceof BackendError && error.code === "aborted";
       if (cancelled || (error instanceof BackendError && error.code === "backend_unresponsive")) {
         // The CLI is asked to stop first so it can save its conversation, then the whole tree goes (Invariant 7);
