@@ -943,6 +943,12 @@ export class SessionStore {
     return this.runtimeMetadata(sessionId)?.external;
   }
 
+  /** The texts of the session's backend notices, so a startup warning is recorded once per session. */
+  backendNoticeTexts(sessionId: string): Set<string> {
+    const rows = this.database.prepare("SELECT payload_json FROM history WHERE session_id = ? AND kind = 'backend_notice'").all(sessionId);
+    return new Set(rows.map((row) => (this.decodeStored(String(row.payload_json)) as { text?: unknown }).text).filter((text): text is string => typeof text === "string"));
+  }
+
   /** What the session's CLI last offered, for display; needs no ownership. */
   externalOffered(sessionId: string): BackendOffered | undefined {
     return this.runtimeMetadata(sessionId)?.external?.offered;

@@ -591,3 +591,17 @@ test("a stderr line over the diagnostic budget is never held whole, and the line
   // A multi-byte character split across chunks stays whole.
   assert.deepEqual([...lines.push(Buffer.from([0xc3])), ...lines.push(Buffer.from([0xbc, 0x0a]))], ["ü"]);
 });
+
+test("the session's lists hold the efforts of the model a turn ran, also on the conversation's first turn", async () => {
+  const h = await harness({ model: "claude-sonnet-4-6" });
+  const agent = h.agent();
+  const efforts = () => h.store.externalOffered(h.session.id)?.effort?.options.map((option) => option.value);
+  try {
+    agent.setTurnOverride({ model: "gemini-3.8-flash" });
+    assert.equal((await agent.run("echo one")).status, "completed");
+    assert.deepEqual(efforts(), ["high", "medium", "low"]);
+    // The next turn returns to the conversation's model, which offers no effort.
+    assert.equal((await agent.run("echo two")).status, "completed");
+    assert.equal(efforts(), undefined);
+  } finally { await agent.close(); h.cleanup(); }
+});

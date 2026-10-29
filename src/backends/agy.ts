@@ -86,7 +86,8 @@ function readModels(executable: string, env: NodeJS.ProcessEnv, timeoutMs: numbe
     try { peer = spawnLinePeer({ command: executable, args: ["models"], env, onLine: (line) => lines.push(line), maxFrameBytes: MAX_FRAME_BYTES }); }
     catch { resolve(undefined); return; }
     const timer = setTimeout(() => stopped(), timeoutMs);
-    stopped = () => { clearTimeout(timer); void peer!.stop(0).catch(() => {}); resolve(undefined); };
+    // Settles once the child is gone, so a reader that stopped it can wait for that.
+    stopped = () => { clearTimeout(timer); void peer!.stop(0).catch(() => {}).then(() => resolve(undefined)); };
     peer.child.stdin.end();
     peer.spawnFailure.catch(() => { clearTimeout(timer); resolve(undefined); });
     // `close` comes once stdout has ended, so every line was read.
@@ -123,11 +124,12 @@ export function agyCatalog(executable: string, env: NodeJS.ProcessEnv, timeoutMs
     };
     const onAbort = () => {
       leave();
-      resolve(undefined);
       if (!shared.waiting && !shared.done) {
         if (catalogs.get(executable) === shared) catalogs.delete(executable);
+        // The last reader stops the read and leaves once `agy models` has exited.
         shared.stop();
-      }
+        void shared.models.then(() => resolve(undefined));
+      } else resolve(undefined);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     void shared.models.then((models) => { if (!left) { leave(); resolve(models); } });
@@ -302,6 +304,9 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
   private baseline: BackendOptions = {};
   private delivered: number | undefined;
   private override: BackendOptions | undefined;
+  private readonly queuedNotices: string[] = [];
+  /** The model the last turn ran (none: agy's default), whose efforts the dashboard lists; unset before a turn. */
+  private turnModel: { model?: string } | undefined;
   private peer: LinePeer | undefined;
   private closed = false;
   private previous: Promise<void> = Promise.resolve();
@@ -321,6 +326,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
   get pid(): number | undefined { return this.peer?.child.pid; }
   currentValue(key: keyof BackendOptions): string | undefined { return this.baseline[key]; }
   setTurnOverride(options: BackendOptions | undefined): void { this.override = options; }
+  noticeNextTurn(messages: readonly string[]): void { this.queuedNotices.push(...messages); }
   get unknownUpdates(): ReadonlyMap<string, number> { return new Map(this.unknownKinds); }
 
   generate(request: ProviderRequest): Promise<ProviderTurn> {
@@ -333,6 +339,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     if (this.closed) throw new BackendError("backend_closed", "agy runtime is closed");
     if (request.signal?.aborted) throw new BackendError("aborted", "startup aborted");
     const notify = (message: string) => { if (!request.signal?.aborted) request.onExternal?.({ type: "notice", message }); };
+    if (!request.signal?.aborted) for (const message of this.queuedNotices.splice(0)) notify(message);
     const override = this.override;
     this.override = undefined;
     let lastAnswer = request.messages.length - 1;
@@ -368,7 +375,8 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     let args = turnArgs();
     // Recorded before sending, so a store failure ends the turn before agy has it.
     this.delivered = request.messages.length;
-    this.saveExternal(turnModel);
+    this.turnModel = { ...(turnModel ? { model: turnModel } : {}) };
+    this.saveExternal();
     let outcome = await this.runProcess(launch, args, text, request, notify);
     // A run agy refused before doing anything is run again without what it refused, once per reason.
     let retriedTools = false;
@@ -395,6 +403,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
         if (!override?.model) { const { model: _model, effort: _effort, ...rest } = this.baseline; this.baseline = rest; }
         turnModel = undefined;
         turnEffort = undefined;
+        this.turnModel = {};
       } else break;
       args = turnArgs();
       outcome = await this.runProcess(launch, args, text, request, notify);
@@ -475,13 +484,13 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     if (hadTurns || stored) notify(FRESH);
   }
 
-  /** `model`: the model this turn runs, whose efforts the dashboard lists. */
-  private saveExternal(model?: string): void {
+  private saveExternal(): void {
     const binding = this.config.binding?.();
     if (!binding || !this.cliSessionId) return;
     const external: ExternalSession = { kind: "agy", cliSessionId: this.cliSessionId, profileDigest: this.profileDigest, baseline: this.baseline,
       ...(this.delivered !== undefined ? { delivered: this.delivered } : {}),
-      offered: offeredFromAgyCatalog(this.launch?.catalog, this.baseline, this.launch?.defaultName, model ?? this.baseline.model) };
+      offered: offeredFromAgyCatalog(this.launch?.catalog, this.baseline, this.launch?.defaultName,
+        this.turnModel ? this.turnModel.model : this.baseline.model) };
     binding.store.writeExternal(binding.sessionId, binding.owner, external);
   }
 

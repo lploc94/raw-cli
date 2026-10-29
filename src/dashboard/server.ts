@@ -21,7 +21,8 @@ import type { AttachmentStaging } from "./attachments.js";
 import type { BackendDiscovery } from "../backends/discovery.js";
 import type { RuntimeConfig } from "../config.js";
 
-export type BackendDiscoverer = (runtime: RuntimeConfig, cwd: string, env: NodeJS.ProcessEnv) => Promise<BackendDiscovery>;
+/** `signal` aborts when the dashboard closes; the discovery settles once what it started has exited. */
+export type BackendDiscoverer = (runtime: RuntimeConfig, cwd: string, env: NodeJS.ProcessEnv, signal: AbortSignal) => Promise<BackendDiscovery>;
 
 export type DashboardRoute = (request: IncomingMessage, response: ServerResponse, context: DashboardContext) => Promise<boolean>;
 export interface DashboardContext {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { dashboardFixture, eventStream } from "./fixtures/dashboard.js";
@@ -576,6 +577,52 @@ test("a backend agent's composer offers what the CLI offers as selects, and says
   } finally { await f.close(); }
 });
 
+/** A Claude Code agent whose adapter is not installed, and an `npm` on PATH that never finishes, recording its pids. */
+function stalledInstall() {
+  const bin = mkdtempSync(join(tmpdir(), "raw-stalled-npm-"));
+  const pids = join(bin, "pids");
+  mkdirSync(join(bin, "bin"));
+  writeFileSync(join(bin, "bin", "npm"), `#!/bin/sh\n/bin/sleep 60 & echo "$$ $!" > "${pids}"; wait\n`);
+  chmodSync(join(bin, "bin", "npm"), 0o755);
+  const started = async (): Promise<number[]> => {
+    for (let waited = 0; waited < 10_000; waited += 25) {
+      if (existsSync(pids) && readFileSync(pids, "utf8").endsWith("\n")) return readFileSync(pids, "utf8").trim().split(" ").map(Number);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error("npm did not start");
+  };
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  return { env: { PATH: `${join(bin, "bin")}:${process.env.PATH}` }, started, alive, remove: () => rmSync(bin, { recursive: true, force: true }),
+    agent: (extra: Record<string, unknown> = {}) => ({ backend: { kind: "claude", executable: process.execPath }, system_prompt: "Be RAW.", tools: { use: [] }, ...extra }) };
+}
+
+test("closing the dashboard stops a backend discovery, the adapter install included, and waits until it has exited", { skip: process.platform === "win32" }, async () => {
+  const npm = stalledInstall();
+  const f = await dashboardFixture({ extraAgents: { ext: npm.agent() }, env: npm.env });
+  try {
+    const asking = f.api("/agents/ext/backend-options").catch(() => undefined);
+    const pids = await npm.started();
+    assert.ok(pids.every(npm.alive));
+    const closing = Date.now();
+    await f.server.close();
+    // Before the fix the discovery had no cancellation: npm and its child ran on after close (here, until sleep ended).
+    assert.ok(Date.now() - closing < 10_000, `close took ${Date.now() - closing} ms`);
+    assert.deepEqual(pids.filter(npm.alive), []);
+    await asking;
+  } finally { await f.close(); npm.remove(); }
+});
+
+test("a backend discovery runs within the agent's request_timeout_ms, the adapter install included, and says so", { skip: process.platform === "win32" }, async () => {
+  const npm = stalledInstall();
+  const f = await dashboardFixture({ extraAgents: { ext: npm.agent({ request_timeout_ms: 1000 }) }, env: npm.env });
+  try {
+    const asking = f.json<{ controls: unknown[]; warning?: string }>("/agents/ext/backend-options");
+    const pids = await npm.started();
+    assert.deepEqual(await asking, { controls: [], warning: "Claude Code: the CLI did not answer within 1000 ms (request_timeout_ms); models and efforts are not listed" });
+    assert.deepEqual(pids.filter(npm.alive), []);
+  } finally { await f.close(); npm.remove(); }
+});
+
 test("a backend turn takes request.backend for itself only; the route checks its shape, the runner the CLI's lists", async () => {
   const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
     attach: scriptedBackend });
@@ -583,7 +630,7 @@ test("a backend turn takes request.backend for itself only; the route checks its
     const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
     const send = (clientRequestId: string, input: string, request?: unknown) => f.api(`/sessions/${session.id}/operations`, "POST",
       { clientRequestId, kind: "turn", agent: "ext", input, ...(request === undefined ? {} : { request }) });
-    for (const [index, request] of [{ effort: "high" }, { backend: { model: "" } }, { backend: { color: "red" } }, { backend: "big" }, { backend: { model: "x".repeat(201) } }].entries()) {
+    for (const [index, request] of [{ effort: "high" }, { backend: { model: "" } }, { backend: { color: "red" } }, { backend: "big" }, { backend: { model: " " } }, { backend: { mode: 7 } }].entries()) {
       const refused = await send(`bad-${index}`, "options", request);
       assert.equal(refused.status, 422, JSON.stringify(request));
       assert.equal((await refused.json() as { error: { code: string } }).error.code, "invalid_request_option");
@@ -610,5 +657,36 @@ test("a backend turn takes request.backend for itself only; the route checks its
     assert.equal((await texts()).at(-1), "assistant: model=small effort=- mode=ask");
     const settled = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
     assert.deepEqual(settled.backendOptions?.map((control) => control.id), ["backend_model", "backend_mode"]);
+  } finally { await f.close(); }
+});
+
+test("a backend agent's startup warnings show in the chat once per session, not once per turn", async () => {
+  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.",
+    tools: { use: ["builtin/bash"] }, max_steps: 3 } }, attach: scriptedBackend });
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
+    const notices = async () => (await f.json<{ items: HistoryView[] }>(`/sessions/${session.id}/history`)).items
+      .filter((item) => item.kind === "backend_notice").map((item) => item.text);
+    for (const [index, input] of ["options", "options"].entries()) {
+      const sent = await f.api(`/sessions/${session.id}/operations`, "POST", { clientRequestId: `t${index}`, kind: "turn", agent: "ext", input });
+      assert.equal((await f.wait((await sent.json() as SessionOperation).id)).state, "completed");
+    }
+    const warnings = (await notices()).filter((text) => / skips | ignores /.test(text ?? ""));
+    assert.ok(warnings.includes('claude agent "ext" skips builtin/bash: Claude Code uses its own shell tool'), JSON.stringify(warnings));
+    assert.ok(warnings.length >= 2, JSON.stringify(warnings));
+    assert.equal(new Set(warnings).size, warnings.length, "each warning once");
+  } finally { await f.close(); }
+});
+
+test("the session's lists follow a model the CLI switched to during the turn", async () => {
+  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
+    attach: scriptedBackend });
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
+    const sent = await f.api(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "switch", kind: "turn", agent: "ext", input: "switch-model" });
+    assert.equal((await f.wait((await sent.json() as SessionOperation).id)).state, "completed");
+    const snapshot = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
+    assert.deepEqual(snapshot.backendOptions?.map((control) => [control.id, control.options.map((option) => option.value)]), [
+      ["backend_model", ["small", "big", "mid"]], ["backend_effort", ["low", "high"]], ["backend_mode", ["ask", "auto"]]]);
   } finally { await f.close(); }
 });

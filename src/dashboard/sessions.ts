@@ -122,6 +122,9 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
    * The controls of a backend agent before its session has asked the CLI: what the backend offers to a new conversation
    * set up as the agent's. A backend that cannot be asked gives no controls and a warning; sending stays possible.
    */
+  // Closing the dashboard aborts `context.signal`, which stops these; close waits until what they started has exited.
+  const discoveries = new Set<Promise<unknown>>();
+  context.onClose(() => Promise.allSettled([...discoveries]).then(() => {}));
   const backendOptions = async (name: string): Promise<{ controls: RequestControl[]; warning?: string }> => {
     const config = await readManagedConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env });
     if (!Object.hasOwn(record(config.data?.agents), name)) throw new DashboardError(404, "not_found", `Agent ${name} is not configured`);
@@ -129,7 +132,9 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     try { runtime = await loadConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env, flags: { agent: name }, requireModel: false }); }
     catch (error) { return { controls: [], warning: error instanceof Error ? error.message : String(error) }; }
     if (!runtime.backend) return { controls: [] };
-    const found = await (context.discoverBackend ?? discoverBackendOptions)(runtime, context.cwd, context.env);
+    const asking = (context.discoverBackend ?? discoverBackendOptions)(runtime, context.cwd, context.env, context.signal);
+    discoveries.add(asking);
+    const found = await asking.finally(() => discoveries.delete(asking));
     return { controls: backendControls(found.offered), ...(found.warning ? { warning: found.warning } : {}) };
   };
   const agentControls = async (name: string): Promise<{ controls: RequestControl[]; backend: boolean }> => {

@@ -127,6 +127,11 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
       content: [{ type: "content", content: { type: "text", text: "late result" } }] });
     return { stopReason: "cancelled" };
   }
+  if (newest === "switch-model") {
+    // The CLI switches its model while it works (its own decision, or a command in the prompt).
+    state.model = "big"; saveSession(id, state);
+    await update(id, { sessionUpdate: "config_option_update", configOptions: configOptions(state) });
+  }
   if (newest === "change-later") {
     // The CLI changes an option between turns (its own command, or the user in another client).
     setTimeout(() => { state.mode = "auto"; saveSession(id, state);

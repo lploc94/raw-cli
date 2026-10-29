@@ -55,6 +55,8 @@ export interface BackendProvider extends ProviderAdapter {
   currentValue(key: keyof BackendOptions): string | undefined;
   /** Values for the next turn only; the turn after it returns to the session's baseline. */
   setTurnOverride(options: BackendOptions | undefined): void;
+  /** Notices the next turn reports first (the host's startup warnings, for a host that shows only turns). */
+  noticeNextTurn(messages: readonly string[]): void;
   close(): Promise<void>;
   /** The CLI process running now. */
   readonly pid: number | undefined;
@@ -148,6 +150,7 @@ export class AcpBackendProvider implements BackendProvider {
   private options: SessionConfigOption[] = [];
   private turn: ActiveTurn | undefined;
   private override: BackendOptions | undefined;
+  private readonly queuedNotices: string[] = [];
   private readonly unknownKinds = new Map<string, number>();
   private closed = false;
   private previous: Promise<void> = Promise.resolve();
@@ -195,6 +198,7 @@ export class AcpBackendProvider implements BackendProvider {
 
   /** Values for the next turn only; the turn after it returns to the session's baseline. */
   setTurnOverride(options: BackendOptions | undefined): void { this.override = options; }
+  noticeNextTurn(messages: readonly string[]): void { this.queuedNotices.push(...messages); }
 
   /**
    * `AgentSession` ends a cancelled turn without waiting for its provider, so a turn starts only once the previous one
@@ -212,6 +216,7 @@ export class AcpBackendProvider implements BackendProvider {
     while (lastAnswer >= 0 && request.messages[lastAnswer]!.role !== "assistant") lastAnswer--;
     // A startup the user cancelled has no turn left to report to.
     const notify = (message: string) => { if (!request.signal?.aborted) request.onExternal?.({ type: "notice", message }); };
+    if (!request.signal?.aborted) for (const message of this.queuedNotices.splice(0)) notify(message);
     const override = this.override;
     this.override = undefined;
     this.tools = request.tools;
@@ -251,7 +256,10 @@ export class AcpBackendProvider implements BackendProvider {
       notify(`${this.label} does not accept images; each is sent as a short description`);
     }
     const prompt = fresh.flatMap((message, index) => [...(index ? [{ type: "text", text: "\n\n" } as ContentBlock] : []), ...promptBlocks(message.content, images)]);
-    return this.prompt(this.live!, prompt, request);
+    const turn = await this.prompt(this.live!, prompt, request);
+    // The CLI may change its options while it works (a model switch); the dashboard lists what it offers at the end.
+    this.saveOffered();
+    return turn;
   }
 
   /** The launch, built once; building it may install the adapter, which is not bound by the startup deadline. */

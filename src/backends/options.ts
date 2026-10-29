@@ -38,11 +38,11 @@ export function offeredFromConfigOptions(options: readonly SessionConfigOption[]
 }
 
 /**
- * What agy offers: its model families, the efforts of the model in use (`model`, else the current one, else agy's default
- * by its display name), and its modes.
+ * What agy offers: its model families, the efforts of `model` (the model in use; none means agy's default, found by its
+ * display name), and its modes.
  */
-export function offeredFromAgyCatalog(catalog: readonly AgyModel[] | undefined, current: BackendOptions, defaultName?: string,
-  model = current.model): BackendOffered {
+export function offeredFromAgyCatalog(catalog: readonly AgyModel[] | undefined, current: BackendOptions, defaultName: string | undefined,
+  model: string | undefined): BackendOffered {
   const mode: BackendOffer = { ...(current.mode ? { current: current.mode } : {}), options: AGY_MODES.map((value) => ({ value, label: value })) };
   if (!catalog?.length) return { mode };
   const family = catalog.find((item) => item.slug === model || item.variants.some((variant) => variant.slug === model))

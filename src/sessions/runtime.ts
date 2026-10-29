@@ -65,6 +65,11 @@ async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<
     await agent.start(agent.transcript.length ? "resume" : "create", undefined, signal);
     // The dashboard's choice for this turn only; the runner checks each value against what the CLI offers then.
     if (options.request?.backend && agent instanceof AcpBackendAgent) agent.setTurnOverride(options.request.backend);
+    // The dashboard shows a startup warning in the chat, once per session; the server's stderr still has every start.
+    if (agent instanceof AcpBackendAgent && tools.warnings.length) {
+      const shown = store.backendNoticeTexts(session.id);
+      agent.provider.noticeNextTurn(tools.warnings.filter((warning) => !shown.has(warning)));
+    }
     const agentName = runtime.agentName ?? runtime.backend!.kind;
     return { agent, ...(agent instanceof AcpBackendAgent ? { measure: (measure: MeasureOptions) => measureBackend(agent, agentName, measure) } : {}),
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },

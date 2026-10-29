@@ -78,7 +78,6 @@ export function requestControls(provider: ProviderName, method: ApiMethod, curre
 }
 
 const BACKEND_KEYS = ["model", "effort", "mode"] as const;
-const BACKEND_VALUE_CHARS = 200;
 
 /**
  * Validates a client override against the controls advertised for the agent. For an agent with an external backend only
@@ -95,8 +94,7 @@ export function parseRequestOverride(raw: unknown, controls: readonly RequestCon
       const backend: NonNullable<RequestOverride["backend"]> = {};
       for (const [name, chosen] of Object.entries(value)) {
         if (!(BACKEND_KEYS as readonly string[]).includes(name)) throw new RequestOverrideError(`request.backend.${name} is not a backend option (model, effort, mode)`);
-        if (typeof chosen !== "string" || !chosen.trim() || chosen.length > BACKEND_VALUE_CHARS)
-          throw new RequestOverrideError(`request.backend.${name} must be a nonempty string of at most ${BACKEND_VALUE_CHARS} characters`);
+        if (typeof chosen !== "string" || !chosen.trim()) throw new RequestOverrideError(`request.backend.${name} must be a nonempty string`);
         backend[name as (typeof BACKEND_KEYS)[number]] = chosen;
       }
       if (Object.keys(backend).length) result.backend = backend;
