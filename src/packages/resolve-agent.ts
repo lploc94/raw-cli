@@ -119,15 +119,14 @@ export async function resolvePackageAgentBinding(binding: unknown, options: Pack
   return { ...definition, ...overrides, ...(local.backend === undefined ? { model: local.model } : { backend: local.backend }) };
 }
 
+/** `skipHooks` leaves the hook selection unresolved, for a runtime that will not run hooks (an external backend). */
 export async function resolvePackageSelections(agent: unknown, options: PackageStoreOptions,
-  context?: PackageResolutionContext): Promise<PackageSelections> {
+  context?: PackageResolutionContext, { skipHooks = false }: { skipHooks?: boolean } = {}): Promise<PackageSelections> {
   const effective = structuredClone(record(agent, "agent"));
   const assets: { tools: Record<string, PackageAsset>; skills: Record<string, PackageAsset>; hooks: Record<string, PackageAsset> } = {
     tools: Object.create(null), skills: Object.create(null), hooks: Object.create(null),
   };
-  // An external backend never runs Raw hooks, so its hook selection is kept for the skip warning but not resolved.
-  const kinds = effective.backend === undefined ? ["tools", "skills", "hooks"] as const : ["tools", "skills"] as const;
-  for (const kind of kinds) {
+  for (const kind of skipHooks ? ["tools", "skills"] as const : ["tools", "skills", "hooks"] as const) {
     const block = effective[kind] as { use?: unknown } | undefined;
     if (!block || !Array.isArray(block.use)) continue;
     const ids: string[] = [];

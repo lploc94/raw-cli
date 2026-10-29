@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -171,15 +171,20 @@ async function withDataHome(run: (root: string, dataHome: string) => Promise<voi
   finally { if (previous === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previous; }
 }
 
+function hookPackage(requires: string): string {
+  const source = mkdtempSync(join(tmpdir(), "raw-backend-hook-"));
+  mkdirSync(join(source, "hooks", "check"), { recursive: true });
+  writeFileSync(join(source, "hooks", "check", "hook.json"), JSON.stringify({ protocol_version: 2, name: "check",
+    events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"] }));
+  writeFileSync(join(source, "hooks", "check", "index.mjs"), "");
+  writeFileSync(join(source, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@test/hooks", version: "1.0.0",
+    description: "Hook", files: ["hooks/check"], exports: { hooks: { check: "hooks/check" } }, requires: [requires] }));
+  return source;
+}
+
 test("a package hook a backend agent selects is reported, not resolved, even when Raw cannot run it", async () => {
   await withDataHome(async (root, dataHome) => {
-    const source = mkdtempSync(join(tmpdir(), "raw-backend-hook-"));
-    mkdirSync(join(source, "hooks", "check"), { recursive: true });
-    writeFileSync(join(source, "hooks", "check", "hook.json"), JSON.stringify({ protocol_version: 2, name: "check",
-      events: [{ name: "PreToolUse", match: "builtin/bash" }], command: "node", args: ["./index.mjs"] }));
-    writeFileSync(join(source, "hooks", "check", "index.mjs"), "");
-    writeFileSync(join(source, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@test/old", version: "1.0.0",
-      description: "Old hook", files: ["hooks/check"], exports: { hooks: { check: "hooks/check" } }, requires: ["raw.hook/1"] }));
+    const source = hookPackage("raw.hook/1");
     const configPath = join(root, "config.json");
     const write = (agent: Record<string, unknown>) => writeFileSync(configPath, JSON.stringify({ default_agent: "a", models: MODELS, agents: { a: agent } }));
     write({ backend: { kind: "codex" }, tools: { use: [] }, hooks: { use: ["pkg/old/hooks/check"] } });
@@ -219,5 +224,19 @@ test("a package binding's backend block is validated like an agent's, and the ed
     await assert.rejects(editAgent({ configPath }, { action: "patch", name: "writer", value: { backend: { kind: "gemini" } } }),
       { message: "package agent binding backend.kind must be claude, codex or agy" });
     assert.equal((await loadConfig({ configPath })).backend?.kind, "codex");
+  });
+});
+
+test("exporting a backend agent still packages the hooks it selects", async () => {
+  await withDataHome(async (root, dataHome) => {
+    const configPath = join(root, "config.json");
+    writeFileSync(configPath, JSON.stringify({ default_agent: "a", models: MODELS,
+      agents: { a: { backend: { kind: "codex" }, tools: { use: [] }, hooks: { use: ["pkg/kit/hooks/check"] } } } }));
+    await installPackage({ configPath, dataHome, source: hookPackage("raw.hook/2"), alias: "kit" });
+    const out = join(root, "out");
+    await exportAgentPackage({ configPath, agentName: "a", out, name: "@test/with-hook", version: "1.0.0" });
+    const agent = JSON.parse(readFileSync(join(out, "agents", "a.json"), "utf8")) as { hooks?: { use: string[] }; backend?: unknown };
+    assert.deepEqual(agent.hooks?.use, ["#hooks/check"]);
+    assert.equal(agent.backend, undefined);
   });
 });

@@ -833,7 +833,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const effective = agentData && typeof agentData === "object" && !Array.isArray(agentData) && Object.hasOwn(agentData, "from")
     ? await resolvePackageAgentBinding(agentData, { configPath: document.path, env }, packageContext) : agentData;
   const packageSelection = effective === undefined ? undefined
-    : await resolvePackageSelections(effective, { configPath: document.path, env }, packageContext);
+    // An external backend never runs Raw hooks: its hook selection is kept for the skip warning but not resolved.
+    : await resolvePackageSelections(effective, { configPath: document.path, env }, packageContext,
+      { skipHooks: typeof effective === "object" && effective !== null && (effective as { backend?: unknown }).backend !== undefined });
   const activeAgents: Record<string, unknown> = {};
   if (wanted !== undefined) activeAgents[wanted] = packageSelection?.agent;
   const originAlias = agentData && typeof agentData === "object" && !Array.isArray(agentData)
