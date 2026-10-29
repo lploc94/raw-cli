@@ -1,0 +1,20 @@
+{
+  "default_agent": "claude",
+  "agents": {
+    "claude": {
+      "backend": { "kind": "claude", "model": "sonnet", "effort": "high" },
+      "system_prompt_file": "prompt.md",
+      "tools": { "use": ["builtin/todo", "builtin/ask_user"] }
+    },
+    "codex": {
+      "backend": { "kind": "codex", "model": "gpt-6.1-terra", "effort": "high", "mode": "workspace-write" },
+      "system_prompt_file": "prompt.md",
+      "tools": { "use": ["builtin/todo", "builtin/ask_user"] }
+    },
+    "agy": {
+      "backend": { "kind": "agy", "model": "gemini-3.8-flash", "effort": "high", "mode": "accept-edits" },
+      "system_prompt_file": "prompt.md",
+      "tools": { "use": [] }
+    }
+  }
+}

@@ -247,7 +247,7 @@ A panel may declare `actions` (menu items on the panel, a block or an item). `pr
 
 ## Tools in an external backend
 
-An agent with a `backend` runs Claude Code, Codex or agy with their own file and shell tools; Raw's other selected tools reach the CLI through Raw's MCP server `raw`, with rules, approvals, panels and questions as here. See [Raw tools in a backend](backends.md#raw-tools-in-a-backend).
+An agent with a `backend` runs Claude Code, Codex or agy with their own file and shell tools. Raw's other selected tools reach Claude Code and Codex through Raw's MCP server `raw`, with rules, approvals, panels and questions as here; agy gets none of them, each skipped with a warning. See [Raw tools in a backend](backends.md#raw-tools-in-a-backend).
 
 ## Agent rules
 

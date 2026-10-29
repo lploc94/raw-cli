@@ -90,6 +90,16 @@ Tool calls run automatically in terminal, headless, dashboard and ACP modes, usi
 
 `provider` names the service; `method` selects its wire API (`openai-chat-completions`, `openai-responses`, `anthropic-messages`, or `google-generate-content`). `model_id` is sent upstream unchanged. Use `api_key_env` to read a selected credential from the environment or `api_key` for a literal value. `raw config list` reports model/access settings without printing credentials. No old flat-agent schema is accepted. See [configuration](docs/configuration.md), [config design](docs/config-design.md), and [providers](docs/providers.md).
 
+### Claude Code, Codex and Antigravity as backends
+
+An agent can run an external coding CLI instead of Raw's own loop: give it a `backend` block in place of `model`. The CLI keeps its own login, tools and context; Raw keeps the session, the terminal and dashboard views, cancel and `--continue`, replaces the CLI's system prompt with the agent's, and offers Raw tools such as `builtin/todo` to Claude Code and Codex through its own MCP server.
+
+```json
+{ "agents": { "claude": { "backend": { "kind": "claude", "model": "sonnet" }, "system_prompt": "You are a careful reviewer.", "tools": { "use": ["builtin/todo"] } } } }
+```
+
+`kind` is `claude`, `codex` or `agy`. Anything the CLI cannot do (hooks, compaction, Raw tools on agy) is skipped with a warning, never an error. See [backends](docs/backends.md) for setup, the capability table and [an example config](examples/agents/cli-backends/).
+
 ## Tools, images and MCP
 
 For a vision-capable model, set `models.<alias>.vision` to `true` and add `builtin/view_image` to `tools.use`, then ask `raw "Explain screenshot.png"`; the model can call `view_image` with the path. There is no image flag. A text-only model can instead call an external MCP vision-to-text server that returns a description. Search likewise comes from a selected MCP tool returning text.

@@ -14,6 +14,28 @@ Cancelling a turn asks the CLI to stop, waits up to 5 s, then stops the adapter 
 
 What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, hooks and native tool rules. The CLI keeps its own context and tools.
 
+## What each backend supports
+
+| Capability | Claude Code | Codex | agy | Proof |
+| --- | --- | --- | --- | --- |
+| System prompt replaces the CLI's | yes | yes | yes | `backend-claude`, `backend-codex`, `backend-agy`: "the system prompt replaces…", "the prompt replaces Codex's…", "the prompt goes to agy byte for byte…"; live: "the agent's prompt replaces the CLI's" |
+| System prompt appended (`system_prompt_mode: "append"`) | yes | yes | no, replaces with a warning | same tests; `backend-agy`: "an agent without a prompt runs agy's own; an empty one and append mode are reported" |
+| `model` | yes | yes | yes | `backend-acp`: "configured options are applied in order…"; `backend-agy`: "the agent's model, effort and mode reach agy as flags…"; live: "the chosen model runs" |
+| `effort` | yes, per model | yes | yes, per model family | `backend-acp`: "an effort override on a model whose selector…"; `backend-agy`: "an effort agy refuses is dropped and the model kept…" |
+| `mode` | yes | yes | yes (`--mode`) | `backend-acp`: "configured options are applied in order…"; `backend-agy`: "the agent's model, effort and mode reach agy as flags…" |
+| Per-turn model, effort and mode from the dashboard | yes | yes | yes | `dashboard-sessions`: "a backend turn takes request.backend for itself only…"; `dashboard-ui/backends.spec.ts`; `backend-agy`: "the agent's model, effort and mode reach agy as flags…" |
+| Resume (`--continue`, reopening a chat) | yes (`session/load`) | yes (`session/load`) | yes (`--conversation`) | `backend-acp`: "a reopened session continues the CLI conversation…"; `backend-agy`: "each later turn continues the conversation…"; live: "--continue resumes" |
+| Cancel | yes | yes | yes (stops agy) | `backend-acp`: "cancel stops the adapter and its descendants…", "cancelling one session leaves another session's adapter running…"; `backend-agy`: "cancel stops agy and what it started…"; live: "end to end in the dashboard" |
+| Permission requests through Raw's approval | yes | yes | no, its mode decides | `backend-acp`: "permission requests go to Raw's approval channel…"; `dashboard-ui/backends.spec.ts` |
+| Raw tools (bridge) | yes | yes | no, with a warning | `backend-bridge`: "the CLI sees the bridged selection minus deny…"; `backend-config`: "agy gets no Raw tools…"; live: "bridge todo" |
+| Panels (todo and tool panels) | yes | yes | no | `backend-bridge`: "a bridged todo call produces the same panel event as Raw's loop…"; live: "bridge todo" |
+| `ask_user` | yes | yes | no | `backend-bridge`: "in the dashboard, a bridged todo fills the session's todo panel and ask_user waits…" |
+| Hooks | no | no | no | `backend-config`: "loop-only settings and hooks on a backend agent load and are reported, not rejected" |
+| Compaction | no | no | no | `backend-acp`: "compaction is reported as unsupported for a backend…" |
+| `tools.rules` on the CLI's own tools | no | no | no | `backend-config`: "rules that only match skipped tools warn that they cannot be enforced" |
+
+Each CLI sends its own system prompt, tool list and context, which Raw cannot shrink. Even with a replaced prompt, a short question cost about 14k input tokens with Claude Code, 18k with Codex and 7k with agy on 2026-10-28. The numbers vary with the CLI's version, its settings and the files it reads (`CLAUDE.md`, `AGENTS.md`).
+
 ## Raw tools in a backend
 
 The CLI keeps its own file, edit and shell tools; Raw's built-ins that do the same job (`read_file`, `write_file`, `edit_file`, `apply_patch`, `bash`, `powershell`, `view_image`) are skipped, each with a warning at startup such as `claude agent "review" skips builtin/bash: Claude Code uses its own shell tool`. The other tools the agent selects are offered to the CLI as one MCP server named `raw`: `builtin/todo`, `builtin/ask_user`, `builtin/list_vars`, `builtin/read_var`, `builtin/list_skills`, `builtin/load_skill`, `builtin/process`, `local/*`, `agent/*`, package tools and `mcp/<server>/<tool>`. Claude Code calls them `mcp__raw__<tool>` (for example `mcp__raw__todo`). `agy` gets none of them (see [Antigravity](#antigravity-agy)).
@@ -62,7 +84,7 @@ Requirements: Antigravity's CLI installed (`agy` on `PATH`, or `backend.executab
 
 - Raw runs `agy` once per turn in its print mode with stream-json on stdin and stdout, and continues the conversation with `--conversation`. When `agy` no longer has the conversation it starts a new one, and the session shows the fresh-conversation notice.
 - System prompt: the agent's prompt replaces agy's through an agent file Raw writes into a plugin of agy's named `raw`, `~/.gemini/config/plugins/raw/agents/raw-<digest>.md`, and passes with `--agent raw-<digest> --disable-slash-commands`. The name is a digest of the file, so an unchanged agent reuses its file; Raw never deletes these files (each distinct prompt and tool list leaves one of a few KB, which you can remove when no Raw runs). `system_prompt_mode: "append"` is not possible with `agy`: the prompt replaces agy's and the session shows a warning. Without a `system_prompt`, and with an empty one (which shows a warning), agy runs its own agent.
-- Tools: an agent file must list its tools, or agy's agent loses its write and shell tools. Raw lists the 26 tools `agy` 1.4.10 can run (`run_command`, `view_file`, `write_to_file`, `replace_file_content`, `grep_search`, `search_web` and the others); `backend.tools` replaces that list. `agy` refuses a run whose agent names a tool it does not know, so Raw then drops those names, says which, and runs the turn again.
+- Tools: an agent file must list its tools, or agy's agent loses its write and shell tools. Raw lists the 25 tools `agy` 1.4.10 can run for a top-level agent (`run_command`, `view_file`, `write_to_file`, `replace_file_content`, `grep_search`, `search_web` and the others; not `finish`, which makes the agent print a subagent's structured output); `backend.tools` replaces that list. `agy` refuses a run whose agent names a tool it does not know, so Raw then drops those names, says which, and runs the turn again.
 - `model` and `effort` take the models `agy models` lists, grouped as Antigravity groups them: a family such as `gemini-3.8-flash` takes the efforts its variants name (`low`, `medium`, `high`), a variant such as `gemini-3.8-flash-high` names its own effort, and a model without variants has none. A value agy does not list is reported and agy uses its default.
 - `mode` is agy's `--mode` (`accept-edits`, `auto`, `plan`); `"skip-permissions"` passes `--dangerously-skip-permissions` instead. agy has no approval channel Raw can answer, so its tools run as its mode allows. A warning agy prints, such as an unknown mode, is shown in the turn.
 - Raw tools are unavailable with `agy`: agy takes an MCP server only from a config file, which would put the bridge's token on disk. Each selected tool that another backend reaches through the bridge is skipped with the warning `agy agent "<name>" skips <tool>: Raw tools are unavailable with agy`.

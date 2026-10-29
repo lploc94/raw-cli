@@ -69,7 +69,13 @@ Lifecycle of a turn:
 | `available_commands_update`, `session_info_update`, `current_mode_update` | ignored |
 | any other kind | dropped before the SDK, one stderr line per kind |
 
-Permission requests go to the host's approval channel; without one, `auto_approve` allows and otherwise Raw refuses with a notice. `compact` and panel actions answer `unsupported_backend`.
+Permission requests go to the host's approval channel; without one, `auto_approve` allows and otherwise Raw refuses with a notice. `compact` answers `unsupported_backend`; a panel action runs in Raw, and the CLI hears of it with the next prompt.
+
+Raw's own tools reach Claude Code and Codex through the bridge (`src/backends/bridge/`): a loopback MCP server per runtime with a random token, which the CLI starts through `raw __bridge-proxy` (stdio). A bridged call runs inside the active turn through `ProviderRequest.runTool`, the same dispatch path as Raw's loop (rules, approvals, panels, `ask_user`, output cap), one call at a time.
+
+`agy` (`src/backends/agy.ts`) has no ACP mode: `AgyBackendProvider` runs `agy` once per turn in print mode with stream-json on stdin and stdout (`spawnLinePeer`), continues the conversation with `--conversation`, and maps its events in `src/backends/agy-events.ts`. The agent's prompt and tool list go into an agent file in agy's plugin directory, named by its content. `agy models` is read once per runtime to check model and effort; a value agy refuses at run time is dropped and the turn runs again once.
+
+The dashboard lists a backend's model, effort and mode before a session runs by asking the CLI once per dashboard process and agent setup (`src/backends/discovery.ts`: a throwaway `session/new`, or `agy models`); a running session lists what its own CLI conversation offered last, kept in its `external` record (`offered`). Both are display only: the runner checks a chosen value at turn time.
 
 ## Runtime variables
 
