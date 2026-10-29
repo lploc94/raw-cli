@@ -54,9 +54,10 @@ export function classifyForBackend(runtime: Pick<RuntimeConfig, "agentName" | "b
   for (const key of runtime.backendIgnoredSettings ?? []) skip(key, "it configures Raw's own agent loop");
   if (backend.tools !== undefined && kind !== "agy") skip("backend.tools", "it applies to agy only");
   const warnings = skipped.map((item) => `${who} skips ${item.id}: ${item.reason}`);
-  const skippedTools = runtime.toolIds.filter((id) => !bridged.includes(id));
+  // The CLI keeps its own tools whatever Raw selects, so a rule is checked against every native identity.
+  const nativeIds = Object.keys(NATIVE_DUPLICATES);
   for (const rule of runtime.toolRules) {
-    if (skippedTools.some((id) => ruleMatches(rule.match, id)) && !bridged.some((id) => ruleMatches(rule.match, id))) {
+    if (nativeIds.some((id) => ruleMatches(rule.match, id)) && !bridged.some((id) => ruleMatches(rule.match, id))) {
       warnings.push(`rule "${rule.match}" cannot be enforced on ${label}'s own tools`);
     }
   }

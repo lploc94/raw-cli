@@ -29,7 +29,7 @@ export function parseBackendSpec(raw: unknown, where: string): BackendSpec {
   const value = raw as Record<string, unknown>;
   for (const key of Object.keys(value)) if (!FIELDS.includes(key)) throw new Error(`unknown ${where} field: ${key}`);
   if (!BACKEND_KINDS.includes(value.kind as BackendKind)) throw new Error(`${where}.kind must be claude, codex or agy`);
-  const mode = value.system_prompt_mode ?? "replace";
+  const mode = value.system_prompt_mode === undefined ? "replace" : value.system_prompt_mode;
   if (mode !== "replace" && mode !== "append") throw new Error(`${where}.system_prompt_mode must be "replace" or "append"`);
   if (value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some((item) => typeof item !== "string" || !item.trim()))) {
     throw new Error(`${where}.tools must be an array of nonempty strings`);

@@ -5,6 +5,7 @@ import { parseComponentReference, parseSelectionReference } from "./references.j
 import { resolveInstalledDependency, resolveInstalledPackage, type PackageStoreOptions } from "./store.js";
 import { hostCapabilities } from "./contract.js";
 import { hasSeparator, readJsonText } from "../platform/fs.js";
+import { parseBackendSpec } from "../backends/config.js";
 
 type JsonObject = Record<string, unknown>;
 export interface PackageAsset { folder: string; name: string; canonicalIdentity: string; as?: string }
@@ -63,7 +64,7 @@ export function validatePackageAgentBinding(binding: unknown): JsonObject & { fr
   const parsed = parseComponentReference(local.from);
   if (parsed.source !== "installed" || parsed.kind !== "agents") throw new Error(`invalid package agent binding: ${local.from}`);
   if (local.model !== undefined && local.backend !== undefined) throw new Error("package agent binding must choose model or backend");
-  if (local.backend !== undefined) record(local.backend, "package agent binding backend");
+  if (local.backend !== undefined) parseBackendSpec(local.backend, "package agent binding backend");
   else if (typeof local.model !== "string" || !local.model.trim()) throw new Error("package agent binding requires model or backend");
   if (local.inputs !== undefined) record(local.inputs, "package agent inputs");
   if (local.overrides !== undefined) {
@@ -124,7 +125,9 @@ export async function resolvePackageSelections(agent: unknown, options: PackageS
   const assets: { tools: Record<string, PackageAsset>; skills: Record<string, PackageAsset>; hooks: Record<string, PackageAsset> } = {
     tools: Object.create(null), skills: Object.create(null), hooks: Object.create(null),
   };
-  for (const kind of ["tools", "skills", "hooks"] as const) {
+  // An external backend never runs Raw hooks, so its hook selection is kept for the skip warning but not resolved.
+  const kinds = effective.backend === undefined ? ["tools", "skills", "hooks"] as const : ["tools", "skills"] as const;
+  for (const kind of kinds) {
     const block = effective[kind] as { use?: unknown } | undefined;
     if (!block || !Array.isArray(block.use)) continue;
     const ids: string[] = [];

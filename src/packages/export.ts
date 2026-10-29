@@ -100,6 +100,7 @@ export async function exportAgentPackage(options: ExportAgentOptions): Promise<{
   if ((await readdir(out)).length) throw new Error(`export destination is not empty: ${out}`);
   const agent = structuredClone(source);
   delete agent.model;
+  delete agent.backend;
   const files: string[] = [];
   const included = new Set((options.includeFiles ?? []).map((path) => resolve(configDir, path)));
   const includeFile = async (sourcePath: string, target: string): Promise<string | undefined> => {
