@@ -908,7 +908,8 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     ...(selected === undefined ? {} : { modelConfig: selected }),
     ...(selectedSpec?.backend === undefined ? {} : { backend: selectedSpec.backend,
       backendIgnoredSettings: selectedSpec.backendIgnoredSettings ?? [] }),
-    systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? agentPrompt ?? resolveSystemPrompt(undefined, undefined),
+    // A backend agent without a prompt of its own runs the CLI's prompt untouched, not Raw's default.
+    systemPrompt: flags.systemPrompt ?? env.RAW_SYSTEM_PROMPT ?? agentPrompt ?? (selectedSpec?.backend ? "" : resolveSystemPrompt(undefined, undefined)),
     maxSteps: numberOption(flags.maxSteps, env.RAW_MAX_STEPS, selectedSpec?.maxSteps, 10000, "max-steps"),
     maxOutputBytes: numberOption(flags.maxOutputBytes, env.RAW_MAX_OUTPUT_BYTES, selectedSpec?.maxOutputBytes, DEFAULT_MAX_OUTPUT_BYTES, "max-output-bytes"),
     requestTimeoutMs: numberOption(flags.requestTimeoutMs, env.RAW_REQUEST_TIMEOUT_MS, selectedSpec?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, "request-timeout-ms"),

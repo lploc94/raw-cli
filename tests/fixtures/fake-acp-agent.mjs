@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { agent, ndJsonStream } from "@agentclientprotocol/sdk";
+import { agent, ndJsonStream, RequestError } from "@agentclientprotocol/sdk";
 
 const stateDir = process.env.FAKE_ACP_STATE;
 mkdirSync(stateDir, { recursive: true });
@@ -42,6 +42,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 app.onRequest("initialize", async () => (await delay(Number(process.env.FAKE_ACP_INIT_DELAY ?? 0)), { protocolVersion: 1,
   agentCapabilities: { loadSession: process.env.FAKE_ACP_LOAD !== "0", promptCapabilities: { image: process.env.FAKE_ACP_IMAGES !== "0" } } }));
 app.onRequest("session/new", ({ params }) => {
+  // As claude-agent-acp answers when the CLI has no login.
+  if (process.env.FAKE_ACP_AUTH === "1") throw RequestError.authRequired();
   const id = `fake-${process.pid}-${sessions.size + 1}`;
   const state = { model: process.env.FAKE_ACP_MODEL ?? "small", effort: undefined, mode: "ask", nonce: undefined, meta: params._meta ?? null };
   sessions.set(id, state); saveSession(id, state);
@@ -164,7 +166,7 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     return { stopReason: "end_turn", usage };
   }
   await text(id, `echo:${input}`);
-  return { stopReason: "end_turn", usage };
+  return { stopReason: "end_turn", usage, _meta: { quota: { model_usage: [{ model: `fake-${state.model}-1` }] } } };
 });
 
 app.connect(ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)));

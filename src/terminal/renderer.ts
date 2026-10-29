@@ -308,6 +308,11 @@ export class TerminalRenderer {
       }
       if (this.wrote && !this.endedWithNewline) process.stdout.write("\n");
     }
+    // The footer shows only the code. A backend's message says what to do (install, log in) and is Raw's own text;
+    // a provider's message is not printed, since it may echo a credential.
+    if (result.status === "error" && result.message && result.code?.startsWith("backend_")) {
+      process.stderr.write(`raw: ${safeTerminalText(result.message)}\n`);
+    }
     this.clearRefresh();
   }
 }

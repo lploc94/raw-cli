@@ -3,7 +3,8 @@ import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import { runtimeAgentOptions } from "../sessions/runtime.js";
 import type { RuntimeTools } from "../tools/plugins/runtime.js";
-import { AcpBackendAgent, AcpBackendProvider, type AcpLaunch } from "./acp-agent.js";
+import { AcpBackendAgent, AcpBackendProvider, type AcpLaunch, type AcpLaunchResolver } from "./acp-agent.js";
+import { claudeLaunch } from "./claude.js";
 import { BACKEND_LABELS, type BackendKind } from "./config.js";
 import type { SessionAgent } from "./types.js";
 
@@ -18,13 +19,13 @@ export interface SessionAgentContext {
 export type SessionAgentFactory = (context: SessionAgentContext) => SessionAgent;
 
 /** How each ACP backend kind starts; a kind without one is not available yet. */
-const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig) => AcpLaunch>> = {};
+const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig, cwd: string) => AcpLaunchResolver>> = { claude: claudeLaunch };
 
 /** Raw's own loop for an agent with a model; an external CLI for an agent with a `backend`. */
 export const createSessionAgent: SessionAgentFactory = (context) => {
   const { runtime, tools, cwd, host } = context;
   if (runtime.backend) {
-    const launch = ACP_LAUNCHES[runtime.backend.kind]?.(runtime);
+    const launch = ACP_LAUNCHES[runtime.backend.kind]?.(runtime, cwd);
     if (!launch) throw new Error(`the ${BACKEND_LABELS[runtime.backend.kind]} backend is not available yet`);
     return createAcpSessionAgent(context, launch);
   }
@@ -36,7 +37,7 @@ export const createSessionAgent: SessionAgentFactory = (context) => {
  * An ACP backend session: Raw's loop keeps history, operations and turn state, and its provider runs the CLI. The CLI
  * owns its tools and context, so no Raw tool, hook, compaction or step limit is configured on the loop.
  */
-export function createAcpSessionAgent({ runtime, cwd, host }: SessionAgentContext, launch: AcpLaunch): AcpBackendAgent {
+export function createAcpSessionAgent({ runtime, cwd, host }: SessionAgentContext, launch: AcpLaunch | AcpLaunchResolver): AcpBackendAgent {
   const spec = runtime.backend!;
   let session: AgentSession | undefined;
   const provider = new AcpBackendProvider({ agentName: runtime.agentName ?? spec.kind, spec, cwd, launch,

@@ -23,7 +23,15 @@ export interface AcpLaunch {
   env: NodeJS.ProcessEnv;
   /** `_meta` of `session/new` and `session/load` (Claude's `systemPrompt`). */
   sessionMeta?: Record<string, unknown>;
+  /** What to tell the user when the CLI answers that it needs a login. */
+  authHint?: string;
 }
+
+/** Builds the launch when the first turn needs it (installing the adapter on first use); its errors end the turn unavailable. */
+export type AcpLaunchResolver = (context: { notify: (message: string) => void; signal?: AbortSignal }) => Promise<AcpLaunch>;
+
+/** ACP's JSON-RPC code for "Authentication required" (`RequestError.authRequired`). */
+const AUTH_REQUIRED = -32000;
 
 /** Values chosen for one CLI conversation or one turn; each is passed through as the CLI names it. */
 export interface BackendOptions { model?: string; effort?: string; mode?: string }
@@ -73,7 +81,7 @@ export interface AcpBackendProviderOptions {
   agentName: string;
   spec: BackendSpec;
   systemPrompt?: string;
-  launch: AcpLaunch;
+  launch: AcpLaunch | AcpLaunchResolver;
   cwd: string;
   autoApprove: boolean;
   approve?: (request: ToolApprovalRequest) => boolean | Promise<boolean>;
@@ -106,6 +114,7 @@ export class AcpBackendProvider implements ProviderAdapter {
   private readonly label: string;
   private readonly profileDigest: string;
   private live: Live | undefined;
+  private launch: AcpLaunch | undefined;
   private cliSessionId: string | undefined;
   private baseline: BackendOptions = {};
   private options: SessionConfigOption[] = [];
@@ -116,6 +125,8 @@ export class AcpBackendProvider implements ProviderAdapter {
   private previous: Promise<void> = Promise.resolve();
   /** `ExternalSession.delivered` of the open CLI conversation. */
   private delivered: number | undefined;
+  /** The model the CLI reported for the last prompt (`_meta.quota.model_usage`), when it reports one. */
+  usedModel: string | undefined;
   /** The CLI's latest report of its context: tokens used and the window. */
   context: { used: number; size: number } | undefined;
 
@@ -157,6 +168,20 @@ export class AcpBackendProvider implements ProviderAdapter {
     const notify = (message: string) => { if (!request.signal?.aborted) request.onExternal?.({ type: "notice", message }); };
     const override = this.override;
     this.override = undefined;
+    try { return await this.runPrompt(request, notify, override, lastAnswer); }
+    catch (error) {
+      // A JSON-RPC error answer from the CLI (numeric code): its details say what went wrong, e.g. that the CLI exited.
+      const answer = error as { code?: unknown; message?: string; data?: { details?: unknown } };
+      if (typeof answer.code !== "number") throw error;
+      if (answer.code === AUTH_REQUIRED) throw new BackendError("backend_auth", `${this.label} needs a login: ${this.launch?.authHint ?? answer.message}`);
+      const details = typeof answer.data?.details === "string" ? `: ${answer.data.details}` : "";
+      throw new BackendError("backend_error", `${this.label}: ${answer.message ?? "error"}${details}`);
+    }
+  }
+
+  private async runPrompt(request: ProviderRequest, notify: (message: string) => void, override: BackendOptions | undefined,
+    lastAnswer: number): Promise<ProviderTurn> {
+    await this.resolveLaunch(request, notify);
     await this.startup(request, async (live) => {
       await this.open(live, notify, lastAnswer >= 0);
       const desired: BackendOptions = {};
@@ -177,6 +202,25 @@ export class AcpBackendProvider implements ProviderAdapter {
     }
     const prompt = fresh.flatMap((message, index) => [...(index ? [{ type: "text", text: "\n\n" } as ContentBlock] : []), ...promptBlocks(message.content, images)]);
     return this.prompt(this.live!, prompt, request);
+  }
+
+  /** The launch, built once; building it may install the adapter, which is not bound by the startup deadline. */
+  private async resolveLaunch(request: ProviderRequest, notify: (message: string) => void): Promise<void> {
+    if (this.launch) return;
+    const { launch } = this.config;
+    if (typeof launch !== "function") { this.launch = launch; return; }
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(new BackendError("aborted", "startup aborted"));
+      if (request.signal?.aborted) onAbort();
+      request.signal?.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      this.launch = await Promise.race([launch({ notify, ...(request.signal ? { signal: request.signal } : {}) }), aborted]);
+    } catch (error) {
+      if (error instanceof BackendError) throw error;
+      throw new BackendError("backend_unavailable", `${this.label} is not available: ${(error as Error).message}`);
+    } finally { if (onAbort) request.signal?.removeEventListener("abort", onAbort); }
   }
 
   /** Spawns the adapter if needed and runs `work` under the startup deadline (`request_timeout_ms`), abort and crash. */
@@ -208,7 +252,8 @@ export class AcpBackendProvider implements ProviderAdapter {
   }
 
   private spawn(): Live {
-    const { launch, cwd } = this.config;
+    const { cwd } = this.config;
+    const launch = this.launch!;
     let peer: AcpPeer;
     try { peer = spawnAcpPeer({ command: launch.command, args: launch.args, cwd, env: launch.env, maxFrameBytes: MAX_FRAME_BYTES }); }
     catch (error) { throw this.unavailable(error); }
@@ -268,7 +313,7 @@ export class AcpBackendProvider implements ProviderAdapter {
     if (this.cliSessionId) return;
     const binding = this.config.binding?.();
     const stored = binding?.store.readExternal(binding.sessionId, binding.owner);
-    const meta = this.config.launch.sessionMeta ? { _meta: this.config.launch.sessionMeta } : {};
+    const meta = this.launch!.sessionMeta ? { _meta: this.launch!.sessionMeta } : {};
     if (stored && stored.kind === this.config.spec.kind && stored.profileDigest === this.profileDigest && live.loadSession) {
       try {
         // Updates that replay the conversation arrive before this answer; with no active turn they are not recorded again.
@@ -362,7 +407,12 @@ export class AcpBackendProvider implements ProviderAdapter {
     try {
       const answer = await Promise.race([response, idle, aborted, live.died]);
       for (const event of turn.mapper.closeOpen("backend_error", `${this.label} did not report a result for this call`)) this.dispatch(turn, event);
-      return { text: turn.text, toolCalls: [], finishReason: answer.stopReason, ...(answer.usage ? { usage: answer.usage } : {}) };
+      // Both adapters name the models a prompt used in `_meta.quota.model_usage`; kept with the usage record.
+      const quota = (answer._meta as { quota?: { model_usage?: Array<{ model?: unknown }> } } | null | undefined)?.quota;
+      const models = (quota?.model_usage ?? []).map((entry) => entry.model).filter((model): model is string => typeof model === "string");
+      if (models.length) this.usedModel = models[0];
+      const usage = answer.usage ? { ...answer.usage, ...(models.length ? { models } : {}) } : undefined;
+      return { text: turn.text, toolCalls: [], finishReason: answer.stopReason, ...(usage ? { usage } : {}) };
     } catch (error) {
       const cancelled = error instanceof BackendError && error.code === "aborted";
       if (cancelled || (error instanceof BackendError && error.code === "backend_unresponsive")) {
@@ -500,7 +550,7 @@ export class AcpBackendAgent implements SessionAgent {
 export function measureBackend(agent: AcpBackendAgent, agentName: string, options: MeasureOptions): SessionMetrics {
   const { tokens, source, window } = agent.contextUsage();
   return { measuredAt: Date.now(), elapsedMs: Math.max(0, Math.round(performance.now() - options.startedAt)),
-    model: agent.provider.currentValue("model") ?? agent.provider.modelConfig.model, agentName,
+    model: agent.provider.usedModel ?? agent.provider.currentValue("model") ?? agent.provider.modelConfig.model, agentName,
     startedTools: options.startedTools, failedTools: options.failedTools, session: agent.stats(), turn: agent.stats(options.firstRequest),
     context: { estimatedTokens: tokens, source, outputReserve: 0,
       ...(window ? { contextWindow: window, percentage: tokens / window * 100, inputBudget: window } : {}) } };
