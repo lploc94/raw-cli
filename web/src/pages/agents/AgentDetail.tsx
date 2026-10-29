@@ -23,7 +23,7 @@ import { Selection } from "./Selection.js";
 type Section = "overview" | "capabilities" | "policy" | "json";
 
 /** The CLIs an agent can run instead of a Raw model (docs/backends.md). */
-const BACKENDS = [
+export const BACKENDS = [
   { kind: "claude", label: "Claude Code" },
   { kind: "codex", label: "Codex" },
   { kind: "agy", label: "Antigravity (agy)" },

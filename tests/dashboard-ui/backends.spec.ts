@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect, openChat } from "./fixtures.js";
@@ -140,5 +141,28 @@ test.describe("a Codex backend agent whose CLI cannot be asked", () => {
     await fits(page, [".agent-row"]);
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(row.locator(".backend-badge")).toHaveText("Codex");
+  });
+});
+
+test.describe("a config with only CLI backends", () => {
+  test.use({
+    viewport: { width: 320, height: 720 },
+    scenario: { config: { models: {}, agents: { ext: { backend: { kind: "claude" }, tools: { use: [] } } }, default_agent: "ext" } },
+  });
+
+  test("creates an agent that runs a CLI, with no Raw model to pick", async ({ page, raw }) => {
+    await page.goto(raw.server.launchUrl);
+    await page.getByRole("link", { name: "Agents", exact: true }).click();
+    await page.getByRole("button", { name: "Create agent" }).click();
+    const dialog = page.getByRole("dialog", { name: "Create agent" });
+    await dialog.getByLabel("Agent name").fill("coder");
+    const runsOn = dialog.getByLabel("Runs on", { exact: true });
+    await expect(runsOn.locator("option")).toHaveText(["Claude Code", "Codex", "Antigravity (agy)"]);
+    await expect(dialog.getByLabel("Model", { exact: true })).toHaveCount(0);
+    await runsOn.selectOption("codex");
+    await fits(page, [".modal, [role=dialog]"]);
+    await dialog.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(page).toHaveURL(/\/agents\/coder$/);
+    expect(JSON.parse(readFileSync(raw.configPath, "utf8")).agents.coder).toEqual({ backend: { kind: "codex" }, tools: { use: [] } });
   });
 });

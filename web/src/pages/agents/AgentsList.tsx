@@ -5,6 +5,7 @@ import { api, errorText } from "../../api.js";
 import { Link, useRouter } from "../../router.js";
 import { Empty, ErrorMessage, Field, Modal } from "../../ui.js";
 import { AgentActionDialog, AgentActionsMenu, type AgentAction } from "./AgentActions.js";
+import { BACKENDS } from "./AgentDetail.js";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -86,8 +87,8 @@ export function AgentsList({
           An agent pairs a model with the tools, skills and rules it may use.
         </Empty>
       ) : (
-        <Empty title="No agents yet" action={<Link href="/settings/models">Configure a model in Settings</Link>}>
-          Agents need a model. Add one, then create an agent.
+        <Empty title="No agents yet" action={create}>
+          An agent runs a CLI such as Claude Code, or a model you <Link href="/settings/models">configure in Settings</Link>.
         </Empty>
       )}
       <CreateAgentDialog
@@ -127,11 +128,15 @@ function CreateAgentDialog({
 }) {
   const [name, setName] = useState("");
   const [model, setModel] = useState(config.models[0] ?? "");
+  // A Raw model (""), or the CLI the agent runs; a config without models can still create a CLI agent.
+  const [runsOn, setRunsOn] = useState("");
   const [error, setError] = useState("");
   const taken = config.agents.includes(name);
+  const kind = runsOn || (config.models.length ? "" : BACKENDS[0].kind);
   useEffect(() => {
     if (!open) return;
     setName("");
+    setRunsOn("");
     setError("");
   }, [open]);
   return (
@@ -139,29 +144,41 @@ function CreateAgentDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Create agent"
-      description="A new agent uses a model from this config. It stays independent of the default agent."
+      description="A new agent uses a model from this config or runs a CLI. It stays independent of the default agent."
     >
       <ErrorMessage>{error}</ErrorMessage>
       <Field label="Agent name" {...(taken ? { hint: "An agent with this name already exists." } : {})}>
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
-      <Field label="Model">
-        <select value={model || config.models[0] || ""} onChange={(e) => setModel(e.target.value)}>
-          {config.models.map((alias) => (
-            <option key={alias}>{alias}</option>
+      <Field label="Runs on">
+        <select value={kind} onChange={(e) => setRunsOn(e.target.value)}>
+          {config.models.length ? <option value="">A Raw model</option> : null}
+          {BACKENDS.map((entry) => (
+            <option key={entry.kind} value={entry.kind}>
+              {entry.label}
+            </option>
           ))}
         </select>
       </Field>
+      {kind ? null : (
+        <Field label="Model">
+          <select value={model || config.models[0] || ""} onChange={(e) => setModel(e.target.value)}>
+            {config.models.map((alias) => (
+              <option key={alias}>{alias}</option>
+            ))}
+          </select>
+        </Field>
+      )}
       <div className="actions">
         <button
           className="primary"
-          disabled={!name.trim() || taken || !(model || config.models[0])}
+          disabled={!name.trim() || taken || !(kind || model || config.models[0])}
           onClick={() => {
             void api<ConfigView>("/agents", "POST", {
               revision: config.revision,
               action: "create",
               name,
-              value: { model: model || config.models[0], tools: { use: [] } },
+              value: { ...(kind ? { backend: { kind } } : { model: model || config.models[0] }), tools: { use: [] } },
             }).then(
               async () => {
                 await changed();
