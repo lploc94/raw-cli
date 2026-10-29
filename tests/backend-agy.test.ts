@@ -533,6 +533,8 @@ test("an agy models read no turn waits on any more is stopped, by a cancel or by
     controller.abort();
     await assert.rejects(turn, (error: { code?: string }) => error.code === "aborted");
     assert.ok(await gone([first!]), "the cancelled read is stopped");
+    // Nothing is sent: a turn handed to agy is recorded as delivered before its process starts.
+    assert.equal((runner as unknown as { delivered?: number }).delivered, undefined, "a cancelled startup launches no turn");
     await runner.close();
     rmSync(join(h.root, "fake", `catalog-${first}.pid`));
     const closing = provider(h);
@@ -541,6 +543,7 @@ test("an agy models read no turn waits on any more is stopped, by a cancel or by
     await closing.close();
     await assert.rejects(pending, (error: { code?: string }) => error.code === "aborted");
     assert.ok(await gone([second!]), "the read of a closed runtime is stopped");
+    assert.equal((closing as unknown as { delivered?: number }).delivered, undefined, "a closed runtime launches no turn");
     // A read another turn still waits on keeps running for it.
     const controllerA = new AbortController();
     const shared = [agyCatalog(h.executable, h.env, 10000, controllerA.signal), agyCatalog(h.executable, h.env, 10000)];

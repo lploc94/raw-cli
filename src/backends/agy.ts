@@ -417,7 +417,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
       launch.catalog = await Promise.race([(this.config.catalog ?? agyCatalog)(launch.executable, this.env, request.timeoutMs, reading.signal),
         new Promise<undefined>((resolve) => { timer = setTimeout(() => { stop(); resolve(undefined); }, request.timeoutMs); }),
         new Promise<never>((_resolve, reject) => {
-          onAbort = () => { stop(); reject(new BackendError("aborted", "startup aborted")); };
+          onAbort = () => { reject(new BackendError("aborted", "startup aborted")); stop(); };
           if (request.signal?.aborted) onAbort();
           request.signal?.addEventListener("abort", onAbort, { once: true });
         })]);
@@ -426,7 +426,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
       if (onAbort) request.signal?.removeEventListener("abort", onAbort);
       this.closing.signal.removeEventListener("abort", stop);
     }
-    if (this.closed) throw new BackendError("aborted", "startup aborted");
+    if (this.closed || request.signal?.aborted) throw new BackendError("aborted", "startup aborted");
     const { model, effort } = { ...this.config.spec, ...this.override };
     if (!launch.catalog && !this.uncheckedNoticed && (model || effort || this.baseline.model || this.baseline.effort)) {
       this.uncheckedNoticed = true;
