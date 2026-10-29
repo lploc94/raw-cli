@@ -92,10 +92,7 @@ export interface RunCliDeps {
 export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   store: SessionStore, selected?: SessionSummary, deps: RunCliDeps = {}): Promise<number> {
   const factory = deps.createSessionAgent ?? createSessionAgent;
-  if (!deps.createSessionAgent) {
-    if (runtime.backend) throw new Error("external backends are not available yet");
-    if (!runtime.modelConfig) throw new Error("provider and model are required");
-  }
+  if (!deps.createSessionAgent && !runtime.backend && !runtime.modelConfig) throw new Error("provider and model are required");
   const cwd = selected?.cwd ?? process.cwd();
   const startupController = new AbortController();
   let startupCancelled = false;
@@ -222,6 +219,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       }
       if (line === "/stats") { process.stderr.write(formatStats(session.stats(), runtime.ui, caps, lastTurn)); continue; }
       if (line === "/compact") {
+        if (runtime.backend) { process.stderr.write("raw: /compact is not supported by this backend; the CLI keeps its own context\n"); continue; }
         try {
           const modelConfig = runtime.resolveCompactModelConfig();
           process.stderr.write(`${paint("thinking", icon("thinking", runtime.ui, caps), runtime.ui, caps)} Compacting with ${modelConfig.agentName}\n`);

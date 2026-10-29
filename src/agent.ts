@@ -41,6 +41,7 @@ import type { HookDispatcher, HookReceipt } from "./hooks/dispatcher.js";
 import type { HookEventName } from "./hooks/contract.js";
 import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./sessions/visible.js";
 import type { ToolDisplay } from "./tools/display.js";
+import type { ExternalTurnEvent } from "./llm/types.js";
 
 export type AgentState = "idle" | "running" | "cancelling" | "compacting" | "closing" | "closed";
 
@@ -92,6 +93,8 @@ export type RunEvent = (
   | ({ type: "panel_update" } & PanelLiveEvent)
   | { type: "hook_event"; id: string; event: HookReceipt["event"]; outcome: HookReceipt["outcome"];
       durationMs: number; message?: string; code?: string }
+  /** A warning or notice from an external backend about this run (src/backends), recorded as `backend_notice`. */
+  | { type: "backend_notice"; message: string }
 ) & { turnId?: string; segmentId?: string };
 
 export interface CompactionDetails {
@@ -299,6 +302,10 @@ export class AgentSession {
   }
 
   get state(): AgentState { return this.currentState; }
+  /** Where this session is stored and who holds it, for an external backend that keeps its CLI session id beside it. */
+  get persistenceBinding(): { store: SessionStore; sessionId: string; owner: SessionOwner } | undefined {
+    return this.persistence ? { store: this.persistence.store, sessionId: this.persistence.sessionId, owner: this.persistence.owner } : undefined;
+  }
   /** The operation/turn ID of the run in progress (the tool call ID of a panel action), if any. */
   get activeTurnId(): string | undefined { return this.currentTurnId; }
   /** The latest committed state of one panel of this session, by full ID. */
@@ -1165,7 +1172,8 @@ export class AgentSession {
         if (event.type === "text_delta") segmentId = appendVisible("assistant", event.text);
         else if (event.type === "reasoning_delta") segmentId = appendVisible("reasoning", event.text);
         else if (event.type === "tool_start") {
-          event = { ...event, display: { ...this.callDisplay(event.name, event.arguments, true), id: event.id } };
+          // An external backend's own tool comes with its display; Raw's tools are projected from their hints.
+          event = { ...event, display: { ...(event.display ?? this.callDisplay(event.name, event.arguments, true)), id: event.id } };
           for (const item of presentation.start(event.id, event.name, event.arguments, event.display!))
             this.recordVisible(item.kind, item.payload, item.status);
           startedCalls.add(event.id);
@@ -1307,6 +1315,28 @@ export class AgentSession {
       emit({ type: "tool_result", id: call.id, name: call.name, result: publicResult, display: projected,
         ...(normalized ? { arguments: structuredClone(normalized) } : {}),
         ...(panelRecords.length ? { panelReceipts: panelRecords.map((record) => structuredClone(record.payload) as unknown as PanelReceipt) } : {}) });
+    };
+    // An external backend's own tool calls and notices: recorded in visible history in the order they happened, never
+    // as model messages, since the backend keeps its own conversation (src/backends).
+    let externalFlushed = false;
+    const external = (event: ExternalTurnEvent) => {
+      try {
+        if (event.type === "notice") {
+          this.recordVisible("backend_notice", { text: event.message });
+          emit({ type: "backend_notice", message: event.message });
+          return;
+        }
+        if (event.type === "tool_start") {
+          for (const item of visibleMessage("", "complete")) this.recordVisible(item.kind, item.payload, item.status);
+          externalFlushed = true;
+          emit({ type: "tool_start", id: event.id, name: event.name, arguments: event.arguments, display: event.display });
+          return;
+        }
+        const result: Extract<RunEvent, { type: "tool_result" }> = { type: "tool_result", id: event.id, name: event.name,
+          result: event.result, display: event.display };
+        for (const item of presentation.result(result, event.started, event.call, event.display)) this.recordVisible(item.kind, item.payload, item.status);
+        emit(result);
+      } catch { /* a persistence failure already aborted the run (durable) */ }
     };
     const firstTask = this.originalTask === undefined;
     // Thrash guard (§6.5): the class of the last automatic compaction or fallback, and the step count when tier 1 last ran.
@@ -1452,6 +1482,8 @@ export class AgentSession {
             onTextDelta: (text) => { if (!controller.signal.aborted) emit({ type: "text_delta", text }); },
             onReasoningDelta: (text) => { if (!controller.signal.aborted) emit({ type: "reasoning_delta", text }); },
             onUsage: recordUsage,
+            // Only an external CLI runs tools of its own; other providers' requests stay as they were.
+            ...(this.options.provider.modelConfig.method === "acp" ? { onExternal: external } : {}),
           }), aborted]);
           const retry = this.replayRetryArmed;
           if (retry) {
@@ -1480,8 +1512,9 @@ export class AgentSession {
           throw new Error("provider returned invalid tool call linkage");
         }
         if (!turn.toolCalls.length) {
+          // Text an external backend wrote before its own tool calls is already recorded; the rest is recorded here.
           this.commitMessage(structuredClone({ role: "assistant", text: turn.text, toolCalls: [],
-            ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }), {}, visibleMessage(turn.text));
+            ...(turn.opaque !== undefined ? { opaque: turn.opaque } : {}) }), {}, visibleMessage(externalFlushed ? "" : turn.text));
           continuedText += turn.text;
           // An answer cut at the output token limit continues in a new request instead of ending the run half written.
           if (turn.truncated && continuations < MAX_OUTPUT_CONTINUATIONS && steps < this.options.maxSteps) {

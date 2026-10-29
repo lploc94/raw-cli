@@ -4,7 +4,8 @@ import { ndJsonStream, type AnyMessage, type AgentConnection, type Stream } from
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import type { AcpServer } from "./methods.js";
 
-const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+/** Longest JSON-RPC message Raw accepts from a peer, on every transport. */
+export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
 export async function serveAcpStdio(server: AcpServer): Promise<void> {
   const stream = ndJsonStream(Writable.toWeb(process.stdout) as unknown as WritableStream<Uint8Array>,

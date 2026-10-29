@@ -1,5 +1,6 @@
 export type ProviderName = string;
-export type ApiMethod = "openai-chat-completions" | "openai-responses" | "anthropic-messages" | "google-generate-content";
+/** `acp`: an external backend CLI driven over the Agent Client Protocol (src/backends); never configurable on a model. */
+export type ApiMethod = "openai-chat-completions" | "openai-responses" | "anthropic-messages" | "google-generate-content" | "acp";
 
 interface RequestBase { maxOutputTokens?: number }
 export type ModelRequestOptions =
@@ -37,6 +38,13 @@ export interface ResolvedModelConfig {
 
 import type { ToolDefinition } from "../tools/registry.js";
 import type { ToolResult } from "../tools/types.js";
+import type { VisibleToolCall, VisibleToolResult } from "../sessions/visible.js";
+
+/** What an external backend reports besides text (src/backends): its own tool calls and notices, shown and recorded only. */
+export type ExternalTurnEvent =
+  | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown>; display: VisibleToolCall }
+  | { type: "tool_result"; id: string; name: string; result: ToolResult; display: VisibleToolResult; call: VisibleToolCall; started: boolean }
+  | { type: "notice"; message: string };
 
 export interface ModelToolCall {
   id: string;
@@ -99,6 +107,8 @@ export interface ProviderRequest {
   onTextDelta?: (delta: string) => void;
   onReasoningDelta?: (delta: string) => void;
   onUsage?: (raw: unknown) => void;
+  /** Tool calls the provider ran itself and notices about the run; only an external backend sends them. */
+  onExternal?: (event: ExternalTurnEvent) => void;
   cacheKey?: string;
 }
 

@@ -49,6 +49,28 @@ Event payloads are detached snapshots. A renderer cannot mutate authorized argum
 
 The hosts (dashboard operations, the CLI and the REPL) run turns through one narrow interface, `SessionAgent` (`src/backends/types.ts`): start, run, run a panel action, compact, abort, close, usage stats, context size and tool identity/display. `AgentSession` (Raw's own loop) is one implementation; an agent with a `backend` block is run by an external CLI backend that implements the same interface ([backends](backends.md)). `createSessionAgent` (`src/backends/factory.ts`) picks the implementation; a session runtime without a Raw model config supplies its own `measure` for the dashboard metrics.
 
+An ACP backend (`src/backends/acp-agent.ts`) runs inside an `AgentSession` as its provider: `AcpBackendProvider` (`method: "acp"`) turns each request into one `session/prompt`, so input commit, queued delivery, visible history, cancel and the single `run_end` are Raw's loop unchanged. The CLI's own tool calls travel through `ProviderRequest.onExternal`; the loop records them like its own and never executes them. Each runtime owns one adapter process (`spawnAcpPeer`, `src/acp/peer.ts`: its own process group on POSIX, a job on Windows, a 16 MiB frame limit).
+
+Lifecycle of a turn:
+
+- Start, under the `request_timeout_ms` deadline: spawn if needed, `initialize`, then `session/load` when the session's `external` record (runtime metadata) has the same backend kind and profile digest (kind, executable, system prompt, prompt mode) and the CLI can load; otherwise `session/new`, the configured model, effort and mode, and the baseline captured from the CLI's options. Updates that replay a loaded conversation are not recorded again. A fresh conversation in a session that had turns gets the notice "This <CLI> conversation starts here; it does not see earlier turns".
+- Options: per turn, the override or else the baseline, applied model → effort → mode against the list the CLI shows at that moment; a value it does not list is reported as a `backend_notice` and the turn runs.
+- Prompt: only messages the CLI has not been sent (`external.delivered`), so the input of a cancelled turn is not sent twice. An inactivity watchdog (`request_timeout_ms`) is paused while a permission request waits on a person.
+- Cancel and the watchdog send `session/cancel`, wait up to 5 s for the answer, then stop the whole tree; a crash ends the turn `backend_exited` with the stderr tail. The next turn starts a new adapter and loads the conversation. A turn starts only after the previous one stopped its adapter.
+
+| ACP `session/update` | Raw |
+| --- | --- |
+| `agent_message_chunk`, `agent_thought_chunk` | `text_delta`, `reasoning_delta` |
+| `tool_call`, `tool_call_update` | `tool_start` once the input is known, one `tool_result` at `completed`/`failed` (content text, `Edited <path>` for diffs, terminal output from `_meta`); identity `cli:<kind>/<name>` |
+| `plan` | `reasoning_delta` lines `[x]` / `[ ]` |
+| `usage_update`, prompt `usage` | context measure (`source: "provider"`), `usage` (input includes cache reads and writes) |
+| `config_option_update` | the runtime's option list |
+| `notice` | `backend_notice` (recorded) |
+| `available_commands_update`, `session_info_update`, `current_mode_update` | ignored |
+| any other kind | dropped before the SDK, one stderr line per kind |
+
+Permission requests go to the host's approval channel; without one, `auto_approve` allows and otherwise Raw refuses with a notice. `compact` and panel actions answer `unsupported_backend`.
+
 ## Runtime variables
 
 Variable definitions are validated config; the runtime-tools instance owns its resolver and TTL cache. CLI and ACP use the same plugin context service. Session storage owns history but never stores a separate variable cache or expanded env bindings. Definitions remain fixed within a runtime; restart/resume loads current definitions. File/env/provider values are read lazily. This adds no session schema revision.

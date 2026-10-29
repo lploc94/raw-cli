@@ -62,7 +62,8 @@ export async function createRuntimeTools(options: {
   const vars = createVariableResolver({ config: runtime.variableConfig, ...(options.env ? { env: options.env } : {}) });
   const plugins = await loadToolPlugins({ selectedIds: localIds, configPath: runtime.configPath, cwd, skills, vars,
     globalConfigRoot: runtime.globalConfigRoot, packageTools: runtime.packageTools });
-  const selectedHooks = await loadSelectedHooks({ selectedIds: runtime.hookIds, configPath: runtime.configPath,
+  // An external backend runs no Raw hooks (its selection is reported as skipped, src/backends/compat.ts), so none load.
+  const selectedHooks = await loadSelectedHooks({ selectedIds: runtime.backend ? [] : runtime.hookIds, configPath: runtime.configPath,
     cwd, globalConfigRoot: runtime.globalConfigRoot, packageHooks: runtime.packageHooks,
     ...(options.env ? { env: options.env } : {}) });
   if (signal?.aborted) throw new Error("tool startup aborted");

@@ -95,6 +95,20 @@ export interface QueuedInputReceipt {
   state: QueuedInputView["state"] | "delivered" | "taken" | "deleted";
   operationId?: string; historySequence?: number;
 }
+/** The external CLI conversation a session continues (src/backends): which CLI, its own session id, and the options it started with. */
+export interface ExternalSession {
+  kind: string;
+  cliSessionId: string;
+  /** Digest of what shapes the CLI conversation (kind, executable, system prompt, prompt mode); a change starts a fresh one. */
+  profileDigest: string;
+  /** The values the conversation was created with, which every turn without an override returns to. */
+  baseline: { model?: string; effort?: string; mode?: string };
+  /** How many of the session's messages were already sent to this CLI conversation, answered or not (a cancelled turn's input). */
+  delivered?: number;
+}
+
+type RuntimeMetadata = { replayBefore: number; replaySignature: string; baseSelection?: readonly string[]; external?: ExternalSession };
+
 export interface AgentIdentity {
   cwd: string;
   configPath?: string;
@@ -832,6 +846,11 @@ export class SessionStore {
           }
         }
       }
+      // Another backend, model or Raw's own loop does not continue the external CLI conversation.
+      if (previousMeta?.external && previousMeta.replaySignature !== replaySignature) {
+        const current = this.runtimeMetadata(sessionId)!;
+        this.writeRuntimeMetadata(sessionId, { ...current, external: null });
+      }
     });
     return this.readAgentState(sessionId, owner);
   }
@@ -896,14 +915,35 @@ export class SessionStore {
     return matches.length === 1 ? rows.filter((row) => row.sequence >= matches[0]!.sequence) : undefined;
   }
 
-  private runtimeMetadata(sessionId: string): { replayBefore: number; replaySignature: string; baseSelection?: readonly string[] } | undefined {
+  private runtimeMetadata(sessionId: string): RuntimeMetadata | undefined {
     const row = this.database.prepare("SELECT payload_json FROM session_runtime_metadata WHERE session_id = ?").get(sessionId);
-    return row ? JSON.parse(String(row.payload_json)) as { replayBefore: number; replaySignature: string; baseSelection?: readonly string[] } : undefined;
+    return row ? JSON.parse(String(row.payload_json)) as RuntimeMetadata : undefined;
   }
 
-  private writeRuntimeMetadata(sessionId: string, metadata: { replayBefore: number; replaySignature: string; baseSelection?: readonly string[] }): void {
+  /**
+   * Replaces the payload; only `external` carries over from the stored one unless the call names it (`null` removes it),
+   * so writers that know nothing of external backends keep it.
+   */
+  private writeRuntimeMetadata(sessionId: string, metadata: Omit<RuntimeMetadata, "external"> & { external?: ExternalSession | null }): void {
+    const { external, ...rest } = metadata;
+    const kept = external === undefined ? this.runtimeMetadata(sessionId)?.external : external ?? undefined;
     this.database.prepare(`INSERT INTO session_runtime_metadata(session_id, payload_json) VALUES (?, ?)
-      ON CONFLICT(session_id) DO UPDATE SET payload_json = excluded.payload_json`).run(sessionId, JSON.stringify(metadata));
+      ON CONFLICT(session_id) DO UPDATE SET payload_json = excluded.payload_json`).run(sessionId, JSON.stringify({ ...rest, ...(kept ? { external: kept } : {}) }));
+  }
+
+  readExternal(sessionId: string, owner: SessionOwner): ExternalSession | undefined {
+    this.ownerRow(sessionId, owner);
+    return this.runtimeMetadata(sessionId)?.external;
+  }
+
+  writeExternal(sessionId: string, owner: SessionOwner, external: ExternalSession | null): void {
+    this.transaction(() => {
+      this.ownerRow(sessionId, owner);
+      const current = this.runtimeMetadata(sessionId);
+      this.writeRuntimeMetadata(sessionId, { replayBefore: current?.replayBefore ?? 0, replaySignature: current?.replaySignature ?? "",
+        ...(current?.baseSelection ? { baseSelection: current.baseSelection } : {}), external });
+      this.renewSession(sessionId, owner);
+    });
   }
 
   private writeMetadata(sessionId: string, metadata: AgentMetadata): void {

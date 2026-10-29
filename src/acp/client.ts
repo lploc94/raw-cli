@@ -1,13 +1,11 @@
 import type { InteractionAdapter, InteractionRequest } from "../interactions/contract.js";
 import { withAbort } from "./rpc.js";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { Readable, Writable } from "node:stream";
-import { client, ndJsonStream, PROTOCOL_VERSION, type ClientConnection, type ContentBlock,
+import { client, PROTOCOL_VERSION, type ClientConnection, type ContentBlock,
   type McpServer, type SessionNotification, type RequestPermissionRequest, type RequestPermissionResponse,
   type ListSessionsResponse } from "@agentclientprotocol/sdk";
 import { createWebSocketStream, type WebSocketConstructor } from "@agentclientprotocol/sdk/experimental/ws-client";
 import WebSocket from "ws";
-import { prepareSpawn, terminateTree } from "../platform/windows.js";
+import { spawnAcpPeer } from "./peer.js";
 
 export interface ParentToolCall {
   sessionId: string;
@@ -60,30 +58,11 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
   app.onNotification("_raw/tool/cancel", (params: unknown) => params as { invocationId: string }, ({ params }) => {
     activeCalls.get(params.invocationId)?.abort();
   });
-  let child: ChildProcessWithoutNullStreams | undefined;
-  // Windows has no signals: the whole tree stops at once, through its job or taskkill.
-  const stopChild = (target: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) => {
-    if (process.platform === "win32") terminateTree(target, { jobbed });
-    else target.kill(signal);
-  };
-  let spawnFailure: Promise<never> | undefined;
-  let stream;
-  let jobbed = false;
-  if ("command" in options) {
-    const cwd = options.cwd ?? process.cwd();
-    const env = options.env ?? process.env;
-    // On Windows a .cmd or script RAW_BINARY starts without a shell, inside a job that owns the agent's whole tree.
-    const prepared = prepareSpawn(options.command, options.args, { cwd, env });
-    // Reported like Node's own spawn failure, so callers see one error for a missing command on every platform.
-    if (!prepared.ok) throw Object.assign(new Error(`spawn ${options.command} ENOENT: ${prepared.message}`), { code: "ENOENT", syscall: "spawn" });
-    jobbed = prepared.jobbed;
-    child = spawn(prepared.file, prepared.args, { cwd, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
-      ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
-    spawnFailure = new Promise<never>((_resolve, reject) => child!.once("error", reject));
-    child.stderr.on("data", () => {});
-    stream = ndJsonStream(Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
-      Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>);
-  } else stream = createWebSocketStream(options.url, { WebSocket: WebSocket as unknown as WebSocketConstructor });
+  // A child runs as its own process group (job on Windows), so stopping it stops everything it started.
+  const peer = "command" in options ? spawnAcpPeer(options) : undefined;
+  const child = peer?.child;
+  const spawnFailure = peer?.spawnFailure;
+  const stream = "command" in options ? peer!.stream : createWebSocketStream(options.url, { WebSocket: WebSocket as unknown as WebSocketConstructor });
   const connection = app.connect(stream);
   connection.signal.addEventListener("abort", () => {
     for (const controller of activeCalls.values()) controller.abort();
@@ -96,27 +75,16 @@ export async function createAcpClient(options: AcpClientOptions): Promise<AcpPar
     initializeResult = await (spawnFailure ? Promise.race([initialize, spawnFailure]) : initialize);
   } catch (error) {
     connection.close();
-    if (child) stopChild(child, "SIGTERM");
+    peer?.signal("SIGTERM");
     throw error;
   }
   const close = async () => {
     for (const controller of activeCalls.values()) controller.abort();
     connection.close();
-    if (!child) return;
-    child.stdin.end();
-    const exited = () => child!.exitCode !== null || child!.signalCode !== null;
-    const waitForExit = (timeoutMs: number) => new Promise<boolean>((resolve) => {
-      if (exited()) { resolve(true); return; }
-      const onExit = () => { clearTimeout(timer); resolve(true); };
-      const timer = setTimeout(() => { child!.off("exit", onExit); resolve(exited()); }, timeoutMs);
-      child!.once("exit", onExit);
-    });
+    if (!peer) return;
     // Longer than the child's own shutdown: stopping its managed processes takes up to 2 s, 5.5 s on Windows.
-    if (await waitForExit(process.platform === "win32" ? 8000 : 5000)) return;
-    stopChild(child, "SIGTERM");
-    if (await waitForExit(1000)) return;
-    stopChild(child, "SIGKILL");
-    if (!(await waitForExit(1000))) throw new Error("raw ACP child did not exit after SIGKILL");
+    try { await peer.stop(process.platform === "win32" ? 8000 : 5000); }
+    catch { throw new Error("raw ACP child did not exit after SIGKILL"); }
   };
   return {
     connection,

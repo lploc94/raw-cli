@@ -208,7 +208,7 @@ export class TerminalRenderer {
     } else if (event.type === "compact_end") {
       this.statusWriter.finish();
       process.stderr.write(`${icon(event.result.status === "compacted" ? "success" : "attention", this.runtime.ui, this.caps)} Compact ${event.result.status}\n`);
-    } else if (event.type === "compact_warning") {
+    } else if (event.type === "compact_warning" || event.type === "backend_notice") {
       this.flushAnswer();
       process.stderr.write(`${paint("warning", safeTerminalText(event.message), this.runtime.ui, this.caps)}\n`);
     }
@@ -288,7 +288,7 @@ export class TerminalRenderer {
       this.finishTextLine();
       process.stderr.write(this.decoratedPlain ? `${icon(event.result.status === "compacted" ? "success" : "attention", this.runtime.ui, this.caps)} Compact ${event.result.status}\n`
         : `raw: compact ${event.result.status}\n`);
-    } else if (event.type === "compact_warning") {
+    } else if (event.type === "compact_warning" || event.type === "backend_notice") {
       this.finishTextLine();
       process.stderr.write(`raw: ${safeTerminalText(event.message)}\n`);
     }

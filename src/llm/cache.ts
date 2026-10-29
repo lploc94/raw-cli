@@ -61,6 +61,13 @@ export function normalizeUsage(method: ApiMethod, raw: unknown, provider?: strin
     const thoughts = count(data.thoughtsTokenCount);
     outputTokens = candidates !== undefined ? candidates + (thoughts ?? 0) : undefined;
     cacheReadTokens = count(data.cachedContentTokenCount);
+  } else if (method === "acp") {
+    // ACP `Usage`: both official adapters report input without the cached parts, as Anthropic does.
+    const ordinary = count(data.inputTokens);
+    cacheReadTokens = count(data.cachedReadTokens);
+    cacheWriteTokens = count(data.cachedWriteTokens);
+    if (ordinary !== undefined) inputTokensTotal = ordinary + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0);
+    outputTokens = count(data.outputTokens);
   } else if (method === "openai-responses") {
     inputTokensTotal = count(data.input_tokens);
     outputTokens = count(data.output_tokens);
