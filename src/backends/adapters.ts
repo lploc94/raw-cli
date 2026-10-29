@@ -45,6 +45,8 @@ export async function installedAdapter(adapter: AdapterPackage, context: Install
   const entry = entryIn(directory, adapter);
   if (existsSync(entry)) return entry;
   context.notify(`Installing ${adapter.name}@${adapter.version} from npm (first use; once per version)`);
+  // A cancel may come from the notice itself; nothing has started yet, so nothing starts.
+  if (context.signal?.aborted) throw new AdapterInstallError("install cancelled");
   const staging = `${directory}.${process.pid}-${randomUUID().slice(0, 8)}`;
   mkdirSync(staging, { recursive: true });
   try {
@@ -64,6 +66,7 @@ export async function installedAdapter(adapter: AdapterPackage, context: Install
  */
 function runNpm(env: NodeJS.ProcessEnv) {
   return (args: string[], cwd: string, signal?: AbortSignal) => new Promise<void>((done, fail) => {
+    if (signal?.aborted) { fail(new AdapterInstallError("install cancelled")); return; }
     const prepared = prepareSpawn("npm", args, { cwd, env });
     if (!prepared.ok) { fail(new AdapterInstallError(`npm was not found (${prepared.message}); install Node.js with npm`)); return; }
     const posix = process.platform !== "win32";

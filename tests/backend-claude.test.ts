@@ -134,6 +134,28 @@ test("cancelling the install stops npm and what it started", { skip: process.pla
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("a cancel that comes with the install notice starts no npm, and the turn ends cancelled", { skip: process.platform === "win32" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
+  try {
+    const marker = join(root, "npm-started");
+    const env = { PATH: `${fakeClaude(root)}:${npmScript(root, `touch "${marker}"; /bin/sleep 60`)}`, XDG_DATA_HOME: join(root, "data") };
+    const runtime = await runtimeFor(root, { backend: { kind: "claude" } });
+    const agent = createAcpSessionAgent({ runtime, tools: undefined as never, cwd: root, host: {} }, claudeLaunch(runtime, root, { env }));
+    try {
+      const result = await agent.run("hello", (event) => {
+        if (event.type === "backend_notice" && event.message.startsWith("Installing")) agent.abort();
+      });
+      assert.equal(result.status, "cancelled");
+    } finally { await agent.close(); }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(existsSync(marker), false);
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(installedAdapter(CLAUDE_ADAPTER, { env, notify: () => {}, signal: controller.signal }), /install cancelled/);
+    assert.equal(existsSync(marker), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("two Raw processes installing the adapter at once both get it, and no staging directory is left", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
   try {

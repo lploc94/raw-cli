@@ -220,6 +220,7 @@ export class AcpBackendProvider implements ProviderAdapter {
     if (this.launch) return;
     const { launch } = this.config;
     if (typeof launch !== "function") { this.launch = launch; return; }
+    if (request.signal?.aborted) throw new BackendError("aborted", "startup aborted");
     let onAbort: (() => void) | undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
       onAbort = () => reject(new BackendError("aborted", "startup aborted"));
