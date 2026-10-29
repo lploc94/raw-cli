@@ -32,6 +32,8 @@ export interface BackendCompatibility {
   readonly warnings: readonly string[];
 }
 
+export const AGY_NO_RAW_TOOLS = "Raw tools are unavailable with agy";
+
 const bridgedId = (id: string): boolean => BRIDGED_BUILTINS.includes(id) || /^(?:local|agent|pkg|pkgdep|mcp)\//.test(id);
 
 export function classifyForBackend(runtime: Pick<RuntimeConfig, "agentName" | "backend" | "toolIds" | "hookIds" | "toolRules"
@@ -47,6 +49,8 @@ export function classifyForBackend(runtime: Pick<RuntimeConfig, "agentName" | "b
   for (const id of runtime.toolIds) {
     const native = NATIVE_DUPLICATES[id];
     if (native !== undefined) skip(id, `${label} uses its own ${native}`);
+    // agy takes an MCP server only from a config file, which would put the bridge's token on disk (Decision 2026-10-29).
+    else if (bridgedId(id) && kind === "agy") skip(id, AGY_NO_RAW_TOOLS);
     else if (bridgedId(id)) bridged.push(id);
     else skip(id, `${label} cannot run it`);
   }

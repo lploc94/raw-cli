@@ -3,7 +3,8 @@ import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import { runtimeAgentOptions } from "../sessions/runtime.js";
 import type { RuntimeTools } from "../tools/plugins/runtime.js";
-import { AcpBackendAgent, AcpBackendProvider, type AcpLaunch, type AcpLaunchResolver } from "./acp-agent.js";
+import { AcpBackendAgent, AcpBackendProvider, type AcpLaunch, type AcpLaunchResolver, type BackendProvider } from "./acp-agent.js";
+import { AgyBackendProvider } from "./agy.js";
 import { claudeLaunch } from "./claude.js";
 import { codexLaunch } from "./codex.js";
 import { BACKEND_LABELS, type BackendKind } from "./config.js";
@@ -27,6 +28,7 @@ const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig, cwd: st
 /** Raw's own loop for an agent with a model; an external CLI for an agent with a `backend`. */
 export const createSessionAgent: SessionAgentFactory = (context) => {
   const { runtime, tools, cwd, host } = context;
+  if (runtime.backend?.kind === "agy") return createAgySessionAgent(context);
   if (runtime.backend) {
     const launch = ACP_LAUNCHES[runtime.backend.kind]?.(runtime, cwd, context.env ? { env: context.env } : {});
     if (!launch) throw new Error(`the ${BACKEND_LABELS[runtime.backend.kind]} backend is not available yet`);
@@ -40,13 +42,27 @@ export const createSessionAgent: SessionAgentFactory = (context) => {
  * An ACP backend session: Raw's loop keeps history, operations and turn state, and its provider runs the CLI. The CLI
  * owns its tools and context; Raw's loop gets only the tools offered through the bridge, and no hook, compaction or step limit.
  */
-export function createAcpSessionAgent({ runtime, tools, cwd, host }: SessionAgentContext, launch: AcpLaunch | AcpLaunchResolver): AcpBackendAgent {
+export function createAcpSessionAgent(context: SessionAgentContext, launch: AcpLaunch | AcpLaunchResolver): AcpBackendAgent {
+  const { runtime, cwd, host } = context;
   const spec = runtime.backend!;
-  let session: AgentSession | undefined;
-  const provider = new AcpBackendProvider({ agentName: runtime.agentName ?? spec.kind, spec, cwd, launch,
+  return backendSession(context, (binding) => new AcpBackendProvider({ agentName: runtime.agentName ?? spec.kind, spec, cwd, launch,
     ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}),
-    autoApprove: runtime.autoApprove, ...(host.approve ? { approve: host.approve } : {}),
-    binding: () => session?.persistenceBinding });
+    autoApprove: runtime.autoApprove, ...(host.approve ? { approve: host.approve } : {}), binding }));
+}
+
+/** An agy backend session: as an ACP one, with agy run once per turn over its stream-json mode. */
+export function createAgySessionAgent(context: SessionAgentContext): AcpBackendAgent {
+  const { runtime, cwd } = context;
+  const spec = runtime.backend!;
+  return backendSession(context, (binding) => new AgyBackendProvider({ agentName: runtime.agentName ?? spec.kind, spec, cwd,
+    ...(context.env ? { env: context.env } : {}), ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}),
+    promptGiven: runtime.backendPromptGiven === true, binding }));
+}
+
+function backendSession({ runtime, tools, cwd, host }: SessionAgentContext,
+  provide: (binding: () => AgentSession["persistenceBinding"]) => BackendProvider): AcpBackendAgent {
+  let session: AgentSession | undefined;
+  const provider = provide(() => session?.persistenceBinding);
   // The registry holds only the bridged tools (createRuntimeTools); the CLI reaches them through the Raw bridge.
   session = createAgent({ provider, cwd, system: runtime.systemPrompt ?? "", configPath: runtime.configPath,
     ...(tools ? { registry: tools.registry, toolSourceDigest: tools.toolSourceDigest, selectedSkills: tools.skills } : {}),

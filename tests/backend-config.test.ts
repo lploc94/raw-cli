@@ -70,8 +70,17 @@ test("the shell warning names each backend", async () => {
   for (const kind of ["claude", "codex", "agy"] as const) {
     const runtime = await loadConfig({ configPath: configFile({ [`e2e-${kind}`]: { backend: { kind },
       system_prompt: "Begin every answer with [RAW_E2E].", tools: { use: ["builtin/todo", "builtin/bash"] } } }), env: {} });
-    assert.deepEqual(classifyForBackend(runtime).warnings, [`${kind} agent "e2e-${kind}" skips builtin/bash: ${names[kind]} uses its own shell tool`]);
+    assert.deepEqual(classifyForBackend(runtime).warnings, [...kind === "agy" ? ['agy agent "e2e-agy" skips builtin/todo: Raw tools are unavailable with agy'] : [],
+      `${kind} agent "e2e-${kind}" skips builtin/bash: ${names[kind]} uses its own shell tool`]);
   }
+});
+
+test("agy gets no Raw tools: every tool another backend reaches through the bridge is skipped with a warning", async () => {
+  const runtime = await load({ backend: { kind: "agy" }, tools: { use: ["builtin/todo", "builtin/ask_user", "local/mine", "mcp/srv/tool"] } });
+  const result = classifyForBackend({ ...runtime, toolIds: [...runtime.toolIds, "pkg/kit/tools/echo"] });
+  assert.deepEqual(result.bridged, []);
+  assert.deepEqual(result.warnings, ["builtin/todo", "builtin/ask_user", "local/mine", "mcp/srv/tool", "pkg/kit/tools/echo"]
+    .map((id) => `agy agent "a" skips ${id}: Raw tools are unavailable with agy`));
 });
 
 test("every bundled built-in and every agent key is classified", async () => {

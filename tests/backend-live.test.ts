@@ -42,10 +42,11 @@ function usedModels(target: Live, session: string): string[] {
   } finally { store.close(); }
 }
 
-/** Each backend's live case: a cheap model it lists, and how that model shows in the usage the CLI reports. */
-const CASES = [
+/** Each backend's live case: a cheap model it lists, and how that model shows in the usage the CLI reports (agy reports none). */
+const CASES: Array<{ kind: string; model: string; reported?: RegExp }> = [
   { kind: "claude", model: "haiku", reported: /haiku/i },
   { kind: "codex", model: "gpt-6-luna", reported: /luna/i },
+  { kind: "agy", model: "gemini-3.8-flash-low" },
 ];
 
 for (const { kind, model, reported } of CASES) {
@@ -59,7 +60,7 @@ for (const { kind, model, reported } of CASES) {
       assert.ok(first.stdout.includes(tag), first.stdout);
       assert.equal(readFileSync(join(target.work, "hello.txt"), "utf8").trim(), "hello raw");
       assert.ok(first.session);
-      assert.ok(usedModels(target, first.session!).some((used) => reported.test(used)), `${model} reported by the CLI`);
+      if (reported) assert.ok(usedModels(target, first.session!).some((used) => reported.test(used)), `${model} reported by the CLI`);
       const nonce = `N-${randomBytes(4).toString("hex")}`;
       const second = raw(target, ["--continue", `Remember this code: ${nonce}. Reply only OK.`]);
       assert.equal(second.status, 0, second.stderr);
@@ -70,7 +71,7 @@ for (const { kind, model, reported } of CASES) {
   });
 
   test(`${kind}: bridge todo: a Raw todo call from the CLI fills the session's todo panel`,
-    { skip: !LIVE.has(kind) && `set RAW_LIVE_BACKENDS=${kind}` }, () => {
+    { skip: (!LIVE.has(kind) && `set RAW_LIVE_BACKENDS=${kind}`) || (kind === "agy" && "agy gets no Raw tools (next test)") }, () => {
     const tag = `RAW-TAG-${randomBytes(3).toString("hex").toUpperCase()}`;
     const target = live(kind, { kind, model }, tag, ["builtin/todo"]);
     try {
@@ -93,3 +94,15 @@ for (const { kind, model, reported } of CASES) {
     } finally { rmSync(target.root, { recursive: true, force: true }); }
   });
 }
+
+test("agy: bridge todo: Raw tools are unavailable with agy, the warning is shown and the turn completes",
+  { skip: !LIVE.has("agy") && "set RAW_LIVE_BACKENDS=agy" }, () => {
+  const tag = `RAW-TAG-${randomBytes(3).toString("hex").toUpperCase()}`;
+  const target = live("agy", { kind: "agy", model: "gemini-3.8-flash-low" }, tag, ["builtin/todo"]);
+  try {
+    const run = raw(target, ["Reply with the single word done."]);
+    assert.equal(run.status, 0, run.stderr);
+    assert.ok(run.stderr.includes('agy agent "agy-live" skips builtin/todo: Raw tools are unavailable with agy'), run.stderr);
+    assert.ok(run.stdout.includes(tag), run.stdout);
+  } finally { rmSync(target.root, { recursive: true, force: true }); }
+});

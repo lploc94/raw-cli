@@ -42,6 +42,23 @@ const AUTH_REQUIRED = -32000;
 /** Values chosen for one CLI conversation or one turn; each is passed through as the CLI names it. */
 export interface BackendOptions { model?: string; effort?: string; mode?: string }
 
+/** What the session agent and the host need from the provider that runs a backend CLI (ACP, or agy's stream-json). */
+export interface BackendProvider extends ProviderAdapter {
+  /** The model the CLI reported for the last prompt, when it reports one. */
+  readonly usedModel: string | undefined;
+  /** The CLI's latest report of its context: tokens used and the window. */
+  readonly context: { used: number; size: number } | undefined;
+  /** The value of one option now, or the baseline before the CLI conversation exists. */
+  currentValue(key: keyof BackendOptions): string | undefined;
+  /** Values for the next turn only; the turn after it returns to the session's baseline. */
+  setTurnOverride(options: BackendOptions | undefined): void;
+  close(): Promise<void>;
+  /** The CLI process running now. */
+  readonly pid: number | undefined;
+  /** Count of each unknown update kind this runtime received. */
+  readonly unknownUpdates: ReadonlyMap<string, number>;
+}
+
 /** A run failure with the code a turn ends with (`backend_exited`, `backend_start_timeout`, …). */
 export class BackendError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "BackendError"; }
@@ -117,7 +134,7 @@ interface Live { peer: AcpPeer; connection: ClientConnection; died: Promise<neve
  * calls it like a model provider: each `generate` sends the new user messages as one `session/prompt` and returns the
  * CLI's answer; the CLI's own tool calls and notices travel through `onExternal`.
  */
-export class AcpBackendProvider implements ProviderAdapter {
+export class AcpBackendProvider implements BackendProvider {
   readonly modelConfig: Readonly<ResolvedModelConfig>;
   private readonly label: string;
   private readonly profileDigest: string;
@@ -568,9 +585,9 @@ export class AcpBackendProvider implements ProviderAdapter {
   }
 }
 
-/** Raw's session agent for an ACP backend: Raw's loop owns history and turn state, the provider runs the CLI. */
+/** Raw's session agent for a backend CLI: Raw's loop owns history and turn state, the provider runs the CLI. */
 export class AcpBackendAgent implements SessionAgent {
-  constructor(private readonly session: AgentSession, readonly provider: AcpBackendProvider) {}
+  constructor(private readonly session: AgentSession, readonly provider: BackendProvider) {}
 
   get state(): AgentState { return this.session.state; }
   get transcript(): readonly ModelMessage[] { return this.session.transcript; }

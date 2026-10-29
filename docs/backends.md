@@ -16,7 +16,7 @@ What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, h
 
 ## Raw tools in a backend
 
-The CLI keeps its own file, edit and shell tools; Raw's built-ins that do the same job (`read_file`, `write_file`, `edit_file`, `apply_patch`, `bash`, `powershell`, `view_image`) are skipped, each with a warning at startup such as `claude agent "review" skips builtin/bash: Claude Code uses its own shell tool`. The other tools the agent selects are offered to the CLI as one MCP server named `raw`: `builtin/todo`, `builtin/ask_user`, `builtin/list_vars`, `builtin/read_var`, `builtin/list_skills`, `builtin/load_skill`, `builtin/process`, `local/*`, `agent/*`, package tools and `mcp/<server>/<tool>`. Claude Code calls them `mcp__raw__<tool>` (for example `mcp__raw__todo`).
+The CLI keeps its own file, edit and shell tools; Raw's built-ins that do the same job (`read_file`, `write_file`, `edit_file`, `apply_patch`, `bash`, `powershell`, `view_image`) are skipped, each with a warning at startup such as `claude agent "review" skips builtin/bash: Claude Code uses its own shell tool`. The other tools the agent selects are offered to the CLI as one MCP server named `raw`: `builtin/todo`, `builtin/ask_user`, `builtin/list_vars`, `builtin/read_var`, `builtin/list_skills`, `builtin/load_skill`, `builtin/process`, `local/*`, `agent/*`, package tools and `mcp/<server>/<tool>`. Claude Code calls them `mcp__raw__<tool>` (for example `mcp__raw__todo`). `agy` gets none of them (see [Antigravity](#antigravity-agy)).
 
 A call runs in Raw, as it does in Raw's own loop: `tools.rules` apply (`deny` hides the tool from the CLI, `ask` uses Raw's approval prompt or card), panels such as the todo list update the side panel, `ask_user` shows its form and the call waits for the answer, panel actions run in Raw and the CLI hears of them with the next prompt, and results are capped by `max_output_bytes`. The chat shows the call once, as Raw's tool, not also as the CLI's MCP call. Raw does not ask again for the CLI's own permission prompt for a `raw` tool. Cancelling the turn cancels the call; a call the CLI makes when no turn is running is refused.
 
@@ -50,3 +50,21 @@ Requirements: Codex installed (`codex` on `PATH`, or `backend.executable`) and l
 - Codex still reads `~/.codex/config.toml`, its `AGENTS.md` files and its own skills, as it does when you run it yourself; turn them off there if the agent should not see them.
 - `model`, `effort` and `mode` take the values Codex lists: models such as `gpt-6.1-terra` or `gpt-6-luna`, effort levels (`low` to `ultra`), and the modes `read-only`, `workspace-write`, `agent` and `agent-full-access`. A value it does not list is reported and Codex keeps its own.
 - Permission requests, errors and the reported model work as for Claude Code; the errors read "Install Codex and log in (`codex`), or set backend.executable" and "run `codex login`".
+
+## Antigravity (`agy`)
+
+Requirements: Antigravity's CLI installed (`agy` on `PATH`, or `backend.executable`) and logged in. Tested with `agy` 1.4.10.
+
+```json
+{ "agents": { "gemini": { "backend": { "kind": "agy", "model": "gemini-3.8-flash", "effort": "high" },
+  "system_prompt": "You are a careful reviewer.", "tools": { "use": [] } } } }
+```
+
+- Raw runs `agy` once per turn in its print mode with stream-json on stdin and stdout, and continues the conversation with `--conversation`. When `agy` no longer has the conversation it starts a new one, and the session shows the fresh-conversation notice.
+- System prompt: the agent's prompt replaces agy's through an agent file Raw writes into a plugin of agy's named `raw`, `~/.gemini/config/plugins/raw/agents/raw-<digest>.md`, and passes with `--agent raw-<digest> --disable-slash-commands`. The name is a digest of the file, so an unchanged agent reuses its file; Raw never deletes these files (each distinct prompt and tool list leaves one of a few KB, which you can remove when no Raw runs). `system_prompt_mode: "append"` is not possible with `agy`: the prompt replaces agy's and the session shows a warning. Without a `system_prompt`, and with an empty one (which shows a warning), agy runs its own agent.
+- Tools: an agent file must list its tools, or agy's agent loses its write and shell tools. Raw lists the 26 tools `agy` 1.4.10 can run (`run_command`, `view_file`, `write_to_file`, `replace_file_content`, `grep_search`, `search_web` and the others); `backend.tools` replaces that list. `agy` refuses a run whose agent names a tool it does not know, so Raw then drops those names, says which, and runs the turn again.
+- `model` and `effort` take the models `agy models` lists, grouped as Antigravity groups them: a family such as `gemini-3.8-flash` takes the efforts its variants name (`low`, `medium`, `high`), a variant such as `gemini-3.8-flash-high` names its own effort, and a model without variants has none. A value agy does not list is reported and agy uses its default.
+- `mode` is agy's `--mode` (`accept-edits`, `auto`, `plan`); `"skip-permissions"` passes `--dangerously-skip-permissions` instead. agy has no approval channel Raw can answer, so its tools run as its mode allows. A warning agy prints, such as an unknown mode, is shown in the turn.
+- Raw tools are unavailable with `agy`: agy takes an MCP server only from a config file, which would put the bridge's token on disk. Each selected tool that another backend reaches through the bridge is skipped with the warning `agy agent "<name>" skips <tool>: Raw tools are unavailable with agy`.
+- Cancelling a turn stops `agy` and everything it started at once (agy has no cancel message); the next turn continues the conversation.
+- Errors: `backend_unavailable` "Install Antigravity (`agy`) and log in, or set backend.executable" when `agy` is not found; `backend_error` with agy's message when its result is an error; `backend_exited` with what it printed when it exits without a result. agy does not report the model a turn used, so the session shows the configured one.

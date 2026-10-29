@@ -1,13 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Transform, Writable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { ndJsonStream } from "@agentclientprotocol/sdk";
 import { prepareSpawn, terminateTree } from "../platform/windows.js";
 import { DEFAULT_MAX_OUTPUT_BYTES } from "../tools/results.js";
 
-/** A child process that speaks newline-delimited JSON-RPC on stdio, and owns everything it starts. */
-export interface AcpPeer {
+/** A child process that writes newline-delimited messages on stdout, and owns everything it starts. */
+export interface LinePeer {
   readonly child: ChildProcessWithoutNullStreams;
-  readonly stream: ReturnType<typeof ndJsonStream>;
   readonly jobbed: boolean;
   /** Rejects when the process could not be started. */
   readonly spawnFailure: Promise<never>;
@@ -23,6 +23,11 @@ export interface AcpPeer {
   stop(graceMs: number): Promise<void>;
 }
 
+/** A child process that speaks newline-delimited JSON-RPC on stdio. */
+export interface AcpPeer extends LinePeer {
+  readonly stream: ReturnType<typeof ndJsonStream>;
+}
+
 /** How long the rest of a stopped child's group may take to exit after SIGTERM. */
 const GROUP_GRACE_MS = 1000;
 
@@ -34,6 +39,32 @@ export interface AcpPeerOptions { command: string; args: readonly string[]; cwd?
  * inside a job on Windows, so stopping it also stops whatever it started.
  */
 export function spawnAcpPeer(options: AcpPeerOptions): AcpPeer {
+  let stream!: ReturnType<typeof ndJsonStream>;
+  const peer = spawnPeer(options, (guard, child) => {
+    stream = ndJsonStream(Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
+      Readable.toWeb(guard) as unknown as ReadableStream<Uint8Array>);
+  });
+  return { ...peer, stream };
+}
+
+/**
+ * Starts `command` like `spawnAcpPeer`, for a child whose stdout is not JSON-RPC: each complete line (without its
+ * newline, decoded as UTF-8) goes to `onLine`, and the last unterminated one when stdout ends.
+ */
+export function spawnLinePeer(options: AcpPeerOptions & { onLine: (line: string) => void }): LinePeer {
+  return spawnPeer(options, (guard) => {
+    const decoder = new StringDecoder("utf8");
+    let pending = "";
+    guard.on("data", (chunk: Buffer) => {
+      const lines = (pending + decoder.write(chunk)).split("\n");
+      pending = lines.pop()!;
+      for (const line of lines) options.onLine(line.replace(/\r$/, ""));
+    });
+    guard.on("end", () => { const rest = pending + decoder.end(); pending = ""; if (rest) options.onLine(rest.replace(/\r$/, "")); });
+  });
+}
+
+function spawnPeer(options: AcpPeerOptions, consume: (guard: Transform, child: ChildProcessWithoutNullStreams) => void): LinePeer {
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   // On Windows a .cmd or script starts without a shell, inside a job that owns the agent's whole tree.
@@ -75,8 +106,7 @@ export function spawnAcpPeer(options: AcpPeerOptions): AcpPeer {
     done(null, chunk);
   } });
   child.stdout.pipe(guard);
-  const stream = ndJsonStream(Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
-    Readable.toWeb(guard) as unknown as ReadableStream<Uint8Array>);
+  consume(guard, child);
   const exited = () => child.exitCode !== null || child.signalCode !== null;
   const signal = (name: NodeJS.Signals) => {
     if (!posix) { terminateTree(child, { jobbed: prepared.jobbed }); return; }
@@ -106,8 +136,8 @@ export function spawnAcpPeer(options: AcpPeerOptions): AcpPeer {
     if (groupAlive()) signal("SIGKILL");
   })();
   child.once("exit", () => { void clearGroup(); });
-  return {
-    child, stream, jobbed: prepared.jobbed, spawnFailure, frameFailure, exited, signal, waitForExit,
+  const peer: LinePeer = {
+    child, jobbed: prepared.jobbed, spawnFailure, frameFailure, exited, signal, waitForExit,
     stderrTail: () => `${dropped ? "[stderr truncated]\n" : ""}${stderr.toString("utf8")}`,
     async stop(graceMs) {
       if (!child.stdin.destroyed) child.stdin.end();
@@ -121,4 +151,5 @@ export function spawnAcpPeer(options: AcpPeerOptions): AcpPeer {
       await clearGroup();
     },
   };
+  return peer;
 }
