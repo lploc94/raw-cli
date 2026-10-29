@@ -1,4 +1,5 @@
 import { assertNoLiveProcesses, recoverProcessHosts } from "../processes/store.js";
+import type { BackendOffered } from "../backends/options.js";
 import { InteractionError, type InteractionRequest, type InteractionSettlement } from "../interactions/contract.js";
 import { canonicalInteractionResult, validateFormAnswers } from "../panels/forms.js";
 import type { InteractionState } from "../panels/contract.js";
@@ -106,6 +107,8 @@ export interface ExternalSession {
   baseline: { model?: string; effort?: string; mode?: string };
   /** How many of the session's messages were already sent to this CLI conversation, answered or not (a cancelled turn's input). */
   delivered?: number;
+  /** What the CLI offered for model, effort and mode when last asked, for the dashboard's controls (display only). */
+  offered?: BackendOffered;
 }
 
 type RuntimeMetadata = { replayBefore: number; replaySignature: string; baseSelection?: readonly string[]; external?: ExternalSession };
@@ -938,6 +941,11 @@ export class SessionStore {
   readExternal(sessionId: string, owner: SessionOwner): ExternalSession | undefined {
     this.ownerRow(sessionId, owner);
     return this.runtimeMetadata(sessionId)?.external;
+  }
+
+  /** What the session's CLI last offered, for display; needs no ownership. */
+  externalOffered(sessionId: string): BackendOffered | undefined {
+    return this.runtimeMetadata(sessionId)?.external?.offered;
   }
 
   writeExternal(sessionId: string, owner: SessionOwner, external: ExternalSession | null): void {

@@ -20,14 +20,17 @@ export function requestKind(provider: ProviderName, method: ApiMethod): RequestK
 
 export interface RequestOption { value: string; label: string; hint?: string }
 export interface RequestControl {
-  id: "effort" | "serviceTier";
+  /** `backend_*`: an external backend's model, effort and mode, sent as `request.backend` (src/backends/options.ts). */
+  id: "effort" | "serviceTier" | "backend_model" | "backend_effort" | "backend_mode";
   label: string;
-  kind: "level" | "choice";
+  /** `select`: a list too long or too free-form for a slider or radio group (a backend's models). */
+  kind: "level" | "choice" | "select";
   options: RequestOption[];
   /** The value configured on the agent, if any. */
   current?: string;
 }
-export interface RequestOverride { effort?: string; serviceTier?: string }
+/** `backend`: the values an external backend's next turn runs with, passed through as the CLI names them. */
+export interface RequestOverride { effort?: string; serviceTier?: string; backend?: { model?: string; effort?: string; mode?: string } }
 
 export class RequestOverrideError extends Error {
   constructor(message: string) { super(message); this.name = "RequestOverrideError"; }
@@ -74,11 +77,34 @@ export function requestControls(provider: ProviderName, method: ApiMethod, curre
   return [];
 }
 
-/** Validates a client override against the controls advertised for the agent. */
-export function parseRequestOverride(raw: unknown, controls: readonly RequestControl[]): RequestOverride {
+const BACKEND_KEYS = ["model", "effort", "mode"] as const;
+const BACKEND_VALUE_CHARS = 200;
+
+/**
+ * Validates a client override against the controls advertised for the agent. For an agent with an external backend only
+ * `backend` is accepted and only its shape is checked: whether the CLI offers a value is known only in the session, after a
+ * model switch, so the runner checks it at turn time and an unlisted value gives a warning (Fixed decision 6).
+ */
+export function parseRequestOverride(raw: unknown, controls: readonly RequestControl[], options: { backend?: boolean } = {}): RequestOverride {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new RequestOverrideError("request must be an object");
   const result: RequestOverride = {};
+  if (options.backend) {
+    for (const [key, value] of Object.entries(raw)) {
+      if (key !== "backend") throw new RequestOverrideError(`request.${key}: this agent runs an external backend; use request.backend`);
+      if (typeof value !== "object" || value === null || Array.isArray(value)) throw new RequestOverrideError("request.backend must be an object");
+      const backend: NonNullable<RequestOverride["backend"]> = {};
+      for (const [name, chosen] of Object.entries(value)) {
+        if (!(BACKEND_KEYS as readonly string[]).includes(name)) throw new RequestOverrideError(`request.backend.${name} is not a backend option (model, effort, mode)`);
+        if (typeof chosen !== "string" || !chosen.trim() || chosen.length > BACKEND_VALUE_CHARS)
+          throw new RequestOverrideError(`request.backend.${name} must be a nonempty string of at most ${BACKEND_VALUE_CHARS} characters`);
+        backend[name as (typeof BACKEND_KEYS)[number]] = chosen;
+      }
+      if (Object.keys(backend).length) result.backend = backend;
+    }
+    return result;
+  }
   for (const [key, value] of Object.entries(raw)) {
+    if (key === "backend") throw new RequestOverrideError("request.backend: this agent has no external backend");
     if (key !== "effort" && key !== "serviceTier") throw new RequestOverrideError(`request.${key} is not a request control`);
     const control = controls.find((entry) => entry.id === key);
     if (!control) throw new RequestOverrideError(`request.${key}: this agent has no request controls for it (no request controls offered by its provider)`);

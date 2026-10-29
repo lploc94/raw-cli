@@ -132,6 +132,30 @@ test("a prompt patch that removes one source and sets the other keeps the new so
   } finally { await f.close(); }
 });
 
+test("the agent editor saves a backend block in place of the model, reloads it, and switches back", async () => {
+  const f = await dashboardFixture();
+  try {
+    let rev = (await f.json<any>("/config")).revision;
+    // As the editor sends it: the model removed, the backend set.
+    const saved = await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw",
+      value: { model: null, backend: { kind: "codex", model: "gpt-6.1-terra", effort: "high" } } });
+    rev = saved.revision;
+    assert.equal(saved.agentSummaries.raw.backend, "Codex");
+    assert.equal(saved.agentSummaries.raw.model, undefined);
+    const reloaded = await f.json<any>("/agents/raw");
+    assert.deepEqual(reloaded.value.backend, { kind: "codex", model: "gpt-6.1-terra", effort: "high" });
+    assert.equal(Object.hasOwn(reloaded.value, "model"), false);
+    // The config loads as a backend agent.
+    const composer = await f.json<any>("/agents/raw/composer");
+    assert.deepEqual(composer.backend, { kind: "codex", label: "Codex" });
+    // Back to a Raw model: the backend goes, even when the patch names only the model.
+    await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw", value: { model: "fixture" } });
+    const back = await f.json<any>("/agents/raw");
+    assert.equal(back.value.model, "fixture");
+    assert.equal(Object.hasOwn(back.value, "backend"), false);
+  } finally { await f.close(); }
+});
+
 test("passive components never import code, per-file conflicts and usages prevent loss", async () => {
   const f = await dashboardFixture(); const sentinel = join(f.root, "imported");
   try {

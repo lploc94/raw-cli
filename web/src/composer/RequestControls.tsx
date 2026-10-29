@@ -72,7 +72,14 @@ export function RequestControls({
             Next turn
           </p>
           {usable.map((control) =>
-            control.kind === "level" ? (
+            control.kind === "select" ? (
+              <SelectControl
+                key={control.id}
+                control={control}
+                value={choice[control.id]}
+                onChange={(next) => set(control.id, next)}
+              />
+            ) : control.kind === "level" ? (
               <LevelControl
                 key={control.id}
                 control={control}
@@ -202,6 +209,41 @@ function ChoiceControl({
           );
         })}
       </RadioGroup.Root>
+    </div>
+  );
+}
+
+/** A native select for a long list (a backend's models): it takes any length of name and keeps the keyboard's type-ahead. */
+function SelectControl({
+  control,
+  value,
+  onChange,
+}: {
+  control: RequestControlMeta;
+  value: string | undefined;
+  onChange: (next: string | undefined) => void;
+}) {
+  const id = useId();
+  const hint = control.options.find((option) => option.value === value)?.hint;
+  return (
+    <div className="request-control">
+      <label className="request-label" htmlFor={id}>
+        {control.label}
+      </label>
+      <select
+        id={id}
+        className="request-select"
+        value={value ?? DEFAULT}
+        onChange={(event) => onChange(event.target.value === DEFAULT ? undefined : event.target.value)}
+      >
+        <option value={DEFAULT}>{`Agent default${control.current ? ` (${control.current})` : ""}`}</option>
+        {control.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label === option.value ? option.value : `${option.label} · ${option.value}`}
+          </option>
+        ))}
+      </select>
+      {hint && <p className="muted small request-hint">{hint}</p>}
     </div>
   );
 }

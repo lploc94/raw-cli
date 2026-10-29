@@ -1,5 +1,6 @@
 import { test as base, expect } from "@playwright/test";
 import { dashboardFixture } from "../fixtures/dashboard.js";
+import type { DashboardOptions } from "../../src/dashboard/server.js";
 import type { MockResponse } from "../fixtures/mock-provider.js";
 import { openAiFrame, openAiDone } from "../fixtures/mock-provider.js";
 
@@ -18,7 +19,8 @@ export const answer = {
 };
 export const test = base.extend<{
   raw: Awaited<ReturnType<typeof dashboardFixture>>;
-  scenario: { responses?: MockResponse[]; agent?: Record<string, unknown>; extraAgents?: Record<string, Record<string, unknown>>; model?: Record<string, unknown>; config?: Record<string, unknown>; env?: Record<string, string> };
+  scenario: { responses?: MockResponse[]; agent?: Record<string, unknown>; extraAgents?: Record<string, Record<string, unknown>>; model?: Record<string, unknown>; config?: Record<string, unknown>; env?: Record<string, string>;
+    attach?: DashboardOptions["attach"]; discoverBackend?: DashboardOptions["discoverBackend"] };
 }>({
   scenario: [{}, { option: true }],
   raw: async ({ scenario }, use) => {
@@ -29,6 +31,8 @@ export const test = base.extend<{
       ...(scenario.model ? { model: scenario.model } : {}),
       ...(scenario.config ? { config: scenario.config } : {}),
       ...(scenario.env ? { env: scenario.env } : {}),
+      ...(scenario.attach ? { attach: scenario.attach } : {}),
+      ...(scenario.discoverBackend ? { discoverBackend: scenario.discoverBackend } : {}),
     });
     try {
       await use(f);

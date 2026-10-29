@@ -14,6 +14,9 @@ import type { SessionSnapshot } from "../src/dashboard/sessions.js";
 import { createAgent } from "../src/agent.js";
 import { COMPACT_SYSTEM_PROMPT } from "../src/compact.js";
 import { compactionInput, isCompactionRequest } from "./fixtures/compaction.js";
+import { createAcpSessionAgent } from "../src/backends/factory.js";
+import type { BackendOffered } from "../src/backends/options.js";
+import { attachSessionRuntimeWith } from "../src/sessions/runtime.js";
 
 test("HTTP duplicate submissions execute one real Bash effect and return the saved receipt", async () => {
   const f = await dashboardFixture({ agent: { tools: { use: ["builtin/bash"] } }, responses: [
@@ -537,5 +540,75 @@ test("POST edit leaves the message waiting when its images cannot be staged agai
     assert.equal(refused.status, 413);
     assert.equal(f.server.context.attachments!.size(), 8);
     assert.deepEqual((await f.json<SessionSnapshot>(`/sessions/${session.id}`)).inputs.map((item) => [item.clientRequestId, item.state]), [["later", "queued"]]);
+  } finally { await f.close(); }
+});
+
+const FAKE_ACP = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
+/** The dashboard's real host runtime, with the scripted ACP agent standing in for the backend CLI. */
+const scriptedBackend = attachSessionRuntimeWith((context) => createAcpSessionAgent(context,
+  { command: process.execPath, args: [FAKE_ACP], env: { ...process.env, FAKE_ACP_STATE: join(context.cwd, "fake-acp") } }));
+/** Model names as long as the CLIs list them (`gpt-6.1-terra`, Claude's dated ids). */
+const LISTED: BackendOffered = {
+  model: { current: "claude-sonnet-4-6-20260915", options: [{ value: "claude-sonnet-4-6-20260915", label: "Claude Sonnet 4.6 (September 2026)" },
+    { value: "gpt-6.1-terra", label: "gpt-6.1-terra", hint: "Frontier agentic coding model." }] },
+  effort: { options: [{ value: "low", label: "low" }, { value: "high", label: "high" }] },
+  mode: { current: "default", options: [{ value: "default", label: "Default" }, { value: "plan", label: "Plan" }] },
+};
+
+test("a backend agent's composer offers what the CLI offers as selects, and says so when the CLI cannot be asked", async () => {
+  let failing = false;
+  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude" }, system_prompt: "Be RAW.", tools: { use: [] } } },
+    discoverBackend: async () => failing ? { offered: {}, warning: "Claude Code could not start: not logged in" } : { offered: structuredClone(LISTED) } });
+  try {
+    const meta = await f.json<{ backend?: { kind: string; label: string }; controls: unknown[] }>("/agents/ext/composer");
+    assert.deepEqual(meta.backend, { kind: "claude", label: "Claude Code" });
+    assert.deepEqual(meta.controls, []);
+    const offered = await f.json<{ controls: Array<{ id: string; kind: string; current?: string; options: Array<{ value: string }> }>; warning?: string }>("/agents/ext/backend-options");
+    assert.deepEqual(offered.controls.map((control) => [control.id, control.kind, control.current, control.options.map((option) => option.value)]), [
+      ["backend_model", "select", "claude-sonnet-4-6-20260915", ["claude-sonnet-4-6-20260915", "gpt-6.1-terra"]],
+      ["backend_effort", "select", undefined, ["low", "high"]], ["backend_mode", "select", "default", ["default", "plan"]]]);
+    assert.equal(offered.warning, undefined);
+    failing = true;
+    assert.deepEqual(await f.json("/agents/ext/backend-options"), { controls: [], warning: "Claude Code could not start: not logged in" });
+    // A Raw agent has no backend controls, and its composer is unchanged.
+    assert.deepEqual(await f.json("/agents/raw/backend-options"), { controls: [] });
+    assert.equal((await f.json<{ backend?: unknown }>("/agents/raw/composer")).backend, undefined);
+  } finally { await f.close(); }
+});
+
+test("a backend turn takes request.backend for itself only; the route checks its shape, the runner the CLI's lists", async () => {
+  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
+    attach: scriptedBackend });
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
+    const send = (clientRequestId: string, input: string, request?: unknown) => f.api(`/sessions/${session.id}/operations`, "POST",
+      { clientRequestId, kind: "turn", agent: "ext", input, ...(request === undefined ? {} : { request }) });
+    for (const [index, request] of [{ effort: "high" }, { backend: { model: "" } }, { backend: { color: "red" } }, { backend: "big" }, { backend: { model: "x".repeat(201) } }].entries()) {
+      const refused = await send(`bad-${index}`, "options", request);
+      assert.equal(refused.status, 422, JSON.stringify(request));
+      assert.equal((await refused.json() as { error: { code: string } }).error.code, "invalid_request_option");
+    }
+    // A Raw agent refuses request.backend.
+    const raw = await f.api(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "raw", kind: "turn", agent: "raw", input: "x", request: { backend: { model: "big" } } });
+    assert.equal(raw.status, 422);
+    // An effort the CLI does not list for that model passes the route; the runner warns and the turn runs without it.
+    const chosen = await send("one", "options", { backend: { model: "big", effort: "turbo" } });
+    assert.equal(chosen.status, 202);
+    assert.equal((await f.wait((await chosen.json() as SessionOperation).id)).state, "completed");
+    const texts = async () => (await f.json<{ items: HistoryView[] }>(`/sessions/${session.id}/history`)).items
+      .filter((item) => item.kind === "assistant" || item.kind === "backend_notice").map((item) => `${item.kind}: ${item.text}`);
+    assert.deepEqual(await texts(), [
+      'backend_notice: Claude Code does not offer effort "turbo"; it keeps "low" (offered: low, high)',
+      "assistant: model=big effort=low mode=ask"]);
+    // The snapshot lists the session's own options: efforts of the model last used, values of the conversation.
+    const after = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
+    assert.deepEqual(after.backendOptions?.map((control) => [control.id, control.current, control.options.map((option) => option.value)]), [
+      ["backend_model", "small", ["small", "big", "mid"]], ["backend_effort", undefined, ["low", "high"]], ["backend_mode", "ask", ["ask", "auto"]]]);
+    // The next turn returns to the conversation's own values.
+    const plain = await send("two", "options");
+    assert.equal((await f.wait((await plain.json() as SessionOperation).id)).state, "completed");
+    assert.equal((await texts()).at(-1), "assistant: model=small effort=- mode=ask");
+    const settled = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
+    assert.deepEqual(settled.backendOptions?.map((control) => control.id), ["backend_model", "backend_mode"]);
   } finally { await f.close(); }
 });

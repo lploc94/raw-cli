@@ -11,6 +11,7 @@ import { AGY_APPEND, AgyBackendProvider, BoundedLines, agyCatalog, AGY_DEFAULT_T
   writeAgyAgent } from "../src/backends/agy.js";
 import { createAgySessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
+import { fakeAgy } from "./fixtures/fake-agy-bin.js";
 import { openSessionStore, type SessionStore, type SessionSummary } from "../src/sessions/store.js";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-agy.mjs");
@@ -29,16 +30,6 @@ interface Harness {
 }
 
 /** An `agy` executable that runs the fake: a copy with its shebang on POSIX, a .cmd on Windows. */
-function fakeAgy(root: string): string {
-  const bin = join(root, "bin");
-  mkdirSync(bin, { recursive: true });
-  if (process.platform === "win32") { writeFileSync(join(bin, "agy.cmd"), `@"${process.execPath}" "${FAKE}" %*\r\n`); return join(bin, "agy.cmd"); }
-  writeFileSync(join(bin, "agy"), readFileSync(FAKE, "utf8").replace("const recordings = join(dirname(fileURLToPath(import.meta.url)), \"agy\");",
-    `const recordings = ${JSON.stringify(RECORDINGS)};`));
-  chmodSync(join(bin, "agy"), 0o755);
-  return join(bin, "agy");
-}
-
 async function harness(backend: Record<string, unknown> = {}, agent: Record<string, unknown> = { system_prompt: "Be RAW." },
   fakeEnv: NodeJS.ProcessEnv = {}): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "raw-backend-agy-"));

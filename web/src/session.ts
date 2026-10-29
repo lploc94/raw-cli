@@ -310,6 +310,8 @@ export function useSession(sessionId: string | undefined, remote?: boolean) {
                           context: snapshot.context,
                           metrics: snapshot.metrics,
                           metricsStale: snapshot.metricsStale,
+                          // A backend turn may have changed what the CLI lists (Claude's efforts follow the model).
+                          ...(snapshot.backendOptions ? { backendOptions: snapshot.backendOptions } : {}),
                         }
                       : old,
                   ),

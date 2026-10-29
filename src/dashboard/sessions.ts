@@ -13,6 +13,9 @@ import { PanelActionError, resolveAction } from "../panels/actions.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { knownPanelDeclarations, type KnownPanels } from "../panels/declarations.js";
 import { buildPanelStack, presentDeclaration, presentToolView, declarationsFor, loadDeclarationsForSaved, toolViewStackItem, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
+import { BACKEND_LABELS } from "../backends/config.js";
+import { discoverBackendOptions } from "../backends/discovery.js";
+import { backendControls } from "../backends/options.js";
 import { parseRequestOverride, requestControls, RequestOverrideError, type RequestControl, type RequestOverride } from "../request-controls.js";
 import { loadSelectedSkills } from "../skills/loader.js";
 import type { UserBlock } from "../llm/types.js";
@@ -41,6 +44,8 @@ export interface SessionSnapshot {
   agent: string | null; panels: PanelStackItem[]; commands?: CommandRecord[]; commandsOmitted?: number; interactions?: InteractionRequest[];
   /** Messages waiting for the agent, oldest first (docs/dashboard-api.md). */
   inputs: QueuedInputView[];
+  /** A backend session's controls, from what its CLI offered when last asked (docs/dashboard-api.md). */
+  backendOptions?: RequestControl[];
 }
 export function workspacePath(value: unknown, base: string): string {
   const input = textField(value, "cwd", 4096);
@@ -92,9 +97,15 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     if (!Object.hasOwn(record(config.data?.agents), name)) throw new DashboardError(404, "not_found", `Agent ${name} is not configured`);
     // The effective selection (direct agents and installed package agents) needs no model credentials; a broken skill only empties the list.
     let vision = false; let skills: Array<{ name: string; description: string }> = []; let controls: RequestControl[] = [];
+    let backend: { kind: string; label: string } | undefined;
     try {
       const runtime = await loadConfig({ ...options, configPath: context.configPath, flags: { agent: name }, requireModel: false });
       vision = runtime.modelConfig?.vision === true;
+      if (runtime.backend) {
+        // Images reach the runner, which sends each as a description when the CLI does not take images.
+        vision = true;
+        backend = { kind: runtime.backend.kind, label: BACKEND_LABELS[runtime.backend.kind] };
+      }
       if (runtime.modelConfig) controls = requestControls(runtime.modelConfig.provider, runtime.modelConfig.method, runtime.modelConfig.request);
       for (const skillId of runtime.skillIds) {
         try { // one broken skill must not hide the others
@@ -104,14 +115,29 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         } catch { /* skipped */ }
       }
     } catch { /* metadata stays best-effort so the composer never blocks */ }
-    return { vision, skills, controls, attachmentKinds: staging.kinds.list().map((kind) => ({ id: kind.id, accept: kind.mimeTypes, maxBytes: kind.maxBytes, enabled: true,
+    return { vision, skills, controls, ...(backend ? { backend } : {}), attachmentKinds: staging.kinds.list().map((kind) => ({ id: kind.id, accept: kind.mimeTypes, maxBytes: kind.maxBytes, enabled: true,
       ...(kind.needsVision && !vision ? { warning: "This agent cannot see images; it will receive a text placeholder instead." } : {}) })) };
   };
-  const agentControls = async (name: string): Promise<RequestControl[]> => {
+  /**
+   * The controls of a backend agent before its session has asked the CLI: what the backend offers to a new conversation
+   * set up as the agent's. A backend that cannot be asked gives no controls and a warning; sending stays possible.
+   */
+  const backendOptions = async (name: string): Promise<{ controls: RequestControl[]; warning?: string }> => {
+    const config = await readManagedConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env });
+    if (!Object.hasOwn(record(config.data?.agents), name)) throw new DashboardError(404, "not_found", `Agent ${name} is not configured`);
+    let runtime;
+    try { runtime = await loadConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env, flags: { agent: name }, requireModel: false }); }
+    catch (error) { return { controls: [], warning: error instanceof Error ? error.message : String(error) }; }
+    if (!runtime.backend) return { controls: [] };
+    const found = await (context.discoverBackend ?? discoverBackendOptions)(runtime, context.cwd, context.env);
+    return { controls: backendControls(found.offered), ...(found.warning ? { warning: found.warning } : {}) };
+  };
+  const agentControls = async (name: string): Promise<{ controls: RequestControl[]; backend: boolean }> => {
     try {
       const runtime = await loadConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env, flags: { agent: name }, requireModel: false });
-      return runtime.modelConfig ? requestControls(runtime.modelConfig.provider, runtime.modelConfig.method, runtime.modelConfig.request) : [];
-    } catch { return []; }
+      if (runtime.backend) return { controls: [], backend: true };
+      return { controls: runtime.modelConfig ? requestControls(runtime.modelConfig.provider, runtime.modelConfig.method, runtime.modelConfig.request) : [], backend: false };
+    } catch { return { controls: [], backend: false }; }
   };
   const requireSession = (id: string): SessionSummary => { const value = store.getSession(id); if (!value) throw new DashboardError(404, "not_found", store.missingSessionMessage()); return value; };
   const requireOperation = (id: string): SessionOperation => { const value = store.getOperation(id); if (!value) throw new DashboardError(404, "not_found", "Operation not found"); requireSession(value.sessionId); return value; };
@@ -146,9 +172,10 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     replayed: () => T | undefined): Promise<{ replay: T } | { blocks?: UserBlock[]; override?: RequestOverride }> => {
     let override: RequestOverride | undefined;
     if (body.request !== undefined) {
-      try { override = parseRequestOverride(body.request, await agentControls(intent.agentName)); }
+      const agent = await agentControls(intent.agentName);
+      try { override = parseRequestOverride(body.request, agent.controls, { backend: agent.backend }); }
       catch (error) { if (error instanceof RequestOverrideError) throw new DashboardError(422, "invalid_request_option", error.message); throw error; }
-      if (override.effort === undefined && override.serviceTier === undefined) override = undefined;
+      if (override.effort === undefined && override.serviceTier === undefined && override.backend === undefined) override = undefined;
       const replay = replayed(); if (replay !== undefined) return { replay };
     }
     if (!ids.length && !files.length) return override ? { override } : {};
@@ -184,7 +211,8 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     const page = store.getSessionHistory({ sessionId: id, limit: 50, atOrBefore: historyWatermark });
     const receipts = store.listOperations(id, 20);
     const commands = processes.commands.listing(id);
-    return { session, history: { ...page, items: page.items.map(projectHistoryItem) }, historyWatermark,
+    const offered = backendControls(store.externalOffered(id));
+    return { session, ...(offered.length ? { backendOptions: offered } : {}), history: { ...page, items: page.items.map(projectHistoryItem) }, historyWatermark,
       ownership: streams.ownership(id), operations: receipts, ...metrics(id), context: store.getContextSummary(id),
       live: output.list(new Set(receipts.filter((op) => !terminalOperationStates.has(op.state)).map((op) => op.id))), approvals: approvals.list(id),
       agent: session.agentName ?? null, commands: commands.items, ...(commands.omitted ? { commandsOmitted: commands.omitted } : {}), interactions: store.pendingInteractions(id),
@@ -196,10 +224,12 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   context.onClose(() => { unsubscribe(); interactions.close(); approvals.close(); streams.close(); output.close(); });
   return [async (request, response) => {
     const url = new URL(request.url!, "http://localhost"); const path = url.pathname; const method = request.method;
-    if (!/^\/api\/(?:workspaces|sessions|operations|permissions|activity|agents\/[^/]+\/composer)(?:\/|$)/.test(path)) return false;
+    if (!/^\/api\/(?:workspaces|sessions|operations|permissions|activity|agents\/[^/]+\/(?:composer|backend-options))(?:\/|$)/.test(path)) return false;
     const reply = (value: unknown, status = 200) => { context.json(response, status, value); return true; };
     const agentRoute = /^\/api\/agents\/([^/]+)\/composer$/.exec(path);
     if (agentRoute && method === "GET") return reply(await composer(decodeURIComponent(agentRoute[1]!)));
+    const optionsRoute = /^\/api\/agents\/([^/]+)\/backend-options$/.exec(path);
+    if (optionsRoute && method === "GET") return reply(await backendOptions(decodeURIComponent(optionsRoute[1]!)));
     if (path === "/api/workspaces" && method === "GET") return reply(await listWorkspaces(store, { current: context.cwd, env: context.env, search: url.searchParams, running: runningByWorkspace }));
     if (path === "/api/workspaces/browse" && method === "GET") return reply(await browseDirectory(url.searchParams, context.env));
     if (path === "/api/workspaces/files" && method === "GET") {

@@ -85,7 +85,7 @@ export function projectHistoryItem(item: HistoryItem): HistoryView {
     } else view.text = typeof payload.input === "string" ? payload.input : String(payload.text ?? "");
     if (payload.queued === true) view.queued = true;
   }
-  else if (["assistant", "reasoning", "status", "runtime_transition", "skill_notice"].includes(item.kind)) {
+  else if (["assistant", "reasoning", "status", "runtime_transition", "skill_notice", "backend_notice"].includes(item.kind)) {
     view.text = String(object(update.content).text ?? payload.text ?? "");
   } else if (item.kind === "compaction") view.compaction = structuredClone(payload) as unknown as CompactionDetails;
   else if (item.kind === "run_end") view.runResult = structuredClone(payload.result) as RunResult;

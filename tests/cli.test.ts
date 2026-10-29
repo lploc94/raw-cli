@@ -3,10 +3,13 @@ import { testConfig } from "./fixtures/config.js";
 import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtempSync } from "node:fs";
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { AGY_APPEND } from "../src/backends/agy.js";
+import { AGY_NO_RAW_TOOLS } from "../src/backends/compat.js";
+import { fakeAgy } from "./fixtures/fake-agy-bin.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { posixOnly } from "./fixtures/platform.js";
 import { onShutdown, shutdownSignals } from "../src/platform/signals.js";
@@ -559,4 +562,32 @@ test("shutdown handlers cover SIGHUP everywhere and SIGBREAK on Windows, and com
   assert.equal(calls, 2);
   off();
   for (const signal of ["SIGTERM", "SIGHUP", "SIGBREAK"]) assert.equal(emitter.listenerCount(signal), 0, signal);
+});
+
+test("a backend agent's warnings are printed once per start, not once per turn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-backend-"));
+  try {
+    const configPath = join(root, "config.json");
+    // agy takes no Raw tools (a start warning), and appends no prompt (a notice when the runtime first resolves agy).
+    await writeFile(configPath, JSON.stringify({ default_agent: "ext", agents: { ext: { backend: { kind: "agy", executable: fakeAgy(root),
+      system_prompt_mode: "append" }, system_prompt: "Be RAW.", tools: { use: ["builtin/todo"] } } } }));
+    // The REPL gets its second message once the first is answered: stdin closing would stop a running turn.
+    const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"), "--config", configPath], {
+      cwd: root, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home"), USERPROFILE: join(root, "home"),
+        FAKE_AGY_STATE: join(root, "fake"), XDG_STATE_HOME: join(root, "state") } });
+    const result = { stdout: "", stderr: "", code: null as number | null };
+    child.stdout.setEncoding("utf8").on("data", (part: string) => { result.stdout += part; });
+    child.stderr.setEncoding("utf8").on("data", (part: string) => { result.stderr += part; });
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    child.stdin.write("echo one\n");
+    await waitFor(() => result.stdout, "ECHO");
+    child.stdin.write("echo two\n");
+    await waitFor(() => result.stdout.replace("ECHO", ""), "ECHO");
+    child.stdin.end();
+    result.code = await exited;
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout.match(/ECHO/g)?.length, 2, result.stdout);
+    assert.equal(result.stderr.split(AGY_NO_RAW_TOOLS).length - 1, 1, result.stderr);
+    assert.equal(result.stderr.split(AGY_APPEND).length - 1, 1, result.stderr);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

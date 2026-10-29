@@ -13,7 +13,7 @@ export const agentSelectionText = (summary: AgentSummary) => `${plural(summary.t
 
 /** The sidebar's line under an agent's name: its model and what it selects, or the package it is bound to. */
 export const agentSubtitle = (summary: AgentSummary) =>
-  [summary.model, summary.from ? `Package ${summary.from}` : agentSelectionText(summary)].filter(Boolean).join(" · ");
+  [summary.model ?? summary.backend, summary.from ? `Package ${summary.from}` : agentSelectionText(summary)].filter(Boolean).join(" · ");
 
 export function AgentsList({
   config,
@@ -55,8 +55,13 @@ export function AgentsList({
                     <Link className="row-link" href={`/agents/${encodeURIComponent(name)}`}>{name}</Link>
                     {isDefault && <span className="badge accent">Default</span>}
                     {summary?.from && <span className="badge">Package</span>}
+                    {summary?.backend && <span className="badge backend-badge">{summary.backend}</span>}
                   </div>
-                  <code className="agent-row-model">{summary?.model ?? "—"}</code>
+                  {summary?.backend && !summary.model ? (
+                    <span className="agent-row-model">{summary.backend}</span>
+                  ) : (
+                    <code className="agent-row-model">{summary?.model ?? "—"}</code>
+                  )}
                   <span className="muted agent-row-counts">
                     {summary?.from ? (
                       <code title={summary.from}>{summary.from}</code>

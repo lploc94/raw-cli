@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { BACKEND_LABELS, type BackendKind } from "../backends/config.js";
 import { canonicalConfigPath, loadMcpCheckConfig, loadVariableConfigAsync, parseConfigSource, parseToolPolicyRules } from "../config.js";
 import { editAgent, editModel, patchRecord, record, type ResourceEdit } from "../management/agents.js";
 import { initializeConfig, mutateConfig, readManagedConfig, saveConfigText, type ManagedConfig } from "../management/config.js";
@@ -16,13 +17,16 @@ export interface ConfigView {
   sessions?: unknown; agentSummaries: Record<string, AgentSummary>;
   varSummaries: Record<string, VarSummary>; providerSummaries: Record<string, ProviderSummary>; mcpSummaries: Record<string, McpSummary>;
 }
-export interface AgentSummary { model?: string; from?: string; tools: number; skills: number; hooks: number; rules: number }
+/** `backend`: the name of the CLI an agent with a `backend` runs (Claude Code, Codex, agy). */
+export interface AgentSummary { model?: string; backend?: string; from?: string; tools: number; skills: number; hooks: number; rules: number }
 const count = (value: unknown) => Array.isArray(value) ? value.length : 0;
 function agentSummaries(agents: Record<string, unknown>): Record<string, AgentSummary> {
   const summaries: Record<string, AgentSummary> = Object.create(null);
   for (const [name, entry] of Object.entries(agents)) {
     const agent = record(entry), tools = record(agent.tools);
-    summaries[name] = { ...(typeof agent.model === "string" ? { model: agent.model } : {}), ...(typeof agent.from === "string" ? { from: agent.from } : {}),
+    const kind = record(agent.backend).kind;
+    const backend = typeof kind === "string" && Object.hasOwn(BACKEND_LABELS, kind) ? BACKEND_LABELS[kind as BackendKind] : undefined;
+    summaries[name] = { ...(typeof agent.model === "string" ? { model: agent.model } : {}), ...(backend ? { backend } : {}), ...(typeof agent.from === "string" ? { from: agent.from } : {}),
       tools: count(tools.use), skills: count(record(agent.skills).use), hooks: count(record(agent.hooks).use), rules: count(tools.rules) };
   }
   return summaries;

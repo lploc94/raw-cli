@@ -5,7 +5,7 @@ import type { ProviderAdapter } from "../llm/types.js";
 import { applyRequestOverride } from "../request-controls.js";
 import { createRuntimeTools, type RuntimeTools } from "../tools/plugins/runtime.js";
 import { AcpBackendAgent, measureBackend } from "../backends/acp-agent.js";
-import { createSessionAgent } from "../backends/factory.js";
+import { createSessionAgent, type SessionAgentFactory } from "../backends/factory.js";
 import type { MeasureOptions } from "./metrics.js";
 import type { AttachSessionRuntime, SessionRuntime } from "./operations.js";
 
@@ -18,12 +18,15 @@ export function runtimeAgentOptions(runtime: RuntimeConfig, tools: RuntimeTools,
     autoApprove: runtime.autoApprove, compact: runtime.compact };
 }
 
-export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
+export const attachSessionRuntime: AttachSessionRuntime = (options) => attachSessionRuntimeWith(createSessionAgent)(options);
+
+/** The host's runtime, with `factory` building a backend agent's session (a test runs a scripted CLI through it). */
+export const attachSessionRuntimeWith = (factory: SessionAgentFactory): AttachSessionRuntime => async (options) => {
   const { store, operation, owner, signal, session } = options;
   const runtime = await loadConfig({ configPath: operation.configPath, flags: { agent: operation.agentName },
     cwd: session.cwd, requireModel: true, ...(options.env ? { env: options.env } : {}) });
   if (signal.aborted) throw new Error("startup aborted");
-  if (runtime.backend) return attachBackendRuntime(runtime, options);
+  if (runtime.backend) return attachBackendRuntime(runtime, options, factory);
   const modelConfig = applyRequestOverride(runtime.modelConfig!, options.request ?? {});
   const provider = createProvider(modelConfig);
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
@@ -48,18 +51,20 @@ export const attachSessionRuntime: AttachSessionRuntime = async (options) => {
 };
 
 /** An external backend's runtime: its own CLI per attached runtime, stopped with it (Fixed decision 8). */
-async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<AttachSessionRuntime>[0]): Promise<SessionRuntime> {
+async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<AttachSessionRuntime>[0], factory: SessionAgentFactory): Promise<SessionRuntime> {
   const { store, operation, owner, signal, session } = options;
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
   for (const warning of tools.warnings) process.stderr.write(`raw: ${warning}\n`);
   try {
     if (signal.aborted) throw new Error("startup aborted");
-    const agent = createSessionAgent({ runtime, tools, cwd: session.cwd, ...(options.env ? { env: options.env } : {}), host: {
+    const agent = factory({ runtime, tools, cwd: session.cwd, ...(options.env ? { env: options.env } : {}), host: {
       ...(options.approve ? { approve: options.approve } : {}),
       ...(options.processes ? { processes: options.processes } : {}),
       ...(options.interactions ? { interactions: options.interactions } : {}), deliverQueuedInputs: true,
       persistence: { store, sessionId: session.id, surface: "web", owner, ownership: "host", operationId: operation.id } } });
     await agent.start(agent.transcript.length ? "resume" : "create", undefined, signal);
+    // The dashboard's choice for this turn only; the runner checks each value against what the CLI offers then.
+    if (options.request?.backend && agent instanceof AcpBackendAgent) agent.setTurnOverride(options.request.backend);
     const agentName = runtime.agentName ?? runtime.backend!.kind;
     return { agent, ...(agent instanceof AcpBackendAgent ? { measure: (measure: MeasureOptions) => measureBackend(agent, agentName, measure) } : {}),
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },

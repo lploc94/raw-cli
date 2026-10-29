@@ -14,6 +14,7 @@ import type { ToolDisplay } from "../tools/display.js";
 import type { ToolApprovalRequest } from "../tools/primitives.js";
 import { AcpUpdateMapper, cliToolIdentity, bridgeToolName, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
 import { bridgeProxyServer } from "./bridge/proxy.js";
+import { offeredFromConfigOptions, type BackendOffered } from "./options.js";
 import { startBridge, type RawBridge } from "./bridge/server.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import type { ToolResult } from "../tools/types.js";
@@ -168,6 +169,21 @@ export class AcpBackendProvider implements BackendProvider {
 
   /** The adapter process of this runtime, while it runs. */
   get pid(): number | undefined { return this.live?.peer.child.pid; }
+  /**
+   * What the CLI offers to a new conversation configured as the agent's, for the dashboard before a session runs: starts
+   * the adapter and a throwaway conversation, then stops them. The notices are what applying the agent's values said.
+   */
+  async discover(timeoutMs: number, signal?: AbortSignal): Promise<{ offered: BackendOffered; notices: string[] }> {
+    const notices: string[] = [];
+    const notify = (message: string) => { notices.push(message); };
+    const request = { system: "", messages: [], tools: [], timeoutMs, ...(signal ? { signal } : {}) } as ProviderRequest;
+    try {
+      await this.resolveLaunch(request, notify);
+      await this.startup(request, (live) => this.open(live, notify, false, []));
+      return { offered: offeredFromConfigOptions(this.options), notices };
+    } finally { await this.close(); }
+  }
+
   /** The session's current `configOptions`, as the CLI last reported them. */
   get configOptions(): readonly SessionConfigOption[] { return structuredClone(this.options); }
   /** The value of one option category now, or the baseline before the CLI conversation exists. */
@@ -223,6 +239,8 @@ export class AcpBackendProvider implements BackendProvider {
       }
       await this.apply(live, desired, notify);
     });
+    // What the CLI offers after this turn's model is set (Claude's efforts depend on it), for the dashboard.
+    this.saveOffered();
     // The CLI already has what an earlier turn sent, also when that turn was cancelled before it answered.
     const delivered = this.delivered !== undefined && this.delivered <= request.messages.length ? this.delivered : 0;
     const fresh = request.messages.slice(Math.max(lastAnswer + 1, delivered))
@@ -385,6 +403,15 @@ export class AcpBackendProvider implements BackendProvider {
       ...(this.delivered !== undefined ? { delivered: this.delivered } : {}) };
     if (binding) binding.store.writeExternal(binding.sessionId, binding.owner, external);
     if (hadTurns || stored) notify(`This ${this.label} conversation starts here; it does not see earlier turns`);
+  }
+
+  private saveOffered(): void {
+    const binding = this.config.binding?.();
+    const stored = binding?.store.readExternal(binding.sessionId, binding.owner);
+    if (!binding || !stored || stored.cliSessionId !== this.cliSessionId) return;
+    // The lists are those of the model in use; the current values are the conversation's own, which a turn returns to.
+    const offered = offeredFromConfigOptions(this.options, this.baseline);
+    if (JSON.stringify(offered) !== JSON.stringify(stored.offered)) binding.store.writeExternal(binding.sessionId, binding.owner, { ...stored, offered });
   }
 
   /**

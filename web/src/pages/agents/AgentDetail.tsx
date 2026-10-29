@@ -22,6 +22,13 @@ import { Selection } from "./Selection.js";
 
 type Section = "overview" | "capabilities" | "policy" | "json";
 
+/** The CLIs an agent can run instead of a Raw model (docs/backends.md). */
+const BACKENDS = [
+  { kind: "claude", label: "Claude Code" },
+  { kind: "codex", label: "Codex" },
+  { kind: "agy", label: "Antigravity (agy)" },
+] as const;
+
 export function AgentDetail({
   name,
   config,
@@ -97,6 +104,25 @@ export function AgentDetail({
     }
     draft.setSource(pretty(next));
   };
+  const backend = value.backend && typeof value.backend === "object" ? (value.backend as Record<string, unknown>) : undefined;
+  /** An agent runs a Raw model or an external CLI; choosing one drops the other (as the server's patch does). */
+  const runOn = (kind: string) => {
+    const copy = { ...value };
+    if (kind) {
+      delete copy.model;
+      copy.backend = { ...(backend ?? {}), kind };
+    } else {
+      delete copy.backend;
+      copy.model = config.models[0] ?? "";
+    }
+    draft.setSource(pretty(copy));
+  };
+  const setBackend = (key: "model" | "effort" | "mode", text: string) => {
+    const next: Record<string, unknown> = { ...backend };
+    if (text.trim()) next[key] = text;
+    else delete next[key];
+    set({ backend: next });
+  };
   const summary = config.agentSummaries?.[name];
   // The draft is authoritative once it parses; the saved summary covers loading and parse errors.
   const bound = draft.base && !parseError ? !!value.from : !!summary?.from;
@@ -121,6 +147,7 @@ export function AgentDetail({
             <h1>{name}</h1>
             <div className="metadata">
               {summary?.model && <code className="badge">{summary.model}</code>}
+              {summary?.backend && <span className="badge backend-badge">{summary.backend}</span>}
               {config.defaultAgent === name && <span className="badge accent">Default</span>}
               {summary?.from && <span className="badge">Package</span>}
             </div>
@@ -177,19 +204,47 @@ export function AgentDetail({
                     <div className="card-header">
                       <div>
                         <h2>Model</h2>
-                        <p>The configured model this agent calls.</p>
+                        <p>
+                          {backend
+                            ? "The CLI this agent runs; its own login, tools and context. Empty fields keep the CLI's defaults."
+                            : "The configured model this agent calls."}
+                        </p>
                       </div>
                     </div>
-                    <Field label="Model">
-                      <select
-                        value={String(value.model ?? "")}
-                        onChange={(e) => set({ model: e.target.value })}
-                      >
-                        {config.models.map((alias) => (
-                          <option key={alias}>{alias}</option>
+                    <Field label="Runs on">
+                      <select value={typeof backend?.kind === "string" ? backend.kind : ""} onChange={(e) => runOn(e.target.value)}>
+                        <option value="">A Raw model</option>
+                        {BACKENDS.map((entry) => (
+                          <option key={entry.kind} value={entry.kind}>
+                            {entry.label}
+                          </option>
                         ))}
                       </select>
                     </Field>
+                    {backend ? (
+                      <>
+                        {(["model", "effort", "mode"] as const).map((key) => (
+                          <Field key={key} label={`CLI ${key}`}>
+                            <input
+                              value={typeof backend[key] === "string" ? String(backend[key]) : ""}
+                              placeholder="CLI default"
+                              onChange={(e) => setBackend(key, e.target.value)}
+                            />
+                          </Field>
+                        ))}
+                      </>
+                    ) : (
+                      <Field label="Model">
+                        <select
+                          value={String(value.model ?? "")}
+                          onChange={(e) => set({ model: e.target.value })}
+                        >
+                          {config.models.map((alias) => (
+                            <option key={alias}>{alias}</option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
                   </section>
                   {value.from ? (
                     <div className="card notice">

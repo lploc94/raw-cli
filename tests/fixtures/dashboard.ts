@@ -6,7 +6,7 @@ import { startDashboard, type DashboardOptions } from "../../src/dashboard/serve
 import type { SessionOperation } from "../../src/sessions/operations.js";
 import { startMockProvider, openAiDone, openAiFrame, type MockResponse } from "./mock-provider.js";
 
-export async function dashboardFixture(options: { responses?: MockResponse[]; agent?: Record<string, unknown>; extraAgents?: Record<string, Record<string, unknown>>; model?: Record<string, unknown>; attach?: DashboardOptions["attach"]; env?: Record<string, string>;
+export async function dashboardFixture(options: { responses?: MockResponse[]; agent?: Record<string, unknown>; extraAgents?: Record<string, Record<string, unknown>>; model?: Record<string, unknown>; attach?: DashboardOptions["attach"]; discoverBackend?: DashboardOptions["discoverBackend"]; env?: Record<string, string>;
   /** Top-level config sections such as `mcp`, merged over the generated config. */
   config?: Record<string, unknown> } = {}) {
   const root = mkdtempSync(join(tmpdir(), "raw-dashboard-flow-"));
@@ -20,7 +20,8 @@ export async function dashboardFixture(options: { responses?: MockResponse[]; ag
     compact: { trigger_tokens: false, ...(options.agent?.compact as Record<string, unknown> | undefined) } }, ...options.extraAgents },
   ...options.config };
   writeFileSync(configPath, JSON.stringify(config));
-  const server = await startDashboard({ port: 0, cwd: root, configPath, env, ...(options.attach ? { attach: options.attach } : {}) });
+  const server = await startDashboard({ port: 0, cwd: root, configPath, env, ...(options.attach ? { attach: options.attach } : {}),
+    ...(options.discoverBackend ? { discoverBackend: options.discoverBackend } : {}) });
   const api = (path: string, method = "GET", body?: unknown) => fetch(`${server.url}/api${path}`, {
     method, headers: { Authorization: `Bearer ${server.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),

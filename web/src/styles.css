@@ -3917,6 +3917,10 @@ button.review-file-row:hover {
   .agent-row .agent-row-counts {
     display: none;
   }
+  /* The model line names the CLI; the name line keeps room for the name. */
+  .agent-row .agent-row-name .backend-badge {
+    display: none;
+  }
 
   .data-row.definition-row {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -4507,6 +4511,24 @@ button.review-file-row:hover {
 }
 .request-reset {
   margin-top: 12px;
+}
+.request-label[for] {
+  display: block;
+}
+/* A backend's model names are long (`claude-sonnet-4-6-20260915`); the select keeps the popover's width and cuts the shown one. */
+.request-select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+.request-hint {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+.backend-badge {
+  flex: none;
 }
 @media (max-width: 599px) {
   .request-pill .pill-text {

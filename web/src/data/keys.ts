@@ -23,6 +23,7 @@ export const keys = {
   sessions: ({ cwd, title, limit = 50, before }: SessionsQuery) =>
     `/sessions?cwd=${enc(cwd)}&title=${enc(title)}&limit=${limit}${before ? `&before=${enc(before)}` : ""}`,
   composer: (agent: string) => `/agents/${enc(agent)}/composer`,
+  backendOptions: (agent: string) => `/agents/${enc(agent)}/backend-options`,
   components: (kind: string) => `/components/${enc(kind)}`,
   packages: () => "/packages",
   packageStages: () => "/packages/stages",

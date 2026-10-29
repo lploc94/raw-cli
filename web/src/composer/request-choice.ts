@@ -7,7 +7,7 @@ export interface ControlOption {
 export interface RequestControlMeta {
   id: string;
   label: string;
-  kind: "level" | "choice";
+  kind: "level" | "choice" | "select";
   options: ControlOption[];
   current?: string;
 }
@@ -16,10 +16,14 @@ export type RequestChoice = Record<string, string>;
 export interface RequestBody {
   effort?: string;
   serviceTier?: string;
+  /** An external backend's values for the turn (docs/dashboard-api.md). */
+  backend?: { model?: string; effort?: string; mode?: string };
 }
 
+/** A backend control's id and the `request.backend` field it fills. */
+const BACKEND_FIELDS = { backend_model: "model", backend_effort: "effort", backend_mode: "mode" } as const;
 /** The ids a turn can carry; descriptors with other ids are ignored rather than rendered as controls that could not be sent. */
-const SENDABLE = ["effort", "serviceTier"] as const;
+const SENDABLE = ["effort", "serviceTier", ...Object.keys(BACKEND_FIELDS)] as const;
 export const usableControls = (controls: readonly RequestControlMeta[]) =>
   controls.filter((control) => (SENDABLE as readonly string[]).includes(control.id) && control.options.length > 0);
 
@@ -58,16 +62,24 @@ export function requestBody(choice: RequestChoice, controls: readonly RequestCon
   const body: RequestBody = {};
   if (kept.effort !== undefined) body.effort = kept.effort;
   if (kept.serviceTier !== undefined) body.serviceTier = kept.serviceTier;
+  for (const [id, field] of Object.entries(BACKEND_FIELDS)) {
+    const value = kept[id];
+    if (value !== undefined) body.backend = { ...body.backend, [field]: value };
+  }
   return Object.keys(body).length ? body : undefined;
 }
 
-/** `Label` for default, `Label: level` for a level, plus ` · tier` for a non-default tier (also when only the tier is set). */
+/**
+ * `Label` for default, `Label: level` for a level, plus ` · tier` for a non-default tier (also when only the tier is set).
+ * A backend shows its model and, after it, the effort chosen.
+ */
 export function pillText(controls: readonly RequestControlMeta[], choice: RequestChoice): { label: string; level: string; tier: string } {
   const usable = usableControls(controls);
-  const primary = usable.find((control) => control.id === "effort") ?? usable[0];
+  const primary = usable.find((control) => control.id === "effort") ?? usable.find((control) => control.id === "backend_model") ?? usable[0];
   if (!primary) return { label: "", level: "", tier: "" };
   const kept = pruneChoice(choice, controls);
-  return { label: primary.label, level: kept[primary.id] ?? "", tier: primary.id === "effort" ? (kept.serviceTier ?? "") : "" };
+  const second = primary.id === "effort" ? "serviceTier" : primary.id === "backend_model" ? "backend_effort" : "";
+  return { label: primary.label, level: kept[primary.id] ?? "", tier: second ? (kept[second] ?? "") : "" };
 }
 
 /** One sentence for assistive tech: every control with its current value. */

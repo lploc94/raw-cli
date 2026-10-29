@@ -22,7 +22,7 @@ import type { QueuedInputView } from "../../src/sessions/view.js";
 import type { AttachmentInfo } from "../../src/dashboard/attachments.js";
 import type { Preferences } from "./preferences.js";
 import { api, ApiError, errorText, fetchBlob, upload } from "./api.js";
-import { useComposerMeta, useHome } from "./data/queries.js";
+import { useBackendOptions, useComposerMeta, useHome } from "./data/queries.js";
 import { shortenPath } from "./workspace/workspace-state.js";
 import { Skeleton, TimelineSkeleton } from "./states.js";
 import { ContextPopover } from "./composer/ContextPopover.js";
@@ -30,6 +30,7 @@ import { contextCard } from "./composer/context-card.js";
 import { DETAILS_ID } from "./panels/panel-state.js";
 import { RequestControls } from "./composer/RequestControls.js";
 import { useRequestChoice } from "./composer/useRequestChoice.js";
+import type { RequestControlMeta } from "./composer/request-choice.js";
 import { addQueuedInput, forgetSession, isTerminal, useSession } from "./session.js";
 import { PendingMessage, Timeline } from "./timeline.js";
 import { Inspector } from "./inspector.js";
@@ -45,6 +46,8 @@ import { QueuedInputs, type QueuedNotice } from "./composer/QueuedInputs.js";
 import { useAttachments, type Chip } from "./composer/useAttachments.js";
 import { fileProvider } from "./composer/files.js";
 import { slashProvider } from "./composer/commands.js";
+
+const NO_CONTROLS: RequestControlMeta[] = [];
 
 /** The app shell's controls that the chat header shows in place of the toolbar. */
 export interface ChatShell {
@@ -198,7 +201,15 @@ export function Chat({
     setAgent(name);
   };
   const { meta, metaFor } = useComposerMeta(agent);
-  const request = useRequestChoice(id, agent, meta.controls, metaFor);
+  const backend = metaFor === agent ? meta.backend : undefined;
+  const discovered = useBackendOptions(agent, !!backend);
+  // A backend session lists what its CLI offered when last asked; before its first turn, what a new conversation offers.
+  const sessionOptions = state?.session.agentName === agent ? state?.backendOptions : undefined;
+  const controls = useMemo(
+    () => (backend ? (sessionOptions ?? discovered.data?.controls ?? NO_CONTROLS) : meta.controls),
+    [backend, sessionOptions, discovered.data, meta.controls],
+  );
+  const request = useRequestChoice(id, agent, controls, backend && !sessionOptions && !discovered.data ? "" : metaFor);
   const skills = meta.skills;
   const att = useAttachments(id, meta.attachmentKinds);
   const [error, setError] = useState("");
@@ -832,6 +843,7 @@ export function Chat({
               {title_ ? <h1 title={title_}>{title_}</h1> : <h1 aria-label="Loading session"><Skeleton width={30} className="skeleton-title" /></h1>}
               <div className="metadata">
                 {agent && <span className="agent-chip" title={agent}>{agent}</span>}
+                {backend && <span className="badge backend-badge" title={`Runs ${backend.label}`}>{backend.label}</span>}
                 <span className="workspace-path" title={cwd_}>
                   {cwd_ ? shortenPath(cwd_, home) : <Skeleton width={50} className="skeleton-small" />}
                 </span>
@@ -1054,7 +1066,7 @@ export function Chat({
                 }
                 controls={
                   <RequestControls
-                    controls={meta.controls}
+                    controls={controls}
                     choice={request.choice}
                     onChange={request.update}
                   />
@@ -1078,7 +1090,9 @@ export function Chat({
                   ? {
                       note: "Images in this chat are sent to this agent as text placeholders.",
                     }
-                  : {})}
+                  : backend && !sessionOptions && discovered.data?.warning
+                    ? { note: `${backend.label} could not be asked for its models: ${discovered.data.warning}. Turns use the agent's settings.` }
+                    : {})}
                 sendMode={preferences.sendMode}
                 providers={providers}
                 {...(current && state?.ownership === "here"

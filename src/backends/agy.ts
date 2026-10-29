@@ -11,6 +11,7 @@ import { DEFAULT_MAX_OUTPUT_BYTES } from "../tools/results.js";
 import type { ExternalSession, SessionOwner, SessionStore } from "../sessions/store.js";
 import { BackendError, backendModelConfig, backendProfileDigest, type BackendOptions, type BackendProvider } from "./acp-agent.js";
 import { findExecutable } from "./adapters.js";
+import { offeredFromAgyCatalog } from "./options.js";
 import { AgyEventMapper, type AgyTurnEvent } from "./agy-events.js";
 import type { BackendSpec } from "./config.js";
 
@@ -366,7 +367,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     let args = turnArgs();
     // Recorded before sending, so a store failure ends the turn before agy has it.
     this.delivered = request.messages.length;
-    this.saveExternal();
+    this.saveExternal(turnModel);
     let outcome = await this.runProcess(launch, args, text, request, notify);
     // A run agy refused before doing anything is run again without what it refused, once per reason.
     let retriedTools = false;
@@ -473,11 +474,13 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     if (hadTurns || stored) notify(FRESH);
   }
 
-  private saveExternal(): void {
+  /** `model`: the model this turn runs, whose efforts the dashboard lists. */
+  private saveExternal(model?: string): void {
     const binding = this.config.binding?.();
     if (!binding || !this.cliSessionId) return;
     const external: ExternalSession = { kind: "agy", cliSessionId: this.cliSessionId, profileDigest: this.profileDigest, baseline: this.baseline,
-      ...(this.delivered !== undefined ? { delivered: this.delivered } : {}) };
+      ...(this.delivered !== undefined ? { delivered: this.delivered } : {}),
+      offered: offeredFromAgyCatalog(this.launch?.catalog, this.baseline, this.launch?.defaultName, model ?? this.baseline.model) };
     binding.store.writeExternal(binding.sessionId, binding.owner, external);
   }
 

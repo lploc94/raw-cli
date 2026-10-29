@@ -18,12 +18,17 @@ import { createSessionRoutes } from "./sessions.js";
 import { createManagementRoutes } from "./management.js";
 import { createPackageRoutes } from "./packages.js";
 import type { AttachmentStaging } from "./attachments.js";
+import type { BackendDiscovery } from "../backends/discovery.js";
+import type { RuntimeConfig } from "../config.js";
+
+export type BackendDiscoverer = (runtime: RuntimeConfig, cwd: string, env: NodeJS.ProcessEnv) => Promise<BackendDiscovery>;
 
 export type DashboardRoute = (request: IncomingMessage, response: ServerResponse, context: DashboardContext) => Promise<boolean>;
 export interface DashboardContext {
   instanceId: string; cwd: string; configPath: string; env: NodeJS.ProcessEnv; signal: AbortSignal;
   preferredAgent?: string; processes?: ProcessSupervisor; store?: SessionStore; operations?: SessionOperations; attachments?: AttachmentStaging; storeDiagnostic?: string;
   json: typeof json; readJson: typeof readJson;
+  discoverBackend?: BackendDiscoverer;
   onClose(cleanup: () => void | Promise<void>): void;
 }
 export interface DashboardOptions {
@@ -31,6 +36,8 @@ export interface DashboardOptions {
   assetsRoot?: string; signal?: AbortSignal;
   storeFactory?: (options: SessionStoreOptions) => SessionStore;
   attach?: AttachSessionRuntime;
+  /** Asks a backend what it offers before a session runs; `discoverBackendOptions` by default. */
+  discoverBackend?: BackendDiscoverer;
   routes?: (context: DashboardContext) => DashboardRoute[];
 }
 export interface DashboardServer {
@@ -62,7 +69,7 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
   const token = createDashboardToken(); const controller = new AbortController();
   const cleanup: Array<() => void | Promise<void>> = [];
   const context: DashboardContext = { instanceId: randomUUID(), cwd, configPath, env, signal: controller.signal,
-    ...(options.agent ? { preferredAgent: options.agent } : {}), json, readJson, onClose: (fn) => { cleanup.push(fn); } };
+    ...(options.agent ? { preferredAgent: options.agent } : {}), ...(options.discoverBackend ? { discoverBackend: options.discoverBackend } : {}), json, readJson, onClose: (fn) => { cleanup.push(fn); } };
   try {
     context.store = (options.storeFactory ?? openSessionStore)({ cwd, env });
   } catch (error) { context.store?.close(); delete context.store; context.storeDiagnostic = error instanceof Error ? error.message : String(error); }

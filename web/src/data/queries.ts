@@ -29,6 +29,8 @@ export interface ComposerMeta {
   skills: ComposerSkill[];
   controls: RequestControlMeta[];
   attachmentKinds: KindMeta[];
+  /** Set for an agent that runs an external CLI (Claude Code, Codex, agy). */
+  backend?: { kind: string; label: string };
 }
 export const emptyComposerMeta: ComposerMeta = {
   vision: false,
@@ -83,6 +85,16 @@ export function useComposerMeta(agent: string) {
       : emptyComposerMeta,
     metaFor: swr.data ? agent : "",
   };
+}
+/**
+ * What a backend agent's CLI offers before its session has asked it (`/backend-options`); asking may start the CLI, so it
+ * is not refetched on focus.
+ */
+export function useBackendOptions(agent: string, enabled: boolean) {
+  return useSWR<{ controls: RequestControlMeta[]; warning?: string }>(enabled && agent ? keys.backendOptions(agent) : null, {
+    keepPreviousData: false,
+    revalidateOnFocus: false,
+  });
 }
 /** Warm the cache ahead of navigation (hover/focus); failures are ignored. */
 export function prefetchComposerMeta(agent: string): void {
