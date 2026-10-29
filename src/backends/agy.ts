@@ -22,11 +22,12 @@ const FRESH = "This agy conversation starts here; it does not see earlier turns"
 
 /**
  * The tools a Raw agent file lists by default: the names agy 1.4.10 reports in `init.tools` that its executor also
- * resolves. agy has no wildcard (`tools: ["*"]` fails) and fails a run on any name it does not resolve, so a name a
+ * resolves, except `finish`, a subagent's way to return structured output (an agent given it prints that output, `{}`,
+ * before its reply). agy has no wildcard (`tools: ["*"]` fails) and fails a run on any name it does not resolve, so a name a
  * later agy drops is removed and the turn retried (`AgyBackendProvider`).
  */
 export const AGY_DEFAULT_TOOLS: readonly string[] = Object.freeze(["ask_custom_permission", "ask_permission", "ask_question",
-  "define_subagent", "find_by_name", "finish", "generate_image", "grep_search", "invoke_subagent", "list_dir", "list_plugin_accounts",
+  "define_subagent", "find_by_name", "generate_image", "grep_search", "invoke_subagent", "list_dir", "list_plugin_accounts",
   "manage_subagents", "manage_task", "multi_replace_file_content", "notebook_edit", "read_url_content", "replace_file_content",
   "run_command", "run_workflow", "schedule", "search_marketplace", "search_web", "send_message", "view_file", "wait", "write_to_file"]);
 

@@ -336,6 +336,10 @@ test("a tool name agy cannot resolve is dropped from the agent and the turn runs
     assert.deepEqual(turn.notices, []);
     assert.equal(usable.calls().length, 1);
   } finally { await second.close(); usable.cleanup(); }
+  // `finish` resolves too, but it is how a subagent returns structured output: a top-level agent given it answers with
+  // its output (`{}`) before the reply (live, agy 1.4.10), so the default leaves it out.
+  assert.ok(!AGY_DEFAULT_TOOLS.includes("finish"), JSON.stringify(AGY_DEFAULT_TOOLS));
+  assert.equal(AGY_DEFAULT_TOOLS.length, 25);
 });
 
 test("an agy error result ends the turn with agy's message", async () => {
