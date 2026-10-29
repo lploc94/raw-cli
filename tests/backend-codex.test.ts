@@ -9,6 +9,7 @@ import { createAcpSessionAgent } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 
 const FAKE_CODEX = join(import.meta.dirname, "fixtures", "fake-codex-app-server.mjs");
+const FAKE_ACP = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
 /** Text a prompt may hold that no quoting layer may change: quotes, backslashes, shell and cmd.exe specials, newlines, non-ASCII. */
 const TRICKY = "He said \"hi\" \\ 100% ^caret !bang `tick` $HOME %PATH% & | < >\nline two\ttab — ünïcødé 🙂\n";
 
@@ -148,17 +149,26 @@ test("each adapter start marks the runtime's prompt directory in use, so the swe
       mkdirSync(join(entry, ".."), { recursive: true });
       writeFileSync(entry, "// adapter\n");
     };
-    const launch = (await codexLaunch(runtime, root, { env, npm })({ notify: () => {} }))!;
-    const file = (JSON.parse(launch.env.CODEX_CONFIG!) as { model_instructions_file: string }).model_instructions_file;
+    const built = (await codexLaunch(runtime, root, { env, npm })({ notify: () => {} }))!;
+    const file = (JSON.parse(built.env.CODEX_CONFIG!) as { model_instructions_file: string }).model_instructions_file;
     const directory = join(file, "..");
-    const longAgo = new Date(Date.now() - 31 * 86_400_000);
-    utimesSync(directory, longAgo, longAgo);
-    launch.prepare!();
-    sweepCodexPrompts(codexPromptRoot(env), 30);
-    assert.equal(readFileSync(file, "utf8"), TRICKY);
-    rmSync(directory, { recursive: true, force: true });
-    launch.prepare!();
-    assert.equal(readFileSync(file, "utf8"), TRICKY);
-    launch.cleanup!();
-  } finally { rmSync(root, { recursive: true, force: true }); }
+    // The scripted ACP agent stands in for codex-acp, with this runtime's prompt preparation; it crashes on "crash".
+    const launch = { command: process.execPath, args: [FAKE_ACP], env: { ...process.env, FAKE_ACP_STATE: join(root, "fake") }, prepare: built.prepare! };
+    const agent = createAcpSessionAgent({ runtime, tools: undefined as never, cwd: root, host: {} }, launch);
+    try {
+      assert.equal((await agent.run("crash", () => {})).status, "error");
+      // Between the adapter's crash and its restart a sweep finds the directory old, or has removed it.
+      const longAgo = new Date(Date.now() - 31 * 86_400_000);
+      utimesSync(directory, longAgo, longAgo);
+      sweepCodexPrompts(codexPromptRoot(env), 30);
+      assert.equal(existsSync(file), false);
+      assert.equal((await agent.run("hello", () => {})).status, "completed");
+      assert.equal(readFileSync(file, "utf8"), TRICKY);
+      utimesSync(directory, longAgo, longAgo);
+      assert.equal((await agent.run("crash", () => {})).status, "error");
+      assert.equal((await agent.run("hello again", () => {})).status, "completed");
+      sweepCodexPrompts(codexPromptRoot(env), 30);
+      assert.equal(readFileSync(file, "utf8"), TRICKY);
+    } finally { await agent.close(); built.cleanup!(); }
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }
 });

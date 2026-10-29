@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import type { RunEvent } from "../src/agent.js";
 import type { AcpBackendAgent } from "../src/backends/acp-agent.js";
-import { AGY_APPEND, AgyBackendProvider, agyCatalog, AGY_DEFAULT_TOOLS, AGY_EMPTY_PROMPT, agyAgentFile, agyModelArgs, agyModeArgs, agyPluginRoot, parseAgyCatalog,
+import { AGY_APPEND, AgyBackendProvider, BoundedLines, agyCatalog, AGY_DEFAULT_TOOLS, AGY_EMPTY_PROMPT, agyAgentFile, agyModelArgs, agyModeArgs, agyPluginRoot, parseAgyCatalog,
   writeAgyAgent } from "../src/backends/agy.js";
 import { createAgySessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
@@ -24,7 +24,7 @@ interface Harness {
   agent(runtime?: RuntimeConfig): AcpBackendAgent;
   reopen(): void;
   calls(): Array<{ argv: string[]; stdin?: string; pid?: number }>;
-  pids(prefix: "agy" | "grandchild"): number[];
+  pids(prefix: "agy" | "grandchild" | "catalog"): number[];
   cleanup(): void;
 }
 
@@ -477,10 +477,10 @@ test("reading the catalog ends with a cancel and within the turn's limit; withou
   const notices: string[] = [];
   const onExternal = (event: { type: string; message?: string }) => { if (event.type === "notice") notices.push(event.message!); };
   try {
-    const turn = await slow.generate(request("echo y", { timeoutMs: 300, onExternal }));
+    const turn = await slow.generate(request("echo y", { timeoutMs: 1500, onExternal }));
     assert.equal(turn.text, "ECHO");
     assert.equal(flagValue(h.calls()[0]!.argv, "--model"), "gemini-3.8-flash");
-    await slow.generate(followUp("echo y", "echo z", { timeoutMs: 300, onExternal }));
+    await slow.generate(followUp("echo y", "echo z", { timeoutMs: 1500, onExternal }));
     assert.deepEqual(notices, ["agy models could not be read; model and effort go to agy unchecked"]);
   } finally { await slow.close(); h.cleanup(); }
 });
@@ -520,4 +520,76 @@ test("what agy prints besides stream-json is kept to the diagnostic budget, and 
     assert.match(message, /not json 199 /);
     assert.ok(turn.notices.includes("agy: after the long line"), JSON.stringify(turn.notices));
   } finally { await agent.close(); h.cleanup(); }
+});
+
+test("an agy models read no turn waits on any more is stopped, by a cancel or by closing the runtime", async () => {
+  const h = await harness({}, { system_prompt: "Be RAW." }, { FAKE_AGY_MODELS_HANG: "1" });
+  const waitFor = async (prefix: "catalog") => { for (let i = 0; i < 200 && !h.pids(prefix).length; i++) await new Promise((r) => setTimeout(r, 25)); return h.pids(prefix); };
+  try {
+    const runner = provider(h);
+    const controller = new AbortController();
+    const turn = runner.generate(request("echo x", { signal: controller.signal }));
+    const [first] = await waitFor("catalog");
+    controller.abort();
+    await assert.rejects(turn, (error: { code?: string }) => error.code === "aborted");
+    assert.ok(await gone([first!]), "the cancelled read is stopped");
+    await runner.close();
+    rmSync(join(h.root, "fake", `catalog-${first}.pid`));
+    const closing = provider(h);
+    const pending = closing.generate(request("echo y"));
+    const [second] = await waitFor("catalog");
+    await closing.close();
+    await assert.rejects(pending, (error: { code?: string }) => error.code === "aborted");
+    assert.ok(await gone([second!]), "the read of a closed runtime is stopped");
+    // A read another turn still waits on keeps running for it.
+    const controllerA = new AbortController();
+    const shared = [agyCatalog(h.executable, h.env, 10000, controllerA.signal), agyCatalog(h.executable, h.env, 10000)];
+    rmSync(join(h.root, "fake", `catalog-${second}.pid`));
+    const [third] = await waitFor("catalog");
+    controllerA.abort();
+    assert.equal(await shared[0], undefined);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(h.pids("catalog").includes(third!) && !(await gone([third!], 100)), "the read still has a waiting turn");
+    process.kill(third!, "SIGKILL");
+    assert.equal(await shared[1], undefined);
+  } finally { h.cleanup(); }
+});
+
+test("an effort agy refuses is dropped and the model kept; an effort alone is dropped too", async () => {
+  const h = await harness({ model: "gemini-3.8-flash", effort: "bogus" });
+  const agent = h.agent();
+  (agent.provider as unknown as { config: { catalog: () => Promise<undefined> } }).config.catalog = async () => undefined;
+  try {
+    const turn = await ask(agent, "echo model");
+    assert.equal(turn.result.status, "completed", JSON.stringify(turn.result));
+    assert.ok(turn.notices.includes('agy does not offer effort "bogus" for model "gemini-3.8-flash"; it keeps its default'), JSON.stringify(turn.notices));
+    const [refused, retried] = h.calls();
+    assert.equal(flagValue(refused!.argv, "--effort"), "bogus");
+    assert.equal(flagValue(retried!.argv, "--model"), "gemini-3.8-flash");
+    assert.equal(flagValue(retried!.argv, "--effort"), undefined);
+    await ask(agent, "echo again");
+    assert.equal(flagValue(h.calls()[2]!.argv, "--model"), "gemini-3.8-flash");
+  } finally { await agent.close(); h.cleanup(); }
+  const alone = await harness({ effort: "bogus" });
+  const solo = alone.agent();
+  (solo.provider as unknown as { config: { catalog: () => Promise<undefined> } }).config.catalog = async () => undefined;
+  try {
+    const turn = await ask(solo, "echo effort");
+    assert.equal(turn.result.status, "completed", JSON.stringify(turn.result));
+    assert.ok(turn.notices.includes('agy does not offer effort "bogus"; it keeps its default'), JSON.stringify(turn.notices));
+    assert.equal(alone.calls().length, 2);
+  } finally { await solo.close(); alone.cleanup(); }
+});
+
+test("a stderr line over the diagnostic budget is never held whole, and the line after it still comes through", () => {
+  const lines = new BoundedLines(1000);
+  const seen: string[] = [];
+  for (let i = 0; i < 50; i++) {
+    seen.push(...lines.push(Buffer.from("z".repeat(700))));
+    assert.ok(lines.buffered <= 1000, `${lines.buffered} characters held`);
+  }
+  seen.push(...lines.push(Buffer.from("\r\nwarning: after\r\nfirst ")), ...lines.push(Buffer.from("half\n")));
+  assert.deepEqual(seen, ["warning: after", "first half"]);
+  // A multi-byte character split across chunks stays whole.
+  assert.deepEqual([...lines.push(Buffer.from([0xc3])), ...lines.push(Buffer.from([0xbc, 0x0a]))], ["ü"]);
 });

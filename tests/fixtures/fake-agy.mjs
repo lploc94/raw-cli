@@ -19,6 +19,12 @@ const out = (line) => process.stdout.write(`${typeof line === "string" ? line : 
 if (argv[0] === "models") {
   log({ argv });
   // FAKE_AGY_MODELS_FAIL: this many reads fail first (a transient failure).
+  // FAKE_AGY_MODELS_HANG: the read never ends (its pid is in catalog-<pid>.pid).
+  if (process.env.FAKE_AGY_MODELS_HANG) { writeFileSync(join(state, `catalog-${process.pid}.pid`), String(process.pid)); setInterval(() => {}, 1000); }
+  else readModels();
+}
+
+function readModels() {
   const failures = Number(process.env.FAKE_AGY_MODELS_FAIL ?? 0);
   const reads = readdirSync(state).filter((name) => name.startsWith("models-read-")).length;
   writeFileSync(join(state, `models-read-${reads}`), "");
@@ -29,9 +35,11 @@ if (argv[0] === "models") {
 }
 
 let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { input += chunk; });
-process.stdin.on("end", () => { void turn(); });
+if (argv[0] !== "models") {
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => { void turn(); });
+}
 
 /** The tool names agy 1.4.10 lists but cannot resolve: exactly those its recorded failure names. */
 const unresolved = () => [...readFileSync(join(recordings, "unknown-tools.jsonl"), "utf8").matchAll(/^unknown component: tool "([^"]+)"|^error: .*?tool "([^"]+)"/gm)]
@@ -78,6 +86,16 @@ async function turn() {
   const model = flag("--model");
   const known = readFileSync(join(recordings, "models.txt"), "utf8").split("\n").map((line) => line.split("\t")[0]).filter(Boolean)
     .flatMap((slug) => [slug, slug.replace(/-(minimal|low|medium|high|xhigh|max)$/, "")]);
+  // As agy 1.4.10 answers an effort the model does not offer (the default model offers low to max).
+  const effort = flag("--effort");
+  const efforts = model ? readFileSync(join(recordings, "models.txt"), "utf8").split("\n").map((line) => line.split("\t")[0])
+    .filter((slug) => slug.startsWith(`${model}-`)).map((slug) => slug.slice(model.length + 1)) : ["low", "medium", "high", "xhigh", "max"];
+  if (effort && (!model || known.includes(model)) && !efforts.includes(effort)) {
+    const error = `invalid model selection (--model "${model ?? ""}" --effort "${effort}"): invalid --effort "${effort}" (valid: ${efforts.join(", ")})`;
+    process.stderr.write(`error: ${error}\n`);
+    out({ event: "result", result: { conversation_id: "", status: "ERROR", response: "", error } });
+    return;
+  }
   if (model && !known.includes(model)) {
     const error = `invalid model selection (--model "${model}" --effort "${flag("--effort") ?? ""}"): model ${model} is not recognized as a known model or custom model in settings`;
     process.stderr.write(`error: ${error}\n`);
