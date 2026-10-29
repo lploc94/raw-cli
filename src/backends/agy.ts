@@ -85,13 +85,20 @@ function readModels(executable: string, env: NodeJS.ProcessEnv, timeoutMs: numbe
   const read: CatalogRead = { waiting: 0, done: false, stop: () => stopped(), models: new Promise<AgyModel[] | undefined>((resolve) => {
     try { peer = spawnLinePeer({ command: executable, args: ["models"], env, onLine: (line) => lines.push(line), maxFrameBytes: MAX_FRAME_BYTES }); }
     catch { resolve(undefined); return; }
+    // The first outcome wins, and the read settles once the child and what it started in its group are gone.
+    let settling = false;
+    const settle = (models: AgyModel[] | undefined) => {
+      if (settling) return;
+      settling = true;
+      clearTimeout(timer);
+      void peer!.stop(0).catch(() => {}).then(() => resolve(models));
+    };
     const timer = setTimeout(() => stopped(), timeoutMs);
-    // Settles once the child is gone, so a reader that stopped it can wait for that.
-    stopped = () => { clearTimeout(timer); void peer!.stop(0).catch(() => {}).then(() => resolve(undefined)); };
+    stopped = () => settle(undefined);
     peer.child.stdin.end();
-    peer.spawnFailure.catch(() => { clearTimeout(timer); resolve(undefined); });
+    peer.spawnFailure.catch(() => settle(undefined));
     // `close` comes once stdout has ended, so every line was read.
-    peer.child.once("close", (code) => { clearTimeout(timer); resolve(code === 0 ? parseAgyCatalog(lines.join("\n")) : undefined); });
+    peer.child.once("close", (code) => settle(code === 0 ? parseAgyCatalog(lines.join("\n")) : undefined));
   }) };
   stopped ??= () => {};
   return read;
@@ -359,6 +366,8 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     const turnArgs = (): string[] => {
       const chosen = agyModelArgs({ ...(turnModel ? { model: turnModel } : {}), ...(turnEffort ? { effort: turnEffort } : {}) },
         launch.catalog, launch.defaultName);
+      // The model the run uses after the catalog check (undefined: agy's default); the session's lists follow it.
+      this.turnModel = { ...(chosen.model ? { model: chosen.model } : {}) };
       // The baseline is checked once a catalog is there; an override every turn.
       const checking = launch.catalog && !this.checked && !override?.model && !override?.effort;
       if (override?.model || override?.effort || checking) for (const notice of chosen.notices) notify(notice);
@@ -375,7 +384,6 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     let args = turnArgs();
     // Recorded before sending, so a store failure ends the turn before agy has it.
     this.delivered = request.messages.length;
-    this.turnModel = { ...(turnModel ? { model: turnModel } : {}) };
     this.saveExternal();
     let outcome = await this.runProcess(launch, args, text, request, notify);
     // A run agy refused before doing anything is run again without what it refused, once per reason.
@@ -403,9 +411,9 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
         if (!override?.model) { const { model: _model, effort: _effort, ...rest } = this.baseline; this.baseline = rest; }
         turnModel = undefined;
         turnEffort = undefined;
-        this.turnModel = {};
       } else break;
       args = turnArgs();
+      this.saveExternal();
       outcome = await this.runProcess(launch, args, text, request, notify);
     }
     if (!outcome.ok) throw new BackendError("backend_error", `agy: ${outcome.error}`);

@@ -511,6 +511,8 @@ export class AcpBackendProvider implements BackendProvider {
       const usage = answer.usage ? { ...answer.usage, ...(models.length ? { models } : {}) } : undefined;
       return { text: turn.text, toolCalls: [], finishReason: answer.stopReason, ...(usage ? { usage } : {}) };
     } catch (error) {
+      // Saved before the adapter stops: the conversation stays the session's, and the next turn loads it with these.
+      this.saveOffered();
       const cancelled = error instanceof BackendError && error.code === "aborted";
       if (cancelled || (error instanceof BackendError && error.code === "backend_unresponsive")) {
         // The CLI is asked to stop first so it can save its conversation, then the whole tree goes (Invariant 7);

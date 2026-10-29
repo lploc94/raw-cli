@@ -133,7 +133,10 @@ function spawnPeer(options: AcpPeerOptions, consume: (guard: Transform, child: C
     if (!groupAlive()) return;
     signal("SIGTERM");
     for (let waited = 0; waited < GROUP_GRACE_MS && groupAlive(); waited += 50) await new Promise((resolve) => setTimeout(resolve, 50));
-    if (groupAlive()) signal("SIGKILL");
+    if (!groupAlive()) return;
+    signal("SIGKILL");
+    // SIGKILL is delivered asynchronously; the group is cleared once it is gone, so a caller can rely on that.
+    for (let waited = 0; waited < GROUP_GRACE_MS && groupAlive(); waited += 50) await new Promise((resolve) => setTimeout(resolve, 50));
   })();
   child.once("exit", () => { void clearGroup(); });
   const peer: LinePeer = {

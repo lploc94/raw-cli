@@ -605,3 +605,17 @@ test("the session's lists hold the efforts of the model a turn ran, also on the 
     assert.equal(efforts(), undefined);
   } finally { await agent.close(); h.cleanup(); }
 });
+
+test("an unlisted model a turn falls back from gives the session the lists of agy's default", async () => {
+  const h = await harness({ model: "claude-sonnet-4-6" });
+  mkdirSync(join(h.home, ".gemini", "antigravity-cli"), { recursive: true });
+  writeFileSync(join(h.home, ".gemini", "antigravity-cli", "settings.json"), JSON.stringify({ model: "Gemini 3.8 Flash (High)" }));
+  const agent = h.agent();
+  try {
+    agent.setTurnOverride({ model: "gemini-9" });
+    assert.equal((await agent.run("echo one")).status, "completed");
+    assert.ok(!h.calls().at(-1)!.argv.includes("--model"));
+    // Before the fix the lists held the unlisted model's (none), not those of the default the turn ran.
+    assert.deepEqual(h.store.externalOffered(h.session.id)?.effort?.options.map((option) => option.value), ["high", "medium", "low"]);
+  } finally { await agent.close(); h.cleanup(); }
+});

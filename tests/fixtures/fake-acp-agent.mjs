@@ -127,10 +127,11 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
       content: [{ type: "content", content: { type: "text", text: "late result" } }] });
     return { stopReason: "cancelled" };
   }
-  if (newest === "switch-model") {
+  if (newest === "switch-model" || newest === "switch-then-fail") {
     // The CLI switches its model while it works (its own decision, or a command in the prompt).
     state.model = "big"; saveSession(id, state);
     await update(id, { sessionUpdate: "config_option_update", configOptions: configOptions(state) });
+    if (newest === "switch-then-fail") throw new Error("failed after the switch");
   }
   if (newest === "change-later") {
     // The CLI changes an option between turns (its own command, or the user in another client).

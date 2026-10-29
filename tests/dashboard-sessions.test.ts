@@ -3,7 +3,7 @@ import test from "node:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { dashboardFixture, eventStream } from "./fixtures/dashboard.js";
 import { makePng } from "./fixtures/images.js";
 import { startDashboard } from "../src/dashboard/server.js";
@@ -612,6 +612,35 @@ test("closing the dashboard stops a backend discovery, the adapter install inclu
   } finally { await f.close(); npm.remove(); }
 });
 
+test("closing the dashboard waits until an agy models read and what it started have exited", { skip: process.platform === "win32" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "raw-stalled-agy-"));
+  const pids = join(dir, "pids");
+  // An `agy models` that never answers, with a child that ignores SIGTERM; the child writes both pids once it does.
+  const worker = `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pids)}, process.env.LEADER + " " + process.pid + "\\n"); setInterval(() => {}, 1000)`;
+  writeFileSync(join(dir, "agy"), `#!${process.execPath}
+require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(worker)}], { stdio: "ignore", env: { ...process.env, LEADER: String(process.pid) } });
+setInterval(() => {}, 1000);
+`);
+  chmodSync(join(dir, "agy"), 0o755);
+  // A killed process its new parent has not reaped yet is a zombie: it answers signal 0 but runs nothing.
+  const alive = (pid: number) => { try { process.kill(pid, 0); } catch { return false; }
+    return !execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z"); };
+  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "agy", executable: join(dir, "agy") }, tools: { use: [] } } } });
+  try {
+    const asking = f.api("/agents/ext/backend-options").catch(() => undefined);
+    let started: number[] = [];
+    for (let waited = 0; waited < 10_000 && !started.length; waited += 25) {
+      if (existsSync(pids) && readFileSync(pids, "utf8").endsWith("\n")) started = readFileSync(pids, "utf8").trim().split(" ").map(Number);
+      else await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(started.length, 2);
+    await f.server.close();
+    // Before the fix close returned once agy itself had exited, with its child still running.
+    assert.deepEqual(started.filter(alive), []);
+    await asking;
+  } finally { await f.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a backend discovery runs within the agent's request_timeout_ms, the adapter install included, and says so", { skip: process.platform === "win32" }, async () => {
   const npm = stalledInstall();
   const f = await dashboardFixture({ extraAgents: { ext: npm.agent({ request_timeout_ms: 1000 }) }, env: npm.env });
@@ -678,15 +707,17 @@ test("a backend agent's startup warnings show in the chat once per session, not 
   } finally { await f.close(); }
 });
 
-test("the session's lists follow a model the CLI switched to during the turn", async () => {
+test("the session's lists follow a model the CLI switched to during the turn, also when the turn then fails", async () => {
   const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
     attach: scriptedBackend });
   try {
-    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
-    const sent = await f.api(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "switch", kind: "turn", agent: "ext", input: "switch-model" });
-    assert.equal((await f.wait((await sent.json() as SessionOperation).id)).state, "completed");
-    const snapshot = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
-    assert.deepEqual(snapshot.backendOptions?.map((control) => [control.id, control.options.map((option) => option.value)]), [
-      ["backend_model", ["small", "big", "mid"]], ["backend_effort", ["low", "high"]], ["backend_mode", ["ask", "auto"]]]);
+    for (const [input, state] of [["switch-model", "completed"], ["switch-then-fail", "error"]]) {
+      const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
+      const sent = await f.api(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "switch", kind: "turn", agent: "ext", input });
+      assert.equal((await f.wait((await sent.json() as SessionOperation).id)).state, state, input);
+      const snapshot = await f.json<SessionSnapshot>(`/sessions/${session.id}`);
+      assert.deepEqual(snapshot.backendOptions?.map((control) => [control.id, control.options.map((option) => option.value)]), [
+        ["backend_model", ["small", "big", "mid"]], ["backend_effort", ["low", "high"]], ["backend_mode", ["ask", "auto"]]], input);
+    }
   } finally { await f.close(); }
 });
