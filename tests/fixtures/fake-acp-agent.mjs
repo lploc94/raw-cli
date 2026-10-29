@@ -40,7 +40,7 @@ const text = (sessionId, value) => update(sessionId, { sessionUpdate: "agent_mes
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 app.onRequest("initialize", async () => (await delay(Number(process.env.FAKE_ACP_INIT_DELAY ?? 0)), { protocolVersion: 1,
-  agentCapabilities: { loadSession: process.env.FAKE_ACP_LOAD !== "0", promptCapabilities: { image: true } } }));
+  agentCapabilities: { loadSession: process.env.FAKE_ACP_LOAD !== "0", promptCapabilities: { image: process.env.FAKE_ACP_IMAGES !== "0" } } }));
 app.onRequest("session/new", ({ params }) => {
   const id = `fake-${process.pid}-${sessions.size + 1}`;
   const state = { model: process.env.FAKE_ACP_MODEL ?? "small", effort: undefined, mode: "ask", nonce: undefined, meta: params._meta ?? null };
@@ -68,8 +68,9 @@ app.onRequest("session/set_config_option", ({ params }) => {
 });
 app.onNotification("session/cancel", ({ params }) => { log({ method: "session/cancel" }); cancels.get(params.sessionId)?.(); });
 
-function grandchild() {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+function grandchild(deaf = false) {
+  // A deaf grandchild ignores SIGTERM, as a CLI's long tool command may.
+  const child = spawn(process.execPath, ["-e", `${deaf ? "process.on('SIGTERM', () => {}); " : ""}setInterval(() => {}, 1000)`], { stdio: "ignore" });
   writeFileSync(join(stateDir, `grandchild-${child.pid}.pid`), String(child.pid));
 }
 
@@ -81,7 +82,7 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
   log({ method: "session/prompt", input, images: params.prompt.filter((block) => block.type === "image").length });
   const cancelled = new Promise((resolve) => cancels.set(id, resolve));
   const usage = { inputTokens: 10, outputTokens: 5, cachedReadTokens: 100, cachedWriteTokens: 20, totalTokens: 135 };
-  if (input.includes("grandchild")) grandchild();
+  if (input.includes("grandchild")) grandchild(input.includes("deaf"));
   if (input.includes("crash")) { process.stderr.write("fake adapter: boom\n"); await delay(50); process.exit(3); }
   // Only the newest message blocks, so input that is wrongly sent again fails the test instead of hanging it.
   const newest = input.split("\n\n").at(-1);
@@ -91,6 +92,28 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     return { stopReason: "cancelled" };
   }
   if (input.includes("huge")) { await text(id, "x".repeat(17 * 1024 * 1024)); return { stopReason: "end_turn" }; }
+  if (newest === "late-tool") {
+    // A tool call that the CLI completes only after it was asked to cancel.
+    await update(id, { sessionUpdate: "tool_call", toolCallId: "late-1", name: "Bash", title: "sleep 9", kind: "execute", status: "in_progress",
+      rawInput: { command: "sleep 9" } });
+    await cancelled;
+    await delay(200);
+    await update(id, { sessionUpdate: "tool_call_update", toolCallId: "late-1", status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "late result" } }] });
+    return { stopReason: "cancelled" };
+  }
+  if (newest === "change-later") {
+    // The CLI changes an option between turns (its own command, or the user in another client).
+    setTimeout(() => { state.mode = "auto"; saveSession(id, state);
+      void update(id, { sessionUpdate: "config_option_update", configOptions: configOptions(state) }); }, 100);
+  }
+  if (newest === "early-content") {
+    await update(id, { sessionUpdate: "tool_call", toolCallId: "read-1", name: "Read", title: "Read a.txt", kind: "read", status: "in_progress", rawInput: { path: "a.txt" } });
+    await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-1", content: [{ type: "content", content: { type: "text", text: "file text" } }] });
+    await update(id, { sessionUpdate: "tool_call_update", toolCallId: "read-1", status: "completed" });
+    await text(id, "read");
+    return { stopReason: "end_turn", usage };
+  }
   const pause = /pause (\d+)/.exec(input);
   if (pause) { await delay(Number(pause[1])); await text(id, "paused"); return { stopReason: "end_turn", usage }; }
   const remember = /remember (\S+)/.exec(input);

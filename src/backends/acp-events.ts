@@ -32,6 +32,8 @@ interface OpenCall {
   /** Command output a CLI streams in `_meta` instead of content (codex-acp without a client terminal). */
   output: string;
   exitCode?: number | null;
+  /** The latest `content` an update set; ACP replaces it with each update that carries it. */
+  content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]>;
 }
 
 const TITLE_CHARS = 120;
@@ -91,11 +93,12 @@ export class AcpUpdateMapper {
     if (!call) {
       const title = update.title ?? "Tool";
       call = { name: update.name ?? title, title, kind: KINDS[update.kind ?? ""] ?? "other", arguments: {}, started: false,
-        startedAt: performance.now(), output: "" };
+        startedAt: performance.now(), output: "", content: [] };
       this.calls.set(id, call);
     }
     if (update.title) call.title = update.title;
     if (update.kind) call.kind = KINDS[update.kind] ?? "other";
+    if (update.content) call.content = update.content;
     const input = record(update.rawInput);
     if (Object.keys(input).length) call.arguments = input;
     const meta = record(update._meta);
@@ -112,7 +115,7 @@ export class AcpUpdateMapper {
     }
     if (terminal) {
       this.calls.delete(id);
-      events.push(this.result(id, call, this.toolResult(call, update.status === "failed", update.content ?? [], update.rawOutput)));
+      events.push(this.result(id, call, this.toolResult(call, update.status === "failed", call.content, update.rawOutput)));
     }
     return events;
   }

@@ -4,8 +4,8 @@ import { client, PROTOCOL_VERSION, type AnyMessage, type ClientConnection, type 
 import type { AgentSession, AgentState, RunEvent, RunResult } from "../agent.js";
 import type { CompactResult } from "../compact.js";
 import type { UsageSummary } from "../llm/cache.js";
-import type { ExternalTurnEvent, ModelMessage, ProviderAdapter, ProviderRequest, ProviderTurn, ResolvedModelConfig,
-  UserInput } from "../llm/types.js";
+import { imagePlaceholderText, type ExternalTurnEvent, type ModelMessage, type ProviderAdapter, type ProviderRequest, type ProviderTurn,
+  type ResolvedModelConfig, type UserInput } from "../llm/types.js";
 import { MAX_FRAME_BYTES } from "../acp/transport.js";
 import { spawnAcpPeer, type AcpPeer } from "../acp/peer.js";
 import type { ExternalSession, SessionOwner, SessionStore } from "../sessions/store.js";
@@ -49,7 +49,8 @@ export function backendProfileDigest(spec: BackendSpec, systemPrompt: string | u
 
 /** The model config Raw's records keep for a backend session: no provider Raw calls, only who runs it. */
 export function backendModelConfig(agentName: string, spec: BackendSpec): ResolvedModelConfig {
-  return { agentName, provider: `backend:${spec.kind}`, method: "acp", model: spec.model ?? "default" };
+  // Images reach the runner, which sends them when the CLI accepts them (`promptCapabilities.image`).
+  return { agentName, provider: `backend:${spec.kind}`, method: "acp", model: spec.model ?? "default", vision: true };
 }
 
 function selectValues(option: SessionConfigOption): string[] {
@@ -57,10 +58,10 @@ function selectValues(option: SessionConfigOption): string[] {
   return option.options.flatMap((item) => "group" in item ? item.options.map((choice) => choice.value) : [item.value]);
 }
 
-function promptBlocks(input: UserInput): ContentBlock[] {
+function promptBlocks(input: UserInput, images: boolean): ContentBlock[] {
   if (typeof input === "string") return [{ type: "text", text: input }];
   return input.map((block): ContentBlock => block.type === "text" ? { type: "text", text: block.text }
-    : block.type === "image" ? { type: "image", data: block.data, mimeType: block.mimeType }
+    : block.type === "image" ? images ? { type: "image", data: block.data, mimeType: block.mimeType } : { type: "text", text: imagePlaceholderText(block) }
     : { type: "resource_link", uri: block.uri, name: block.name,
       ...(block.title != null ? { title: block.title } : {}), ...(block.description != null ? { description: block.description } : {}),
       ...(block.mimeType != null ? { mimeType: block.mimeType } : {}), ...(block.size != null ? { size: block.size } : {}) });
@@ -93,7 +94,7 @@ interface ActiveTurn {
   resume(): void;
 }
 
-interface Live { peer: AcpPeer; connection: ClientConnection; died: Promise<never>; loadSession: boolean; ready: Promise<void> }
+interface Live { peer: AcpPeer; connection: ClientConnection; died: Promise<never>; loadSession: boolean; images: boolean; ready: Promise<void> }
 
 /**
  * Runs one external ACP agent process (and through it the user's CLI) for one session runtime. Raw's `AgentSession`
@@ -169,7 +170,11 @@ export class AcpBackendProvider implements ProviderAdapter {
     const fresh = request.messages.slice(Math.max(lastAnswer + 1, delivered))
       .filter((message): message is Extract<ModelMessage, { role: "user" }> => message.role === "user");
     if (!fresh.length) throw new BackendError("backend_error", "there is no new message to send");
-    const prompt = fresh.flatMap((message, index) => [...(index ? [{ type: "text", text: "\n\n" } as ContentBlock] : []), ...promptBlocks(message.content)]);
+    const images = this.live!.images;
+    if (!images && fresh.some((message) => typeof message.content !== "string" && message.content.some((block) => block.type === "image"))) {
+      notify(`${this.label} does not accept images; each is sent as a short description`);
+    }
+    const prompt = fresh.flatMap((message, index) => [...(index ? [{ type: "text", text: "\n\n" } as ContentBlock] : []), ...promptBlocks(message.content, images)]);
     return this.prompt(this.live!, prompt, request);
   }
 
@@ -227,10 +232,13 @@ export class AcpBackendProvider implements ProviderAdapter {
       peer.frameFailure.catch(() => reject(new BackendError("backend_frame_too_large",
         `${this.label} sent a message longer than ${MAX_FRAME_BYTES} bytes`)));
     });
-    const live: Live = { peer, connection, died, loadSession: false, ready: Promise.resolve() };
+    const live: Live = { peer, connection, died, loadSession: false, images: false, ready: Promise.resolve() };
     died.catch(() => { if (this.live === live) { this.live = undefined; this.cliSessionId = undefined; } });
     live.ready = connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
-      .then((initialize) => { live.loadSession = initialize.agentCapabilities?.loadSession === true; });
+      .then((initialize) => {
+        live.loadSession = initialize.agentCapabilities?.loadSession === true;
+        live.images = initialize.agentCapabilities?.promptCapabilities?.image === true;
+      });
     live.ready.catch(() => {});
     this.live = live;
     return live;
@@ -325,14 +333,21 @@ export class AcpBackendProvider implements ProviderAdapter {
     const arm = () => {
       clearTimeout(timer);
       if (paused) return;
-      timer = setTimeout(() => rejectIdle(new BackendError("backend_unresponsive",
-        `${this.label} sent nothing for ${request.timeoutMs} ms`)), request.timeoutMs);
+      timer = setTimeout(() => { detach("backend_error", `${this.label} sent nothing for ${request.timeoutMs} ms`);
+        rejectIdle(new BackendError("backend_unresponsive", `${this.label} sent nothing for ${request.timeoutMs} ms`)); }, request.timeoutMs);
+    };
+    // A cancelled or silent turn ends now: its open calls get their result before the loop records the run's end, and
+    // whatever the CLI sends while it is being stopped is not part of the turn.
+    const detach = (code: string, message: string) => {
+      if (this.turn !== turn) return;
+      for (const event of turn.mapper.closeOpen(code, message)) this.dispatch(turn, event);
+      this.turn = undefined;
     };
     const turn: ActiveTurn = { request, mapper: new AcpUpdateMapper(), text: "", touch: arm,
       pause: () => { paused++; clearTimeout(timer); }, resume: () => { paused = Math.max(0, paused - 1); arm(); } };
     let onAbort: (() => void) | undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
-      onAbort = () => reject(new BackendError("aborted", "turn cancelled"));
+      onAbort = () => { detach("cancelled", "cancelled"); reject(new BackendError("aborted", "turn cancelled")); };
       if (request.signal?.aborted) onAbort();
       request.signal?.addEventListener("abort", onAbort, { once: true });
     });
@@ -355,21 +370,27 @@ export class AcpBackendProvider implements ProviderAdapter {
           new Promise<void>((resolve) => { grace = setTimeout(resolve, CANCEL_GRACE_MS); })]);
         clearTimeout(grace);
       }
+      detach("backend_error", (error as Error).message);
       await this.stopPeer(live);
-      for (const event of turn.mapper.closeOpen(cancelled ? "cancelled" : "backend_error",
-        cancelled ? "cancelled" : (error as Error).message)) this.dispatch(turn, event);
       throw error;
     } finally {
       clearTimeout(timer);
       if (onAbort) request.signal?.removeEventListener("abort", onAbort);
-      this.turn = undefined;
+      if (this.turn === turn) this.turn = undefined;
     }
   }
 
   private update(notification: SessionNotification): void {
     const turn = this.turn;
-    // Outside a turn (a `session/load` replay, a late update) nothing is recorded: Raw already has that history.
-    if (!turn || notification.sessionId !== this.cliSessionId) return;
+    if (notification.sessionId !== this.cliSessionId) return;
+    if (!turn) {
+      // Outside a turn (a `session/load` replay, a late update) nothing is recorded: Raw already has that history.
+      // Session state still changes: the options and the context the CLI reports.
+      const { update } = notification;
+      if (update.sessionUpdate === "config_option_update") this.options = update.configOptions;
+      else if (update.sessionUpdate === "usage_update") this.context = { used: update.used, size: update.size };
+      return;
+    }
     turn.touch();
     for (const event of turn.mapper.map(notification.update)) this.dispatch(turn, event);
   }

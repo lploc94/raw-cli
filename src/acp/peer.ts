@@ -23,6 +23,9 @@ export interface AcpPeer {
   stop(graceMs: number): Promise<void>;
 }
 
+/** How long the rest of a stopped child's group may take to exit after SIGTERM. */
+const GROUP_GRACE_MS = 1000;
+
 export interface AcpPeerOptions { command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv; stderrBytes?: number;
   maxFrameBytes?: number }
 
@@ -87,16 +90,34 @@ export function spawnAcpPeer(options: AcpPeerOptions): AcpPeer {
     const timer = setTimeout(() => { child.off("exit", onExit); resolve(exited()); }, timeoutMs);
     child.once("exit", onExit);
   });
+  const groupAlive = () => {
+    if (!posix || !child.pid) return false;
+    try { process.kill(-child.pid, 0); return true; }
+    catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+  };
+  // What the child started outlives it in its group: once the child is gone (stopped, or crashed between turns),
+  // the rest of the group gets SIGTERM and, after a second, SIGKILL.
+  let cleared: Promise<void> | undefined;
+  const clearGroup = () => cleared ??= (async () => {
+    if (!groupAlive()) return;
+    signal("SIGTERM");
+    for (let waited = 0; waited < GROUP_GRACE_MS && groupAlive(); waited += 50) await new Promise((resolve) => setTimeout(resolve, 50));
+    if (groupAlive()) signal("SIGKILL");
+  })();
+  child.once("exit", () => { void clearGroup(); });
   return {
     child, stream, jobbed: prepared.jobbed, spawnFailure, frameFailure, exited, signal, waitForExit,
     stderrTail: () => `${dropped ? "[stderr truncated]\n" : ""}${stderr.toString("utf8")}`,
     async stop(graceMs) {
       if (!child.stdin.destroyed) child.stdin.end();
-      if (graceMs > 0 && await waitForExit(graceMs)) { signal("SIGTERM"); return; }
-      signal("SIGTERM");
-      if (await waitForExit(1000)) { signal("SIGKILL"); return; }
-      signal("SIGKILL");
-      if (!(await waitForExit(1000))) throw new Error(`process ${child.pid} did not exit after SIGKILL`);
+      if (!(graceMs > 0 && await waitForExit(graceMs))) {
+        signal("SIGTERM");
+        if (!(await waitForExit(1000))) {
+          signal("SIGKILL");
+          if (!(await waitForExit(1000))) throw new Error(`process ${child.pid} did not exit after SIGKILL`);
+        }
+      }
+      await clearGroup();
     },
   };
 }

@@ -8,6 +8,7 @@ import { AcpBackendAgent, type AcpLaunch } from "../src/backends/acp-agent.js";
 import { createAcpSessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { openSessionStore, type SessionStore, type SessionSummary } from "../src/sessions/store.js";
+import type { UserImageBlock } from "../src/llm/types.js";
 import type { ToolApprovalRequest } from "../src/tools/primitives.js";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
@@ -424,4 +425,86 @@ test("a cancelled turn's input is not sent again, in the same runtime or a reope
       assert.equal(prompts().at(-1), "recall");
     }
   } finally { await agent.close(); h.cleanup(); }
+});
+
+test("a cancelled turn's open CLI calls end before run_end, and what the CLI sends while it stops is dropped", async () => {
+  const h = await harness();
+  const agent = h.agent();
+  const seen = collect();
+  try {
+    const running = agent.run("late-tool", seen.on);
+    await until(() => seen.events.some((event) => event.type === "tool_start"));
+    agent.abort();
+    assert.equal((await running).status, "cancelled");
+    const end = seen.types().indexOf("run_end");
+    const results = seen.events.filter((event) => event.type === "tool_result");
+    assert.equal(results.length, 1);
+    assert.ok(seen.events.indexOf(results[0]!) < end);
+    assert.equal((results[0] as { result: { code?: string } }).result.code, "cancelled");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(seen.events.length, end + 1);
+    const history = h.store.getSessionHistory({ sessionId: h.session.id }).items;
+    assert.equal(history.at(-1)?.kind, "run_end");
+    assert.ok(!JSON.stringify(history).includes("late result"));
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("an adapter that dies between turns, or is stopped, takes its descendants with it, also those that ignore SIGTERM", async () => {
+  const h = await harness();
+  const agent = h.agent();
+  try {
+    await ask(agent, "grandchild hello");
+    process.kill(agent.provider.pid!, "SIGKILL");
+    assert.ok(await gone(h.pids("grandchild")));
+    assert.equal((await ask(agent, "hello")).result.status, "completed");
+    await ask(agent, "grandchild deaf hello");
+    await agent.close();
+    assert.ok(await gone([...h.pids("adapter"), ...h.pids("grandchild")]));
+  } finally { await agent.close(); h.cleanup(); }
+  const again = await harness();
+  const cancelled = again.agent();
+  try {
+    const running = cancelled.run("grandchild deaf wait");
+    await until(() => again.pids("grandchild").length === 1);
+    cancelled.abort();
+    await running;
+    assert.ok(await gone([...again.pids("adapter"), ...again.pids("grandchild")]));
+  } finally { await cancelled.close(); again.cleanup(); }
+});
+
+test("an option the CLI changes between turns is set back to the baseline from the CLI's latest list", async () => {
+  const h = await harness();
+  const agent = h.agent();
+  try {
+    await ask(agent, "change-later");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal((await ask(agent, "options")).text, "model=small effort=- mode=ask");
+    assert.deepEqual(setCalls(h), ["mode=ask"]);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("a CLI call's result is the content it set last, also when that came before the completed status", async () => {
+  const h = await harness();
+  const agent = h.agent();
+  try {
+    const turn = await ask(agent, "early-content");
+    const result = turn.events.find((event) => event.type === "tool_result") as { result: { content: Array<{ text?: string }> } } | undefined;
+    assert.equal(result?.result.content[0]?.text, "file text");
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("an image reaches a CLI that accepts images, and becomes a description with a notice for one that does not", async () => {
+  const image: UserImageBlock = { type: "image", mimeType: "image/jpeg", data: readFileSync(join(import.meta.dirname, "fixtures", "vision.jpg")).toString("base64") };
+  for (const accepts of [true, false]) {
+    const h = await harness({ kind: "claude" }, {}, accepts ? {} : { FAKE_ACP_IMAGES: "0" });
+    const agent = h.agent();
+    try {
+      const seen = collect();
+      const result = await agent.run([{ type: "text", text: "look" }, image], seen.on);
+      assert.equal(result.status, "completed", JSON.stringify(result));
+      const prompt = h.calls().find((call) => call.method === "session/prompt")!;
+      assert.equal(prompt.images, accepts ? 1 : 0);
+      assert.deepEqual(notices(seen.events), accepts ? [] : ["Claude Code does not accept images; each is sent as a short description"]);
+    } finally { await agent.close(); h.cleanup(); }
+  }
 });
