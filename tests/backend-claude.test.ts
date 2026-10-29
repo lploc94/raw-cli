@@ -138,7 +138,7 @@ test("a cancel that comes with the install notice starts no npm, and the turn en
   const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
   try {
     const marker = join(root, "npm-started");
-    const env = { PATH: `${fakeClaude(root)}:${npmScript(root, `touch "${marker}"; /bin/sleep 60`)}`, XDG_DATA_HOME: join(root, "data") };
+    const env = { PATH: `${fakeClaude(root)}:${npmScript(root, `/usr/bin/touch "${marker}"; /bin/sleep 60`)}`, XDG_DATA_HOME: join(root, "data") };
     const runtime = await runtimeFor(root, { backend: { kind: "claude" } });
     const agent = createAcpSessionAgent({ runtime, tools: undefined as never, cwd: root, host: {} }, claudeLaunch(runtime, root, { env }));
     try {
@@ -147,7 +147,8 @@ test("a cancel that comes with the install notice starts no npm, and the turn en
       });
       assert.equal(result.status, "cancelled");
     } finally { await agent.close(); }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Before the fix npm started here and touched the marker within about half a second.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     assert.equal(existsSync(marker), false);
     const controller = new AbortController();
     controller.abort();
