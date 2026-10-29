@@ -29,6 +29,8 @@ export interface AcpLaunch {
   sessionMeta?: Record<string, unknown>;
   /** What to tell the user when the CLI answers that it needs a login. */
   authHint?: string;
+  /** Removes what the launch wrote for this runtime (Codex's prompt file); run once when the runtime closes. */
+  cleanup?: () => void;
 }
 
 /** Builds the launch when the first turn needs it (installing the adapter on first use); its errors end the turn unavailable. */
@@ -227,9 +229,14 @@ export class AcpBackendProvider implements ProviderAdapter {
       if (request.signal?.aborted) onAbort();
       request.signal?.addEventListener("abort", onAbort, { once: true });
     });
+    const building = launch({ notify, ...(request.signal ? { signal: request.signal } : {}) });
     try {
-      this.launch = await Promise.race([launch({ notify, ...(request.signal ? { signal: request.signal } : {}) }), aborted]);
+      this.launch = await Promise.race([building, aborted]);
+      // Closed while the launch was being built: what it wrote goes now, since close has already run.
+      if (this.closed) { this.cleanupLaunch(); throw new BackendError("aborted", "startup aborted"); }
     } catch (error) {
+      // A launch that finishes after its turn was cancelled is not used: what it wrote goes.
+      if (!this.launch) void building.then((late) => late.cleanup?.(), () => {});
       if (error instanceof BackendError) throw error;
       throw new BackendError("backend_unavailable", `${this.label} is not available: ${(error as Error).message}`);
     } finally { if (onAbort) request.signal?.removeEventListener("abort", onAbort); }
@@ -550,6 +557,14 @@ export class AcpBackendProvider implements ProviderAdapter {
       await live.peer.stop(CLOSE_GRACE_MS);
     }
     await (await this.bridge)?.close();
+    this.cleanupLaunch();
+  }
+
+  private cleanupLaunch(): void {
+    if (!this.launch?.cleanup) return;
+    const { cleanup, ...rest } = this.launch;
+    this.launch = rest;
+    cleanup();
   }
 }
 

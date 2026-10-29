@@ -36,3 +36,17 @@ Requirements: Claude Code installed (`claude` on `PATH`, or `backend.executable`
 - Permission requests appear as Raw's approval prompt in the terminal and the approval card in the dashboard. With no approval channel they are allowed when `auto_approve` is on (Raw's default) and refused with a notice otherwise.
 - Errors: `backend_unavailable` "Install Claude Code and log in (`claude`), or set backend.executable" when `claude` is not found; `backend_auth` "run `claude` once and log in" when Claude Code reports no login; `backend_error` with Claude Code's message otherwise.
 - The model Claude Code reports for each prompt is kept with the usage record and shown as the session's model.
+
+## Codex
+
+Requirements: Codex installed (`codex` on `PATH`, or `backend.executable`) and logged in (`codex login`).
+
+```json
+{ "agents": { "codex": { "backend": { "kind": "codex", "model": "gpt-6.1-terra", "effort": "high" },
+  "system_prompt": "You are a careful reviewer.", "tools": { "use": [] } } } }
+```
+
+- System prompt: the agent's prompt replaces Codex's. Raw writes it to a file of its own (under `$XDG_STATE_HOME/raw/backends/codex/`, removed when the session closes) and gives Codex `model_instructions_file` with `include_environment_context` and `include_permissions_instructions` off, through codex-acp's `CODEX_CONFIG`. `system_prompt_mode: "append"` keeps Codex's prompt and adds the agent's as `developer_instructions`. Without a `system_prompt` Codex runs its own prompt. An explicit empty `system_prompt` cannot replace it (Codex will not start a thread on empty instructions), so Codex keeps its own and the session shows a warning. A `CODEX_CONFIG` you set yourself keeps its other settings.
+- Codex still reads `~/.codex/config.toml`, its `AGENTS.md` files and its own skills, as it does when you run it yourself; turn them off there if the agent should not see them.
+- `model`, `effort` and `mode` take the values Codex lists: models such as `gpt-6.1-terra` or `gpt-6-luna`, effort levels (`low` to `ultra`), and the modes `read-only`, `workspace-write`, `agent` and `agent-full-access`. A value it does not list is reported and Codex keeps its own.
+- Permission requests, errors and the reported model work as for Claude Code; the errors read "Install Codex and log in (`codex`), or set backend.executable" and "run `codex login`".

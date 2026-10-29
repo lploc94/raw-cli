@@ -5,6 +5,7 @@ import { runtimeAgentOptions } from "../sessions/runtime.js";
 import type { RuntimeTools } from "../tools/plugins/runtime.js";
 import { AcpBackendAgent, AcpBackendProvider, type AcpLaunch, type AcpLaunchResolver } from "./acp-agent.js";
 import { claudeLaunch } from "./claude.js";
+import { codexLaunch } from "./codex.js";
 import { BACKEND_LABELS, type BackendKind } from "./config.js";
 import type { SessionAgent } from "./types.js";
 
@@ -21,7 +22,7 @@ export interface SessionAgentContext {
 export type SessionAgentFactory = (context: SessionAgentContext) => SessionAgent;
 
 /** How each ACP backend kind starts; a kind without one is not available yet. */
-const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig, cwd: string, deps: { env?: NodeJS.ProcessEnv }) => AcpLaunchResolver>> = { claude: claudeLaunch };
+const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig, cwd: string, deps: { env?: NodeJS.ProcessEnv }) => AcpLaunchResolver>> = { claude: claudeLaunch, codex: codexLaunch };
 
 /** Raw's own loop for an agent with a model; an external CLI for an agent with a `backend`. */
 export const createSessionAgent: SessionAgentFactory = (context) => {

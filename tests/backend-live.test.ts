@@ -42,44 +42,54 @@ function usedModels(target: Live, session: string): string[] {
   } finally { store.close(); }
 }
 
-test("claude: the agent's prompt replaces Claude Code's, its own tools write the file, the chosen model runs, --continue resumes",
-  { skip: !LIVE.has("claude") && "set RAW_LIVE_BACKENDS=claude" }, () => {
-  const tag = `RAW-TAG-${randomBytes(3).toString("hex").toUpperCase()}`;
-  const target = live("claude", { kind: "claude", model: "haiku" }, tag);
-  try {
-    const first = raw(target, ["Create a file hello.txt in the current directory containing exactly: hello raw. Then reply done."]);
-    assert.equal(first.status, 0, first.stderr);
-    assert.ok(first.stdout.includes(tag), first.stdout);
-    assert.equal(readFileSync(join(target.work, "hello.txt"), "utf8").trim(), "hello raw");
-    assert.ok(first.session);
-    assert.ok(usedModels(target, first.session!).some((model) => /haiku/i.test(model)), "haiku reported by the CLI");
-    const nonce = `N-${randomBytes(4).toString("hex")}`;
-    const second = raw(target, ["--continue", `Remember this code: ${nonce}. Reply only OK.`]);
-    assert.equal(second.status, 0, second.stderr);
-    const third = raw(target, ["--continue", "What code did I ask you to remember? Reply with the code only."]);
-    assert.equal(third.status, 0, third.stderr);
-    assert.ok(third.stdout.includes(nonce), third.stdout);
-  } finally { rmSync(target.root, { recursive: true, force: true }); }
-});
+/** Each backend's live case: a cheap model it lists, and how that model shows in the usage the CLI reports. */
+const CASES = [
+  { kind: "claude", model: "haiku", reported: /haiku/i },
+  { kind: "codex", model: "gpt-6-luna", reported: /luna/i },
+];
 
-test("claude: bridge todo: a Raw todo call from Claude Code fills the session's todo panel",
-  { skip: !LIVE.has("claude") && "set RAW_LIVE_BACKENDS=claude" }, () => {
-  const tag = `RAW-TAG-${randomBytes(3).toString("hex").toUpperCase()}`;
-  const target = live("claude", { kind: "claude", model: "haiku" }, tag, ["builtin/todo"]);
-  try {
-    const run = raw(target, ["Use the todo tool from the raw MCP server to make a todo list with two items, alpha and beta, with alpha done. Then reply done."]);
-    assert.equal(run.status, 0, run.stderr);
-    assert.ok(run.session);
-    const store = openSessionStore({ env: target.env });
+for (const { kind, model, reported } of CASES) {
+  test(`${kind}: the agent's prompt replaces the CLI's, its own tools write the file, the chosen model runs, --continue resumes`,
+    { skip: !LIVE.has(kind) && `set RAW_LIVE_BACKENDS=${kind}` }, () => {
+    const tag = `RAW-TAG-${randomBytes(3).toString("hex").toUpperCase()}`;
+    const target = live(kind, { kind, model }, tag);
     try {
-      const panel = store.listSessionPanels(run.session!).find((item) => item.panelId === "builtin/todo#todo");
-      const text = JSON.stringify(panel?.document ?? null);
-      assert.match(text, /alpha/i, text);
-      assert.match(text, /beta/i, text);
-      const calls = store.getSessionHistory({ sessionId: run.session!, limit: 100 }).items.filter((item) => item.kind === "tool_call")
-        .map((item) => (item.payload.display as { name?: string; identity?: string } | undefined) ?? {});
-      assert.deepEqual(calls.filter((call) => call.name === "todo").map((call) => call.identity), ["builtin/todo"], "shown once, as Raw's tool");
-      assert.ok(!calls.some((call) => call.name?.startsWith("mcp__raw__")), JSON.stringify(calls));
-    } finally { store.close(); }
-  } finally { rmSync(target.root, { recursive: true, force: true }); }
-});
+      const first = raw(target, ["Create a file hello.txt in the current directory containing exactly: hello raw. Then reply done."]);
+      assert.equal(first.status, 0, first.stderr);
+      assert.ok(first.stdout.includes(tag), first.stdout);
+      assert.equal(readFileSync(join(target.work, "hello.txt"), "utf8").trim(), "hello raw");
+      assert.ok(first.session);
+      assert.ok(usedModels(target, first.session!).some((used) => reported.test(used)), `${model} reported by the CLI`);
+      const nonce = `N-${randomBytes(4).toString("hex")}`;
+      const second = raw(target, ["--continue", `Remember this code: ${nonce}. Reply only OK.`]);
+      assert.equal(second.status, 0, second.stderr);
+      const third = raw(target, ["--continue", "What code did I ask you to remember? Reply with the code only."]);
+      assert.equal(third.status, 0, third.stderr);
+      assert.ok(third.stdout.includes(nonce), third.stdout);
+    } finally { rmSync(target.root, { recursive: true, force: true }); }
+  });
+
+  test(`${kind}: bridge todo: a Raw todo call from the CLI fills the session's todo panel`,
+    { skip: !LIVE.has(kind) && `set RAW_LIVE_BACKENDS=${kind}` }, () => {
+    const tag = `RAW-TAG-${randomBytes(3).toString("hex").toUpperCase()}`;
+    const target = live(kind, { kind, model }, tag, ["builtin/todo"]);
+    try {
+      const started = Date.now();
+      const run = raw(target, ["Use the todo tool from the raw MCP server to make a todo list with two items, alpha and beta, with alpha done. Then reply done."]);
+      console.log(`${kind} bridge todo turn: ${Date.now() - started} ms`);
+      assert.equal(run.status, 0, run.stderr);
+      assert.ok(run.session);
+      const store = openSessionStore({ env: target.env });
+      try {
+        const panel = store.listSessionPanels(run.session!).find((item) => item.panelId === "builtin/todo#todo");
+        const text = JSON.stringify(panel?.document ?? null);
+        assert.match(text, /alpha/i, text);
+        assert.match(text, /beta/i, text);
+        const calls = store.getSessionHistory({ sessionId: run.session!, limit: 100 }).items.filter((item) => item.kind === "tool_call")
+          .map((item) => (item.payload.display as { name?: string; title?: string; identity?: string } | undefined) ?? {});
+        assert.deepEqual(calls.filter((call) => call.name === "todo").map((call) => call.identity), ["builtin/todo"], "shown once, as Raw's tool");
+        assert.ok(!calls.some((call) => /^mcp(__|\.)raw/.test(call.name ?? "") || /^mcp\.raw\./.test(call.title ?? "")), JSON.stringify(calls));
+      } finally { store.close(); }
+    } finally { rmSync(target.root, { recursive: true, force: true }); }
+  });
+}
