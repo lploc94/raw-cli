@@ -4,7 +4,7 @@
 // word of the message picks the behavior. Every call is logged to $FAKE_AGY_STATE/calls.jsonl.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +18,11 @@ const out = (line) => process.stdout.write(`${typeof line === "string" ? line : 
 
 if (argv[0] === "models") {
   log({ argv });
+  // FAKE_AGY_MODELS_FAIL: this many reads fail first (a transient failure).
+  const failures = Number(process.env.FAKE_AGY_MODELS_FAIL ?? 0);
+  const reads = readdirSync(state).filter((name) => name.startsWith("models-read-")).length;
+  writeFileSync(join(state, `models-read-${reads}`), "");
+  if (reads < failures) { process.stderr.write("error: cannot reach the model service\n"); process.exit(1); }
   process.stderr.write("Fetching available models...\n");
   process.stdout.write(readFileSync(join(recordings, "models.txt")));
   process.exit(0);
@@ -69,6 +74,16 @@ async function turn() {
   const init = { event: "init", conversation_id: conversation, init: { cwd: process.cwd(), ...(agentName ? { agent: agentName } : {}), tools: [], permission_mode: "request-review" } };
   const result = (response) => ({ event: "result", result: { conversation_id: conversation, status: "SUCCESS", response, duration_seconds: 1, num_turns: 1,
     usage: { input_tokens: 10, output_tokens: 2, thinking_tokens: 1, cache_read_tokens: 5, total_tokens: 12 } } });
+  // As agy 1.4.10 answers an unknown --model: on stderr and as an error result with no conversation.
+  const model = flag("--model");
+  const known = readFileSync(join(recordings, "models.txt"), "utf8").split("\n").map((line) => line.split("\t")[0]).filter(Boolean)
+    .flatMap((slug) => [slug, slug.replace(/-(minimal|low|medium|high|xhigh|max)$/, "")]);
+  if (model && !known.includes(model)) {
+    const error = `invalid model selection (--model "${model}" --effort "${flag("--effort") ?? ""}"): model ${model} is not recognized as a known model or custom model in settings`;
+    process.stderr.write(`error: ${error}\n`);
+    out({ event: "result", result: { conversation_id: "", status: "ERROR", response: "", error } });
+    return;
+  }
   if (agentName && !agent) { out({ event: "result", result: { conversation_id: "", status: "ERROR", response: "", error: `agent ${agentName} not found` } }); return; }
   if (word === "replay") return replay(text.split(/\s/)[1], values);
   if (word === "unknown-tools") {
@@ -89,6 +104,20 @@ async function turn() {
   }
   if (word === "silent-text") { out(init); out(result("from the result only\n")); return; }
   if (word === "warn") { process.stderr.write("warning: unrecognized --mode value \"bogus\" (valid: accept-edits, auto, plan)\n"); out(init); out(result("OK")); return; }
+  if (word === "slow-exit") {
+    // Saves the conversation after its result, as agy does, then exits.
+    out(init); out(result("OK"));
+    setTimeout(() => { writeFileSync(join(state, `saved-${conversation}`), ""); process.exit(0); }, Number(text.split(/\s/)[1] ?? 1500));
+    setInterval(() => {}, 1000);
+    return;
+  }
+  if (word === "noisy") {
+    out(init);
+    for (let i = 0; i < 200; i++) out(`not json ${i} ${"y".repeat(1000)}`);
+    process.stderr.write("z".repeat(1024 * 1024));
+    process.stderr.write("\nwarning: after the long line\n", () => process.exit(3));
+    return;
+  }
   if (word === "crash") { out(init); process.stderr.write("boom\n"); process.exit(3); }
   if (word === "long") { out(init); process.stdout.write("x".repeat(17 * 1024 * 1024)); setInterval(() => {}, 1000); return; }
   if (word === "hang") {

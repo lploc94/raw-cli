@@ -3,11 +3,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { MAX_FRAME_BYTES } from "../acp/transport.js";
 import { spawnLinePeer, type LinePeer } from "../acp/peer.js";
 import { imagePlaceholderText, type ModelMessage, type ProviderAdapter, type ProviderRequest, type ProviderTurn, type ResolvedModelConfig,
   type UserInput } from "../llm/types.js";
 import { prepareSpawn } from "../platform/windows.js";
+import { DEFAULT_MAX_OUTPUT_BYTES } from "../tools/results.js";
 import type { ExternalSession, SessionOwner, SessionStore } from "../sessions/store.js";
 import { BackendError, backendModelConfig, backendProfileDigest, type BackendOptions, type BackendProvider } from "./acp-agent.js";
 import { findExecutable } from "./adapters.js";
@@ -29,14 +31,8 @@ export const AGY_DEFAULT_TOOLS: readonly string[] = Object.freeze(["ask_custom_p
   "manage_subagents", "manage_task", "multi_replace_file_content", "notebook_edit", "read_url_content", "replace_file_content",
   "run_command", "run_workflow", "schedule", "search_marketplace", "search_web", "send_message", "view_file", "wait", "write_to_file"]);
 
-/** How long `agy models` may take. */
-const CATALOG_TIMEOUT_MS = 15000;
-/** How long agy may take to exit after its result, while it saves the conversation. */
-const EXIT_GRACE_MS = 2000;
 /** How long a finished stdout waits for the exit to be reported, and the reverse. */
 const EXIT_WAIT_MS = 1000;
-/** Lines of agy's stdout that are not stream-json, kept for an error message. */
-const NOISE_LINES = 20;
 
 // ---------- models: families and their efforts (the rules of cross-review's agy reviewer) ----------
 
@@ -73,17 +69,20 @@ export function parseAgyCatalog(text: string): AgyModel[] | undefined {
 
 const catalogs = new Map<string, Promise<AgyModel[] | undefined>>();
 
-/** The catalog of the agy at `executable`, read once per process; undefined when `agy models` cannot be read. */
-export function agyCatalog(executable: string, env: NodeJS.ProcessEnv): Promise<AgyModel[] | undefined> {
+/**
+ * The catalog of the agy at `executable`, read once per process; undefined when `agy models` cannot be read within
+ * `timeoutMs` (the reading turn's `request_timeout_ms`). A failed read is not kept, so the next turn reads again.
+ */
+export function agyCatalog(executable: string, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<AgyModel[] | undefined> {
   let catalog = catalogs.get(executable);
   if (!catalog) {
-    catalog = new Promise((resolve) => {
+    catalog = new Promise<AgyModel[] | undefined>((resolve) => {
       const prepared = prepareSpawn(executable, ["models"], { cwd: process.cwd(), env });
       if (!prepared.ok) { resolve(undefined); return; }
-      execFile(prepared.file, prepared.args, { env, encoding: "utf8", timeout: CATALOG_TIMEOUT_MS, windowsHide: true,
+      execFile(prepared.file, prepared.args, { env, encoding: "utf8", timeout: timeoutMs, windowsHide: true,
         ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) },
       (error, stdout) => resolve(error ? undefined : parseAgyCatalog(stdout)));
-    });
+    }).then((models) => { if (!models) catalogs.delete(executable); return models; });
     catalogs.set(executable, catalog);
   }
   return catalog;
@@ -210,10 +209,10 @@ export interface AgyBackendProviderOptions {
   binding?: () => Binding | undefined;
   diagnostic?: (line: string) => void;
   /** Reads the catalog; `agy models` by default. */
-  catalog?: (executable: string, env: NodeJS.ProcessEnv) => Promise<AgyModel[] | undefined>;
+  catalog?: (executable: string, env: NodeJS.ProcessEnv, timeoutMs: number) => Promise<AgyModel[] | undefined>;
 }
 
-interface Launch { executable: string; agent?: string; tools: readonly string[]; catalog: AgyModel[] | undefined; defaultName?: string }
+interface Launch { executable: string; agent?: string; tools: readonly string[]; catalog?: AgyModel[] | undefined; defaultName?: string }
 
 /** How one agy process ended its turn. */
 type Outcome = { ok: true; turn: ProviderTurn } | { ok: false; error: string; quiet: boolean };
@@ -230,6 +229,9 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
   private launch: Launch | undefined;
   private cliSessionId: string | undefined;
   private opened = false;
+  /** Whether the baseline model and effort were checked against a catalog (stored ones were). */
+  private checked = false;
+  private uncheckedNoticed = false;
   private baseline: BackendOptions = {};
   private delivered: number | undefined;
   private override: BackendOptions | undefined;
@@ -267,6 +269,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     let lastAnswer = request.messages.length - 1;
     while (lastAnswer >= 0 && request.messages[lastAnswer]!.role !== "assistant") lastAnswer--;
     const launch = await this.resolveLaunch(notify);
+    await this.readCatalog(launch, request, notify);
     this.open(notify, lastAnswer >= 0);
     const delivered = this.delivered !== undefined && this.delivered <= request.messages.length ? this.delivered : 0;
     const fresh = request.messages.slice(Math.max(lastAnswer + 1, delivered))
@@ -275,32 +278,82 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     const parts = fresh.map((message) => inputText(message.content));
     if (parts.some((part) => part.images)) notify("agy does not accept images; each is sent as a short description");
     const text = parts.map((part) => part.text).join("\n\n");
+    let turnModel = override?.model ?? this.baseline.model;
+    let turnEffort = override?.effort ?? this.baseline.effort;
     const turnArgs = (): string[] => {
-      const chosen = agyModelArgs({ ...(override?.model ?? this.baseline.model ? { model: override?.model ?? this.baseline.model } : {}),
-        ...(override?.effort ?? this.baseline.effort ? { effort: override?.effort ?? this.baseline.effort } : {}) }, launch.catalog, launch.defaultName);
-      if (override) for (const notice of chosen.notices) notify(notice);
+      const chosen = agyModelArgs({ ...(turnModel ? { model: turnModel } : {}), ...(turnEffort ? { effort: turnEffort } : {}) },
+        launch.catalog, launch.defaultName);
+      // The baseline is checked once a catalog is there; an override every turn.
+      const checking = launch.catalog && !this.checked && !override?.model && !override?.effort;
+      if (override?.model || override?.effort || checking) for (const notice of chosen.notices) notify(notice);
+      if (checking) {
+        this.checked = true;
+        const { model: _model, effort: _effort, ...rest } = this.baseline;
+        this.baseline = { ...rest, ...(chosen.model ? { model: chosen.model } : {}), ...(chosen.effort ? { effort: chosen.effort } : {}) };
+      }
       const mode = override?.mode ?? this.baseline.mode;
       return ["--input-format", "stream-json", "--output-format", "stream-json",
         ...(launch.agent ? ["--agent", launch.agent, "--disable-slash-commands"] : []), ...chosen.args, ...agyModeArgs(mode),
         ...(this.cliSessionId ? ["--conversation", this.cliSessionId] : []), "--print="];
     };
+    let args = turnArgs();
     // Recorded before sending, so a store failure ends the turn before agy has it.
     this.delivered = request.messages.length;
     this.saveExternal();
-    let outcome = await this.runProcess(launch, turnArgs(), text, request, notify);
-    if (!outcome.ok && outcome.quiet && launch.agent) {
-      // agy fails a run on a tool name its executor does not resolve; the agent goes on without those tools, once.
+    let outcome = await this.runProcess(launch, args, text, request, notify);
+    // A run agy refused before doing anything is run again without what it refused, once per reason.
+    let retriedTools = false;
+    let retriedModel = false;
+    while (!outcome.ok && outcome.quiet) {
       const unknown = [...outcome.error.matchAll(/tool "([^"]+)" not found in registry/g)].map((match) => match[1]!)
         .filter((name) => launch.tools.includes(name));
-      if (unknown.length) {
+      if (!retriedTools && launch.agent && unknown.length) {
+        // agy fails a run on a tool name its executor does not resolve; the agent goes on without those tools.
+        retriedTools = true;
         launch.tools = launch.tools.filter((name) => !unknown.includes(name));
         launch.agent = writeAgyAgent(agyPluginRoot(this.env), this.config.agentName, this.config.systemPrompt!, launch.tools);
         notify(`agy does not know the tool${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")}; the agent runs without ${unknown.length > 1 ? "them" : "it"}`);
-        outcome = await this.runProcess(launch, turnArgs(), text, request, notify);
-      }
+      } else if (!retriedModel && args.includes("--model") && /^invalid model selection\b/.test(outcome.error)) {
+        // Without a catalog Raw could not check the model; agy refuses an unknown one, and the turn runs on its default.
+        retriedModel = true;
+        notify(`agy does not offer model "${turnModel}"; it keeps its default`);
+        if (!override?.model) { const { model: _model, effort: _effort, ...rest } = this.baseline; this.baseline = rest; }
+        turnModel = undefined;
+        turnEffort = undefined;
+      } else break;
+      args = turnArgs();
+      outcome = await this.runProcess(launch, args, text, request, notify);
     }
     if (!outcome.ok) throw new BackendError("backend_error", `agy: ${outcome.error}`);
     return outcome.turn;
+  }
+
+  /**
+   * The catalog, read until one read succeeds; a read is bounded by the turn's `request_timeout_ms` and ends with a
+   * cancel. Without it the configured model and effort go to agy unchecked, which the turn says once.
+   */
+  private async readCatalog(launch: Launch, request: ProviderRequest, notify: (message: string) => void): Promise<void> {
+    if (launch.catalog) return;
+    let timer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
+    try {
+      launch.catalog = await Promise.race([(this.config.catalog ?? agyCatalog)(launch.executable, this.env, request.timeoutMs),
+        new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), request.timeoutMs); }),
+        new Promise<never>((_resolve, reject) => {
+          onAbort = () => reject(new BackendError("aborted", "startup aborted"));
+          if (request.signal?.aborted) onAbort();
+          request.signal?.addEventListener("abort", onAbort, { once: true });
+        })]);
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) request.signal?.removeEventListener("abort", onAbort);
+    }
+    if (this.closed) throw new BackendError("aborted", "startup aborted");
+    const { model, effort } = { ...this.config.spec, ...this.override };
+    if (!launch.catalog && !this.uncheckedNoticed && (model || effort || this.baseline.model || this.baseline.effort)) {
+      this.uncheckedNoticed = true;
+      notify("agy models could not be read; model and effort go to agy unchecked");
+    }
   }
 
   /** The executable, the agent file and the catalog, found once per runtime; the baseline is the agent's valid options. */
@@ -316,10 +369,8 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
       try { agent = writeAgyAgent(agyPluginRoot(this.env), this.config.agentName, systemPrompt, tools); }
       catch (error) { throw new BackendError("backend_unavailable", `agy is not available: cannot write the agent file: ${(error as Error).message}`); }
     } else if (this.config.promptGiven) notify(AGY_EMPTY_PROMPT);
-    const catalog = await (this.config.catalog ?? agyCatalog)(executable, this.env);
     const defaultName = agyDefaultModel(this.env);
-    const launch: Launch = { executable, tools, catalog, ...(agent ? { agent } : {}), ...(defaultName ? { defaultName } : {}) };
-    if (this.closed) throw new BackendError("aborted", "startup aborted");
+    const launch: Launch = { executable, tools, ...(agent ? { agent } : {}), ...(defaultName ? { defaultName } : {}) };
     this.launch = launch;
     return launch;
   }
@@ -334,13 +385,11 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
       this.cliSessionId = stored.cliSessionId;
       this.baseline = { ...stored.baseline };
       this.delivered = stored.delivered;
+      this.checked = true;
       return;
     }
-    const chosen = agyModelArgs({ ...(this.config.spec.model ? { model: this.config.spec.model } : {}),
-      ...(this.config.spec.effort ? { effort: this.config.spec.effort } : {}) }, this.launch!.catalog, this.launch!.defaultName);
-    for (const notice of chosen.notices) notify(notice);
-    this.baseline = { ...(chosen.model ? { model: chosen.model } : {}), ...(chosen.effort ? { effort: chosen.effort } : {}),
-      ...(this.config.spec.mode ? { mode: this.config.spec.mode } : {}) };
+    const { model, effort, mode } = this.config.spec;
+    this.baseline = { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(mode ? { mode } : {}) };
     // What an earlier conversation of this session was sent, a cancelled turn's input too, is not sent to this one.
     this.delivered = stored?.delivered ?? this.delivered;
     if (hadTurns || stored) notify(FRESH);
@@ -362,7 +411,13 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     let active = false;
     let usage: Record<string, number> | undefined;
     let result: Extract<AgyTurnEvent, { type: "result" }> | undefined;
-    const noise: string[] = [];
+    // What agy printed that is not stream-json, for an error message: its last bytes only, as the peer keeps stderr.
+    let noise = "";
+    let noiseDropped = false;
+    const keepNoise = (line: string) => {
+      noise += `${line}\n`;
+      if (noise.length > DEFAULT_MAX_OUTPUT_BYTES) { noise = noise.slice(noise.length - DEFAULT_MAX_OUTPUT_BYTES); noiseDropped = true; }
+    };
     const requested = this.cliSessionId;
     let settle!: (error?: Error) => void;
     const done = new Promise<void>((resolve, reject) => { settle = (error) => error ? reject(error) : resolve(); });
@@ -389,25 +444,29 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     const onLine = (line: string) => {
       arm();
       if (!line.trim()) return;
-      let parsed: unknown;
-      try { parsed = JSON.parse(line); }
-      catch {
-        warning(line);
-        noise.push(line);
-        if (noise.length > NOISE_LINES) noise.shift();
-        return;
-      }
-      for (const event of mapper.map(parsed)) dispatch(event);
+      // A failure here (the store refusing the conversation id, a host callback) ends the turn, not the process.
+      try {
+        let parsed: unknown;
+        try { parsed = JSON.parse(line); }
+        catch { warning(line); keepNoise(line); return; }
+        for (const event of mapper.map(parsed)) dispatch(event);
+      } catch (error) { settle(error instanceof Error ? error : new Error(String(error))); }
     };
     let peer: LinePeer;
     try { peer = spawnLinePeer({ command: launch.executable, args, cwd: this.config.cwd, env: this.env, maxFrameBytes: MAX_FRAME_BYTES, onLine }); }
     catch (error) { throw new BackendError("backend_unavailable", `agy could not start: ${(error as Error).message}`); }
     this.peer = peer;
+    // Warnings are whole stderr lines; a line longer than the diagnostic budget is not one, and is skipped to its end.
     let stderrLine = "";
+    let skipping = false;
+    const decoder = new StringDecoder("utf8");
     peer.child.stderr.on("data", (chunk: Buffer) => {
-      const lines = (stderrLine + chunk.toString("utf8")).split("\n");
+      const lines = (stderrLine + decoder.write(chunk)).split("\n");
       stderrLine = lines.pop()!;
-      for (const line of lines) warning(line);
+      try {
+        for (const line of lines) { if (!skipping) warning(line); skipping = false; }
+      } catch (error) { settle(error instanceof Error ? error : new Error(String(error))); }
+      if (stderrLine.length > DEFAULT_MAX_OUTPUT_BYTES) { stderrLine = ""; skipping = true; }
     });
     peer.spawnFailure.catch((error: unknown) => settle(new BackendError("backend_unavailable", `agy could not start: ${(error as Error).message}`)));
     peer.frameFailure.catch(() => settle(new BackendError("backend_frame_too_large", `agy sent a message longer than ${MAX_FRAME_BYTES} bytes`)));
@@ -415,7 +474,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
       // The last lines may still be on their way; the exit counts once stdout has ended or a moment has passed.
       const report = () => {
         if (result) return;
-        const tail = [...noise, peer.stderrTail().trim()].filter(Boolean).join("\n").trim();
+        const tail = [`${noiseDropped ? "[output truncated]\n" : ""}${noise}`.trim(), peer.stderrTail().trim()].filter(Boolean).join("\n");
         settle(new BackendError("backend_exited", `agy exited (${signal ?? `code ${code}`}) without a result${tail ? `: ${tail}` : ""}`));
       };
       if (peer.child.stdout.readableEnded) report();
@@ -430,8 +489,15 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     try {
       await done;
       for (const event of mapper.closeOpen("backend_error", "agy did not report a result for this call")) dispatch(event);
-      // Waits for agy to finish saving the conversation before the next turn continues it.
-      await peer.stop(EXIT_GRACE_MS).catch(() => {});
+      // agy saves the conversation after its result and then exits (about 0.9 s with agy 1.4.10); the next turn continues
+      // it, so agy gets as long as the turn's silence limit. One still running then, or cancelled meanwhile, is stopped.
+      clearTimeout(timer);
+      let onCancel: (() => void) | undefined;
+      const exited = await Promise.race([peer.waitForExit(request.timeoutMs),
+        new Promise<boolean>((resolve) => { onCancel = () => resolve(false); request.signal?.addEventListener("abort", onCancel, { once: true }); })]);
+      if (onCancel) request.signal?.removeEventListener("abort", onCancel);
+      if (!exited && !request.signal?.aborted) notify(`agy did not exit within ${request.timeoutMs} ms of its answer and was stopped; the next turn may not see this one`);
+      await peer.stop(0).catch(() => {});
       const ended = result!;
       if (!ended.ok) return { ok: false, error: ended.error, quiet: !active };
       if (!reply && ended.response) { reply = ended.response; request.onTextDelta?.(reply); }

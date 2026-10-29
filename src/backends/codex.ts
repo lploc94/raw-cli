@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { RuntimeConfig } from "../config.js";
@@ -51,9 +51,16 @@ export function codexLaunch(runtime: RuntimeConfig, cwd: string, deps: Pick<Inst
     const config = codexConfig(runtime, join(directory, "prompt.md"));
     if (runtime.backendPromptGiven && !runtime.systemPrompt && runtime.backend!.systemPromptMode === "replace") notify(CODEX_EMPTY_PROMPT);
     let cleanup: (() => void) | undefined;
+    let prepare: (() => void) | undefined;
     if (config?.model_instructions_file) {
-      mkdirSync(directory, { recursive: true });
-      writeFileSync(join(directory, "prompt.md"), runtime.systemPrompt);
+      // The sweep goes by age: each adapter start marks the directory in use, and restores a prompt a sweep removed.
+      prepare = () => {
+        const file = join(directory, "prompt.md");
+        if (!existsSync(file)) { mkdirSync(directory, { recursive: true }); writeFileSync(file, runtime.systemPrompt); }
+        const now = new Date();
+        utimesSync(directory, now, now);
+      };
+      prepare();
       cleanup = () => rmSync(directory, { recursive: true, force: true });
     }
     // A CODEX_CONFIG the user set keeps its other settings; the prompt settings are the agent's.
@@ -64,6 +71,7 @@ export function codexLaunch(runtime: RuntimeConfig, cwd: string, deps: Pick<Inst
     const launchEnv: NodeJS.ProcessEnv = { ...env, CODEX_PATH: executable };
     if (Object.keys(merged).length) launchEnv.CODEX_CONFIG = JSON.stringify(merged);
     else delete launchEnv.CODEX_CONFIG;
-    return { command: process.execPath, args: [adapter], env: launchEnv, authHint: "run `codex login`", ...(cleanup ? { cleanup } : {}) };
+    return { command: process.execPath, args: [adapter], env: launchEnv, authHint: "run `codex login`", ...(cleanup ? { cleanup } : {}),
+      ...(prepare ? { prepare } : {}) };
   };
 }

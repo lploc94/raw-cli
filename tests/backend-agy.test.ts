@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import type { RunEvent } from "../src/agent.js";
 import type { AcpBackendAgent } from "../src/backends/acp-agent.js";
-import { AGY_APPEND, AGY_DEFAULT_TOOLS, AGY_EMPTY_PROMPT, agyAgentFile, agyModelArgs, agyModeArgs, agyPluginRoot, parseAgyCatalog,
+import { AGY_APPEND, AgyBackendProvider, agyCatalog, AGY_DEFAULT_TOOLS, AGY_EMPTY_PROMPT, agyAgentFile, agyModelArgs, agyModeArgs, agyPluginRoot, parseAgyCatalog,
   writeAgyAgent } from "../src/backends/agy.js";
 import { createAgySessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
@@ -20,7 +20,7 @@ const FRESH = "This agy conversation starts here; it does not see earlier turns"
 const TRICKY = "He said \"hi\" \\ 100% ^caret !bang `tick` $HOME %PATH% & | < >\nline two\ttab — ünïcødé 🙂\n";
 
 interface Harness {
-  root: string; home: string; store: SessionStore; session: SessionSummary; runtime: RuntimeConfig; diagnostics: string[];
+  root: string; home: string; env: NodeJS.ProcessEnv; executable: string; store: SessionStore; session: SessionSummary; runtime: RuntimeConfig; diagnostics: string[];
   agent(runtime?: RuntimeConfig): AcpBackendAgent;
   reopen(): void;
   calls(): Array<{ argv: string[]; stdin?: string; pid?: number }>;
@@ -39,21 +39,23 @@ function fakeAgy(root: string): string {
   return join(bin, "agy");
 }
 
-async function harness(backend: Record<string, unknown> = {}, agent: Record<string, unknown> = { system_prompt: "Be RAW." }): Promise<Harness> {
+async function harness(backend: Record<string, unknown> = {}, agent: Record<string, unknown> = { system_prompt: "Be RAW." },
+  fakeEnv: NodeJS.ProcessEnv = {}): Promise<Harness> {
   const root = mkdtempSync(join(tmpdir(), "raw-backend-agy-"));
   const home = join(root, "home");
   const state = join(root, "fake");
   const configPath = join(root, "config.json");
-  writeFileSync(configPath, JSON.stringify({ default_agent: "ext", agents: { ext: { backend: { kind: "agy", executable: fakeAgy(root), ...backend },
+  const executable = fakeAgy(root);
+  writeFileSync(configPath, JSON.stringify({ default_agent: "ext", agents: { ext: { backend: { kind: "agy", executable, ...backend },
     tools: { use: [] }, ...agent } } }));
   const runtime = await loadConfig({ configPath, env: {} });
   const storeEnv = { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root };
   let store = openSessionStore({ env: storeEnv });
   const session = store.createSession({ cwd: root, title: "New session", ...sessionIdentity(runtime) });
   const diagnostics: string[] = [];
-  const env = { ...process.env, HOME: home, USERPROFILE: home, FAKE_AGY_STATE: state };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, FAKE_AGY_STATE: state, ...fakeEnv };
   const h: Harness = {
-    root, home, store, session, runtime, diagnostics,
+    root, home, env, executable, store, session, runtime, diagnostics,
     agent: (override) => {
       const created = createAgySessionAgent({ runtime: override ?? runtime, tools: undefined as never, cwd: root, env,
         host: { persistence: { store: h.store, sessionId: session.id, surface: "web" } } });
@@ -417,5 +419,105 @@ test("agy missing from PATH ends the turn unavailable with the install hint", as
     const turn = await ask(agent, "echo");
     assert.equal(turn.result.code, "backend_unavailable");
     assert.match(turn.result.message ?? "", /Install Antigravity/);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+/** A provider on its own, for failures the session agent would otherwise absorb. */
+function provider(h: Harness, options: Partial<ConstructorParameters<typeof AgyBackendProvider>[0]> = {}) {
+  return new AgyBackendProvider({ agentName: "ext", spec: h.runtime.backend!, systemPrompt: "Be RAW.", cwd: h.root, env: h.env, ...options });
+}
+const request = (content: string, extra: Record<string, unknown> = {}) =>
+  ({ system: "", messages: [{ role: "user" as const, content }], tools: [], timeoutMs: 10000, ...extra });
+/** The request of a second turn, after `prior` was answered. */
+const followUp = (prior: string, content: string, extra: Record<string, unknown> = {}) => request(content, { messages: [
+  { role: "user" as const, content: prior }, { role: "assistant" as const, text: "OK", toolCalls: [] }, { role: "user" as const, content }], ...extra });
+
+test("a store failure while agy runs ends the turn with that error and stops agy, not the process", async () => {
+  const h = await harness();
+  const failing = provider(h, { binding: () => ({ sessionId: h.session.id, owner: {} as never,
+    store: { readExternal: () => undefined, writeExternal: () => { throw new Error("simulated SQLITE_FULL"); } } as never }) });
+  try {
+    await assert.rejects(failing.generate(request("replay turn1")), /simulated SQLITE_FULL/);
+    assert.ok(await gone(h.pids("agy")));
+  } finally { await failing.close(); h.cleanup(); }
+});
+
+test("agy gets the turn's silence limit to save and exit after its answer; one still running then is stopped with a notice", async () => {
+  const h = await harness();
+  const notices: string[] = [];
+  const onExternal = (event: { type: string; message?: string }) => { if (event.type === "notice") notices.push(event.message!); };
+  const runner = provider(h);
+  try {
+    // agy 1.4.10 exits about 0.9 s after its result; 2.4 s here is still within the limit.
+    const turn = await runner.generate(request("slow-exit 2400", { onExternal }));
+    assert.equal(turn.text, "OK");
+    assert.equal(readdirSync(join(h.root, "fake")).filter((name) => name.startsWith("saved-")).length, 1);
+    assert.deepEqual(notices, []);
+    const short = await runner.generate(followUp("slow-exit 2400", "slow-exit 60000", { onExternal, timeoutMs: 800 }));
+    assert.equal(short.text, "OK");
+    assert.deepEqual(notices, ["agy did not exit within 800 ms of its answer and was stopped; the next turn may not see this one"]);
+    assert.ok(await gone(h.pids("agy")));
+  } finally { await runner.close(); h.cleanup(); }
+});
+
+test("reading the catalog ends with a cancel and within the turn's limit; without it the model goes unchecked, once said", async () => {
+  const h = await harness({ model: "gemini-3.8-flash" });
+  const never = () => new Promise<undefined>(() => {});
+  const cancelled = provider(h, { spec: h.runtime.backend!, catalog: never });
+  try {
+    const controller = new AbortController();
+    const turn = cancelled.generate(request("echo x", { signal: controller.signal }));
+    setTimeout(() => controller.abort(), 50);
+    const started = Date.now();
+    await assert.rejects(turn, (error: { code?: string }) => error.code === "aborted");
+    assert.ok(Date.now() - started < 1000);
+    assert.deepEqual(h.calls(), []);
+  } finally { await cancelled.close(); }
+  const slow = provider(h, { catalog: never });
+  const notices: string[] = [];
+  const onExternal = (event: { type: string; message?: string }) => { if (event.type === "notice") notices.push(event.message!); };
+  try {
+    const turn = await slow.generate(request("echo y", { timeoutMs: 300, onExternal }));
+    assert.equal(turn.text, "ECHO");
+    assert.equal(flagValue(h.calls()[0]!.argv, "--model"), "gemini-3.8-flash");
+    await slow.generate(followUp("echo y", "echo z", { timeoutMs: 300, onExternal }));
+    assert.deepEqual(notices, ["agy models could not be read; model and effort go to agy unchecked"]);
+  } finally { await slow.close(); h.cleanup(); }
+});
+
+test("a failed catalog read is not kept, and an unknown model agy refuses is dropped for agy's default", async () => {
+  const h = await harness({}, { system_prompt: "Be RAW." }, { FAKE_AGY_MODELS_FAIL: "1" });
+  try {
+    assert.equal(await agyCatalog(h.executable, h.env, 10000), undefined);
+    assert.equal((await agyCatalog(h.executable, h.env, 10000))?.[0]?.slug, "gemini-4-argon");
+  } finally { h.cleanup(); }
+  const unchecked = await harness({ model: "gemini-9", effort: "high" });
+  const agent = unchecked.agent();
+  (agent.provider as unknown as { config: { catalog: () => Promise<undefined> } }).config.catalog = async () => undefined;
+  try {
+    const turn = await ask(agent, "echo model");
+    assert.equal(turn.result.status, "completed", JSON.stringify(turn.result));
+    assert.deepEqual(turn.notices, ["agy models could not be read; model and effort go to agy unchecked",
+      'agy does not offer model "gemini-9"; it keeps its default']);
+    const [refused, retried] = unchecked.calls();
+    assert.equal(flagValue(refused!.argv, "--model"), "gemini-9");
+    assert.equal(flagValue(retried!.argv, "--model"), undefined);
+    assert.equal(flagValue(retried!.argv, "--effort"), undefined);
+    await ask(agent, "echo again");
+    assert.equal(flagValue(unchecked.calls()[2]!.argv, "--model"), undefined);
+  } finally { await agent.close(); unchecked.cleanup(); }
+});
+
+test("what agy prints besides stream-json is kept to the diagnostic budget, and a warning after a huge stderr line still shows", async () => {
+  const h = await harness();
+  const agent = h.agent();
+  try {
+    const turn = await ask(agent, "noisy");
+    assert.equal(turn.result.code, "backend_exited");
+    const message = turn.result.message ?? "";
+    assert.ok(message.length < 3 * 64 * 1024, `${message.length} characters`);
+    assert.match(message, /\[output truncated\]\n[^]*\nnot json \d+ y+/);
+    assert.match(message, /not json 199 /);
+    assert.ok(turn.notices.includes("agy: after the long line"), JSON.stringify(turn.notices));
   } finally { await agent.close(); h.cleanup(); }
 });

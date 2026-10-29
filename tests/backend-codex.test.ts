@@ -137,3 +137,28 @@ test("a prompt directory a crashed Raw left behind is removed once older than th
     sweepCodexPrompts(join(root, "missing"), 30);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("each adapter start marks the runtime's prompt directory in use, so the sweep keeps it, and restores a prompt a sweep removed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-codex-"));
+  try {
+    const env = { PATH: fakeCodex(root), XDG_DATA_HOME: join(root, "data"), XDG_STATE_HOME: join(root, "state") };
+    const runtime = await runtimeFor(root, { backend: { kind: "codex" }, system_prompt: TRICKY });
+    const npm = async (_args: string[], cwd: string) => {
+      const entry = join(cwd, "node_modules", ...CODEX_ADAPTER.name.split("/"), CODEX_ADAPTER.entry);
+      mkdirSync(join(entry, ".."), { recursive: true });
+      writeFileSync(entry, "// adapter\n");
+    };
+    const launch = (await codexLaunch(runtime, root, { env, npm })({ notify: () => {} }))!;
+    const file = (JSON.parse(launch.env.CODEX_CONFIG!) as { model_instructions_file: string }).model_instructions_file;
+    const directory = join(file, "..");
+    const longAgo = new Date(Date.now() - 31 * 86_400_000);
+    utimesSync(directory, longAgo, longAgo);
+    launch.prepare!();
+    sweepCodexPrompts(codexPromptRoot(env), 30);
+    assert.equal(readFileSync(file, "utf8"), TRICKY);
+    rmSync(directory, { recursive: true, force: true });
+    launch.prepare!();
+    assert.equal(readFileSync(file, "utf8"), TRICKY);
+    launch.cleanup!();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

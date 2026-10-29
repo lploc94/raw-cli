@@ -31,6 +31,8 @@ export interface AcpLaunch {
   authHint?: string;
   /** Removes what the launch wrote for this runtime (Codex's prompt file); run once when the runtime closes. */
   cleanup?: () => void;
+  /** Restores what the launch wrote, if something removed it, and marks it in use; run before each adapter start. */
+  prepare?: () => void;
 }
 
 /** Builds the launch when the first turn needs it (installing the adapter on first use); its errors end the turn unavailable. */
@@ -291,7 +293,7 @@ export class AcpBackendProvider implements BackendProvider {
     const { cwd } = this.config;
     const launch = this.launch!;
     let peer: AcpPeer;
-    try { peer = spawnAcpPeer({ command: launch.command, args: launch.args, cwd, env: launch.env, maxFrameBytes: MAX_FRAME_BYTES }); }
+    try { launch.prepare?.(); peer = spawnAcpPeer({ command: launch.command, args: launch.args, cwd, env: launch.env, maxFrameBytes: MAX_FRAME_BYTES }); }
     catch (error) { throw this.unavailable(error); }
     const app = client({ name: "raw-cli" });
     app.onNotification("session/update", (params: unknown) => params as SessionNotification, ({ params }) => this.update(params));
