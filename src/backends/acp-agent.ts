@@ -335,7 +335,8 @@ export class AcpBackendProvider implements ProviderAdapter {
     let paused = 0;
     const arm = () => {
       clearTimeout(timer);
-      if (paused) return;
+      // An approval that settles after the turn ended does not start a watchdog for it.
+      if (paused || this.turn !== turn) return;
       timer = setTimeout(() => { detach("backend_error", `${this.label} sent nothing for ${request.timeoutMs} ms`);
         rejectIdle(new BackendError("backend_unresponsive", `${this.label} sent nothing for ${request.timeoutMs} ms`)); }, request.timeoutMs);
     };

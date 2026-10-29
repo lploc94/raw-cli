@@ -512,3 +512,39 @@ test("an image reaches a CLI that accepts images, and becomes a description with
     } finally { await agent.close(); h.cleanup(); }
   }
 });
+
+test("a cancelled turn's input is not sent again after the backend model changes", async () => {
+  const h = await harness();
+  let agent = h.agent();
+  const prompts = () => h.calls().filter((call) => call.method === "session/prompt").map((call) => call.input);
+  try {
+    const waiting = agent.run("wait");
+    await until(() => prompts().includes("wait"));
+    agent.abort();
+    await waiting;
+    await agent.close();
+    agent = h.agent({ runtime: { ...h.runtime, backend: { ...h.runtime.backend!, model: "big" } } });
+    const turn = await ask(agent, "recall");
+    assert.deepEqual(prompts(), ["wait", "recall"]);
+    assert.deepEqual(turn.notices, ["This Claude Code conversation starts here; it does not see earlier turns"]);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("an approval that settles after the adapter died and the runtime closed leaves no timer behind", async () => {
+  const h = await harness();
+  let settle!: (allowed: boolean) => void;
+  let asked = false;
+  const agent = h.agent({ approve: () => { asked = true; return new Promise<boolean>((resolve) => { settle = resolve; }); } });
+  try {
+    const running = agent.run("permission");
+    await until(() => asked);
+    process.kill(agent.provider.pid!, "SIGKILL");
+    assert.equal((await running).code, "backend_exited");
+    await agent.close();
+    const timers = () => process.getActiveResourcesInfo().filter((kind) => kind === "Timeout").length;
+    const before = timers();
+    settle(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(timers() <= before, `${timers()} timers after the approval, ${before} before`);
+  } finally { await agent.close(); h.cleanup(); }
+});

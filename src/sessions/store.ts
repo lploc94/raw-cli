@@ -97,6 +97,7 @@ export interface QueuedInputReceipt {
 }
 /** The external CLI conversation a session continues (src/backends): which CLI, its own session id, and the options it started with. */
 export interface ExternalSession {
+  /** Empty, with `cliSessionId`, when the conversation was dropped and only `delivered` is kept. */
   kind: string;
   cliSessionId: string;
   /** Digest of what shapes the CLI conversation (kind, executable, system prompt, prompt mode); a change starts a fresh one. */
@@ -846,10 +847,13 @@ export class SessionStore {
           }
         }
       }
-      // Another backend, model or Raw's own loop does not continue the external CLI conversation.
-      if (previousMeta?.external && previousMeta.replaySignature !== replaySignature) {
+      // Another backend, model or Raw's own loop does not continue the external CLI conversation. Only how many
+      // messages a CLI was already sent stays, so a cancelled turn's input is not sent to the next CLI conversation.
+      if (previousMeta?.external?.cliSessionId && previousMeta.replaySignature !== replaySignature) {
         const current = this.runtimeMetadata(sessionId)!;
-        this.writeRuntimeMetadata(sessionId, { ...current, external: null });
+        const { delivered } = previousMeta.external;
+        this.writeRuntimeMetadata(sessionId, { ...current,
+          external: delivered === undefined ? null : { kind: "", cliSessionId: "", profileDigest: "", baseline: {}, delivered } });
       }
     });
     return this.readAgentState(sessionId, owner);
