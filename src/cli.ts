@@ -172,6 +172,13 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     rl?.close();
   };
   const cliLabel = runtime.backend ? BACKEND_LABELS[runtime.backend.kind] : "the CLI";
+  const reportLost = (event: Extract<BackgroundEvent, { type: "exited" }>) => process.stderr.write(
+    `raw: ${cliLabel} exited; ${event.lost.length} background task(s) were lost: ${event.lost.map((name) => safeTerminalText(name)).join(", ")}\n`);
+  /** Says which of the CLI's tasks closing the session stops. */
+  const reportStopped = () => {
+    const stopped = session.background ? liveTasks(session.background) : [];
+    if (stopped.length) process.stderr.write(`raw: stopped ${stopped.length} background task(s) of ${cliLabel}: ${stopped.map((task) => safeTerminalText(task.name)).join(", ")}\n`);
+  };
   /** Runs the CLI turn waiting now, rendered like a turn of the REPL. */
   const cliTurn = async (background: BackgroundWork): Promise<RunResult> => {
     currentRenderer = new TerminalRenderer(session, runtime, cwd, false);
@@ -196,10 +203,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     const off = background.onEvent((event) => { if (event.type === "exited") exited = event; wake?.(); });
     try {
       while (true) {
-        if (exited) {
-          process.stderr.write(`raw: ${cliLabel} exited; ${exited.lost.length} background task(s) were lost: ${exited.lost.map((name) => safeTerminalText(name)).join(", ")}\n`);
-          return 1;
-        }
+        if (exited) { reportLost(exited); return 1; }
         if (wait.signal.aborted) {
           const stopping = liveTasks(background);
           await background.stopAll();
@@ -220,7 +224,7 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     closed = true;
     session.abort();
   };
-  const onTerm = () => { closed = true; session.abort(); rl?.close(); };
+  const onTerm = () => { closed = true; session.abort(); backgroundWait?.abort(); rl?.close(); };
   process.on("SIGINT", interrupt);
   const offTerm = onShutdown(onTerm);
   rl?.on("SIGINT", interrupt);
@@ -236,6 +240,17 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       return session.background && result.status !== "cancelled" ? await awaitBackground(session.background, result) : statusCode(result);
     }
     if (!rl || !lines) throw new Error("interactive input unavailable");
+    // An adapter that exits between turns takes its tasks with it; the REPL says so when it happens.
+    let offExited: (() => void) | undefined;
+    const watchExit = () => {
+      offExited?.();
+      offExited = session.background?.onEvent((event) => {
+        if (event.type !== "exited" || !event.lost.length) return;
+        currentRenderer?.beforeInput();
+        reportLost(event);
+      });
+    };
+    watchExit();
     new TerminalRenderer(session, runtime, cwd, true, Boolean(selected)).start();
     if (selected) for (const item of store.getSessionHistory({ sessionId: selected.id }).items) {
       process.stdout.write(renderTerminalHistory(item, runtime.ui,
@@ -258,12 +273,15 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       if (!line.trim()) continue;
       if (line === "/exit") break;
       if (line === "/clear") {
+        reportStopped();
+        offExited?.();
         await session.close(hookEvent);
         record = createSavedSession("New session");
         session = createRuntimeAgent(record.id);
         await session.start("create", hookEvent);
         lastTurn = undefined;
         sessionResumable = true;
+        watchExit();
         process.stderr.write("raw: conversation cleared\n");
         new TerminalRenderer(session, runtime, cwd, true).start();
         continue;
@@ -302,8 +320,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       if (result.code === "approval_required" && !process.stdin.isTTY) return statusCode(result);
       currentRenderer = undefined;
     }
-    const stopped = session.background ? liveTasks(session.background) : [];
-    if (stopped.length) process.stderr.write(`raw: stopped ${stopped.length} background task(s) of ${cliLabel}: ${stopped.map((task) => safeTerminalText(task.name)).join(", ")}\n`);
+    offExited?.();
+    reportStopped();
     if (sessionResumable && store.getSession(record.id)) process.stderr.write(formatResumeCommand(record.id, runtime.ui, caps));
     return cancelledWhileIdle ? 130 : 0;
   } finally {

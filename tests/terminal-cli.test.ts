@@ -254,3 +254,39 @@ test("background: a one-shot run does not end in the gap before Claude Code's ow
     assert.match(run.stdout, /Noted: Background job finished\./);
   } finally { cleanup(); }
 });
+
+test("background: SIGTERM or SIGHUP while a one-shot run waits stops the task in the CLI and ends the run", async (t) => {
+  for (const signal of ["SIGTERM", "SIGHUP"] as const) await t.test(signal, async () => {
+    const { run, exited, stops, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000" }, ["bg"]);
+    try {
+      await until(() => run.stderr.includes(WAITING), "the waiting line");
+      run.child.kill(signal);
+      assert.equal(await exited, 130, run.stderr);
+      assert.match(run.stderr, /raw: stopped 1 background task\(s\)\n/);
+      assert.deepEqual(stops(), ["task-1"]);
+    } finally { if (run.code === undefined) run.child.kill("SIGKILL"); cleanup(); }
+  });
+});
+
+test("background: the REPL reports tasks an exited adapter lost and tasks /clear stops", async (t) => {
+  await t.test("an adapter that exits while the REPL waits for a line", async () => {
+    const { run, exited, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000", FAKE_ACP_EXIT_AFTER_BG: "1", FAKE_ACP_EXIT_AFTER_BG_MS: "300" }, [], { stdin: "bg\n", keepStdin: true });
+    try {
+      await until(() => run.stderr.includes("raw: Claude Code exited; 1 background task(s) were lost: Background job\n"), "the lost line");
+      run.child.stdin.end("/exit\n");
+      assert.equal(await exited, 0, run.stderr);
+      assert.doesNotMatch(run.stderr, /raw: stopped/);
+    } finally { if (run.code === undefined) run.child.kill("SIGKILL"); cleanup(); }
+  });
+  await t.test("/clear with a running task", async () => {
+    const { run, exited, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000" }, [], { stdin: "bg\n", keepStdin: true });
+    try {
+      await until(() => run.stdout.includes("started"), "the first answer");
+      run.child.stdin.write("/clear\n");
+      await until(() => run.stderr.includes("raw: conversation cleared\n"), "the clear");
+      assert.match(run.stderr, /raw: stopped 1 background task\(s\) of Claude Code: Background job\nraw: conversation cleared\n/);
+      run.child.stdin.end("/exit\n");
+      assert.equal(await exited, 0, run.stderr);
+    } finally { if (run.code === undefined) run.child.kill("SIGKILL"); cleanup(); }
+  });
+});

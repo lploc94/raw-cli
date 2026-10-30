@@ -168,3 +168,23 @@ test("the tail reads past trailing blank lines and long lines, and a carriage re
   assert.deepEqual(commandTail([chunk("warn: ","stderr"),chunk("x\n","stdout"),chunk("e\n","stderr")]),[{channel:"stdout",text:"warn: x"},{channel:"stderr",text:"e"}]);
   assert.deepEqual(commandTail([]),[]);
 });
+
+test("CLI task rows: an unchanged snapshot of many ended tasks writes nothing again, a changed task writes once", async () => {
+  const {Commands}=await import("../src/processes/presentation.js");
+  for(const count of [100,101,250]){
+    let writes=0;
+    const commands=new Commands({hostToken:"h",list:()=>[],output:()=>{throw new Error("unused");},publish:()=>{writes++;}});
+    const tasks=Array.from({length:count},(_,i)=>({id:`t${i}`,name:`job ${i}`,type:"shell",state:"completed" as const,canStop:true,startedAt:i+1,endedAt:i+2,exitCode:0}));
+    const snapshot=()=>{const rows=commands.cli("s","/w","cli/codex");for(const task of tasks)rows.upsert(task);};
+    snapshot();
+    assert.equal(writes,count,"each new task is written once");
+    snapshot();snapshot();
+    assert.equal(writes,count,`an unchanged snapshot of ${count} ended tasks writes nothing`);
+    tasks[0]={...tasks[0]!,state:"failed" as never,exitCode:1};
+    snapshot();
+    assert.equal(writes,count+1,"the one changed task is written");
+    // Another session's task with the same id is its own row.
+    commands.cli("other","/w","cli/codex").upsert(tasks[1]!);
+    assert.equal(writes,count+2);
+  }
+});

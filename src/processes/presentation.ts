@@ -78,6 +78,8 @@ interface Entry {record:CommandRecord;chunks:ProcessChunk[];forgotten?:boolean;t
 /** Independent durable host projection; never writes to a PanelHost or model transcript. */
 export class Commands {
   private readonly active=new Map<string,Entry>();
+  /** Each CLI task row as last written, by session and row id. */
+  private readonly cliWritten=new Map<string,string>();
   constructor(private readonly options:{store?:SessionStore;hostToken:string;list:(sid:string)=>ProcessRecord[];output:(sid:string,id:string,cursor?:number,max?:number)=>ProcessOutput;publish?:(sid:string,items:CommandRecord[],omitted:number)=>void}) {}
   private stored(sessionId:string):Entry[] {
     return (this.options.store?.database.prepare("SELECT record_json,chunks_json FROM session_commands WHERE session_id = ? ORDER BY created_at DESC LIMIT 100").all(sessionId)??[])
@@ -136,21 +138,21 @@ export class Commands {
     return {upsert:task=>{
       if(task.type==="turn")return;
       const id=`cli:${task.id}`;
-      let entry=this.active.get(id);
-      if(entry?.record.sessionId!==sessionId){
-        entry={record:{id,sessionId,kind:"background",owner,command:"",cwd:terminalText(cwd),state:"running",createdAt:task.startedAt,updatedAt:Date.now(),cursor:0,droppedBytes:0},chunks:[]};
-        this.active.set(id,entry);
-      }
-      const r=entry.record;
+      const found=this.active.get(id);
+      let entry=found?.record.sessionId===sessionId?found:undefined;
+      const r=entry?.record??{cwd:terminalText(cwd),createdAt:task.startedAt,updatedAt:Date.now()};
       const state:CommandRecord["state"]=task.state==="paused"?"running":task.state==="completed"?"exited":task.state;
       const label=task.description&&task.description!==task.name?terminalText(utf8Prefix(task.description,800).text):undefined;
       const next:CommandRecord={id,sessionId,kind:"background",owner,command:terminalText(utf8Prefix(task.name,4096).text),...(Buffer.byteLength(task.name)>4096?{commandTruncated:true}:{}),
         cwd:r.cwd,state,createdAt:r.createdAt,updatedAt:r.updatedAt,cursor:0,droppedBytes:0,canStop:task.canStop,...(task.state==="paused"?{paused:true}:{}),
         ...(label===undefined?{}:{label}),...(task.endedAt===undefined?{}:{endedAt:task.endedAt}),...(task.exitCode===undefined?{}:{exitCode:task.exitCode}),
         ...(task.error===undefined?{}:{error:terminalText(utf8Prefix(task.error,800).text)})};
-      if(JSON.stringify({...next,updatedAt:0})===JSON.stringify({...r,updatedAt:0}))return;
-      entry.record=next;
+      // The CLI reports all its tasks on each change: a task written as it is now, even one no longer kept here, is not written again.
+      const written=`${sessionId}\0${id}`;const shape=JSON.stringify({...next,updatedAt:0});
+      if(this.cliWritten.get(written)===shape)return;
+      if(entry)entry.record=next;else{entry={record:next,chunks:[]};this.active.set(id,entry);}
       this.save(entry);
+      this.cliWritten.set(written,shape);
       const terminal=[...this.active.values()].filter(e=>e.record.sessionId===sessionId&&!LIVE_PROCESS_STATES.includes(e.record.state)).sort((a,b)=>b.record.createdAt-a.record.createdAt);
       for(const old of terminal.slice(100))this.active.delete(old.record.id);
     }};
@@ -164,6 +166,7 @@ export class Commands {
     return {id,chunks,earliestCursor,nextCursor,cursor:e.record.cursor,droppedBytes:earliestCursor,truncated:cursor<earliestCursor||nextCursor<e.record.cursor};
   }
   forgetSession(sessionId:string):void {
+    for(const key of this.cliWritten.keys())if(key.startsWith(`${sessionId}\0`))this.cliWritten.delete(key);
     for(const [id,entry] of this.active)if(entry.record.sessionId===sessionId){entry.forgotten=true;if(entry.timer)clearTimeout(entry.timer);this.active.delete(id);}
   }
   close():void {for(const e of this.active.values()){if(e.timer)clearTimeout(e.timer);delete e.timer;if(LIVE_PROCESS_STATES.includes(e.record.state)){e.record.state="lost";e.record.endedAt=Date.now();}this.save(e);}}
