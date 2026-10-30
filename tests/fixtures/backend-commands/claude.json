@@ -1,0 +1,377 @@
+[
+  {
+    "name": "local-skill-1",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "local-skill-2",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "find-skills",
+    "description": "Helps users discover and install agent skills when they ask questions like \"how do I do X\", \"find a skill for X\", \"is there a skill that can...\", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill. (user)",
+    "input": null
+  },
+  {
+    "name": "local-skill-3",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "linkup-search",
+    "description": "Use this skill whenever the agent has access to Linkup web search or fetch tools. Teaches the agent how to reason about query construction, choose search depth, write effective queries, select the right output type, use the fetch endpoint, and apply advanced techniques like sequential search and multi-query coverage. Applicable to any task involving web search, content extraction, company research, news retrieval, data enrichment, or real-time information gathering via Linkup. (user)",
+    "input": null
+  },
+  {
+    "name": "local-skill-4",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "local-skill-5",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "local-skill-6",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "local-skill-7",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "local-skill-8",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "local-skill-9",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "tavily-best-practices",
+    "description": "Build production-ready Tavily integrations with best practices baked in. Reference documentation for developers using coding assistants (Claude Code, Cursor, etc.) to implement web search, content extraction, crawling, and research in agentic workflows, RAG systems, or autonomous agents. (user)",
+    "input": null
+  },
+  {
+    "name": "tavily-cli",
+    "description": "Web search, content extraction, crawling, and deep research via the Tavily CLI. Use this skill whenever the user wants to search the web, find articles, research a topic, look something up online, extract content from a URL, grab text from a webpage, crawl documentation, download a site's pages, discover URLs on a domain, or conduct in-depth research with citations. Also use when they say \"fetch this page\", \"pull the content from\", \"get the page at https://\", \"find me articles about\", or reference extracting data from external websites. This provides LLM-optimized web search, content extraction, site crawling, URL discovery, and AI-powered deep research — capabilities beyond what agents can do natively. Do NOT trigger for local file operations, git commands, deployments, or code editing tasks. (user)",
+    "input": null
+  },
+  {
+    "name": "tavily-crawl",
+    "description": "Crawl websites and extract content from multiple pages via the Tavily CLI. Use this skill when the user wants to crawl a site, download documentation, extract an entire docs section, bulk-extract pages, save a site as local markdown files, or says \"crawl\", \"get all the pages\", \"download the docs\", \"extract everything under /docs\", \"bulk extract\", or needs content from many pages on the same domain. Supports depth/breadth control, path filtering, semantic instructions, and saving each page as a local markdown file. (user)",
+    "input": null
+  },
+  {
+    "name": "tavily-dynamic-search",
+    "description": "Programmatic web search with context isolation. Use this skill for any research task where you need to search the web, filter results, and extract specific information — without polluting your context window with raw HTML and boilerplate. This is the default skill for web research. Triggered by \"search for\", \"look up\", \"find\", \"research\", \"what's the latest on\", or any query that requires current web information. Also use when asked to \"search and filter\", \"find the important parts\", or \"extract the key details\" — any case where the user wants curated, noise-free content. (user)",
+    "input": null
+  },
+  {
+    "name": "tavily-extract",
+    "description": "Extract clean markdown or text content from specific URLs via the Tavily CLI. Use this skill when the user has one or more URLs and wants their content, says \"extract\", \"grab the content from\", \"pull the text from\", \"get the page at\", \"read this webpage\", or needs clean text from web pages. Handles JavaScript-rendered pages, returns LLM-optimized markdown, and supports query-focused chunking for targeted extraction. Can process up to 20 URLs in a single call. (user)",
+    "input": null
+  },
+  {
+    "name": "tavily-map",
+    "description": "Discover and list all URLs on a website without extracting content, via the Tavily CLI. Use this skill when the user wants to find a specific page on a large site, list all URLs, see the site structure, find where something is on a domain, or says \"map the site\", \"find the URL for\", \"what pages are on\", \"list all pages\", or \"site structure\". Faster than crawling — returns URLs only. Essential when you know the site but not the exact page. Combine with extract for targeted content retrieval. (user)",
+    "input": null
+  },
+  {
+    "name": "tavily-research",
+    "description": "Conduct comprehensive AI-powered research with citations via the Tavily CLI. Use this skill when the user wants deep research, a detailed report, a comparison, market analysis, literature review, or says \"research\", \"investigate\", \"analyze in depth\", \"compare X vs Y\", \"what does the market look like for\", or needs multi-source synthesis with explicit citations. Returns a structured report grounded in web sources. Takes 30-120 seconds. For quick fact-finding, use tavily-search instead. (user)",
+    "input": null
+  },
+  {
+    "name": "tavily-search",
+    "description": "Search the web with LLM-optimized results via the Tavily CLI. Use this skill when the user wants to search the web, find articles, look up information, get recent news, discover sources, or says \"search for\", \"find me\", \"look up\", \"what's the latest on\", \"find articles about\", or needs current information from the internet. Returns relevant results with content snippets, relevance scores, and metadata — optimized for LLM consumption. Supports domain filtering, time ranges, and multiple search depths. (user)",
+    "input": null
+  },
+  {
+    "name": "deep-research",
+    "description": "Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. (dynamic workflow)",
+    "input": null
+  },
+  {
+    "name": "frontend-design:frontend-design",
+    "description": "(frontend-design) Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, or applications. Generates creative, polished code that avoids generic AI aesthetics.",
+    "input": null
+  },
+  {
+    "name": "dataviz",
+    "description": "Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization, in ANY output medium — an HTML or React artifact, inline SVG, plotting code in any library (matplotlib, plotly, d3, Recharts, …), an image/PNG you will render and upload, or a chart shared into Slack. Read it BEFORE writing the first line of chart code, choosing chart colors, building a stat tile / meter / KPI row, or laying out a dashboard. When the destination is a first-party document connector (host-designated, never self-described) that renders live charts, hand it the rows (inline, or as an uploaded data file the chart cites) rather than a rendered PNG/SVG — a picture of a chart loses hover, data inspection and per-value comments. Produces visualizations that read as one system — elegant, accessible, consistent in light and dark — using a brand-neutral placeholder palette you swap for your own. Teaches a design-system-agnostic method: a form heuristic, a color formula with a runnable validator, mark specs, and interaction rules. A validated default palette is documented in `references/palette.md` — swap that file's values for your brand's. Triggers on: \"chart\", \"graph\", \"plot\", \"data viz\", \"visualization\", \"dashboard\", \"analytics\", \"visualize data\", \"categorical colors\", \"sequential / diverging palette\", \"stat tile\", \"sparkline\", \"heatmap\", \"legend\", \"axis\", \"tooltip\", \"chart colors\", \"color by series\".",
+    "input": null
+  },
+  {
+    "name": "update-config",
+    "description": "Use this skill to configure the Claude Code harness via settings.json. Automated behaviors (\"from now on when X\", \"each time X\", \"whenever X\", \"before/after X\") require hooks configured in settings.json - the harness executes these, not Claude, so memory/preferences cannot fulfill them. Also use for: permissions (\"allow X\", \"add permission\", \"move permission to\"), env vars (\"set X=Y\"), hook troubleshooting, or any changes to settings.json/settings.local.json files. Examples: \"allow npm commands\", \"add bq permission to global settings\", \"move permission to user settings\", \"set DEBUG=true\", \"when claude stops show X\". For simple settings like theme/model, suggest the /config command.",
+    "input": null
+  },
+  {
+    "name": "verify",
+    "description": "Verify that a code change actually does what it's supposed to by exercising it end-to-end and observing behavior — drive the affected flow, not just tests or typecheck. Run before committing nontrivial changes; bootstraps this repo's project verify skill if none exists yet. Don't invoke it on a diff that only touches tests, docs, or other code with no runtime surface to drive (a change to product source always has one) — there's nothing to observe.",
+    "input": null
+  },
+  {
+    "name": "debug",
+    "description": "Enable debug logging for this session and help diagnose issues",
+    "input": {
+      "hint": "[issue description]"
+    }
+  },
+  {
+    "name": "code-review",
+    "description": "Review the current diff, or a PR number/branch/path target, for correctness bugs (plus reuse/simplification/efficiency cleanups where the model's recipe covers them) at the effort level given first, before any target (low|medium|high|xhigh|max: from few high-confidence findings to many, some uncertain); with no level given, it reuses the level you typed last. Pass --comment to post findings as inline PR comments, or --fix to apply them to the working tree after the review. Pass --max-findings <n> to report up to n findings, or --max-findings all for every finding. The choice stays until you pass --max-findings default.",
+    "input": {
+      "hint": "[low|medium|high|xhigh|max] [--fix] [--comment] [<pr#>|<branch>|<path>] [--max-findings <n>|all]"
+    }
+  },
+  {
+    "name": "simplify",
+    "description": "Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the fixes. Quality only — it does not hunt for bugs; use /code-review for that.",
+    "input": {
+      "hint": "[<target>]"
+    }
+  },
+  {
+    "name": "batch",
+    "description": "Research and plan a large-scale change, then execute it in parallel across 5–30 isolated worktree agents that each open a PR.",
+    "input": {
+      "hint": "<instruction>"
+    }
+  },
+  {
+    "name": "fewer-permission-prompts",
+    "description": "Scan your transcripts for common read-only Bash and MCP tool calls, then add a prioritized allowlist to project .claude/settings.json to reduce permission prompts.",
+    "input": null
+  },
+  {
+    "name": "doctor",
+    "description": "Health-check the user's Claude Code setup and fix issues: diagnose installation health — what the `claude doctor` terminal diagnostics cover — from local data (duplicate or leftover installs, PATH, unparseable settings files, broken or colliding agent definitions, skills whose frontmatter fails to parse); find unused skills, MCP servers, and plugins versus their context cost and disable dead weight; deduplicate local CLAUDE.md files against checked-in ones; trim checked-in CLAUDE.md files by cutting content a session could derive from the codebase (directory layouts, tech-stack lists, architecture overviews) while keeping gotchas, rationale, and non-standard conventions; migrate always-loaded CLAUDE.md guidance into lazy skills and nested CLAUDE.md files; flag slow hooks and context-heavy extensions; check the installed version is current; make auto mode the default permission mode; and pre-approve frequently denied read-only commands. Use when the user asks for a doctor run, checkup, audit, tune-up, or cleanup of their Claude Code setup or configuration.",
+    "input": {
+      "hint": "[prompt-audit [<path>]]"
+    }
+  },
+  {
+    "name": "loop",
+    "description": "Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let the model self-pace.",
+    "input": {
+      "hint": "[interval] [prompt]"
+    }
+  },
+  {
+    "name": "schedule",
+    "description": "Create, update, list, or run scheduled cloud agents (routines) that execute on a cron schedule.",
+    "input": null
+  },
+  {
+    "name": "claude-api",
+    "description": "Reference for the Claude API / Anthropic SDK — model ids, pricing, params, streaming, tool use, MCP, agents, caching, token counting, model migration.\nTRIGGER — read BEFORE opening the target file; don't skip because it \"looks like a one-liner\" — whenever: the prompt names Claude/Anthropic in any form (Claude, Anthropic, Fable, Opus, Sonnet, Haiku, `anthropic`, `@anthropic-ai`, `claude-*`, `us.anthropic.*`, `[1m]`); the user asks about an LLM (pricing/model choice/limits/caching) — never answer from memory; OR the task is LLM-shaped with provider unstated (agent/MCP/tool-definition/multi-agent/RAG/LLM-judge/computer-use; generate/summarize/extract/classify/rewrite/converse over NL; debugging refusals/cutoffs/streaming/tool-calls/tokens).\nSKIP only when another provider is being worked on (overrides all triggers): OpenAI/GPT/Gemini/Llama/Mistral/Cohere/Ollama named in the query; OR `grep -rE 'openai|langchain_openai|google.generativeai|genai|mistralai|cohere|ollama'` over the project hits (run this grep FIRST if no provider named — don't Read the file).",
+    "input": null
+  },
+  {
+    "name": "workflow-authoring",
+    "description": "Reference for writing a Workflow tool script (script API and gotchas, resume, quality patterns, worked examples). Load before authoring a script for a workflow the user already opted into; it does not itself authorize running one.",
+    "input": null
+  },
+  {
+    "name": "run",
+    "description": "Launch and drive this project's app to see a change working. Use when asked to run, start, or screenshot the app, or to confirm a change works in the real app (not just tests). First looks for a project skill that already covers launching the app; otherwise falls back to built-in patterns per project type (CLI, server, TUI, Electron, browser-driven, library).",
+    "input": null
+  },
+  {
+    "name": "run-skill-generator",
+    "description": "Author or improve the run-<unit> skill - a per-project skill that tells agents how to build, launch, and drive this project's app. Use when the user asks to set up the project, get it running, write run instructions, or verify build/run steps work from a clean environment.",
+    "input": null
+  },
+  {
+    "name": "plugin-authoring",
+    "description": "Make a mod: a change to Claude's own interface or behaviour, such as a panel or pane that stays beside the chat and updates, a band, status line, toast, slash command, or hook on tool calls. Use to make, change or debug a mod or its hooks module.",
+    "input": null
+  },
+  {
+    "name": "agents",
+    "description": "(removed) Ask Claude to create/manage subagents, or edit .claude/agents/",
+    "input": null
+  },
+  {
+    "name": "auto-mode-setup",
+    "description": "Teach auto mode about your environment, plus optional rule tweaks",
+    "input": {
+      "hint": "[--request-id <uuid>] (--wizard posture=… scope=… depth=… --propose | --expect-sha256 <64-hex> --apply-file <path>)"
+    }
+  },
+  {
+    "name": "autocompact",
+    "description": "Configure the auto-compact window size",
+    "input": {
+      "hint": "[auto|<tokens>]"
+    }
+  },
+  {
+    "name": "color",
+    "description": "Set the prompt bar color for this session",
+    "input": {
+      "hint": "[red|blue|green|yellow|purple|orange|pink|cyan|default]"
+    }
+  },
+  {
+    "name": "compact",
+    "description": "Free up context by summarizing the conversation so far",
+    "input": {
+      "hint": "<optional custom summarization instructions>"
+    }
+  },
+  {
+    "name": "config",
+    "description": "Set a setting by key",
+    "input": {
+      "hint": "key=value"
+    }
+  },
+  {
+    "name": "output-style",
+    "description": "List output styles or switch to one",
+    "input": {
+      "hint": "[style]"
+    }
+  },
+  {
+    "name": "context",
+    "description": "Show current context usage",
+    "input": null
+  },
+  {
+    "name": "effort",
+    "description": "Set effort level for model usage",
+    "input": {
+      "hint": "<low|medium|high|xhigh|max|auto|ultracode [on|off]>"
+    }
+  },
+  {
+    "name": "fast",
+    "description": "Toggle fast mode (Opus 5.5)",
+    "input": {
+      "hint": "[on|off]"
+    }
+  },
+  {
+    "name": "focus",
+    "description": "Toggle focus view: just your prompt, summary, and response",
+    "input": {
+      "hint": "[on|off]"
+    }
+  },
+  {
+    "name": "heapdump",
+    "description": "Dump the JS heap to the Desktop; on Linux with no Desktop folder, the home directory",
+    "input": null
+  },
+  {
+    "name": "init",
+    "description": "Initialize a new CLAUDE.md file with codebase documentation",
+    "input": null
+  },
+  {
+    "name": "model",
+    "description": "Set the AI model for Claude Code",
+    "input": {
+      "hint": "<model>"
+    }
+  },
+  {
+    "name": "__remote-workflow",
+    "description": "Run the workflow script delivered in this session environment (server-launched sessions only)",
+    "input": null
+  },
+  {
+    "name": "workflow-launch-exec",
+    "description": "Execute a server-launched workflow handoff (workflow_launch event sessions only)",
+    "input": null
+  },
+  {
+    "name": "reload-plugins",
+    "description": "Activate pending plugin changes in the current session",
+    "input": {
+      "hint": "[--force]"
+    }
+  },
+  {
+    "name": "reload-skills",
+    "description": "Pick up skills added or changed on disk during this session",
+    "input": null
+  },
+  {
+    "name": "rename",
+    "description": "Rename the current conversation",
+    "input": {
+      "hint": "[name]"
+    }
+  },
+  {
+    "name": "security-review",
+    "description": "Complete a security review of the pending changes on the current branch",
+    "input": null
+  },
+  {
+    "name": "usage-credits",
+    "description": "Configure usage credits or request them from your admin when you hit a limit",
+    "input": null
+  },
+  {
+    "name": "extra-usage",
+    "description": "Renamed to /usage-credits",
+    "input": null
+  },
+  {
+    "name": "usage",
+    "description": "Show session cost, plan usage, and what's contributing to your limits",
+    "input": null
+  },
+  {
+    "name": "insights",
+    "description": "Generate a report analyzing your Claude Code sessions",
+    "input": null
+  },
+  {
+    "name": "recap",
+    "description": "Generate a one-line session recap now",
+    "input": null
+  },
+  {
+    "name": "goal",
+    "description": "Set a goal — keep working until the condition is met",
+    "input": null
+  },
+  {
+    "name": "list-agents",
+    "description": "List subagents, teammates, and other Claude sessions you can message",
+    "input": null
+  },
+  {
+    "name": "team-onboarding",
+    "description": "Help teammates ramp on Claude Code with a guide from your usage",
+    "input": null
+  },
+  {
+    "name": "mcp",
+    "description": "Show the MCP servers and their status, or reconnect, enable, or disable a server",
+    "input": {
+      "hint": "[reconnect|enable|disable [<server>|all]]"
+    }
+  },
+  {
+    "name": "remote-control",
+    "description": "Continue this session from claude.ai/code or the Claude mobile app; `off` disconnects",
+    "input": {
+      "hint": "[session name | off]"
+    }
+  }
+]

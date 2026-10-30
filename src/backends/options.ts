@@ -1,4 +1,4 @@
-import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import type { AvailableCommand, SessionConfigOption } from "@agentclientprotocol/sdk";
 import type { RequestControl } from "../request-controls.js";
 import type { BackendOptions } from "./acp-agent.js";
 import type { AgyModel } from "./agy.js";
@@ -12,6 +12,26 @@ export interface BackendOffer { current?: string; options: BackendChoice[] }
  * at turn time (Fixed decision 6).
  */
 export type BackendOffered = Partial<Record<keyof BackendOptions, BackendOffer>>;
+
+/**
+ * A command the CLI lists for its prompt (ACP `available_commands_update`), for the dashboard's `/` menu. The CLI runs it
+ * from the prompt text (`/name input`); a Codex skill (`$name`) is a mention in the text, not a command.
+ */
+export interface BackendCommand { name: string; description: string; hint?: string }
+
+/** The CLI's list as the dashboard shows it: names without whitespace, the first of each name, in the CLI's order. */
+export function commandsFromAcp(list: readonly AvailableCommand[]): BackendCommand[] {
+  const seen = new Set<string>();
+  const commands: BackendCommand[] = [];
+  for (const item of list) {
+    if (typeof item.name !== "string" || !/^\S+$/.test(item.name) || seen.has(item.name)) continue;
+    seen.add(item.name);
+    const hint = item.input?.hint;
+    commands.push({ name: item.name, description: typeof item.description === "string" ? item.description : "",
+      ...(typeof hint === "string" && hint ? { hint } : {}) });
+  }
+  return commands;
+}
 
 /** The ACP `configOptions` category behind each option. */
 const CATEGORIES = [["model", "model"], ["effort", "thought_level"], ["mode", "mode"]] as const;

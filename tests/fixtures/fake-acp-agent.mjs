@@ -61,7 +61,12 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 app.onRequest("initialize", async () => (await delay(Number(process.env.FAKE_ACP_INIT_DELAY ?? 0)), { protocolVersion: 1,
   agentCapabilities: { loadSession: process.env.FAKE_ACP_LOAD !== "0", promptCapabilities: { image: process.env.FAKE_ACP_IMAGES !== "0" } } }));
-app.onRequest("session/new", ({ params }) => {
+// The command list (ACP `available_commands_update`) a conversation advertises: FAKE_ACP_COMMANDS after `session/new`,
+// FAKE_ACP_LOAD_COMMANDS inside `session/load` before it answers (`before`, as codex-acp 2.3.0 does) or after it (`after`).
+const commandList = (name) => process.env[name] ? JSON.parse(process.env[name]) : undefined;
+const advertise = (sessionId, availableCommands) => update(sessionId, { sessionUpdate: "available_commands_update", availableCommands });
+app.onRequest("session/new", ({ params, client: peer }) => {
+  client = peer;
   // As claude-agent-acp answers when the CLI has no login.
   if (process.env.FAKE_ACP_AUTH === "1") throw RequestError.authRequired();
   const id = `fake-${process.pid}-${sessions.size + 1}`;
@@ -69,6 +74,8 @@ app.onRequest("session/new", ({ params }) => {
   sessions.set(id, state); saveSession(id, state);
   mcpServers.set(id, params.mcpServers ?? []);
   log({ method: "session/new", meta: params._meta ?? null, mcpServers: (params.mcpServers ?? []).map((server) => server.name) });
+  const listed = commandList("FAKE_ACP_COMMANDS");
+  if (listed) setTimeout(() => { void advertise(id, listed); }, Number(process.env.FAKE_ACP_COMMANDS_DELAY ?? 5));
   return { sessionId: id, configOptions: configOptions(state) };
 });
 app.onRequest("session/load", async ({ params, client: peer }) => {
@@ -81,6 +88,9 @@ app.onRequest("session/load", async ({ params, client: peer }) => {
   mcpClients.delete(params.sessionId);
   // Real adapters replay the conversation as updates before answering.
   await text(params.sessionId, "REPLAYED");
+  const listed = commandList("FAKE_ACP_LOAD_LIST") ?? [{ name: "status", description: "Current status" }];
+  if (process.env.FAKE_ACP_LOAD_COMMANDS === "before") await advertise(params.sessionId, listed);
+  if (process.env.FAKE_ACP_LOAD_COMMANDS === "after") setTimeout(() => { void advertise(params.sessionId, listed); }, 5);
   return { configOptions: configOptions(state) };
 });
 app.onRequest("session/set_config_option", ({ params }) => {
@@ -132,6 +142,12 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     state.model = "big"; saveSession(id, state);
     await update(id, { sessionUpdate: "config_option_update", configOptions: configOptions(state) });
     if (newest === "switch-then-fail") throw new Error("failed after the switch");
+  }
+  if (newest === "commands-change") {
+    // The CLI lists other commands while it works (a skill installed during the turn).
+    await advertise(id, [{ name: "second", description: "The second list" }]);
+    await text(id, "listed");
+    return { stopReason: "end_turn", usage };
   }
   if (newest === "change-later") {
     // The CLI changes an option between turns (its own command, or the user in another client).

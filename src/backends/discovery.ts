@@ -5,10 +5,13 @@ import { BACKEND_LABELS } from "./config.js";
 import { AGY_MISSING, agyCatalog, agyDefaultModel } from "./agy.js";
 import { claudeLaunch } from "./claude.js";
 import { codexLaunch } from "./codex.js";
-import { offeredFromAgyCatalog, type BackendOffered } from "./options.js";
+import { offeredFromAgyCatalog, type BackendCommand, type BackendOffered } from "./options.js";
 
-/** What the dashboard shows before a session runs: the options, and a warning when the CLI could not be asked. */
-export interface BackendDiscovery { offered: BackendOffered; warning?: string }
+/**
+ * What the dashboard shows before a session runs: the options, the commands a new conversation lists (Claude Code and
+ * Codex), and a warning when the CLI could not be asked.
+ */
+export interface BackendDiscovery { offered: BackendOffered; commands?: BackendCommand[]; warning?: string }
 
 const found = new Map<string, Promise<BackendDiscovery>>();
 
@@ -54,8 +57,8 @@ async function discover(runtime: RuntimeConfig, cwd: string, env: NodeJS.Process
   const provider = new AcpBackendProvider({ agentName: runtime.agentName ?? spec.kind, spec, cwd, launch, autoApprove: false,
     ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}), diagnostic: () => {} });
   try {
-    const { offered, notices } = await provider.discover(ms, stop);
-    return { offered, ...(notices.length ? { warning: notices.join("\n") } : {}) };
+    const { offered, commands, notices } = await provider.discover(ms, stop);
+    return { offered, ...(commands ? { commands } : {}), ...(notices.length ? { warning: notices.join("\n") } : {}) };
   } catch (error) {
     if (deadline.aborted) throw new Error(`${BACKEND_LABELS[spec.kind]}: ${late}`);
     throw error;

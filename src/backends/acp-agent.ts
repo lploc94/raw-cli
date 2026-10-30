@@ -14,7 +14,7 @@ import type { ToolDisplay } from "../tools/display.js";
 import type { ToolApprovalRequest } from "../tools/primitives.js";
 import { AcpUpdateMapper, cliToolIdentity, bridgeToolName, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
 import { bridgeProxyServer } from "./bridge/proxy.js";
-import { offeredFromConfigOptions, type BackendOffered } from "./options.js";
+import { commandsFromAcp, offeredFromConfigOptions, type BackendCommand, type BackendOffered } from "./options.js";
 import { startBridge, type RawBridge } from "./bridge/server.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import type { ToolResult } from "../tools/types.js";
@@ -74,6 +74,8 @@ export const CANCEL_GRACE_MS = 5000;
 const CLOSE_GRACE_MS = 2000;
 /** How long a closed connection waits for the adapter's exit to be reported. */
 const EXIT_WAIT_MS = 1000;
+/** How long discovery waits for the CLI's command list after `session/new`: ~20× the slowest measured arrival (51 ms). */
+const COMMANDS_WAIT_MS = 1000;
 /** The ACP `configOptions` category behind each option, in the order they are applied. */
 const CATEGORIES = [["model", "model"], ["effort", "thought_level"], ["mode", "mode"]] as const;
 
@@ -163,6 +165,12 @@ export class AcpBackendProvider implements BackendProvider {
   usedModel: string | undefined;
   /** The CLI's latest report of its context: tokens used and the window. */
   context: { used: number; size: number } | undefined;
+  /** The commands the CLI conversation last listed (ACP `available_commands_update`), for the dashboard's `/` menu. */
+  commands: BackendCommand[] | undefined;
+  /** The CLI conversation `session/load` is resuming, while it runs: its command list counts, its replay does not. */
+  private loading: string | undefined;
+  /** Called when a command list arrives; discovery waits for the first. */
+  private commandsArrived: (() => void) | undefined;
 
   constructor(private readonly config: AcpBackendProviderOptions) {
     this.modelConfig = backendModelConfig(config.agentName, config.spec);
@@ -176,15 +184,38 @@ export class AcpBackendProvider implements BackendProvider {
    * What the CLI offers to a new conversation configured as the agent's, for the dashboard before a session runs: starts
    * the adapter and a throwaway conversation, then stops them. The notices are what applying the agent's values said.
    */
-  async discover(timeoutMs: number, signal?: AbortSignal): Promise<{ offered: BackendOffered; notices: string[] }> {
+  async discover(timeoutMs: number, signal?: AbortSignal): Promise<{ offered: BackendOffered; commands?: BackendCommand[]; notices: string[] }> {
     const notices: string[] = [];
     const notify = (message: string) => { notices.push(message); };
     const request = { system: "", messages: [], tools: [], timeoutMs, ...(signal ? { signal } : {}) } as ProviderRequest;
     try {
       await this.resolveLaunch(request, notify);
       await this.startup(request, (live) => this.open(live, notify, false, []));
-      return { offered: offeredFromConfigOptions(this.options), notices };
+      await this.firstCommands(signal);
+      return { offered: offeredFromConfigOptions(this.options), ...(this.commands ? { commands: this.commands } : {}), notices };
     } finally { await this.close(); }
+  }
+
+  /**
+   * Waits for the conversation's first command list: the CLIs send it 1–51 ms after `session/new` (measured 2026-10-30);
+   * without one by COMMANDS_WAIT_MS, or once `signal` aborts, discovery goes on without it.
+   */
+  private async firstCommands(signal: AbortSignal | undefined): Promise<void> {
+    if (this.commands || signal?.aborted) return;
+    let timer: NodeJS.Timeout | undefined;
+    let onAbort: (() => void) | undefined;
+    try {
+      await new Promise<void>((resolve) => {
+        this.commandsArrived = resolve;
+        timer = setTimeout(resolve, COMMANDS_WAIT_MS);
+        onAbort = resolve;
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    } finally {
+      this.commandsArrived = undefined;
+      clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   /** The session's current `configOptions`, as the CLI last reported them. */
@@ -379,10 +410,13 @@ export class AcpBackendProvider implements BackendProvider {
     const stored = binding?.store.readExternal(binding.sessionId, binding.owner);
     const meta = this.launch!.sessionMeta ? { _meta: this.launch!.sessionMeta } : {};
     if (stored && stored.kind === this.config.spec.kind && stored.profileDigest === this.profileDigest && live.loadSession) {
+      // The conversation keeps its stored list unless the CLI sends another, also while it loads (codex-acp 2.3.0 does).
+      this.commands = stored.commands;
+      this.loading = stored.cliSessionId;
       try {
         // Updates that replay the conversation arrive before this answer; with no active turn they are not recorded again.
         const loaded = await live.connection.agent.request("session/load", { sessionId: stored.cliSessionId, cwd: this.config.cwd,
-          mcpServers, ...meta });
+          mcpServers, ...meta }).finally(() => { this.loading = undefined; });
         this.options = loaded.configOptions ?? [];
         this.cliSessionId = stored.cliSessionId;
         this.baseline = { ...stored.baseline };
@@ -393,6 +427,8 @@ export class AcpBackendProvider implements BackendProvider {
         if (live.peer.exited()) throw error;
       }
     }
+    // A new conversation has only the list it sends.
+    this.commands = undefined;
     const created = await live.connection.agent.request("session/new", { cwd: this.config.cwd, mcpServers, ...meta });
     this.cliSessionId = created.sessionId;
     this.options = created.configOptions ?? [];
@@ -419,7 +455,11 @@ export class AcpBackendProvider implements BackendProvider {
     if (!binding || !stored || stored.cliSessionId !== this.cliSessionId) return;
     // The lists are those of the model in use; the current values are the conversation's own, which a turn returns to.
     const offered = offeredFromConfigOptions(this.options, this.baseline);
-    if (JSON.stringify(offered) !== JSON.stringify(stored.offered)) binding.store.writeExternal(binding.sessionId, binding.owner, { ...stored, offered });
+    // A conversation that has sent no list yet keeps the stored one.
+    const commands = this.commands ?? stored.commands;
+    if (JSON.stringify(offered) !== JSON.stringify(stored.offered) || JSON.stringify(commands) !== JSON.stringify(stored.commands)) {
+      binding.store.writeExternal(binding.sessionId, binding.owner, { ...stored, offered, ...(commands ? { commands } : {}) });
+    }
   }
 
   /**
@@ -537,13 +577,18 @@ export class AcpBackendProvider implements BackendProvider {
 
   private update(notification: SessionNotification): void {
     const turn = this.turn;
-    if (notification.sessionId !== this.cliSessionId) return;
+    const { update } = notification;
+    if (notification.sessionId !== this.cliSessionId) {
+      // The conversation being loaded may list its commands before `session/load` answers; the rest is its replay.
+      if (notification.sessionId === this.loading && update.sessionUpdate === "available_commands_update") this.listCommands(commandsFromAcp(update.availableCommands));
+      return;
+    }
     if (!turn) {
       // Outside a turn (a `session/load` replay, a late update) nothing is recorded: Raw already has that history.
-      // Session state still changes: the options and the context the CLI reports.
-      const { update } = notification;
+      // Session state still changes: the options, the context and the commands the CLI reports.
       if (update.sessionUpdate === "config_option_update") this.options = update.configOptions;
       else if (update.sessionUpdate === "usage_update") this.context = { used: update.used, size: update.size };
+      else if (update.sessionUpdate === "available_commands_update") this.listCommands(commandsFromAcp(update.availableCommands));
       return;
     }
     turn.touch();
@@ -556,8 +601,17 @@ export class AcpBackendProvider implements BackendProvider {
     else if (event.type === "reasoning") request.onReasoningDelta?.(event.text);
     else if (event.type === "context") this.context = { used: event.used, size: event.size };
     else if (event.type === "config") this.options = event.options;
+    else if (event.type === "commands") this.listCommands(event.commands);
     else if (event.type === "unknown") this.reportUnknown(event.kind);
     else request.onExternal?.(event as ExternalTurnEvent);
+  }
+
+  /** The CLI's new command list replaces the last one and is saved with the session; a store failure is only reported. */
+  private listCommands(commands: BackendCommand[]): void {
+    this.commands = commands;
+    this.commandsArrived?.();
+    try { this.saveOffered(); }
+    catch (error) { (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} commands not saved: ${(error as Error).message}\n`); }
   }
 
   /** Counts an update Raw does not handle and reports its kind once per runtime. */

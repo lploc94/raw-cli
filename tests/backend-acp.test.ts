@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { RunEvent } from "../src/agent.js";
-import { AcpBackendAgent, measureBackend, type AcpLaunch } from "../src/backends/acp-agent.js";
+import { AcpBackendAgent, AcpBackendProvider, measureBackend, type AcpLaunch } from "../src/backends/acp-agent.js";
 import { createAcpSessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { openSessionStore, type SessionStore, type SessionSummary } from "../src/sessions/store.js";
@@ -603,4 +603,88 @@ test("an approval that settles after the adapter died and the runtime closed lea
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(timers() <= before, `${timers()} timers after the approval, ${before} before`);
   } finally { await agent.close(); h.cleanup(); }
+});
+
+const FIRST = [{ name: "first", description: "The first list" }, { name: "review", description: "Review", input: { hint: "what" } }];
+const commandNames = (list: ReadonlyArray<{ name: string }> | undefined) => list?.map((command) => command.name);
+const providerCommands = (agent: AcpBackendAgent) => commandNames((agent.provider as AcpBackendProvider).commands);
+
+test("the CLI's command list: the latest one is kept on the provider and in the session, and survives reopening", async () => {
+  const h = await harness({ kind: "claude" }, {}, { FAKE_ACP_COMMANDS: JSON.stringify(FIRST) });
+  let agent = h.agent();
+  try {
+    await ask(agent, "pause 100");
+    assert.deepEqual(providerCommands(agent), ["first", "review"]);
+    assert.deepEqual(h.store.externalCommands(h.session.id), [{ name: "first", description: "The first list" },
+      { name: "review", description: "Review", hint: "what" }]);
+    // A second list during a turn replaces the first.
+    assert.equal((await ask(agent, "commands-change")).text, "listed");
+    assert.deepEqual(providerCommands(agent), ["second"]);
+    assert.deepEqual(commandNames(h.store.externalCommands(h.session.id)), ["second"]);
+    await agent.close();
+    h.reopen();
+    assert.deepEqual(commandNames(h.store.externalCommands(h.session.id)), ["second"]);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("a resumed CLI conversation takes the list it sends inside or after session/load, keeps the stored one without, and a fresh one drops it", async () => {
+  const h = await harness({ kind: "codex" }, {}, { FAKE_ACP_COMMANDS: JSON.stringify(FIRST) });
+  let agent = h.agent();
+  try {
+    await ask(agent, "pause 100");
+    assert.deepEqual(commandNames(h.store.externalCommands(h.session.id)), ["first", "review"]);
+    await agent.close();
+    const first = h.store.externalCommands(h.session.id)!;
+    for (const [mode, expected] of [["", ["first", "review"]], ["before", ["status"]], ["after", ["status"]]] as const) {
+      // Each mode resumes the same CLI conversation with the stored list `first`.
+      const owner = h.store.claimSession(h.session.id);
+      h.store.writeExternal(h.session.id, owner, { ...h.store.readExternal(h.session.id, owner)!, commands: first });
+      h.store.releaseSession(h.session.id, owner);
+      agent = h.agent({ env: { FAKE_ACP_COMMANDS: "", FAKE_ACP_LOAD_COMMANDS: mode } });
+      const turn = await ask(agent, "pause 100");
+      assert.deepEqual(turn.notices, [], mode);
+      assert.ok(h.calls().at(-1)?.method === "session/prompt");
+      assert.deepEqual(providerCommands(agent), expected, mode);
+      assert.deepEqual(commandNames(h.store.externalCommands(h.session.id)), expected, mode);
+      await agent.close();
+    }
+    // The CLI no longer has the conversation: a new one starts without the old conversation's list, then has its own.
+    for (const name of readdirSync(h.state).filter((item) => item.startsWith("session-"))) rmSync(join(h.state, name));
+    agent = h.agent({ env: { FAKE_ACP_COMMANDS: "", FAKE_ACP_LOAD_COMMANDS: "before" } });
+    await ask(agent, "pause 50");
+    assert.equal(providerCommands(agent), undefined);
+    assert.equal(h.store.externalCommands(h.session.id), undefined);
+    await agent.close();
+    for (const name of readdirSync(h.state).filter((item) => item.startsWith("session-"))) rmSync(join(h.state, name));
+    agent = h.agent({ env: { FAKE_ACP_COMMANDS: JSON.stringify([{ name: "fresh", description: "Fresh" }]) } });
+    await ask(agent, "pause 100");
+    assert.deepEqual(commandNames(h.store.externalCommands(h.session.id)), ["fresh"]);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("discovery returns the command list the CLI sends after session/new, and returns within about a second without one", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-backend-discover-"));
+  const discover = (env: NodeJS.ProcessEnv) => new AcpBackendProvider({ agentName: "ext", spec: { kind: "codex", systemPromptMode: "replace" },
+    cwd: root, autoApprove: false, diagnostic: () => {},
+    launch: { command: process.execPath, args: [FAKE], env: { ...process.env, FAKE_ACP_STATE: join(root, "fake"), ...env } } }).discover(10000);
+  try {
+    const listed = await discover({ FAKE_ACP_COMMANDS: JSON.stringify(FIRST), FAKE_ACP_COMMANDS_DELAY: "30" });
+    assert.deepEqual(commandNames(listed.commands), ["first", "review"]);
+    assert.ok(listed.offered.model?.options.length);
+    const started = Date.now();
+    const none = await discover({});
+    const took = Date.now() - started;
+    assert.ok(!Object.hasOwn(none, "commands"));
+    assert.ok(none.offered.model?.options.length);
+    assert.ok(took >= 1000 && took < 3000, `took ${took} ms`);
+    // An abort ends the wait at once.
+    const controller = new AbortController();
+    const provider = new AcpBackendProvider({ agentName: "ext", spec: { kind: "codex", systemPromptMode: "replace" }, cwd: root, autoApprove: false,
+      diagnostic: () => {}, launch: { command: process.execPath, args: [FAKE], env: { ...process.env, FAKE_ACP_STATE: join(root, "fake") } } });
+    const waiting = provider.discover(10000, controller.signal);
+    setTimeout(() => controller.abort(), 400);
+    const begun = Date.now();
+    await waiting.then(() => {}, () => {});
+    assert.ok(Date.now() - begun < 900, "the wait ends on abort");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

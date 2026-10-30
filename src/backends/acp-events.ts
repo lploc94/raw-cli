@@ -2,6 +2,7 @@ import type { SessionConfigOption, SessionUpdate } from "@agentclientprotocol/sd
 import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "../sessions/visible.js";
 import type { ToolKind } from "../tools/display.js";
 import type { ToolResult } from "../tools/types.js";
+import { commandsFromAcp, type BackendCommand } from "./options.js";
 
 /** What one ACP `session/update` means to Raw: chat text, a CLI tool call, or session state that is not chat. */
 export type AcpTurnEvent =
@@ -11,6 +12,7 @@ export type AcpTurnEvent =
   | { type: "tool_result"; id: string; name: string; result: ToolResult; display: VisibleToolResult; call: VisibleToolCall; started: boolean }
   | { type: "context"; used: number; size: number }
   | { type: "config"; options: SessionConfigOption[] }
+  | { type: "commands"; commands: BackendCommand[] }
   | { type: "notice"; message: string }
   | { type: "unknown"; kind: string };
 
@@ -41,7 +43,7 @@ const TITLE_CHARS = 120;
 const KINDS: Record<string, ToolKind> = { read: "read", edit: "edit", delete: "edit", move: "edit", search: "search",
   execute: "execute", think: "think", fetch: "fetch" };
 /** Updates that change session state the runtime keeps, never the chat. */
-const STATE_UPDATES = new Set(["available_commands_update", "session_info_update", "current_mode_update"]);
+const STATE_UPDATES = new Set(["session_info_update", "current_mode_update"]);
 
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -86,6 +88,7 @@ export class AcpUpdateMapper {
           text: `${update.entries.map((entry) => `${entry.status === "completed" ? "[x]" : "[ ]"} ${entry.content}`).join("\n")}\n` }] : [];
       case "usage_update": return [{ type: "context", used: update.used, size: update.size }];
       case "config_option_update": return [{ type: "config", options: update.configOptions }];
+      case "available_commands_update": return [{ type: "commands", commands: commandsFromAcp(update.availableCommands) }];
       case "notice": return [{ type: "notice", message: update.description ? `${update.title}: ${update.description}` : update.title }];
       case "tool_call": case "tool_call_update": return this.tool(update);
       default: return STATE_UPDATES.has(update.sessionUpdate) ? [] : [{ type: "unknown", kind: update.sessionUpdate }];

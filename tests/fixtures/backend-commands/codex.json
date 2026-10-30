@@ -1,0 +1,359 @@
+[
+  {
+    "name": "plan",
+    "description": "Turn plan mode on.",
+    "input": null
+  },
+  {
+    "name": "mcp",
+    "description": "Show the status of the MCP servers, or reconnect them.",
+    "input": {
+      "hint": "[reconnect]"
+    }
+  },
+  {
+    "name": "skills",
+    "description": "List available skills.",
+    "input": null
+  },
+  {
+    "name": "status",
+    "description": "Display session configuration and token usage.",
+    "input": null
+  },
+  {
+    "name": "review",
+    "description": "Review uncommitted changes, or review with custom instructions.",
+    "input": {
+      "hint": "optional review instructions"
+    }
+  },
+  {
+    "name": "review-branch",
+    "description": "Review changes relative to a base branch.",
+    "input": {
+      "hint": "branch name"
+    }
+  },
+  {
+    "name": "review-commit",
+    "description": "Review a specific commit.",
+    "input": {
+      "hint": "commit sha"
+    }
+  },
+  {
+    "name": "compact",
+    "description": "Summarize conversation to avoid hitting the context limit.",
+    "input": null
+  },
+  {
+    "name": "goal",
+    "description": "Set a goal to keep pursuing.",
+    "input": {
+      "hint": "[<objective>|clear|pause|resume]"
+    }
+  },
+  {
+    "name": "rename",
+    "description": "Rename the current session.",
+    "input": {
+      "hint": "new name"
+    }
+  },
+  {
+    "name": "logout",
+    "description": "Sign out of Codex. This option is available when you are logged in via ChatGPT.",
+    "input": null
+  },
+  {
+    "name": "$local-skill-1",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$local-skill-2",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$documents:documents",
+    "description": "Create, edit, redline, and comment on `.docx`, Word, and Google Docs-targeted document artifacts inside the container, with a strict render-and-verify workflow. Use `render_docx.py` to generate page PNGs (and optional PDF) for visual QA, then iterate until layout is flawless before delivering the final document.",
+    "input": null
+  },
+  {
+    "name": "$find-skills",
+    "description": "Helps users discover and install agent skills when they ask questions like \"how do I do X\", \"find a skill for X\", \"is there a skill that can...\", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.",
+    "input": null
+  },
+  {
+    "name": "$linkup-search",
+    "description": "Use this skill whenever the agent has access to Linkup web search or fetch tools. Teaches the agent how to reason about query construction, choose search depth, write effective queries, select the right output type, use the fetch endpoint, and apply advanced techniques like sequential search and multi-query coverage. Applicable to any task involving web search, content extraction, company research, news retrieval, data enrichment, or real-time information gathering via Linkup.",
+    "input": null
+  },
+  {
+    "name": "$local-skill-4",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$local-skill-5",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-analytics-dashboard",
+    "description": "Create a spreadsheet using the Analytics Dashboard template and its retained reference file. Use when the user selects or names Analytics Dashboard. Monitor acquisition, engagement, retention, revenue, and conversion funnel KPIs with charts.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-business-review",
+    "description": "Create a presentation using the Business Review template and its retained reference file. Use when the user selects or names Business Review. Review business performance, KPIs, segment results, strategic priorities, decisions, and outlook.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-design-report",
+    "description": "Create a document using the Design Report template and its retained reference file. Use when the user selects or names Design Report. Produce design reports with an executive summary, key findings, implications, recommendations, and appendix.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-experiment-analysis",
+    "description": "Create a document using the Experiment Analysis template and its retained reference file. Use when the user selects or names Experiment Analysis. Analyze experiments with hypotheses, methodology, results, interpretation, limitations, and next steps.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-financial-budget",
+    "description": "Create a spreadsheet using the Financial Budget template and its retained reference file. Use when the user selects or names Financial Budget. Model actuals, budget and scenario forecasts, variances, cash runway, and departmental plans.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-investment-committee-memo",
+    "description": "Create a document using the Investment Committee Memo template and its retained reference file. Use when the user selects or names Investment Committee Memo. Prepare investment committee memos with the thesis, transaction details, financial analysis, risks, and recommendation.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-legal-memorandum",
+    "description": "Create a document using the Legal Memorandum template and its retained reference file. Use when the user selects or names Legal Memorandum. Draft legal memoranda with the issue, brief answer, relevant facts, analysis, and conclusion.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-market-trends-report",
+    "description": "Create a presentation using the Market Trends Report template and its retained reference file. Use when the user selects or names Market Trends Report. Communicate market or industry trends, supporting evidence, implications, and recommended responses.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-minimal-letterhead",
+    "description": "Create a document using the Minimal Letterhead template and its retained reference file. Use when the user selects or names Minimal Letterhead. Write professional business letters with sender, recipient, message, and signature fields in a minimal letterhead layout.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-operating-calendar",
+    "description": "Create a spreadsheet using the Operating Calendar template and its retained reference file. Use when the user selects or names Operating Calendar. Plan annual and monthly operating milestones, campaigns, launches, deadlines, and recurring events.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-operating-review",
+    "description": "Create a presentation using the Operating Review template and its retained reference file. Use when the user selects or names Operating Review. Run weekly operating reviews with scorecards, functional updates, risks, decisions, and action items.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-project-kickoff",
+    "description": "Create a presentation using the Project Kickoff template and its retained reference file. Use when the user selects or names Project Kickoff. Align teams on project goals, scope, roles, milestones, risks, and the working model.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-project-tracker",
+    "description": "Create a spreadsheet using the Project Tracker template and its retained reference file. Use when the user selects or names Project Tracker. Manage workstreams, tasks, owners, status, priority, dates, launch pulse, and a Gantt schedule.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-sales-pipeline",
+    "description": "Create a spreadsheet using the Sales Pipeline template and its retained reference file. Use when the user selects or names Sales Pipeline. Track opportunities, stages, owners, deal sizes, probabilities, forecasts, next steps, and risks.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-simple-dark-mode",
+    "description": "Create a presentation using the Simple Dark Mode template and its retained reference file. Use when the user selects or names Simple Dark Mode. Create clean dark-mode presentations with bold typography, simple sections, charts, and imagery.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-simple-light-mode",
+    "description": "Create a presentation using the Simple Light Mode template and its retained reference file. Use when the user selects or names Simple Light Mode. Create clean light-mode presentations with spacious typography, simple sections, charts, and imagery.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-strategy-memorandum",
+    "description": "Create a document using the Strategy Memorandum template and its retained reference file. Use when the user selects or names Strategy Memorandum. Present strategic context, choices, rationale, risks, milestones, and a clear recommendation.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-system-design",
+    "description": "Create a document using the System Design template and its retained reference file. Use when the user selects or names System Design. Document system architecture, requirements, components, data flows, APIs, tradeoffs, and operational considerations.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-team-alignment",
+    "description": "Create a presentation using the Team Alignment template and its retained reference file. Use when the user selects or names Team Alignment. Facilitate team offsites and planning with context, goals, priorities, decisions, and action items.",
+    "input": null
+  },
+  {
+    "name": "$openai-templates:artifact-template-three-statement-forecast",
+    "description": "Create a spreadsheet using the Three-Statement Forecast template and its retained reference file. Use when the user selects or names Three-Statement Forecast. Build an integrated income statement, balance sheet, and cash flow forecast with assumptions, checks, and an executive summary.",
+    "input": null
+  },
+  {
+    "name": "$pages:maintain-space",
+    "description": "Reconcile new evidence into existing ChatGPT Pages or a Space when the user requests upkeep. For a direct text correction, use write-page. Do not use for ordinary chat drafts, writing, or advice, or treat a selected Page as a request to save. Schedule future upkeep only when requested.",
+    "input": null
+  },
+  {
+    "name": "$pages:manage-schedules",
+    "description": "Review a ChatGPT Space page and its schedules, recommend useful recurring work, and create, update, or remove scheduled automations.",
+    "input": null
+  },
+  {
+    "name": "$pages:organize-space",
+    "description": "Organize existing ChatGPT Pages and Space structure when the user requests changes to that structure. Do not use for ordinary chat drafts or advice; a selected Page alone does not authorize reorganization. A narrow text edit does not need this workflow.",
+    "input": null
+  },
+  {
+    "name": "$pages:write-page",
+    "description": "Create or edit requested Page/Space content, or use for prose you have already decided to save as a standalone Markdown file, only if the user did not explicitly request a Markdown file. Honor established formats, destinations, and repository documentation. A selected Page alone does not authorize a write.",
+    "input": null
+  },
+  {
+    "name": "$pdf:pdf",
+    "description": "Read, create, inspect, render, and verify PDF files where visual layout matters, including fillable AcroForms. Use Poppler rendering plus Python tools such as reportlab, pdfplumber, and pypdf for generation and extraction.",
+    "input": null
+  },
+  {
+    "name": "$presentations:Presentations",
+    "description": "Read, create or edit PowerPoint or Google Slides decks. Use for presentation, slide deck, PowerPoint, PPT, PPTX, or Google Slides requests.",
+    "input": null
+  },
+  {
+    "name": "$local-skill-6",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$local-skill-7",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$local-skill-8",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$local-skill-9",
+    "description": "A skill installed on the machine the list was recorded on",
+    "input": null
+  },
+  {
+    "name": "$sites:sites",
+    "description": "Use Sites when the user wants a website built for them (including a landing page, portfolio, dashboard, portal, tracker, hub, game, event registration, or tool), requests changes to a website already built with Sites, wants to publish a website with Sites, or wants to manage Sites hosting.",
+    "input": null
+  },
+  {
+    "name": "$sites:sites-remix",
+    "description": "Remix a Site built with the Sites plugin into a new Site. Use when the user has identified the source Site and asks to remix it.",
+    "input": null
+  },
+  {
+    "name": "$spreadsheets:Spreadsheets",
+    "description": "Create, edit, analyze, and verify standalone spreadsheet files or Google Sheets-ready workbooks, including .xlsx, .xls, .csv, and .tsv. Do not use for live controlling Microsoft Excel app or a live Excel session.",
+    "input": null
+  },
+  {
+    "name": "$spreadsheets:excel-live-control",
+    "description": "Control an open or active Microsoft Excel workbook through the ChatGPT add-in or connected session. Use when the user tags the Microsoft Excel app in Codex or follows up on an established live Excel task. Do not use for standalone spreadsheet files or Google Sheets.",
+    "input": null
+  },
+  {
+    "name": "$tavily-best-practices",
+    "description": "Build production-ready Tavily integrations with best practices baked in. Reference documentation for developers using coding assistants (Claude Code, Cursor, etc.) to implement web search, content extraction, crawling, and research in agentic workflows, RAG systems, or autonomous agents.",
+    "input": null
+  },
+  {
+    "name": "$tavily-cli",
+    "description": "Web search, content extraction, crawling, and deep research via the Tavily CLI. Use this skill whenever the user wants to search the web, find articles, research a topic, look something up online, extract content from a URL, grab text from a webpage, crawl documentation, download a site's pages, discover URLs on a domain, or conduct in-depth research with citations. Also use when they say \"fetch this page\", \"pull the content from\", \"get the page at https://\", \"find me articles about\", or reference extracting data from external websites. This provides LLM-optimized web search, content extraction, site crawling, URL discovery, and AI-powered deep research — capabilities beyond what agents can do natively. Do NOT trigger for local file operations, git commands, deployments, or code editing tasks.",
+    "input": null
+  },
+  {
+    "name": "$tavily-crawl",
+    "description": "Crawl websites and extract content from multiple pages via the Tavily CLI. Use this skill when the user wants to crawl a site, download documentation, extract an entire docs section, bulk-extract pages, save a site as local markdown files, or says \"crawl\", \"get all the pages\", \"download the docs\", \"extract everything under /docs\", \"bulk extract\", or needs content from many pages on the same domain. Supports depth/breadth control, path filtering, semantic instructions, and saving each page as a local markdown file.",
+    "input": null
+  },
+  {
+    "name": "$tavily-dynamic-search",
+    "description": "Programmatic web search with context isolation. Use this skill for any research task where you need to search the web, filter results, and extract specific information — without polluting your context window with raw HTML and boilerplate. This is the default skill for web research. Triggered by \"search for\", \"look up\", \"find\", \"research\", \"what's the latest on\", or any query that requires current web information. Also use when asked to \"search and filter\", \"find the important parts\", or \"extract the key details\" — any case where the user wants curated, noise-free content.",
+    "input": null
+  },
+  {
+    "name": "$tavily-extract",
+    "description": "Extract clean markdown or text content from specific URLs via the Tavily CLI. Use this skill when the user has one or more URLs and wants their content, says \"extract\", \"grab the content from\", \"pull the text from\", \"get the page at\", \"read this webpage\", or needs clean text from web pages. Handles JavaScript-rendered pages, returns LLM-optimized markdown, and supports query-focused chunking for targeted extraction. Can process up to 20 URLs in a single call.",
+    "input": null
+  },
+  {
+    "name": "$tavily-map",
+    "description": "Discover and list all URLs on a website without extracting content, via the Tavily CLI. Use this skill when the user wants to find a specific page on a large site, list all URLs, see the site structure, find where something is on a domain, or says \"map the site\", \"find the URL for\", \"what pages are on\", \"list all pages\", or \"site structure\". Faster than crawling — returns URLs only. Essential when you know the site but not the exact page. Combine with extract for targeted content retrieval.",
+    "input": null
+  },
+  {
+    "name": "$tavily-research",
+    "description": "Conduct comprehensive AI-powered research with citations via the Tavily CLI. Use this skill when the user wants deep research, a detailed report, a comparison, market analysis, literature review, or says \"research\", \"investigate\", \"analyze in depth\", \"compare X vs Y\", \"what does the market look like for\", or needs multi-source synthesis with explicit citations. Returns a structured report grounded in web sources. Takes 30-120 seconds. For quick fact-finding, use tavily-search instead.",
+    "input": null
+  },
+  {
+    "name": "$tavily-search",
+    "description": "Search the web with LLM-optimized results via the Tavily CLI. Use this skill when the user wants to search the web, find articles, look up information, get recent news, discover sources, or says \"search for\", \"find me\", \"look up\", \"what's the latest on\", \"find articles about\", or needs current information from the internet. Returns relevant results with content snippets, relevance scores, and metadata — optimized for LLM consumption. Supports domain filtering, time ranges, and multiple search depths.",
+    "input": null
+  },
+  {
+    "name": "$template-creator:template-creator",
+    "description": "Create or update a reusable personal Codex artifact-template skill. Use when the user invokes $template-creator or asks in natural language to create a reusable template from a reference document, presentation, spreadsheet, Google Docs, Slides, or Sheets link, ImageGen or Product Design image, email, Slack message, or Site project, or explicitly asks to edit or update a passed artifact-template skill. Do not use for one-off creation from an existing template.",
+    "input": null
+  },
+  {
+    "name": "$work-pets:create-pet",
+    "description": "Create, repair, validate, preview, upload, or activate an animated v2 pet in ChatGPT Work mode from a character idea, brand cue, or reference image. Use for new ChatGPT Pets, custom mascots, non-pixel styles, and unattached sprite sheets requiring nine animation states plus sixteen look directions. Preserve Library artifacts and Pets MCP lifecycle behavior. Exclude real pets, standalone images, and other-app pets; clarify before invoking.",
+    "input": null
+  },
+  {
+    "name": "$work-pets:pets",
+    "description": "List, inspect, select, download, or delete animated pets in ChatGPT Work mode. Use for an explicit pet in ChatGPT or established ChatGPT Pets context. Exclude real-world and other-app pets; clarify before invoking.",
+    "input": null
+  },
+  {
+    "name": "$work-pets:update-pet",
+    "description": "Inspect, validate, preview, repair, or update a custom pet in ChatGPT Work mode, including its name, description, or sprite sheet. Use for a pet in ChatGPT or established ChatGPT Pets context. Exclude real-world and other-app pets; clarify before invoking.",
+    "input": null
+  },
+  {
+    "name": "$imagegen",
+    "description": "Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas.",
+    "input": null
+  },
+  {
+    "name": "$openai-docs",
+    "description": "Codex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, and self-knowledge; OpenAI APIs and ChatGPT Work. 'You'/'this app' means Codex only.",
+    "input": null
+  },
+  {
+    "name": "$review-agent",
+    "description": "Perform a read-only, defect-first review of a specified code change and return every actionable finding. Use when another agent delegates review of uncommitted changes, a base-branch diff, a commit, or custom review instructions.",
+    "input": null
+  },
+  {
+    "name": "$skill-creator",
+    "description": "Create or update a skill",
+    "input": null
+  },
+  {
+    "name": "$skill-installer",
+    "description": "Install curated skills from openai/skills or other repos",
+    "input": null
+  }
+]
