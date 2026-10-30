@@ -15,7 +15,7 @@ import { knownPanelDeclarations, type KnownPanels } from "../panels/declarations
 import { buildPanelStack, presentDeclaration, presentToolView, declarationsFor, loadDeclarationsForSaved, toolViewStackItem, type LoadedDeclarations, type PanelStackItem } from "../panels/stack.js";
 import { BACKEND_LABELS } from "../backends/config.js";
 import { discoverBackendOptions } from "../backends/discovery.js";
-import { backendControls } from "../backends/options.js";
+import { backendControls, type BackendCommand } from "../backends/options.js";
 import { parseRequestOverride, requestControls, RequestOverrideError, type RequestControl, type RequestOverride } from "../request-controls.js";
 import { loadSelectedSkills } from "../skills/loader.js";
 import type { UserBlock } from "../llm/types.js";
@@ -46,6 +46,8 @@ export interface SessionSnapshot {
   inputs: QueuedInputView[];
   /** A backend session's controls, from what its CLI offered when last asked (docs/dashboard-api.md). */
   backendOptions?: RequestControl[];
+  /** The commands a backend session's CLI listed last (Claude Code, Codex), for the `/` menu (docs/dashboard-api.md). */
+  backendCommands?: BackendCommand[];
 }
 export function workspacePath(value: unknown, base: string): string {
   const input = textField(value, "cwd", 4096);
@@ -125,7 +127,7 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
   // Closing the dashboard aborts `context.signal`, which stops these; close waits until what they started has exited.
   const discoveries = new Set<Promise<unknown>>();
   context.onClose(() => Promise.allSettled([...discoveries]).then(() => {}));
-  const backendOptions = async (name: string): Promise<{ controls: RequestControl[]; warning?: string }> => {
+  const backendOptions = async (name: string): Promise<{ controls: RequestControl[]; commands?: BackendCommand[]; warning?: string }> => {
     const config = await readManagedConfig({ cwd: context.cwd, configPath: context.configPath, env: context.env });
     if (!Object.hasOwn(record(config.data?.agents), name)) throw new DashboardError(404, "not_found", `Agent ${name} is not configured`);
     let runtime;
@@ -135,7 +137,8 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     const asking = (context.discoverBackend ?? discoverBackendOptions)(runtime, context.cwd, context.env, context.signal);
     discoveries.add(asking);
     const found = await asking.finally(() => discoveries.delete(asking));
-    return { controls: backendControls(found.offered), ...(found.warning ? { warning: found.warning } : {}) };
+    return { controls: backendControls(found.offered), ...(found.commands ? { commands: found.commands } : {}),
+      ...(found.warning ? { warning: found.warning } : {}) };
   };
   const agentControls = async (name: string): Promise<{ controls: RequestControl[]; backend: boolean }> => {
     try {
@@ -217,7 +220,8 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     const receipts = store.listOperations(id, 20);
     const commands = processes.commands.listing(id);
     const offered = backendControls(store.externalOffered(id));
-    return { session, ...(offered.length ? { backendOptions: offered } : {}), history: { ...page, items: page.items.map(projectHistoryItem) }, historyWatermark,
+    const listed = store.externalCommands(id);
+    return { session, ...(offered.length ? { backendOptions: offered } : {}), ...(listed ? { backendCommands: listed } : {}), history: { ...page, items: page.items.map(projectHistoryItem) }, historyWatermark,
       ownership: streams.ownership(id), operations: receipts, ...metrics(id), context: store.getContextSummary(id),
       live: output.list(new Set(receipts.filter((op) => !terminalOperationStates.has(op.state)).map((op) => op.id))), approvals: approvals.list(id),
       agent: session.agentName ?? null, commands: commands.items, ...(commands.omitted ? { commandsOmitted: commands.omitted } : {}), interactions: store.pendingInteractions(id),

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect, openChat } from "./fixtures.js";
 import { createAcpSessionAgent } from "../../src/backends/factory.js";
-import type { BackendOffered } from "../../src/backends/options.js";
+import { commandsFromAcp, type BackendOffered } from "../../src/backends/options.js";
 import { attachSessionRuntimeWith } from "../../src/sessions/runtime.js";
 
 const FAKE_ACP = join(import.meta.dirname, "..", "fixtures", "fake-acp-agent.mjs");
@@ -18,6 +18,8 @@ const DISCOVERED: BackendOffered = {
   effort: { options: [{ value: "low", label: "low" }, { value: "high", label: "high" }] },
   mode: { current: "ask", options: [{ value: "ask", label: "Ask before edits" }, { value: "auto", label: "Auto" }] },
 };
+/** The commands Claude Code listed on 2026-10-30 (claude-agent-acp 0.98.0). */
+const CLAUDE_COMMANDS = commandsFromAcp(JSON.parse(readFileSync(join(import.meta.dirname, "..", "fixtures", "backend-commands", "claude.json"), "utf8")));
 const TODO = { title: "Ship", todos: [{ content: "Write tests for the backend controls at narrow widths", status: "in_progress" }, { content: "Docs", status: "pending" }] };
 
 const message = (page: Page) => page.getByRole("textbox", { name: "Message" });
@@ -48,8 +50,42 @@ test.describe("a Claude Code backend agent at 320 px", () => {
       extraAgents: { ext: { cli: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: ["builtin/todo"] } } },
       config: { default_agent: "ext" },
       attach: scriptedBackend,
-      discoverBackend: async () => ({ offered: structuredClone(DISCOVERED) }),
+      discoverBackend: async () => ({ offered: structuredClone(DISCOVERED), commands: structuredClone(CLAUDE_COMMANDS) }),
     },
+  });
+
+  test("the / menu lists Claude Code's commands; one is inserted, not sent, and goes to the CLI as typed", async ({ page, raw }) => {
+    await openChat(page, raw);
+    const input = message(page);
+    await input.click();
+    await input.pressSequentially("/");
+    const list = page.getByRole("listbox", { name: "Suggestions" });
+    await expect(list).toBeVisible();
+    await expect(list.getByRole("option").first()).toContainText("/compact");
+    await expect(list.getByRole("option").first()).toContainText("· Claude Code");
+    await fits(page, [".suggestions"]);
+    await input.pressSequentially("context");
+    const context = list.getByRole("option").filter({ hasText: "· Claude Code" }).first();
+    await expect(context).toContainText("/context");
+    await page.keyboard.press("Enter");
+    await expect(input).toHaveValue("/context ");
+    await expect(list).toHaveCount(0);
+    await expect(answers(page)).toHaveCount(0);
+    await input.pressSequentially("all");
+    await page.keyboard.press("Enter");
+    await expect(answers(page).last()).toContainText("echo:/context all");
+    // The CLI's /compact is inserted too; Raw's /rename keeps its dialog and Claude Code's rename is not listed.
+    await input.pressSequentially("/compact");
+    await expect(list.getByRole("option").first()).toContainText("· Claude Code");
+    await page.keyboard.press("Enter");
+    await expect(input).toHaveValue("/compact ");
+    await input.fill("");
+    await input.pressSequentially("/rename");
+    await expect(list.getByRole("option").filter({ hasText: "/rename" })).toHaveCount(1);
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.keyboard.press("Escape");
+    expect(raw.provider.requests.length).toBe(0);
   });
 
   test("the composer offers the backend's selects, a choice runs the next turn, and an unlisted value shows the backend notice", async ({ page, raw }) => {
@@ -128,6 +164,13 @@ test.describe("a Codex backend agent whose CLI cannot be asked", () => {
     await openChat(page, raw);
     await expect(page.getByText("Codex could not be asked for its models: Codex could not start: not logged in. Turns use the agent's settings.")).toBeVisible();
     await expect(pill(page)).toHaveCount(0);
+    // Without Codex's list the menu has no CLI commands, and Raw's /compact says Codex compacts on its own.
+    await message(page).pressSequentially("/");
+    const compact = page.getByRole("listbox", { name: "Suggestions" }).getByRole("option").first();
+    await expect(compact).toContainText("/compact");
+    await expect(compact).toContainText("Codex compacts its own context");
+    await expect(page.getByRole("listbox", { name: "Suggestions" }).getByRole("option").filter({ hasText: "· Codex" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
     await message(page).fill("hello");
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
     await fits(page, [".composer-area"]);

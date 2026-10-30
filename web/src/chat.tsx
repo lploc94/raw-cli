@@ -209,6 +209,14 @@ export function Chat({
     () => (backend ? (sessionOptions ?? discovered.data?.controls ?? NO_CONTROLS) : meta.controls),
     [backend, sessionOptions, discovered.data, meta.controls],
   );
+  // Claude Code's and Codex's own commands for the `/` menu: the session's list once it has one, else a new conversation's.
+  const sessionCommands = state?.session.agentName === agent ? state?.backendCommands : undefined;
+  const cli = useMemo(
+    () => backend && (backend.kind === "claude" || backend.kind === "codex")
+      ? { label: backend.label, commands: sessionCommands ?? discovered.data?.commands }
+      : undefined,
+    [backend, sessionCommands, discovered.data],
+  );
   const request = useRequestChoice(id, agent, controls, backend && !sessionOptions && !discovered.data ? "" : metaFor);
   const skills = meta.skills;
   const att = useAttachments(id, meta.attachmentKinds);
@@ -824,12 +832,13 @@ export function Chat({
           details: () => setInspector((value) => !value),
         },
         skills,
+        cli,
       ),
       files,
     ],
     // `send` closes over live state; the rebuilt provider only needs to track what changes the list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [skills, compactDisabled, state, agent, busy, files],
+    [skills, cli, compactDisabled, state, agent, busy, files],
   );
   return (
     <Dialog.Root open={inspector} onOpenChange={setInspector} modal={narrow}>

@@ -577,6 +577,30 @@ test("a backend agent's composer offers what the CLI offers as selects, and says
   } finally { await f.close(); }
 });
 
+test("the backend-options route and the session snapshot carry the CLI's command list", async () => {
+  const commands = [{ name: "context", description: "Show context usage" }, { name: "review", description: "Review", hint: "what" }];
+  let listed = true;
+  const previous = process.env.FAKE_ACP_COMMANDS;
+  process.env.FAKE_ACP_COMMANDS = JSON.stringify([{ name: "status", description: "Current status" }]);
+  const f = await dashboardFixture({ extraAgents: { ext: { cli: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
+    attach: scriptedBackend, discoverBackend: async () => listed ? { offered: structuredClone(LISTED), commands: structuredClone(commands) } : { offered: {} } });
+  try {
+    const offered = await f.json<{ controls: unknown[]; commands?: unknown }>("/agents/ext/backend-options");
+    assert.deepEqual(offered.commands, commands);
+    assert.equal(offered.controls.length, 3);
+    listed = false;
+    assert.ok(!Object.hasOwn(await f.json("/agents/ext/backend-options"), "commands"));
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
+    assert.ok(!Object.hasOwn(await f.json<SessionSnapshot>(`/sessions/${session.id}`), "backendCommands"));
+    const sent = await f.api(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "one", kind: "turn", agent: "ext", input: "pause 100" });
+    assert.equal((await f.wait((await sent.json() as SessionOperation).id)).state, "completed");
+    assert.deepEqual((await f.json<SessionSnapshot>(`/sessions/${session.id}`)).backendCommands, [{ name: "status", description: "Current status" }]);
+  } finally {
+    await f.close();
+    if (previous === undefined) delete process.env.FAKE_ACP_COMMANDS; else process.env.FAKE_ACP_COMMANDS = previous;
+  }
+});
+
 /** A Claude Code agent whose adapter is not installed, and an `npm` on PATH that never finishes, recording its pids. */
 function stalledInstall() {
   const bin = mkdtempSync(join(tmpdir(), "raw-stalled-npm-"));

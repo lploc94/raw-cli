@@ -10,6 +10,7 @@ import type { Page } from "../../src/sessions/store.js";
 import { api, ApiError, errorText, subscribe } from "./api.js";
 import { applyFrame } from "./panels/panel-state.js";
 import { browserScheduler, createEventBatcher } from "./session-batch.js";
+import { refreshFromSnapshot } from "./session-refresh.js";
 
 export type LiveTool = DashboardEventData["tool"] & { operationId: string };
 export interface ChatState extends SessionSnapshot {
@@ -303,17 +304,7 @@ export function useSession(sessionId: string | undefined, remote?: boolean) {
               )
                 .then((snapshot) =>
                   setState((old) =>
-                    old
-                      ? {
-                          ...old,
-                          session: snapshot.session,
-                          context: snapshot.context,
-                          metrics: snapshot.metrics,
-                          metricsStale: snapshot.metricsStale,
-                          // A backend turn may have changed what the CLI lists (Claude's efforts follow the model).
-                          ...(snapshot.backendOptions ? { backendOptions: snapshot.backendOptions } : {}),
-                        }
-                      : old,
+                    old ? refreshFromSnapshot(old, snapshot) : old,
                   ),
                 )
                 .catch(() => {});

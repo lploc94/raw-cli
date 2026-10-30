@@ -1,5 +1,6 @@
 import useSWR, { preload } from "swr";
 import useSWRInfinite, { type SWRInfiniteKeyedMutator } from "swr/infinite";
+import type { BackendCommand } from "../../../src/backends/options.js";
 import type { DashboardBootstrap } from "../../../src/dashboard/contract.js";
 import type { WorkspaceFileListing } from "../../../src/dashboard/files.js";
 import type { ConfigView } from "../../../src/dashboard/management.js";
@@ -91,7 +92,7 @@ export function useComposerMeta(agent: string) {
  * is not refetched on focus.
  */
 export function useBackendOptions(agent: string, enabled: boolean) {
-  return useSWR<{ controls: RequestControlMeta[]; warning?: string }>(enabled && agent ? keys.backendOptions(agent) : null, {
+  return useSWR<{ controls: RequestControlMeta[]; commands?: BackendCommand[]; warning?: string }>(enabled && agent ? keys.backendOptions(agent) : null, {
     keepPreviousData: false,
     revalidateOnFocus: false,
   });
