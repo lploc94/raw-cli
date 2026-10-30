@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -12,6 +12,7 @@ import { openAiFrame, openAiDone } from "./fixtures/mock-provider.js";
 import type { SessionSummary } from "../src/sessions/store.js";
 import type { SessionOperation } from "../src/sessions/operations.js";
 import type { SessionSnapshot } from "../src/dashboard/sessions.js";
+import type { CommandRecord } from "../src/processes/presentation.js";
 import { createAgent } from "../src/agent.js";
 import { COMPACT_SYSTEM_PROMPT } from "../src/compact.js";
 import { compactionInput, isCompactionRequest } from "./fixtures/compaction.js";
@@ -743,5 +744,74 @@ test("the session's lists follow a model the CLI switched to during the turn, al
       assert.deepEqual(snapshot.backendOptions?.map((control) => [control.id, control.options.map((option) => option.value)]), [
         ["backend_model", ["small", "big", "mid"]], ["backend_effort", ["low", "high"]], ["backend_mode", ["ask", "auto"]]], input);
     }
+  } finally { await f.close(); }
+});
+
+/** The scripted ACP agent with AIR async tasks, as Raw declares them to Claude Code and Codex (cli-background-work). */
+const taskBackend = (env: NodeJS.ProcessEnv) => attachSessionRuntimeWith((context) => createAcpSessionAgent(context,
+  { command: process.execPath, args: [FAKE_ACP], env: { ...process.env, FAKE_ACP_STATE: join(context.cwd, "fake-acp"), ...env }, asyncTasks: true }));
+async function taskSession(kind: "claude" | "codex", env: NodeJS.ProcessEnv) {
+  const f = await dashboardFixture({ extraAgents: { ext: { cli: { kind }, system_prompt: "Be RAW.", tools: { use: [] } } }, attach: taskBackend(env) });
+  const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
+  const sent = await f.json<SessionOperation>(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "bg", kind: "turn", agent: "ext", input: "bg" });
+  assert.equal((await f.wait(sent.id)).state, "completed");
+  const rows = async () => (await f.json<{ items: CommandRecord[] }>(`/sessions/${session.id}/commands`)).items.filter((row) => row.id.startsWith("cli:"));
+  const stops = () => { try { return readdirSync(join(f.root, "fake-acp")).filter((name) => name.startsWith("calls-")).flatMap((name) =>
+    readFileSync(join(f.root, "fake-acp", name), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>))
+    .filter((call) => call.method === "_session/async_task/stop").map((call) => call.asyncTaskId); } catch { return []; } };
+  return { f, session, rows, stops, url: `/sessions/${session.id}/commands/cli%3Atask-1` };
+}
+
+test("CLI task: a Codex background task is a Commands row, Stop stops it in the CLI, and the row follows the CLI's state", async () => {
+  const { f, rows, stops, url } = await taskSession("codex", { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "20000" });
+  try {
+    const [row] = await rows();
+    assert.equal(row?.id, "cli:task-1");
+    assert.deepEqual([row!.kind, row!.owner, row!.command, row!.state, row!.canStop], ["background", "cli/codex", "Background job", "running", true]);
+    assert.equal((await f.api(`${url}/output`)).status, 404);
+    assert.equal(((await (await f.api(`${url}/output`)).json()) as { error: { code: string } }).error.code, "output_unavailable");
+    const stopped = await f.api(`${url}/stop`, "POST", { clientRequestId: "stop-1" });
+    assert.equal(stopped.status, 202);
+    assert.equal(((await stopped.json()) as { state: string }).state, "completed");
+    assert.deepEqual(stops(), ["task-1"]);
+    await until(async () => (await rows())[0]?.state === "stopped", "the stopped row");
+    const again = await f.api(`${url}/stop`, "POST", { clientRequestId: "stop-2" });
+    assert.equal(again.status, 409);
+    assert.equal(((await again.json()) as { error: { code: string } }).error.code, "process_not_running");
+  } finally { await f.close(); }
+});
+
+test("CLI task: rows map a completion with its exit code, a pause and a lost task", async (t) => {
+  await t.test("completed", async () => {
+    const { f, rows } = await taskSession("codex", { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_EXIT: "0" });
+    try {
+      await until(async () => (await rows())[0]?.state === "exited" && (await rows())[0]?.exitCode === 0, "the exited row");
+    } finally { await f.close(); }
+  });
+  await t.test("paused", async () => {
+    const { f, rows } = await taskSession("claude", { FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_STATES: "paused" });
+    try {
+      await until(async () => (await rows())[0]?.paused === true, "the paused row");
+      assert.equal((await rows())[0]!.state, "running");
+      assert.equal((await rows())[0]!.owner, "cli/claude-code");
+    } finally { await f.close(); }
+  });
+  await t.test("lost", async () => {
+    const { f, rows } = await taskSession("claude", { FAKE_ACP_BG_MS: "20000", FAKE_ACP_EXIT_AFTER_BG: "1", FAKE_ACP_EXIT_AFTER_BG_MS: "300" });
+    try {
+      await until(async () => (await rows())[0]?.state === "lost", "the lost row");
+      assert.ok((await rows())[0]!.error, "the row says why");
+    } finally { await f.close(); }
+  });
+});
+
+test("CLI task: a task the CLI does not let Raw stop has no Stop: 409 not_stoppable and no stop sent", async () => {
+  const { f, rows, stops, url } = await taskSession("claude", { FAKE_ACP_BG_MS: "20000", FAKE_ACP_BG_TYPE: "monitor", FAKE_ACP_BG_CANSTOP: "0" });
+  try {
+    assert.equal((await rows())[0]?.canStop, false);
+    const refused = await f.api(`${url}/stop`, "POST", { clientRequestId: "stop-1" });
+    assert.equal(refused.status, 409);
+    assert.equal(((await refused.json()) as { error: { code: string } }).error.code, "not_stoppable");
+    assert.deepEqual(stops(), []);
   } finally { await f.close(); }
 });

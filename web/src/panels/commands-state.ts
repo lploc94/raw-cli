@@ -23,7 +23,7 @@ export type CommandTone = "running" | "failed" | "success" | "warning" | "muted"
 export interface CommandStatus { tone: CommandTone; chip: string; label: string; compact: boolean }
 export function commandStatus(item: CommandRecord): CommandStatus {
   if (commandRunning(item)) {
-    const word = item.state === "stopping" ? "Stopping" : item.state === "starting" ? "Starting" : "Running";
+    const word = item.state === "stopping" ? "Stopping" : item.state === "starting" ? "Starting" : item.paused ? "Paused" : "Running";
     return { tone: "running", chip: word, label: word, compact: false };
   }
   // Timed out, stopped and lost are compact cards with their own chip; only a failure shows the whole card.

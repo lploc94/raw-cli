@@ -3,16 +3,21 @@ import { stripVTControlCharacters } from "node:util";
 import type { SessionStore } from "../sessions/store.js";
 import type { ToolResult } from "../tools/types.js";
 import { utf8Prefix } from "../tools/results.js";
+import type { CliTask } from "../backends/types.js";
 import { LIVE_PROCESS_STATES, ProcessError, type ProcessOutput, type ProcessRecord, type ProcessChunk } from "./contract.js";
 export interface CommandRecord {
-  id: string; sessionId: string; kind: "foreground" | "background"; owner: "builtin/bash" | "builtin/powershell" | "builtin/process";
+  id: string; sessionId: string; kind: "foreground" | "background"; owner: "builtin/bash" | "builtin/powershell" | "builtin/process" | CliCommandOwner;
   command: string; commandTruncated?: boolean; cwd: string; label?: string; state: ProcessRecord["state"]; createdAt: number; updatedAt: number;
   endedAt?: number; exitCode?: number | null; signal?: string | null; error?: string; cursor: number; droppedBytes: number;
   /** Foreground Bash: the model's call id, and the complete output the call saved (docs/tool-ux-design.md §6.4). */
   toolCallId?: string; fullOutputPath?: string; fullOutputCapped?: boolean;
   /** Foreground Bash: the last non-empty output lines, sanitized and bounded (docs/dashboard-api.md). */
   tail?: CommandTailLine[];
+  /** A backend CLI's task (`cli/*`): whether the CLI lets Raw stop it, and a pause it reported. */
+  canStop?: boolean; paused?: boolean;
 }
+/** The CLI whose background task a row is (cli-background-work). */
+export type CliCommandOwner = "cli/claude-code" | "cli/codex";
 export interface CommandTailLine { channel: "stdout" | "stderr"; text: string }
 const TAIL_LINES = 3, TAIL_LINE_BYTES = 160, TAIL_BYTES = 512;
 /** The newest rows the dashboard shows; `omitted` counts the older ones that were cut. */
@@ -121,6 +126,33 @@ export class Commands {
         const terminal=[...this.active.values()].filter(e=>e.record.sessionId===sessionId&&!LIVE_PROCESS_STATES.includes(e.record.state)).sort((a,b)=>b.record.createdAt-a.record.createdAt);
         for(const old of terminal.slice(100))this.active.delete(old.record.id);
       }};
+    }};
+  }
+  /**
+   * A backend CLI's background tasks: one row per task (`cli:<asyncTaskId>`), its state the CLI's; a `turn` task is the
+   * CLI turn's operation, not a row. Their output stays in the CLI.
+   */
+  cli(sessionId:string,cwd:string,owner:CliCommandOwner):{upsert(task:CliTask):void} {
+    return {upsert:task=>{
+      if(task.type==="turn")return;
+      const id=`cli:${task.id}`;
+      let entry=this.active.get(id);
+      if(entry?.record.sessionId!==sessionId){
+        entry={record:{id,sessionId,kind:"background",owner,command:"",cwd:terminalText(cwd),state:"running",createdAt:task.startedAt,updatedAt:Date.now(),cursor:0,droppedBytes:0},chunks:[]};
+        this.active.set(id,entry);
+      }
+      const r=entry.record;
+      const state:CommandRecord["state"]=task.state==="paused"?"running":task.state==="completed"?"exited":task.state;
+      const label=task.description&&task.description!==task.name?terminalText(utf8Prefix(task.description,800).text):undefined;
+      const next:CommandRecord={id,sessionId,kind:"background",owner,command:terminalText(utf8Prefix(task.name,4096).text),...(Buffer.byteLength(task.name)>4096?{commandTruncated:true}:{}),
+        cwd:r.cwd,state,createdAt:r.createdAt,updatedAt:r.updatedAt,cursor:0,droppedBytes:0,canStop:task.canStop,...(task.state==="paused"?{paused:true}:{}),
+        ...(label===undefined?{}:{label}),...(task.endedAt===undefined?{}:{endedAt:task.endedAt}),...(task.exitCode===undefined?{}:{exitCode:task.exitCode}),
+        ...(task.error===undefined?{}:{error:terminalText(utf8Prefix(task.error,800).text)})};
+      if(JSON.stringify({...next,updatedAt:0})===JSON.stringify({...r,updatedAt:0}))return;
+      entry.record=next;
+      this.save(entry);
+      const terminal=[...this.active.values()].filter(e=>e.record.sessionId===sessionId&&!LIVE_PROCESS_STATES.includes(e.record.state)).sort((a,b)=>b.record.createdAt-a.record.createdAt);
+      for(const old of terminal.slice(100))this.active.delete(old.record.id);
     }};
   }
   output(sessionId:string,id:string,cursor=0,max=65536):ProcessOutput {

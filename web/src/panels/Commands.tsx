@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { ArrowUpRight, AtSign, Ban, Check, CircleCheck, CircleX, Clock, Copy, Loader, Square, Unplug, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, AtSign, Ban, Check, CircleCheck, CircleX, Clock, Copy, Loader, Pause, Square, Unplug, type LucideIcon } from "lucide-react";
 import type { CommandRecord } from "../../../src/processes/presentation.js";
 import type { ProcessOutput } from "../../../src/processes/contract.js";
 import { api, errorText } from "../api.js";
@@ -71,6 +71,8 @@ function Command({ item, sessionId, sessionCwd, now, matches, selection, onInser
   useEffect(() => () => stopAbort.current?.abort(), []);
   const [page, setPage] = useState(0);
   const live = commandRunning(item);
+  // A CLI's background task: the CLI keeps its output, and Raw can stop it only when the CLI allows.
+  const cli = item.owner === "cli/claude-code" ? "Claude Code" : item.owner === "cli/codex" ? "Codex" : undefined;
   const wasLive = useRef(live);
   // A Stop button that disappears with the job hands focus to its card.
   useEffect(() => {
@@ -84,7 +86,7 @@ function Command({ item, sessionId, sessionCwd, now, matches, selection, onInser
   const latestCursor = useRef(item.cursor);
   latestCursor.current = item.cursor;
   useEffect(() => {
-    if (!opened) return;
+    if (!opened || cli) return;
     const abort = new AbortController();
     let pending = false;
     let failed = false;
@@ -144,7 +146,7 @@ function Command({ item, sessionId, sessionCwd, now, matches, selection, onInser
     finally { setStopping(false); }
   };
   const status = commandStatus(item);
-  const Icon = status.tone === "failed" ? CircleX : ICONS[item.state];
+  const Icon = status.tone === "failed" ? CircleX : item.paused && live ? Pause : ICONS[item.state];
   const commandLine = `${item.command}${item.commandTruncated ? "…" : ""}`;
   const name = item.label || commandLine;
   const duration = formatDuration((item.endedAt ?? now) - item.createdAt);
@@ -157,12 +159,13 @@ function Command({ item, sessionId, sessionCwd, now, matches, selection, onInser
   const compact = status.compact && !opened;
   const notes = <>
     {item.error && !compact && <p className="command-note" role="note">{item.error}</p>}
+    {cli && !compact && <p className="command-note" role="note">Output stays in {cli}</p>}
     {notice && <p className="command-note" role="status">{notice}</p>}
     {error && <p className="command-note error" role="alert">{error}</p>}
   </>;
   // A compact row already leads with the state's glyph: its chip is the word alone.
   const chip = <span className="command-chip" data-tone={status.tone}>
-    {!compact && <Icon size={11} aria-hidden="true" className={status.tone === "running" ? "panel-spin" : undefined} />}{status.chip}
+    {!compact && <Icon size={11} aria-hidden="true" className={status.tone === "running" && !item.paused ? "panel-spin" : undefined} />}{status.chip}
   </span>;
   return <li ref={card} tabIndex={-1} className="command-card" data-id={item.id} data-state={item.state} data-tone={status.tone} data-kind={item.kind} data-compact={compact || undefined} hidden={!visible}
     aria-label={`${name}: ${status.label}`}
@@ -189,7 +192,7 @@ function Command({ item, sessionId, sessionCwd, now, matches, selection, onInser
       {notes}
       <div className="command-card-foot">
         <span className="command-card-kind">{live ? `${clock(item.createdAt)} · ${item.kind}` : ""}</span>
-        {item.kind === "background" && live && (
+        {item.kind === "background" && live && item.canStop !== false && (
           // aria-disabled, not disabled: a disabled button drops focus, and the card keeps it while Stop settles.
           <button type="button" className="command-action danger" aria-label="Stop" title={`Stop ${name}`} aria-disabled={stopping || item.state === "stopping"}
             onClick={() => { if (!stopping && item.state !== "stopping") void stop(); }}>
@@ -202,13 +205,15 @@ function Command({ item, sessionId, sessionCwd, now, matches, selection, onInser
             <AtSign size={12} aria-hidden="true" />
           </button>
         )}
-        <OutputToggle button={outputButton} opened={opened} onToggle={() => {
-          if (opened && status.compact) focusAfter.current = openButton;
-          setOpened(!opened);
-        }} />
+        {cli ? opened && status.compact && <button ref={outputButton} type="button" className="command-action" aria-expanded={true}
+          onClick={() => { focusAfter.current = openButton; setOpened(false); }}>Less</button>
+          : <OutputToggle button={outputButton} opened={opened} onToggle={() => {
+            if (opened && status.compact) focusAfter.current = openButton;
+            setOpened(!opened);
+          }} />}
       </div>
     </>}
-    {opened && <div className="terminal-frame command-output">
+    {opened && !cli && <div className="terminal-frame command-output">
       <div className="terminal-bar">
         <span>{item.exitCode != null ? `exit ${item.exitCode}` : status.label}</span>
         <CopyButton value={output.text} label="Copy output" />

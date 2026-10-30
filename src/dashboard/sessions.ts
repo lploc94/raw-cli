@@ -5,6 +5,7 @@ import { ProcessSupervisor } from "../processes/supervisor.js";
 import { InteractionService } from "../interactions/service.js";
 import { InteractionError, type InteractionRequest } from "../interactions/contract.js";
 import { FormValidationError } from "../panels/forms.js";
+import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { record } from "../management/agents.js";
@@ -344,6 +345,19 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
       const id=commandRoute[2]===undefined?undefined:decodeURIComponent(commandRoute[2]);
       try {
         if(id===undefined&&method==="GET"){const {items,omitted}=processes.commands.listing(sessionId);return reply({items,...(omitted?{omitted}:{})});}
+        // A CLI's background task: Raw asks the CLI to stop it, and its output stays in the CLI (cli-background-work).
+        if(id?.startsWith("cli:")&&commandRoute[3]!=="controls"){
+          const row=processes.commands.list(sessionId).find(item=>item.id===id);
+          if(!row)throw new DashboardError(404,"process_not_found","command not found in this session");
+          if(commandRoute[3]==="output"&&method==="GET")throw new DashboardError(404,"output_unavailable",`The output of this task stays in ${row.owner==="cli/codex"?"Codex":"Claude Code"}`);
+          if(commandRoute[3]==="stop"&&method==="POST"){
+            if(!["starting","running","stopping"].includes(row.state))throw new DashboardError(409,"process_not_running","the task is not running");
+            if(!row.canStop)throw new DashboardError(409,"not_stoppable","the CLI does not let Raw stop this task");
+            const stopped=await operations.stopCliTask(sessionId,id.slice("cli:".length));
+            return reply({id:randomUUID(),sessionId,processId:id,state:stopped?"completed":"failed",
+              ...(stopped?{}:{result:{content:[{type:"text",text:"The CLI did not stop the task"}]}})},202);
+          }
+        }
         if(id&&commandRoute[3]==="output"&&method==="GET") {
           const cursor=url.searchParams.has("cursor")?Number(url.searchParams.get("cursor")):0;
           const maxBytes=url.searchParams.has("maxBytes")?Number(url.searchParams.get("maxBytes")):65536;

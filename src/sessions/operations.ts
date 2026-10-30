@@ -3,7 +3,7 @@ import type { ProcessSupervisor } from "../processes/supervisor.js";
 import type { InteractionService } from "../interactions/service.js";
 import type { RunEvent, RunResult } from "../agent.js";
 import type { AcpBackendProvider } from "../backends/acp-agent.js";
-import type { BackgroundEvent, SessionAgent } from "../backends/types.js";
+import type { BackgroundEvent, CliTask, SessionAgent } from "../backends/types.js";
 import type { CompactOptions, CompactResult } from "../compact.js";
 import type { CompactSettings } from "../config.js";
 import type { ResolvedModelConfig } from "../llm/types.js";
@@ -394,15 +394,27 @@ export class SessionOperations {
   private background(sessionId: string, provider: AcpBackendProvider, event: BackgroundEvent): void {
     if (this.residents.get(sessionId)?.provider !== provider) return;
     if (event.type === "cli_turn") this.cliTurn(sessionId);
-    else if (event.type === "tasks") this.closeIfIdle(sessionId);
+    else if (event.type === "tasks") { this.listTasks(sessionId, provider, event.tasks); this.closeIfIdle(sessionId); }
     else if (event.type === "exited") {
       // The adapter is gone with its work: the next operation starts a fresh one and is told what was lost.
+      this.listTasks(sessionId, provider, provider.backgroundTasks());
       const resident = this.residents.get(sessionId)!;
       resident.unsubscribe();
       this.residents.delete(sessionId);
       this.carry(sessionId, provider.drainNotices());
       if (event.lost.length) this.carry(sessionId, [`${provider.label} exited; ${event.lost.length} background task(s) were lost: ${event.lost.join(", ")}`]);
       if (!resident.attached) void this.closeProvider(sessionId, provider);
+    }
+  }
+
+  /** The CLI's tasks as rows of the session's Commands tab. */
+  private listTasks(sessionId: string, provider: AcpBackendProvider, tasks: readonly CliTask[]): void {
+    const commands = this.options.processes?.commands;
+    const cwd = commands && this.options.store.getSession(sessionId)?.cwd;
+    if (!commands || cwd === undefined) return;
+    const rows = commands.cli(sessionId, cwd, provider.kind === "claude" ? "cli/claude-code" : "cli/codex");
+    for (const task of tasks) {
+      try { rows.upsert(task); } catch { /* the listing does not own the CLI's work */ }
     }
   }
 

@@ -289,3 +289,53 @@ test.describe("CLI connections in Settings and on the agent page at 320 px", () 
       context_window_tokens: 8192, base_url: "http://127.0.0.1:9/v1" });
   });
 });
+
+/** The scripted agent with AIR async tasks; each test sets how its background task behaves before it sends `bg`. */
+let taskEnv: NodeJS.ProcessEnv = {};
+const taskBackend = attachSessionRuntimeWith((context) => createAcpSessionAgent(context,
+  { command: process.execPath, args: [FAKE_ACP], env: { ...process.env, FAKE_ACP_STATE: join(context.cwd, "fake-acp"), ...taskEnv }, asyncTasks: true }));
+const cliCards = (page: Page) => page.locator(".commands li.command-card[data-id^='cli:']");
+async function backgroundTask(page: Page, raw: Parameters<typeof openChat>[1], env: NodeJS.ProcessEnv) {
+  taskEnv = env;
+  await openChat(page, raw);
+  await send(page, "bg");
+  await expect(answers(page).last()).toContainText("started");
+  await page.getByRole("button", { name: "Side panel", exact: true }).click();
+  await page.getByRole("tab", { name: "Commands", exact: true }).click();
+  const card = cliCards(page).first();
+  await expect(card).toContainText("Background job");
+  return card;
+}
+
+test.describe("Claude Code's background tasks in the Commands tab at 320 px", () => {
+  test.use({
+    viewport: { width: 320, height: 720 },
+    scenario: { extraAgents: { ext: { cli: { kind: "claude" }, system_prompt: "Be RAW.", tools: { use: [] } } }, config: { default_agent: "ext" },
+      attach: taskBackend, discoverBackend: async () => ({ offered: {} }) },
+  });
+
+  test("a running task shows its name, Running and Stop, says its output stays in the CLI, and Stop ends it", async ({ page, raw }) => {
+    const card = await backgroundTask(page, raw, { FAKE_ACP_BG_MS: "60000" });
+    await expect(card.locator(".command-chip")).toHaveText("Running");
+    await expect(card.getByText("Output stays in Claude Code")).toBeVisible();
+    await expect(card.getByRole("button", { name: "Output", exact: true })).toHaveCount(0);
+    await fits(page, [".inspector", ".command-card"]);
+    await card.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(card).toHaveAttribute("data-state", "stopped");
+    await expect(card).toContainText("Stopped");
+    await expect(card.getByRole("button", { name: "Output", exact: true })).toHaveCount(0);
+    await fits(page, [".inspector", ".command-card"]);
+  });
+
+  test("a task the CLI does not let Raw stop shows no Stop", async ({ page, raw }) => {
+    const card = await backgroundTask(page, raw, { FAKE_ACP_BG_MS: "60000", FAKE_ACP_BG_TYPE: "monitor", FAKE_ACP_BG_CANSTOP: "0" });
+    await expect(card.locator(".command-chip")).toHaveText("Running");
+    await expect(card.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  });
+
+  test("a paused task says Paused", async ({ page, raw }) => {
+    const card = await backgroundTask(page, raw, { FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_STATES: "paused" });
+    await expect(card.locator(".command-chip")).toHaveText("Paused");
+    await fits(page, [".inspector", ".command-card"]);
+  });
+});

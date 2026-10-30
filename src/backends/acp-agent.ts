@@ -277,6 +277,8 @@ export class AcpBackendProvider implements BackendProvider {
     this.config = { ...rest, ...(host?.binding ? { binding: host.binding } : {}), ...(host?.approve ? { approve: host.approve } : {}) };
   }
 
+  /** The CLI this provider runs. */
+  get kind(): BackendKind { return this.config.spec.kind; }
   /** Whether `close()` has run. */
   get isClosed(): boolean { return this.closed; }
 
