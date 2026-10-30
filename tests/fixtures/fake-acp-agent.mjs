@@ -122,8 +122,8 @@ app.onRequest("_session/async_task/stop", (params) => params, async ({ params })
   for (const timer of task.timers) clearTimeout(timer);
   task.release?.();
   await taskState(params.asyncTaskId, "stopped");
-  // Claude Code then says so outside any turn (spike claude-air-stop-shell.log).
-  if (task.shape === "done") setTimeout(() => { void text(task.sessionId, `**Task stopped by user:** ${task.name}`); }, 20);
+  // Claude Code then says so outside any turn, before it answers the stop (spike claude-air-stop-shell.log).
+  if (task.shape === "done") await text(task.sessionId, `**Task stopped by user:** ${task.name}`);
   return { stopped: true };
 });
 

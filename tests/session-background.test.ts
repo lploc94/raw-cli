@@ -9,6 +9,7 @@ import { SessionOperations, type AttachSessionRuntime, type SessionOperation } f
 import { attachSessionRuntimeWith } from "../src/sessions/runtime.js";
 import { openSessionStore, type SessionStore } from "../src/sessions/store.js";
 import { cliConfig } from "./fixtures/cli-agent.js";
+import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 // Phase 3 of cli-background-work: the dashboard's operations keep a backend CLI's adapter while its background work
 // runs, and record the turns the CLI takes after it as operations of the session.
@@ -33,7 +34,7 @@ async function fixture(kind: "claude" | "codex", fakeEnv: NodeJS.ProcessEnv = {}
     if (failCliAttach && options.operation.origin === "cli") throw new Error("simulated attach failure");
     return real(options);
   };
-  const service = new SessionOperations({ store, attach, env: {} });
+  const service = new SessionOperations({ store, attach, env: { RAW_TEST_KEY: "key" } });
   let count = 0;
   const intent = (input: string) => ({ sessionId: session.id, clientRequestId: `r${++count}`, kind: "turn" as const, input, agentName: "ext", configPath });
   const f = {
@@ -176,6 +177,48 @@ test("resident: a changed agent profile stops the old adapter and its tasks, wit
     assert.equal(f.pids().filter(alive).length, 0, "no task, no residency");
     assert.equal(f.pids().length, 2);
     assert.ok(f.history().includes("notice:Claude Code stopped 1 background task(s) because the agent changed: Background job"), JSON.stringify(f.history()));
+  } finally { await f.close(); }
+});
+
+test("resident: switching the agent to Raw's own loop stops the old adapter and its tasks, with a notice", async () => {
+  const f = await fixture("claude", { FAKE_ACP_BG_MS: "20000" });
+  const model = await startMockProvider([{ frames: [openAiFrame({ content: "raw-answer" }, "stop"), openAiDone] }]);
+  try {
+    assert.equal((await f.run("bg")).state, "completed");
+    const [pid] = f.pids();
+    writeFileSync(f.configPath, JSON.stringify({ default_agent: "ext",
+      models: { fixture: { provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: model.url, api_key_env: "RAW_TEST_KEY" } },
+      agents: { ext: { model: "fixture", tools: { use: [] } } } }));
+    const operation = await f.run("hello");
+    assert.equal(operation.state, "completed", JSON.stringify(operation.error));
+    assert.equal(alive(pid!), false, "the old adapter stopped before the Raw turn ended");
+    const history = f.history();
+    assert.ok(history.includes("notice:Claude Code stopped 1 background task(s) because the agent changed: Background job"), JSON.stringify(history));
+    assert.equal(history.at(-1), "assistant:raw-answer");
+  } finally { await model.close(); await f.close(); }
+});
+
+test("resident: Raw's stop of the last background task succeeds and the CLI's answer to it reaches the next turn", async () => {
+  const f = await fixture("claude", { FAKE_ACP_BG_MS: "20000" });
+  try {
+    assert.equal((await f.run("bg")).state, "completed");
+    const [pid] = f.pids();
+    assert.equal(await f.service.stopCliTask(f.session.id, "task-1"), true);
+    await until(() => !alive(pid!), "the adapter to close");
+    assert.equal((await f.run("next")).state, "completed");
+    assert.ok(f.history().includes("notice:**Task stopped by user:** Background job"), JSON.stringify(f.history()));
+  } finally { await f.close(); }
+});
+
+test("resident: closing the service waits for an adapter its running operation leaves behind", async () => {
+  const f = await fixture("claude", { FAKE_ACP_BG_MS: "20000" });
+  try {
+    assert.equal((await f.run("bg")).state, "completed");
+    const [pid] = f.pids();
+    f.submit("wait");
+    await until(() => f.operations()[1]?.state === "running" && f.prompts().length === 2, "the second turn to run");
+    await f.service.close();
+    assert.equal(alive(pid!), false);
   } finally { await f.close(); }
 });
 

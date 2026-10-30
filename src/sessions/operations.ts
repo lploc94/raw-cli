@@ -80,6 +80,8 @@ export class SessionOperations {
   private readonly residents = new Map<string, Resident>();
   /** Notices of a closed provider (an exit, an abandoned turn) for the session's next operation. */
   private readonly carried = new Map<string, string[]>();
+  /** Providers being closed, no longer residents. */
+  private readonly closing = new Set<Promise<void>>();
   /** Sessions whose CLI turn waits for this process's running operation to end. */
   private readonly cliPending = new Set<string>();
   private readonly observers = new Set<(event: OperationEvent) => void>();
@@ -234,6 +236,8 @@ export class SessionOperations {
       active.agent = runtime.agent;
       this.carried.delete(operation.sessionId);
       if (runtime.backend) this.attachResident(operation, runtime.backend.provider);
+      // Raw's own loop stopped the kept adapter it replaced.
+      else if (resident?.provider.isClosed) this.dropResident(operation.sessionId, resident.provider);
       firstRequest = runtime.agent.stats().requests;
       const attached = runtime;
       const measure = (options: MeasureOptions) => attached.measure ? attached.measure(options)
@@ -374,9 +378,12 @@ export class SessionOperations {
     await this.closeProvider(sessionId, resident.provider);
   }
 
-  private async closeProvider(sessionId: string, provider: AcpBackendProvider): Promise<void> {
+  /** Closes a provider; `close()` of this service waits for every close still under way. */
+  private closeProvider(sessionId: string, provider: AcpBackendProvider): Promise<void> {
     this.carry(sessionId, provider.drainNotices());
-    await provider.close().catch(() => {});
+    const closing: Promise<void> = provider.close().catch(() => {}).finally(() => { this.closing.delete(closing); });
+    this.closing.add(closing);
+    return closing;
   }
 
   private carry(sessionId: string, notices: readonly string[]): void {
@@ -395,7 +402,7 @@ export class SessionOperations {
       this.residents.delete(sessionId);
       this.carry(sessionId, provider.drainNotices());
       if (event.lost.length) this.carry(sessionId, [`${provider.label} exited; ${event.lost.length} background task(s) were lost: ${event.lost.join(", ")}`]);
-      if (!resident.attached) void provider.close().catch(() => {});
+      if (!resident.attached) void this.closeProvider(sessionId, provider);
     }
   }
 
@@ -468,6 +475,7 @@ export class SessionOperations {
     await Promise.allSettled([...this.active.values()].map((item) => item.done));
     // Kept adapters stop with the dashboard, and their tasks with them.
     await Promise.allSettled([...this.residents.keys()].map((sessionId) => this.closeResident(sessionId)));
+    await Promise.allSettled([...this.closing]);
     this.observers.clear();
   }
 }

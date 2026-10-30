@@ -27,6 +27,8 @@ export const attachSessionRuntimeWith = (factory: SessionAgentFactory): AttachSe
     cwd: session.cwd, requireModel: true, ...(options.env ? { env: options.env } : {}) });
   if (signal.aborted) throw new Error("startup aborted");
   if (runtime.backend) return attachBackendRuntime(runtime, options, factory);
+  // Raw's own loop replaces a kept CLI adapter: it is stopped, and what it leaves is recorded once the agent runs.
+  const notices = await releaseResident(options.resident, undefined, [...(options.notices ?? [])]);
   const modelConfig = applyRequestOverride(runtime.modelConfig!, options.request ?? {});
   const provider = createProvider(modelConfig);
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
@@ -44,6 +46,7 @@ export const attachSessionRuntimeWith = (factory: SessionAgentFactory): AttachSe
       ...(options.interactions ? { interactions: options.interactions } : {}), deliverQueuedInputs: true,
       persistence: { store, sessionId: session.id, surface: "web", owner, ownership: "host", operationId: operation.id } });
     await agent.start(agent.transcript.length ? "resume" : "create", undefined, signal);
+    for (const text of notices) store.appendOwnedHistory(session.id, owner, "backend_notice", { text, operationId: operation.id });
     return { agent, modelConfig, compact: runtime.compact, compactOptions,
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },
       close: () => tools.mcp.close() };
@@ -54,17 +57,11 @@ export const attachSessionRuntimeWith = (factory: SessionAgentFactory): AttachSe
 async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<AttachSessionRuntime>[0], factory: SessionAgentFactory): Promise<SessionRuntime> {
   const { store, operation, owner, signal, session } = options;
   const notices = [...(options.notices ?? [])];
-  let resident = options.resident;
   const spec = runtime.backend!;
-  // A kept adapter serves only the agent it was started for; another one stops it and its tasks, and says so.
-  if (resident && resident.residentKey !== backendResidentKey({ agentName: runtime.agentName ?? spec.kind, spec, cwd: session.cwd,
-    autoApprove: runtime.autoApprove, ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}) })) {
-    const names = resident.backgroundTasks().filter((task) => task.state === "running" || task.state === "paused").map((task) => task.name);
-    notices.push(...resident.drainNotices());
-    await resident.close();
-    if (names.length) notices.push(`${resident.label} stopped ${names.length} background task(s) because the agent changed: ${names.join(", ")}`);
-    resident = undefined;
-  }
+  const key = backendResidentKey({ agentName: runtime.agentName ?? spec.kind, spec, cwd: session.cwd,
+    autoApprove: runtime.autoApprove, ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}) });
+  const resident = options.resident?.residentKey === key ? options.resident : undefined;
+  await releaseResident(options.resident, resident, notices);
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
   for (const warning of tools.warnings) process.stderr.write(`raw: ${warning}\n`);
   try {
@@ -90,4 +87,17 @@ async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },
       close: () => tools.mcp.close() };
   } catch (error) { await tools.mcp.close(); throw error; }
+}
+
+/**
+ * A kept adapter serves only the agent it was started for: unless it is `kept`, it is stopped with its tasks, and its
+ * notices and the stop are added to `notices`.
+ */
+async function releaseResident(resident: AcpBackendProvider | undefined, kept: AcpBackendProvider | undefined, notices: string[]): Promise<string[]> {
+  if (!resident || resident === kept) return notices;
+  const names = resident.backgroundTasks().filter((task) => task.state === "running" || task.state === "paused").map((task) => task.name);
+  notices.push(...resident.drainNotices());
+  await resident.close();
+  if (names.length) notices.push(`${resident.label} stopped ${names.length} background task(s) because the agent changed: ${names.join(", ")}`);
+  return notices;
 }

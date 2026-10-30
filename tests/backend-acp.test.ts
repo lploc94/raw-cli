@@ -985,6 +985,33 @@ test("CLI turn: a task Raw stopped leaves nothing to deliver", async () => {
   } finally { await agent.close(); h.cleanup(); }
 });
 
+test("CLI turn: a completion that arrives while Raw's stop goes unanswered is still delivered", async () => {
+  const h = await harness({ kind: "codex" });
+  const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "200", FAKE_ACP_STOP_HANG: "1" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    assert.equal(await provider.stopTask("task-1"), false);
+    assert.equal(task()?.state, "completed");
+    await until(() => cliTurns(events) === 1);
+    assert.match(provider.cliTurnNote() ?? "", /^Background command "Background job" completed/);
+    assert.equal(provider.hasBackgroundWork(), true);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("CLI turn: an adapter that exits before Raw records Claude Code's ended turn keeps its text as a notice", async () => {
+  const h = await harness();
+  const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_EXIT_AFTER_BG: "1",
+    FAKE_ACP_EXIT_AFTER_BG_MS: "600" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    await until(() => task("task-2")?.state === "completed");
+    await until(() => events.some((event) => event.type === "exited"));
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.equal(provider.cliTurnNote(), undefined);
+    assert.ok(provider.drainNotices().some((notice) => notice.includes("Noted: Background job finished.")), JSON.stringify(bgNotices(events)));
+  } finally { await agent.close(); h.cleanup(); }
+});
+
 test("CLI turn: Codex completions are delivered whatever the timing", async (t) => {
   await t.test("during a user turn: no wake until that turn ends, then one", async () => {
     const h = await harness({ kind: "codex" });

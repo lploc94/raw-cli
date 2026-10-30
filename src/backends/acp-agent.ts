@@ -182,6 +182,10 @@ interface PendingCliTurn {
   settle?: (state: CliTaskState) => void;
 }
 
+/** The answer text a CLI turn sent before Raw adopted it. */
+const bufferedText = (pending: PendingCliTurn) => pending.buffer.flatMap((update) =>
+  update.sessionUpdate === "agent_message_chunk" && update.content.type === "text" ? [update.content.text] : []).join("");
+
 /** A finished task the CLI has not been told about yet; due when Raw delivers it itself (Codex at once, Claude Code later). */
 interface Obligation { taskId: string; due: boolean; timer?: NodeJS.Timeout }
 
@@ -245,6 +249,8 @@ export class AcpBackendProvider implements BackendProvider {
   private readonly owed = new Set<string>();
   /** Tasks Raw asked to stop: their end is not news to the model. */
   private readonly stoppedByRaw = new Set<string>();
+  /** Stop requests not yet answered. */
+  private stopping = 0;
   /** Set by a fallback wake of Claude Code, cleared by its next turn task: it may still answer the completion itself. */
   private fallbackWatch = false;
   private cliStart: CliStart | undefined;
@@ -960,15 +966,23 @@ export class AcpBackendProvider implements BackendProvider {
     const lost = [...this.tasks.values()].filter((task) => LIVE_STATES.has(task.state));
     for (const task of lost) Object.assign(task, { state: "lost", endedAt: Date.now(), error: message });
     this.backgroundCalls.clear();
-    // The CLI's own turn went with its adapter: what it asked is refused, and a followed turn ends with the exit.
-    this.pendingCli?.adopt(undefined);
+    // The CLI's own turn went with its adapter: what it asked is refused, what it said is kept as a notice, and a
+    // followed turn ends with the exit.
+    const pending = this.pendingCli;
+    pending?.adopt(undefined);
     this.pendingCli = undefined;
+    const said = pending ? bufferedText(pending) : "";
+    if (said && !this.closed) {
+      const notice = `${this.label} exited before Raw recorded its turn after a background task:\n${said}`;
+      this.queuedNotices.push(notice);
+      this.emit({ type: "notice", text: notice });
+    }
     // Completions the CLI was owed cannot reach it: they are named with the lost tasks.
     const owed = this.obligations.map((obligation) => this.tasks.get(obligation.taskId)!);
     for (const obligation of this.obligations) clearTimeout(obligation.timer);
     this.obligations = [];
     this.fallbackWatch = false;
-    if (!lost.length && !owed.length) return;
+    if (!lost.length && !owed.length && !pending) return;
     // The exit first: a host told only that no work is left would close the provider as idle and miss what was lost.
     if (!this.closed) this.emit({ type: "exited", message, lost: [...lost, ...owed].map((task) => task.name) });
     this.emitTasks();
@@ -998,8 +1012,8 @@ export class AcpBackendProvider implements BackendProvider {
     return [...this.tasks.values()].some((task) => LIVE_STATES.has(task.state)) || this.pendingCli !== undefined || this.obligations.length > 0;
   }
 
-  /** `hasBackgroundWork()`, or a fallback wake that Claude Code may still answer with a turn of its own. */
-  keepsAdapter(): boolean { return this.hasBackgroundWork() || this.fallbackWatch; }
+  /** `hasBackgroundWork()`, a fallback wake that Claude Code may still answer with a turn of its own, or a stop not yet answered. */
+  keepsAdapter(): boolean { return this.hasBackgroundWork() || this.fallbackWatch || this.stopping > 0; }
 
   /**
    * The note of the CLI turn waiting to run: Claude Code's own turn, else the due completions joined, oldest first
@@ -1041,7 +1055,7 @@ export class AcpBackendProvider implements BackendProvider {
     const pending = this.pendingCli;
     if (!pending) return;
     this.pendingCli = undefined;
-    const text = pending.buffer.flatMap((update) => update.sessionUpdate === "agent_message_chunk" && update.content.type === "text" ? [update.content.text] : []).join("");
+    const text = bufferedText(pending);
     // Kept before the stop: a host may close this provider on the stop's state update, taking the notices with it.
     const notice = `${this.label} started a turn after a background task, but ${why}; it was stopped${text ? `\n${text}` : ""}`;
     this.queuedNotices.push(notice);
@@ -1066,6 +1080,8 @@ export class AcpBackendProvider implements BackendProvider {
     // Bounded like a cancelled prompt's answer (CANCEL_GRACE_MS); past it the request is cancelled and the task left as it is.
     // Its end is not news to the model, whichever arrives first: the answer or the state update.
     this.stoppedByRaw.add(id);
+    // The adapter is kept until the answer: the CLI says what it stopped before it answers (claude-air-stop-shell.log).
+    this.stopping++;
     const cancel = new AbortController();
     let timer: NodeJS.Timeout | undefined;
     const late = new Promise<"late">((resolve) => { timer = setTimeout(() => resolve("late"), CANCEL_GRACE_MS); });
@@ -1082,10 +1098,18 @@ export class AcpBackendProvider implements BackendProvider {
     } catch { return false; }
     finally {
       clearTimeout(timer);
-      if (!stopped && LIVE_STATES.has(task.state)) this.stoppedByRaw.delete(id);
+      this.stopping--;
+      if (!stopped) {
+        // Not stopped by Raw: an end that came meanwhile is the task's own, and owed like any other.
+        this.stoppedByRaw.delete(id);
+        if (!LIVE_STATES.has(task.state)) this.taskEnded(task);
+      }
+      // The adapter reports the stop as a state update; a stop it confirmed is final either way.
+      if (stopped && LIVE_STATES.has(task.state)) Object.assign(task, { state: "stopped", endedAt: Date.now() });
+      // Listeners see the stop settled: a host may now close an adapter with no work left.
+      this.flushOutside();
+      this.emitTasks();
     }
-    // The adapter reports the stop as a state update; a stop it confirmed is final either way.
-    if (stopped && LIVE_STATES.has(task.state)) { Object.assign(task, { state: "stopped", endedAt: Date.now() }); this.emitTasks(); }
     return stopped;
   }
 
