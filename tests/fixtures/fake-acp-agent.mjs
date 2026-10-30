@@ -108,12 +108,14 @@ app.onNotification("session/cancel", ({ params }) => { log({ method: "session/ca
 // (spikes .cross-review/spikes/cli-background-work): id → { sessionId, callId, shape, ended, timers }.
 const tasks = new Map();
 let taskCount = 0;
-const taskState = (taskId, state) => {
+const taskState = (taskId, state, extra = {}) => {
   const task = tasks.get(taskId);
-  return update(task.sessionId, { sessionUpdate: "async_task_state_update", asyncTaskId: taskId, state, ...(task.shape === "open" ? { toolCallId: task.callId } : {}) });
+  return update(task.sessionId, { sessionUpdate: "async_task_state_update", asyncTaskId: taskId, state, ...(task.shape === "open" ? { toolCallId: task.callId } : {}), ...extra });
 };
 app.onRequest("_session/async_task/stop", (params) => params, async ({ params }) => {
   log({ method: "_session/async_task/stop", asyncTaskId: params.asyncTaskId });
+  // An adapter whose CLI never answers the stop.
+  if (process.env.FAKE_ACP_STOP_HANG === "1") await new Promise(() => {});
   const task = tasks.get(params.asyncTaskId);
   if (!task || task.ended) return { stopped: false };
   task.ended = true;
@@ -126,7 +128,8 @@ app.onRequest("_session/async_task/stop", (params) => params, async ({ params })
  * Prompt `bg`: a command that goes on in the background after the turn ends. FAKE_ACP_BG_CALL chooses the call's shape:
  * `done` (Claude Code: the call completes in the turn with "running in background") or `open` (Codex: the call stays open,
  * marked backgrounded, and completes with its `terminal_exit` after the task). FAKE_ACP_BG_STATES are the states sent
- * after the spawn, spread over FAKE_ACP_BG_MS; FAKE_ACP_BG_TYPE and FAKE_ACP_BG_CANSTOP=0 shape the task.
+ * after the spawn, spread over FAKE_ACP_BG_MS; FAKE_ACP_BG_TYPE and FAKE_ACP_BG_CANSTOP=0 shape the task. As claude-agent-acp
+ * does, the spawn carries the first output path, progress a changed one, and with FAKE_ACP_BG_FINAL_PATH=1 the last state another.
  */
 async function background(id) {
   const shape = process.env.FAKE_ACP_BG_CALL ?? "done";
@@ -139,7 +142,7 @@ async function background(id) {
   const backgrounded = { jetbrains: { air: { asyncTasks: { backgrounded: true } } } };
   if (shape === "open") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, _meta: backgrounded });
   await update(id, { sessionUpdate: "async_task_spawned", asyncTaskId: taskId, name: "Background job", taskType: process.env.FAKE_ACP_BG_TYPE ?? "shell",
-    showInTranscript: false, canStop: process.env.FAKE_ACP_BG_CANSTOP !== "0", toolCallId: callId });
+    showInTranscript: false, canStop: process.env.FAKE_ACP_BG_CANSTOP !== "0", toolCallId: callId, outputFilePath: join(stateDir, `${taskId}.first`) });
   await update(id, { sessionUpdate: "async_task_progress", asyncTaskId: taskId, outputFilePath: join(stateDir, `${taskId}.output`) });
   if (shape === "done") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, status: "completed", _meta: backgrounded,
     content: [{ type: "content", content: { type: "text", text: `Command running in background with ID: ${taskId}.` } }] });
@@ -147,8 +150,9 @@ async function background(id) {
   const step = Number(process.env.FAKE_ACP_BG_MS ?? 300) / states.length;
   states.forEach((state, index) => task.timers.push(setTimeout(async () => {
     if (task.ended) return;
-    await taskState(taskId, state);
-    if (index < states.length - 1) return;
+    const last = index === states.length - 1;
+    await taskState(taskId, state, last && process.env.FAKE_ACP_BG_FINAL_PATH === "1" ? { outputFilePath: join(stateDir, `${taskId}.final`) } : {});
+    if (!last) return;
     task.ended = true;
     if (shape === "open") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, name: "exec_command", status: "completed",
       _meta: { terminal_exit: { exit_code: Number(process.env.FAKE_ACP_BG_EXIT ?? 0), signal: null, terminal_id: callId } } });
@@ -179,7 +183,13 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     await cancelled;
     return { stopReason: "cancelled" };
   }
-  if (newest === "bg") { await background(id); await text(id, "started"); return { stopReason: "end_turn", usage }; }
+  if (newest === "bg") {
+    await background(id);
+    // The model may go on answering after its background command has finished.
+    await delay(Number(process.env.FAKE_ACP_BG_ANSWER_MS ?? 0));
+    await text(id, "started");
+    return { stopReason: "end_turn", usage };
+  }
   if (input.includes("huge")) { await text(id, "x".repeat(17 * 1024 * 1024)); return { stopReason: "end_turn" }; }
   if (newest === "late-tool") {
     // A tool call that the CLI completes only after it was asked to cancel.

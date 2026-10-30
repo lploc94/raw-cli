@@ -638,16 +638,19 @@ export class AcpBackendProvider implements BackendProvider {
       if (notification.sessionId === this.loading && update.sessionUpdate === "available_commands_update") this.listCommands(commandsFromAcp(update.availableCommands));
       return;
     }
-    if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && this.backgroundCalls.has(update.toolCallId)) {
-      // A backgrounded call completes after its turn (codex-acp): its exit code is the task's.
+    if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+      // A task's command reports its exit code on its tool call (codex-acp), inside its turn or after it.
       const exit = (update._meta as { terminal_exit?: { exit_code?: unknown } } | null | undefined)?.terminal_exit;
       const task = [...this.tasks.values()].find((item) => item.toolCallId === update.toolCallId);
       if (task && exit && "exit_code" in exit) {
         task.exitCode = typeof exit.exit_code === "number" ? exit.exit_code : null;
         this.emitTasks();
       }
-      if (update.status === "completed" || update.status === "failed") this.backgroundCalls.delete(update.toolCallId);
-      return;
+      // A call that ended its turn running in the background belongs to its task from then on.
+      if (this.backgroundCalls.has(update.toolCallId)) {
+        if (update.status === "completed" || update.status === "failed") this.backgroundCalls.delete(update.toolCallId);
+        return;
+      }
     }
     if (!turn) {
       // Outside a turn (a `session/load` replay, a late update) nothing is recorded: Raw already has that history.
@@ -694,33 +697,40 @@ export class AcpBackendProvider implements BackendProvider {
     if (!id) return;
     const text = (value: unknown) => typeof value === "string" && value ? value : undefined;
     const known = this.tasks.get(id);
+    // Each of the three kinds may carry the output path and the tool call (`async-tasks.js` publishProgress, publishState).
+    const path = text(update.outputFilePath);
+    const toolCallId = text(update.toolCallId);
     if (update.sessionUpdate === "async_task_spawned") {
       const description = text(update.description);
-      const toolCallId = text(update.toolCallId);
       this.tasks.set(id, { id, name: text(update.name) ?? id, type: text(update.taskType) ?? "task", state: known?.state ?? "running",
         canStop: update.canStop === true, startedAt: known?.startedAt ?? Date.now(), ...(description ? { description } : {}),
-        ...(toolCallId ? { toolCallId } : {}), ...(known?.outputFilePath ? { outputFilePath: known.outputFilePath } : {}) });
-    } else if (update.sessionUpdate === "async_task_progress") {
-      const path = text(update.outputFilePath);
-      if (known && path) known.outputFilePath = path;
+        ...(toolCallId ?? known?.toolCallId ? { toolCallId: toolCallId ?? known!.toolCallId! } : {}),
+        ...(path ?? known?.outputFilePath ? { outputFilePath: path ?? known!.outputFilePath! } : {}) });
+      this.emitTasks();
       return;
-    } else {
-      const state = text(update.state);
-      if (!known || !state) return;
-      if (!AIR_STATES.has(state)) {
-        if (!this.unknownStates.has(state)) {
-          this.unknownStates.add(state);
-          (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} sent unknown task state ${state}\n`);
-        }
-        return;
-      }
-      // A task that ended stays ended (`async-tasks.js`: a terminal task ignores later live states).
-      if (!LIVE_STATES.has(known.state) || known.state === state) return;
-      known.state = state as CliTaskState;
-      if (!LIVE_STATES.has(known.state)) known.endedAt = Date.now();
-      const error = text(update.error);
-      if (error) known.error = error;
     }
+    if (!known) return;
+    let changed = false;
+    if (path && path !== known.outputFilePath) { known.outputFilePath = path; changed = true; }
+    if (toolCallId && toolCallId !== known.toolCallId) { known.toolCallId = toolCallId; changed = true; }
+    const state = update.sessionUpdate === "async_task_state_update" ? text(update.state) : undefined;
+    if (state && !AIR_STATES.has(state)) {
+      if (!this.unknownStates.has(state)) {
+        this.unknownStates.add(state);
+        (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} sent unknown task state ${state}\n`);
+      }
+    } else if (state && state !== known.state && known.state !== "lost") {
+      const live = LIVE_STATES.has(state as CliTaskState);
+      // An ended task never runs again; a later end corrects an earlier one (`async-tasks.js` finish: a provisional `stopped`).
+      if (!live || LIVE_STATES.has(known.state)) {
+        known.state = state as CliTaskState;
+        if (!live) known.endedAt = Date.now();
+        const error = text(update.error);
+        if (error) known.error = error;
+        changed = true;
+      }
+    }
+    if (!changed) return;
     this.emitTasks();
   }
 
@@ -762,11 +772,22 @@ export class AcpBackendProvider implements BackendProvider {
     const live = this.live;
     const sessionId = this.cliSessionId;
     if (this.closed || !task || !LIVE_STATES.has(task.state) || !task.canStop || !live || !sessionId) return false;
+    // Bounded like a cancelled prompt's answer (CANCEL_GRACE_MS); past it the request is cancelled and the task left as it is.
+    const cancel = new AbortController();
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<"late">((resolve) => { timer = setTimeout(() => resolve("late"), CANCEL_GRACE_MS); });
     let stopped = false;
     try {
-      const answer = await live.connection.agent.request<{ stopped?: unknown }>("_session/async_task/stop", { sessionId, asyncTaskId: id });
+      const answer = await Promise.race([late, live.died.catch(() => "late" as const),
+        live.connection.agent.request<{ stopped?: unknown }>("_session/async_task/stop", { sessionId, asyncTaskId: id }, { cancellationSignal: cancel.signal })]);
+      if (answer === "late") {
+        cancel.abort();
+        (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} did not answer the stop of task ${id} within ${CANCEL_GRACE_MS} ms\n`);
+        return false;
+      }
       stopped = answer?.stopped === true;
     } catch { return false; }
+    finally { clearTimeout(timer); }
     // The adapter reports the stop as a state update; a stop it confirmed is final either way.
     if (stopped && LIVE_STATES.has(task.state)) { Object.assign(task, { state: "stopped", endedAt: Date.now() }); this.emitTasks(); }
     return stopped;

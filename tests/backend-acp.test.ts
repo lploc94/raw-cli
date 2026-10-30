@@ -774,6 +774,8 @@ test("background: task state sequences follow the adapter's state machine", asyn
   const cases: Array<{ name: string; states: string; end: string; seen: string[]; diagnostics: string[] }> = [
     { name: "pause and resume", states: "paused,running,completed", end: "completed", seen: ["running", "paused", "running", "completed"], diagnostics: [] },
     { name: "a terminal task ignores a later live state", states: "completed,running", end: "completed", seen: ["running", "completed"], diagnostics: [] },
+    // claude-agent-acp corrects a provisional `stopped` when the task's real end arrives (`async-tasks.js` `finish`).
+    { name: "a later terminal state corrects an earlier one", states: "stopped,completed", end: "completed", seen: ["running", "stopped", "completed"], diagnostics: [] },
     { name: "an unknown state keeps the previous one", states: "weird,weird", end: "running", seen: ["running"],
       diagnostics: ["raw: claude sent unknown task state weird\n"] },
   ];
@@ -787,7 +789,8 @@ test("background: task state sequences follow the adapter's state machine", asyn
       await new Promise((resolve) => setTimeout(resolve, 600));
       assert.equal(task()?.state, item.end);
       assert.deepEqual(states().filter((value, index, all) => value !== all[index - 1]), item.seen);
-      if (item.end === "completed") assert.deepEqual(live.slice(0, -1).every(Boolean) && live.at(-1) === false, true, JSON.stringify(live));
+      // Live through a pause, until the end.
+      if (item.seen.includes("paused")) assert.deepEqual(live.slice(0, -1).every(Boolean) && live.at(-1) === false, true, JSON.stringify(live));
       assert.deepEqual(h.diagnostics, item.diagnostics);
     } finally { await agent.close(); h.cleanup(); }
   });
@@ -815,5 +818,44 @@ test("background: an adapter exit makes its live tasks lost with an exited event
     const exited = events.find((event) => event.type === "exited") as Extract<BackgroundEvent, { type: "exited" }> | undefined;
     assert.match(exited?.message ?? "", /exited \(code 4\)/);
     assert.equal(provider.hasBackgroundWork(), false);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("background: a command that ends while its turn still answers keeps its exit code on the task, and the call its real result", async () => {
+  const h = await harness({ kind: "codex" });
+  const { agent, task } = airAgent(h, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "20", FAKE_ACP_BG_EXIT: "3", FAKE_ACP_BG_ANSWER_MS: "300" });
+  const seen = collect();
+  try {
+    assert.equal((await agent.run("bg", seen.on)).status, "completed");
+    assert.equal(task()?.state, "completed");
+    assert.equal(task()?.exitCode, 3);
+    const result = seen.events.find((event) => event.type === "tool_result") as Extract<RunEvent, { type: "tool_result" }>;
+    assert.equal(result.result.exitCode, 3);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("background: the output path from the spawn, progress and state is kept, and each change is reported", async () => {
+  const h = await harness();
+  const { agent, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "300", FAKE_ACP_BG_FINAL_PATH: "1" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    const paths = () => events.flatMap((event) => event.type === "tasks" ? [event.tasks[0]?.outputFilePath?.split(".").at(-1)] : []);
+    assert.deepEqual(paths().filter((value, index, all) => value !== all[index - 1]), ["first", "output"]);
+    await until(() => task()?.state === "completed");
+    assert.ok(task()?.outputFilePath?.endsWith("task-1.final"));
+    assert.equal(paths().at(-1), "final");
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("background: a stop the CLI never answers resolves false within the cancel grace and leaves the task running", async () => {
+  const h = await harness();
+  const { agent, provider, task } = airAgent(h, { FAKE_ACP_BG_MS: "60000", FAKE_ACP_STOP_HANG: "1" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    const started = Date.now();
+    assert.equal(await provider.stopTask("task-1"), false);
+    assert.ok(Date.now() - started < 7000, `${Date.now() - started} ms`);
+    assert.equal(task()?.state, "running");
+    assert.ok(h.diagnostics.some((line) => /did not answer the stop of task task-1/.test(line)), JSON.stringify(h.diagnostics));
   } finally { await agent.close(); h.cleanup(); }
 });
