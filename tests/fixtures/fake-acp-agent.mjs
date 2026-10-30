@@ -59,7 +59,8 @@ const update = (sessionId, value) => client.notify("session/update", { sessionId
 const text = (sessionId, value) => update(sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } });
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-app.onRequest("initialize", async () => (await delay(Number(process.env.FAKE_ACP_INIT_DELAY ?? 0)), { protocolVersion: 1,
+app.onRequest("initialize", async ({ params }) => (log({ method: "initialize", clientCapabilities: params.clientCapabilities ?? null }),
+  await delay(Number(process.env.FAKE_ACP_INIT_DELAY ?? 0)), { protocolVersion: 1,
   agentCapabilities: { loadSession: process.env.FAKE_ACP_LOAD !== "0", promptCapabilities: { image: process.env.FAKE_ACP_IMAGES !== "0" } } }));
 // The command list (ACP `available_commands_update`) a conversation advertises: FAKE_ACP_COMMANDS after `session/new`,
 // FAKE_ACP_LOAD_COMMANDS inside `session/load` before it answers (`before`, as codex-acp 2.3.0 does) or after it (`after`).
@@ -103,6 +104,58 @@ app.onRequest("session/set_config_option", ({ params }) => {
 });
 app.onNotification("session/cancel", ({ params }) => { log({ method: "session/cancel" }); cancels.get(params.sessionId)?.(); });
 
+// Background tasks of the AIR async-tasks extension, as claude-agent-acp 0.98.0 and codex-acp 2.3.0 report them
+// (spikes .cross-review/spikes/cli-background-work): id → { sessionId, callId, shape, ended, timers }.
+const tasks = new Map();
+let taskCount = 0;
+const taskState = (taskId, state) => {
+  const task = tasks.get(taskId);
+  return update(task.sessionId, { sessionUpdate: "async_task_state_update", asyncTaskId: taskId, state, ...(task.shape === "open" ? { toolCallId: task.callId } : {}) });
+};
+app.onRequest("_session/async_task/stop", (params) => params, async ({ params }) => {
+  log({ method: "_session/async_task/stop", asyncTaskId: params.asyncTaskId });
+  const task = tasks.get(params.asyncTaskId);
+  if (!task || task.ended) return { stopped: false };
+  task.ended = true;
+  for (const timer of task.timers) clearTimeout(timer);
+  await taskState(params.asyncTaskId, "stopped");
+  return { stopped: true };
+});
+
+/**
+ * Prompt `bg`: a command that goes on in the background after the turn ends. FAKE_ACP_BG_CALL chooses the call's shape:
+ * `done` (Claude Code: the call completes in the turn with "running in background") or `open` (Codex: the call stays open,
+ * marked backgrounded, and completes with its `terminal_exit` after the task). FAKE_ACP_BG_STATES are the states sent
+ * after the spawn, spread over FAKE_ACP_BG_MS; FAKE_ACP_BG_TYPE and FAKE_ACP_BG_CANSTOP=0 shape the task.
+ */
+async function background(id) {
+  const shape = process.env.FAKE_ACP_BG_CALL ?? "done";
+  const taskId = `task-${++taskCount}`;
+  const callId = `bg-call-${taskCount}`;
+  const task = { sessionId: id, callId, shape, ended: false, timers: [] };
+  tasks.set(taskId, task);
+  await update(id, { sessionUpdate: "tool_call", toolCallId: callId, name: shape === "open" ? "exec_command" : "Bash", kind: "execute",
+    title: "sleep 1; echo done", status: "in_progress", rawInput: { command: "sleep 1; echo done" } });
+  const backgrounded = { jetbrains: { air: { asyncTasks: { backgrounded: true } } } };
+  if (shape === "open") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, _meta: backgrounded });
+  await update(id, { sessionUpdate: "async_task_spawned", asyncTaskId: taskId, name: "Background job", taskType: process.env.FAKE_ACP_BG_TYPE ?? "shell",
+    showInTranscript: false, canStop: process.env.FAKE_ACP_BG_CANSTOP !== "0", toolCallId: callId });
+  await update(id, { sessionUpdate: "async_task_progress", asyncTaskId: taskId, outputFilePath: join(stateDir, `${taskId}.output`) });
+  if (shape === "done") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, status: "completed", _meta: backgrounded,
+    content: [{ type: "content", content: { type: "text", text: `Command running in background with ID: ${taskId}.` } }] });
+  const states = (process.env.FAKE_ACP_BG_STATES ?? "completed").split(",");
+  const step = Number(process.env.FAKE_ACP_BG_MS ?? 300) / states.length;
+  states.forEach((state, index) => task.timers.push(setTimeout(async () => {
+    if (task.ended) return;
+    await taskState(taskId, state);
+    if (index < states.length - 1) return;
+    task.ended = true;
+    if (shape === "open") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, name: "exec_command", status: "completed",
+      _meta: { terminal_exit: { exit_code: Number(process.env.FAKE_ACP_BG_EXIT ?? 0), signal: null, terminal_id: callId } } });
+  }, step * (index + 1))));
+  if (process.env.FAKE_ACP_EXIT_AFTER_BG === "1") setTimeout(() => { process.stderr.write("fake adapter: gone\n"); process.exit(4); }, 100);
+}
+
 function grandchild(deaf = false) {
   // A deaf grandchild ignores SIGTERM, as a CLI's long tool command may.
   const child = spawn(process.execPath, ["-e", `${deaf ? "process.on('SIGTERM', () => {}); " : ""}setInterval(() => {}, 1000)`], { stdio: "ignore" });
@@ -126,6 +179,7 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     await cancelled;
     return { stopReason: "cancelled" };
   }
+  if (newest === "bg") { await background(id); await text(id, "started"); return { stopReason: "end_turn", usage }; }
   if (input.includes("huge")) { await text(id, "x".repeat(17 * 1024 * 1024)); return { stopReason: "end_turn" }; }
   if (newest === "late-tool") {
     // A tool call that the CLI completes only after it was asked to cancel.

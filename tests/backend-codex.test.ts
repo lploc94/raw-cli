@@ -140,6 +140,7 @@ test("the prompt file holds the prompt byte for byte while the runtime lives, an
     assert.notEqual(file(one), file(two));
     assert.equal(readFileSync(file(one), "utf8"), TRICKY);
     assert.equal(one!.env.CODEX_PATH, join(env.PATH, process.platform === "win32" ? "codex.cmd" : "codex"));
+    assert.equal(one!.asyncTasks, true, "Codex is told Raw handles AIR async tasks");
     one!.cleanup!();
     assert.equal(existsSync(file(one)), false);
     assert.equal(readFileSync(file(two), "utf8"), TRICKY);

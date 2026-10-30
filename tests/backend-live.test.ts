@@ -5,7 +5,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createSessionAgent } from "../src/backends/factory.js";
+import type { AcpBackendProvider, CliTask } from "../src/backends/acp-agent.js";
+import { claudeLaunch } from "../src/backends/claude.js";
+import { codexLaunch } from "../src/backends/codex.js";
+import { createAcpSessionAgent, createSessionAgent } from "../src/backends/factory.js";
+import { loadConfig } from "../src/config.js";
 import type { SessionOperation } from "../src/sessions/operation-types.js";
 import { attachSessionRuntimeWith } from "../src/sessions/runtime.js";
 import { openSessionStore, type SessionSummary } from "../src/sessions/store.js";
@@ -282,4 +286,41 @@ test("claude, codex: slash commands: discovery and the session list the CLI's co
       assert.match(answers(codex.id), /model|sandbox|limit/i, "Codex's /status answers with its status");
     } finally { store.close(); }
   } finally { await f.close(); }
+});
+
+test("claude, codex: a background command's task lifecycle and the gap to the next turn",
+  { skip: !(LIVE.has("claude") && LIVE.has("codex")) && "set RAW_LIVE_BACKENDS=claude,codex" }, async () => {
+  const prompts: Record<string, string> = {
+    claude: "Run the shell command `sleep 5; echo done` in the background (run_in_background), then end your turn at once without waiting for it.",
+    codex: "Start the shell command `sleep 5; echo done` in a background terminal session (not nohup, not &), then end your turn at once without waiting for it.",
+  };
+  for (const { kind, model } of CASES.filter((item) => item.kind in prompts)) {
+    const target = live(kind, { kind, model }, "BG-LIVE");
+    const runtime = await loadConfig({ configPath: target.config, env: target.env });
+    const launch = kind === "claude" ? claudeLaunch(runtime, target.work, { env: target.env }) : codexLaunch(runtime, target.work, { env: target.env });
+    const agent = createAcpSessionAgent({ runtime, tools: undefined as never, cwd: target.work, host: {} }, launch);
+    const provider = agent.provider as AcpBackendProvider;
+    const shell = () => provider.backgroundTasks().find((task) => task.type === "shell");
+    const wait = async (check: () => CliTask | undefined, ms: number, what: string) => {
+      for (const end = Date.now() + ms; Date.now() < end; await new Promise((resolve) => setTimeout(resolve, 50))) { const found = check(); if (found) return found; }
+      throw new Error(`${kind}: ${what} within ${ms} ms; tasks ${JSON.stringify(provider.backgroundTasks())}`);
+    };
+    try {
+      const result = await agent.run(prompts[kind]!);
+      const promptEnd = Date.now();
+      assert.equal(result.status, "completed", JSON.stringify(result));
+      // Announced inside the turn (the spikes) or just after it; live when the prompt ends; terminal after it.
+      const announced = await wait(shell, 10_000, "no shell task");
+      assert.ok(announced.startedAt <= promptEnd + 10_000);
+      assert.equal(announced.state === "running" || announced.state === "paused" || (announced.endedAt ?? 0) > promptEnd, true, JSON.stringify(announced));
+      const ended = await wait(() => { const task = shell(); return task?.endedAt ? task : undefined; }, 90_000, "the shell task did not end");
+      assert.equal(ended.state, "completed", JSON.stringify(ended));
+      assert.ok(ended.endedAt! >= promptEnd, `ended ${ended.endedAt! - promptEnd} ms after the prompt`);
+      if (kind === "claude") {
+        const turn = await wait(() => provider.backgroundTasks().find((task) => task.type === "turn" && task.startedAt >= ended.endedAt!), 30_000,
+          "Claude Code started no turn of its own");
+        console.log(`claude: completion-to-turn gap ${turn.startedAt - ended.endedAt!} ms`);
+      } else console.log(`codex: shell task ${ended.name} ended with exit code ${String(ended.exitCode)}`);
+    } finally { await agent.close(); rmSync(target.root, { recursive: true, force: true }); }
+  }
 });

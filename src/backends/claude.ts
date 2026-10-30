@@ -29,6 +29,6 @@ export function claudeLaunch(runtime: RuntimeConfig, cwd: string, deps: Pick<Ins
     const window = runtime.backend!.contextWindow;
     return { command: process.execPath, args: [adapter],
       env: { ...env, CLAUDE_CODE_EXECUTABLE: executable, ...(window === undefined ? {} : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) }) },
-      ...(sessionMeta ? { sessionMeta } : {}), authHint: "run `claude` once and log in" };
+      ...(sessionMeta ? { sessionMeta } : {}), authHint: "run `claude` once and log in", asyncTasks: true };
   };
 }

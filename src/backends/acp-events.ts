@@ -16,6 +16,9 @@ export type AcpTurnEvent =
   | { type: "notice"; message: string }
   | { type: "unknown"; kind: string };
 
+/** The `session/update` kinds of the AIR async-tasks extension, which the runner keeps out of the SDK and handles itself. */
+export const ASYNC_TASK_KINDS: ReadonlySet<string> = new Set(["async_task_spawned", "async_task_progress", "async_task_state_update"]);
+
 /**
  * The update kinds of `@agentclientprotocol/sdk` 1.5.0's `SessionUpdate`. The SDK rejects any other kind before a handler
  * sees it, so the runner reports and drops those itself (Invariant 8).
@@ -37,6 +40,8 @@ interface OpenCall {
   /** The latest `content` an update set; ACP replaces it with each update that carries it. */
   content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]>;
   rawOutput?: unknown;
+  /** The CLI moved the call's command to the background (AIR `_meta.jetbrains.air.asyncTasks.backgrounded`). */
+  backgrounded?: boolean;
 }
 
 const TITLE_CHARS = 120;
@@ -95,12 +100,17 @@ export class AcpUpdateMapper {
     }
   }
 
-  /** Ends every call still open (a cancelled or failed turn), so each started call has exactly one result. */
-  closeOpen(code: string, message: string): AcpTurnEvent[] {
+  /**
+   * Ends every call still open (a cancelled or failed turn), so each started call has exactly one result. A call the CLI
+   * moved to the background has not failed: it ends running, as task `taskOf(id)` (its own id when no task names it).
+   */
+  closeOpen(code: string, message: string, taskOf: (id: string) => string | undefined = () => undefined): AcpTurnEvent[] {
     const events: AcpTurnEvent[] = [];
     for (const [id, call] of this.calls) {
       if (!call.started) continue;
-      events.push(this.result(id, call, { isError: true, code, content: [{ type: "text", text: message }] }));
+      events.push(this.result(id, call, call.backgrounded
+        ? { isError: false, content: [{ type: "text", text: `Running in the background as task ${taskOf(id) ?? id}` }] }
+        : { isError: true, code, content: [{ type: "text", text: message }] }));
     }
     this.calls.clear();
     return events;
@@ -125,6 +135,7 @@ export class AcpUpdateMapper {
     const input = record(update.rawInput);
     if (Object.keys(input).length) call.arguments = input;
     const meta = record(update._meta);
+    if (record(record(record(meta.jetbrains).air).asyncTasks).backgrounded === true) call.backgrounded = true;
     const delta = record(meta.terminal_output_delta).data;
     if (typeof delta === "string") call.output += delta;
     const exit = record(meta.terminal_exit);
@@ -142,6 +153,9 @@ export class AcpUpdateMapper {
     }
     return events;
   }
+
+  /** The open calls the CLI moved to the background. */
+  backgroundedCalls(): string[] { return [...this.calls].filter(([, call]) => call.backgrounded && call.started).map(([id]) => id); }
 
   private display(id: string, call: OpenCall, started: boolean): VisibleToolCall {
     const projected = projectToolCall(call.name, cliToolIdentity(call.kind, call.name), call.arguments, started, { kind: call.kind });

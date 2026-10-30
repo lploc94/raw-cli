@@ -76,7 +76,7 @@ export function codexLaunch(runtime: RuntimeConfig, cwd: string, deps: Pick<Inst
     const launchEnv: NodeJS.ProcessEnv = { ...env, CODEX_PATH: executable };
     if (Object.keys(merged).length) launchEnv.CODEX_CONFIG = JSON.stringify(merged);
     else delete launchEnv.CODEX_CONFIG;
-    return { command: process.execPath, args: [adapter], env: launchEnv, authHint: "run `codex login`", ...(cleanup ? { cleanup } : {}),
+    return { command: process.execPath, args: [adapter], env: launchEnv, authHint: "run `codex login`", asyncTasks: true, ...(cleanup ? { cleanup } : {}),
       ...(prepare ? { prepare } : {}) };
   };
 }

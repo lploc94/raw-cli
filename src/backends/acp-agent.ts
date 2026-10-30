@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { client, PROTOCOL_VERSION, type AnyMessage, type ClientConnection, type ContentBlock, type McpServerStdio, type RequestPermissionRequest,
+import { client, PROTOCOL_VERSION, type AnyMessage, type ClientCapabilities, type ClientConnection, type ContentBlock, type McpServerStdio, type RequestPermissionRequest,
   type RequestPermissionResponse, type SessionConfigOption, type SessionNotification } from "@agentclientprotocol/sdk";
 import type { AgentSession, AgentState, RunEvent, RunResult } from "../agent.js";
 import type { CompactResult } from "../compact.js";
@@ -12,7 +12,7 @@ import type { ExternalSession, SessionOwner, SessionStore } from "../sessions/st
 import type { MeasureOptions, SessionMetrics } from "../sessions/metrics.js";
 import type { ToolDisplay } from "../tools/display.js";
 import type { ToolApprovalRequest } from "../tools/primitives.js";
-import { AcpUpdateMapper, cliToolIdentity, bridgeToolName, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
+import { AcpUpdateMapper, ASYNC_TASK_KINDS, cliToolIdentity, bridgeToolName, KNOWN_UPDATE_KINDS, type AcpTurnEvent } from "./acp-events.js";
 import { bridgeProxyServer } from "./bridge/proxy.js";
 import { commandsFromAcp, offeredFromConfigOptions, type BackendCommand, type BackendOffered } from "./options.js";
 import { startBridge, type RawBridge } from "./bridge/server.js";
@@ -34,7 +34,42 @@ export interface AcpLaunch {
   cleanup?: () => void;
   /** Restores what the launch wrote, if something removed it, and marks it in use; run before each adapter start. */
   prepare?: () => void;
+  /** Declares the AIR async-tasks extension, so the adapter reports its background tasks (claude-agent-acp, codex-acp). */
+  asyncTasks?: boolean;
 }
+
+/** A background task's state: the AIR states of the installed adapters (`async-tasks.js` `taskState`), and Raw's `lost`. */
+export type CliTaskState = "running" | "paused" | "completed" | "failed" | "stopped" | "lost";
+const LIVE_STATES: ReadonlySet<CliTaskState> = new Set(["running", "paused"]);
+const AIR_STATES: ReadonlySet<string> = new Set(["running", "paused", "completed", "failed", "stopped"]);
+
+/** One background task of the CLI conversation, as the adapter reported it (AIR `async_task_*`). */
+export interface CliTask {
+  id: string;
+  name: string;
+  /** `shell`, `turn`, `monitor`, … as the adapter names it. */
+  type: string;
+  description?: string;
+  state: CliTaskState;
+  canStop: boolean;
+  toolCallId?: string;
+  startedAt: number;
+  endedAt?: number;
+  exitCode?: number | null;
+  error?: string;
+  outputFilePath?: string;
+}
+
+/** What the provider reports about work outside Raw's turns. */
+export type BackgroundEvent =
+  | { type: "tasks"; tasks: CliTask[] }
+  | { type: "exited"; message: string };
+
+/** The AIR capability a client declares in `initialize` (`air-extension.js` of claude-agent-acp). */
+const AIR_CAPABILITIES: ClientCapabilities = { _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
+/** The method an `async_task_*` update is renamed to before the SDK, which does not know those kinds; order is kept. */
+const ASYNC_TASK_METHOD = "_raw/async_task";
+interface AsyncTaskNotification { sessionId: string; update: Record<string, unknown> }
 
 /** Builds the launch when the first turn needs it (installing the adapter on first use); its errors end the turn unavailable. */
 export type AcpLaunchResolver = (context: { notify: (message: string) => void; signal?: AbortSignal }) => Promise<AcpLaunch>;
@@ -171,6 +206,13 @@ export class AcpBackendProvider implements BackendProvider {
   private loading: string | undefined;
   /** Called when a command list arrives; discovery waits for the first. */
   private commandsArrived: (() => void) | undefined;
+  /** The CLI conversation's background tasks (AIR), kept across turns. */
+  private readonly tasks = new Map<string, CliTask>();
+  private readonly listeners = new Set<(event: BackgroundEvent) => void>();
+  /** Calls that ended a turn running in the background: their later updates belong to the task, not to a turn. */
+  private readonly backgroundCalls = new Set<string>();
+  /** Task states the adapter sent that Raw does not know, each reported once. */
+  private readonly unknownStates = new Set<string>();
 
   constructor(private readonly config: AcpBackendProviderOptions) {
     this.modelConfig = backendModelConfig(config.agentName, config.spec);
@@ -356,11 +398,14 @@ export class AcpBackendProvider implements BackendProvider {
     app.onNotification("session/update", (params: unknown) => params as SessionNotification, ({ params }) => this.update(params));
     app.onRequest("session/request_permission", (params: unknown) => params as RequestPermissionRequest,
       ({ params }) => this.permission(params));
+    app.onNotification(ASYNC_TASK_METHOD, (params: unknown) => params as AsyncTaskNotification, ({ params }) => this.task(params));
     // Unknown update kinds never reach the SDK, which would reject them before any handler (Invariant 8).
     const connection = app.connect({ writable: peer.stream.writable, readable: peer.stream.readable.pipeThrough(
       new TransformStream<AnyMessage, AnyMessage>({ transform: (message, controller) => {
         const update = (message as { method?: unknown; params?: { update?: { sessionUpdate?: unknown } } });
         const kind = update.method === "session/update" ? update.params?.update?.sessionUpdate : undefined;
+        // AIR task updates go on under a method of their own, in their place among the other messages.
+        if (typeof kind === "string" && ASYNC_TASK_KINDS.has(kind)) { controller.enqueue({ ...message, method: ASYNC_TASK_METHOD } as AnyMessage); return; }
         if (typeof kind === "string" && !KNOWN_UPDATE_KINDS.has(kind)) { this.reportUnknown(kind); return; }
         controller.enqueue(message);
       } })) });
@@ -374,8 +419,12 @@ export class AcpBackendProvider implements BackendProvider {
         `${this.label} sent a message longer than ${MAX_FRAME_BYTES} bytes`)));
     });
     const live: Live = { peer, connection, died, loadSession: false, images: false, ready: Promise.resolve() };
-    died.catch(() => { if (this.live === live) { this.live = undefined; this.cliSessionId = undefined; } });
-    live.ready = connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+    died.catch((error: unknown) => {
+      if (this.live === live) { this.live = undefined; this.cliSessionId = undefined; }
+      this.loseTasks(error instanceof Error ? error.message : String(error));
+    });
+    live.ready = connection.agent.request("initialize", { protocolVersion: PROTOCOL_VERSION,
+      clientCapabilities: launch.asyncTasks ? AIR_CAPABILITIES : {} })
       .then((initialize) => {
         live.loadSession = initialize.agentCapabilities?.loadSession === true;
         live.images = initialize.agentCapabilities?.promptCapabilities?.image === true;
@@ -526,7 +575,7 @@ export class AcpBackendProvider implements BackendProvider {
     // whatever the CLI sends while it is being stopped is not part of the turn.
     const detach = (code: string, message: string) => {
       if (this.turn !== turn) return;
-      for (const event of turn.mapper.closeOpen(code, message)) this.dispatch(turn, event);
+      for (const event of this.closeCalls(turn, code, message)) this.dispatch(turn, event);
       this.turn = undefined;
     };
     const turn: ActiveTurn = { request, mapper: new AcpUpdateMapper(), text: "", touch: arm,
@@ -543,7 +592,7 @@ export class AcpBackendProvider implements BackendProvider {
     response.catch(() => {});
     try {
       const answer = await Promise.race([response, idle, aborted, live.died]);
-      for (const event of turn.mapper.closeOpen("backend_error", `${this.label} did not report a result for this call`)) this.dispatch(turn, event);
+      for (const event of this.closeCalls(turn, "backend_error", `${this.label} did not report a result for this call`)) this.dispatch(turn, event);
       // Both adapters name the models a prompt used in `_meta.quota.model_usage`; kept with the usage record.
       const quota = (answer._meta as { quota?: { model_usage?: Array<{ model?: unknown }> } } | null | undefined)?.quota;
       const models = (quota?.model_usage ?? []).map((entry) => entry.model).filter((model): model is string => typeof model === "string");
@@ -575,12 +624,29 @@ export class AcpBackendProvider implements BackendProvider {
     }
   }
 
+  /** Ends the turn's open calls; a call the CLI moved to the background ends running, and its later updates go to its task. */
+  private closeCalls(turn: ActiveTurn, code: string, message: string): AcpTurnEvent[] {
+    for (const id of turn.mapper.backgroundedCalls()) this.backgroundCalls.add(id);
+    return turn.mapper.closeOpen(code, message, (id) => [...this.tasks.values()].find((task) => task.toolCallId === id)?.id);
+  }
+
   private update(notification: SessionNotification): void {
     const turn = this.turn;
     const { update } = notification;
     if (notification.sessionId !== this.cliSessionId) {
       // The conversation being loaded may list its commands before `session/load` answers; the rest is its replay.
       if (notification.sessionId === this.loading && update.sessionUpdate === "available_commands_update") this.listCommands(commandsFromAcp(update.availableCommands));
+      return;
+    }
+    if ((update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") && this.backgroundCalls.has(update.toolCallId)) {
+      // A backgrounded call completes after its turn (codex-acp): its exit code is the task's.
+      const exit = (update._meta as { terminal_exit?: { exit_code?: unknown } } | null | undefined)?.terminal_exit;
+      const task = [...this.tasks.values()].find((item) => item.toolCallId === update.toolCallId);
+      if (task && exit && "exit_code" in exit) {
+        task.exitCode = typeof exit.exit_code === "number" ? exit.exit_code : null;
+        this.emitTasks();
+      }
+      if (update.status === "completed" || update.status === "failed") this.backgroundCalls.delete(update.toolCallId);
       return;
     }
     if (!turn) {
@@ -619,6 +685,91 @@ export class AcpBackendProvider implements BackendProvider {
     const seen = this.unknownKinds.get(kind) ?? 0;
     this.unknownKinds.set(kind, seen + 1);
     if (!seen) (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} sent unknown update ${kind}\n`);
+  }
+
+  /** An AIR task update of this conversation: the task registry follows the adapter's state machine. */
+  private task({ sessionId, update }: AsyncTaskNotification): void {
+    if (sessionId !== this.cliSessionId) return;
+    const id = typeof update.asyncTaskId === "string" ? update.asyncTaskId : undefined;
+    if (!id) return;
+    const text = (value: unknown) => typeof value === "string" && value ? value : undefined;
+    const known = this.tasks.get(id);
+    if (update.sessionUpdate === "async_task_spawned") {
+      const description = text(update.description);
+      const toolCallId = text(update.toolCallId);
+      this.tasks.set(id, { id, name: text(update.name) ?? id, type: text(update.taskType) ?? "task", state: known?.state ?? "running",
+        canStop: update.canStop === true, startedAt: known?.startedAt ?? Date.now(), ...(description ? { description } : {}),
+        ...(toolCallId ? { toolCallId } : {}), ...(known?.outputFilePath ? { outputFilePath: known.outputFilePath } : {}) });
+    } else if (update.sessionUpdate === "async_task_progress") {
+      const path = text(update.outputFilePath);
+      if (known && path) known.outputFilePath = path;
+      return;
+    } else {
+      const state = text(update.state);
+      if (!known || !state) return;
+      if (!AIR_STATES.has(state)) {
+        if (!this.unknownStates.has(state)) {
+          this.unknownStates.add(state);
+          (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} sent unknown task state ${state}\n`);
+        }
+        return;
+      }
+      // A task that ended stays ended (`async-tasks.js`: a terminal task ignores later live states).
+      if (!LIVE_STATES.has(known.state) || known.state === state) return;
+      known.state = state as CliTaskState;
+      if (!LIVE_STATES.has(known.state)) known.endedAt = Date.now();
+      const error = text(update.error);
+      if (error) known.error = error;
+    }
+    this.emitTasks();
+  }
+
+  /** The adapter is gone: its live tasks went with it. */
+  private loseTasks(message: string): void {
+    const lost = [...this.tasks.values()].filter((task) => LIVE_STATES.has(task.state));
+    for (const task of lost) Object.assign(task, { state: "lost", endedAt: Date.now(), error: message });
+    this.backgroundCalls.clear();
+    if (!lost.length) return;
+    this.emitTasks();
+    this.emit({ type: "exited", message });
+  }
+
+  private emitTasks(): void { this.emit({ type: "tasks", tasks: this.backgroundTasks() }); }
+
+  /** Listeners never throw into the transport. */
+  private emit(event: BackgroundEvent): void {
+    for (const listener of [...this.listeners]) {
+      try { listener(event); }
+      catch (error) { (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: background listener failed: ${(error as Error).message}\n`); }
+    }
+  }
+
+  /** Reports work outside Raw's turns; returns the unsubscribe. */
+  onBackground(listener: (event: BackgroundEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  /** The conversation's background tasks, oldest first. */
+  backgroundTasks(): CliTask[] { return [...this.tasks.values()].map((task) => ({ ...task })); }
+
+  /** Whether the CLI has work that outlives the turn: a live task. */
+  hasBackgroundWork(): boolean { return [...this.tasks.values()].some((task) => LIVE_STATES.has(task.state)); }
+
+  /** Asks the CLI to stop a live task it lets Raw stop; false for an unknown or ended task, or a closed runtime. */
+  async stopTask(id: string): Promise<boolean> {
+    const task = this.tasks.get(id);
+    const live = this.live;
+    const sessionId = this.cliSessionId;
+    if (this.closed || !task || !LIVE_STATES.has(task.state) || !task.canStop || !live || !sessionId) return false;
+    let stopped = false;
+    try {
+      const answer = await live.connection.agent.request<{ stopped?: unknown }>("_session/async_task/stop", { sessionId, asyncTaskId: id });
+      stopped = answer?.stopped === true;
+    } catch { return false; }
+    // The adapter reports the stop as a state update; a stop it confirmed is final either way.
+    if (stopped && LIVE_STATES.has(task.state)) { Object.assign(task, { state: "stopped", endedAt: Date.now() }); this.emitTasks(); }
+    return stopped;
   }
 
   /** Count of each unknown update kind this runtime received. */
@@ -670,6 +821,7 @@ export class AcpBackendProvider implements BackendProvider {
     }
     await (await this.bridge)?.close();
     this.cleanupLaunch();
+    this.listeners.clear();
   }
 
   private cleanupLaunch(): void {

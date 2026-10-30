@@ -64,6 +64,7 @@ test("the launch installs the pinned adapter once, without optional binaries, an
     assert.equal(Object.hasOwn(launch.env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW"), false);
     assert.ok(!Object.keys(launch.env).some((key) => /RAW_BRIDGE|TOKEN/i.test(key)));
     assert.deepEqual(launch.sessionMeta, { systemPrompt: "Be RAW." });
+    assert.equal(launch.asyncTasks, true, "Claude Code is told Raw handles AIR async tasks");
     assert.deepEqual(calls.map((call) => call.args), [["install", "--omit=optional", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact",
       "@agentclientprotocol/claude-agent-acp@0.98.0"]]);
     assert.deepEqual(notices, ["Installing @agentclientprotocol/claude-agent-acp@0.98.0 from npm (first use; once per version)"]);

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { RunEvent } from "../src/agent.js";
-import { AcpBackendAgent, AcpBackendProvider, measureBackend, type AcpLaunch } from "../src/backends/acp-agent.js";
+import { AcpBackendAgent, AcpBackendProvider, measureBackend, type AcpLaunch, type BackgroundEvent, type CliTask } from "../src/backends/acp-agent.js";
 import { createAcpSessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { openSessionStore, type SessionStore, type SessionSummary } from "../src/sessions/store.js";
@@ -16,7 +16,8 @@ const FAKE = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
 
 interface Harness {
   root: string; state: string; store: SessionStore; session: SessionSummary; runtime: RuntimeConfig; diagnostics: string[];
-  agent(options?: { approve?: (request: ToolApprovalRequest) => boolean | Promise<boolean>; env?: NodeJS.ProcessEnv; runtime?: RuntimeConfig }): AcpBackendAgent;
+  agent(options?: { approve?: (request: ToolApprovalRequest) => boolean | Promise<boolean>; env?: NodeJS.ProcessEnv; runtime?: RuntimeConfig;
+    launch?: Partial<AcpLaunch> }): AcpBackendAgent;
   reopen(): void;
   pids(prefix: "adapter" | "grandchild"): number[];
   calls(): Array<Record<string, unknown>>;
@@ -36,7 +37,8 @@ async function harness(backend: Record<string, unknown> = { kind: "claude" }, ag
   const h: Harness = {
     root, state, store, session, runtime, diagnostics,
     agent: (options = {}) => {
-      const launch: AcpLaunch = { command: process.execPath, args: [FAKE], env: { ...process.env, FAKE_ACP_STATE: state, ...fakeEnv, ...options.env } };
+      const launch: AcpLaunch = { command: process.execPath, args: [FAKE], env: { ...process.env, FAKE_ACP_STATE: state, ...fakeEnv, ...options.env },
+        ...options.launch };
       const created = createAcpSessionAgent({ runtime: options.runtime ?? runtime, tools: undefined as never, cwd: root,
         host: { persistence: { store: h.store, sessionId: session.id, surface: "web" }, ...(options.approve ? { approve: options.approve } : {}) } }, launch);
       (created.provider as unknown as { config: { diagnostic: (line: string) => void } }).config.diagnostic = (line) => diagnostics.push(line);
@@ -687,4 +689,131 @@ test("discovery returns the command list the CLI sends after session/new, and re
     await waiting.then(() => {}, () => {});
     assert.ok(Date.now() - begun < 900, "the wait ends on abort");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+/** An agent whose launch declares AIR async tasks, its provider, and every background event it reports. */
+function airAgent(h: Harness, env: NodeJS.ProcessEnv = {}) {
+  const agent = h.agent({ env, launch: { asyncTasks: true } });
+  const provider = agent.provider as AcpBackendProvider;
+  const events: BackgroundEvent[] = [];
+  provider.onBackground((event) => { events.push(event); });
+  const states = () => events.flatMap((event) => event.type === "tasks" ? [event.tasks.map((task) => task.state).join(",")] : []);
+  return { agent, provider, events, states, task: (id = "task-1"): CliTask | undefined => provider.backgroundTasks().find((task) => task.id === id) };
+}
+const unknownAsync = (h: Harness) => h.diagnostics.filter((line) => /unknown update async_task/.test(line));
+
+test("AIR: initialize declares async tasks only for a launch that has them", async () => {
+  const h = await harness();
+  try {
+    for (const launch of [{}, { asyncTasks: true }]) {
+      const agent = h.agent({ launch });
+      try { assert.equal((await agent.run(`hello ${JSON.stringify(launch)}`)).status, "completed"); } finally { await agent.close(); }
+    }
+    // The fake's SDK fills in the standard capabilities; the AIR declaration is the `_meta`.
+    const meta = h.calls().filter((call) => call.method === "initialize").map((call) => (call.clientCapabilities as { _meta?: unknown })._meta ?? null);
+    assert.deepEqual(meta, [null, { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } }]);
+  } finally { h.cleanup(); }
+});
+
+test("background: Codex's open backgrounded call ends running, and its task is tracked after the turn to completed with the exit code", async () => {
+  const h = await harness({ kind: "codex" });
+  const { agent, provider, states, task } = airAgent(h, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "300", FAKE_ACP_BG_EXIT: "3" });
+  const seen = collect();
+  try {
+    const result = await agent.run("bg", seen.on);
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    const results = seen.events.filter((event) => event.type === "tool_result") as Array<Extract<RunEvent, { type: "tool_result" }>>;
+    assert.deepEqual(results.map((event) => [event.id, event.result.isError, event.result.content]),
+      [["bg-call-1", false, [{ type: "text", text: "Running in the background as task task-1" }]]]);
+    // The turn has ended; the task still runs.
+    assert.equal(task()?.state, "running");
+    assert.equal(provider.hasBackgroundWork(), true);
+    await until(() => task()?.state === "completed");
+    await until(() => task()?.exitCode === 3);
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.deepEqual(states().filter((value, index, all) => value !== all[index - 1]), ["running", "completed"]);
+    assert.equal(task()?.toolCallId, "bg-call-1");
+    assert.ok(task()?.outputFilePath?.endsWith("task-1.output"));
+    // The call's late completion is the task's, not a new call in any turn.
+    assert.deepEqual(unknownAsync(h), []);
+    assert.equal(seen.events.filter((event) => event.type === "tool_start").length, 1);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("background: Claude Code's call completes in the turn with its own text, and its task is tracked", async () => {
+  const h = await harness();
+  const { agent, task } = airAgent(h, { FAKE_ACP_BG_CALL: "done", FAKE_ACP_BG_MS: "200" });
+  const seen = collect();
+  try {
+    assert.equal((await agent.run("bg", seen.on)).status, "completed");
+    const result = seen.events.find((event) => event.type === "tool_result") as Extract<RunEvent, { type: "tool_result" }>;
+    assert.deepEqual(result.result.content, [{ type: "text", text: "Command running in background with ID: task-1." }]);
+    assert.equal(task()?.state, "running");
+    await until(() => task()?.state === "completed");
+    assert.equal(task()?.exitCode, undefined);
+    assert.deepEqual(unknownAsync(h), []);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("background: stopTask stops a running task through the CLI, and is false for an ended or unknown task", async () => {
+  const h = await harness();
+  const { agent, provider, task } = airAgent(h, { FAKE_ACP_BG_MS: "20000" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    assert.equal(await provider.stopTask("task-1"), true);
+    assert.equal(task()?.state, "stopped");
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.equal(await provider.stopTask("task-1"), false);
+    assert.equal(await provider.stopTask("nope"), false);
+    assert.deepEqual(h.calls().filter((call) => call.method === "_session/async_task/stop").map((call) => call.asyncTaskId), ["task-1"]);
+  } finally { await agent.close(); h.cleanup(); }
+  assert.equal(await provider.stopTask("task-1"), false, "a closed provider stops nothing");
+});
+
+test("background: task state sequences follow the adapter's state machine", async (t) => {
+  const cases: Array<{ name: string; states: string; end: string; seen: string[]; diagnostics: string[] }> = [
+    { name: "pause and resume", states: "paused,running,completed", end: "completed", seen: ["running", "paused", "running", "completed"], diagnostics: [] },
+    { name: "a terminal task ignores a later live state", states: "completed,running", end: "completed", seen: ["running", "completed"], diagnostics: [] },
+    { name: "an unknown state keeps the previous one", states: "weird,weird", end: "running", seen: ["running"],
+      diagnostics: ["raw: claude sent unknown task state weird\n"] },
+  ];
+  for (const item of cases) await t.test(item.name, async () => {
+    const h = await harness();
+    const { agent, provider, states, task } = airAgent(h, { FAKE_ACP_BG_STATES: item.states, FAKE_ACP_BG_MS: "300" });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      const live: boolean[] = [];
+      provider.onBackground(() => { live.push(provider.hasBackgroundWork()); });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.equal(task()?.state, item.end);
+      assert.deepEqual(states().filter((value, index, all) => value !== all[index - 1]), item.seen);
+      if (item.end === "completed") assert.deepEqual(live.slice(0, -1).every(Boolean) && live.at(-1) === false, true, JSON.stringify(live));
+      assert.deepEqual(h.diagnostics, item.diagnostics);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+  await t.test("a monitor task that cannot be stopped is not sent a stop", async () => {
+    const h = await harness();
+    const { agent, provider, task } = airAgent(h, { FAKE_ACP_BG_TYPE: "monitor", FAKE_ACP_BG_CANSTOP: "0", FAKE_ACP_BG_MS: "20000" });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      assert.deepEqual([task()?.type, task()?.canStop], ["monitor", false]);
+      assert.equal(await provider.stopTask("task-1"), false);
+      assert.equal(task()?.state, "running");
+      assert.deepEqual(h.calls().filter((call) => call.method === "_session/async_task/stop"), []);
+      assert.deepEqual(unknownAsync(h), []);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+});
+
+test("background: an adapter exit makes its live tasks lost with an exited event", async () => {
+  const h = await harness();
+  const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "20000", FAKE_ACP_EXIT_AFTER_BG: "1" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    await until(() => task()?.state === "lost");
+    assert.match(task()!.error!, /exited \(code 4\).*gone/);
+    const exited = events.find((event) => event.type === "exited") as Extract<BackgroundEvent, { type: "exited" }> | undefined;
+    assert.match(exited?.message ?? "", /exited \(code 4\)/);
+    assert.equal(provider.hasBackgroundWork(), false);
+  } finally { await agent.close(); h.cleanup(); }
 });
