@@ -197,7 +197,7 @@ test("background: a one-shot run waits for the task and prints Claude Code's own
   } finally { cleanup(); }
 });
 
-test("background: Ctrl-C while a one-shot run waits stops the task in the CLI and exits 130", async () => {
+test("background: Ctrl-C while a one-shot run waits stops the task in the CLI and exits 130", { skip: posixOnly("signals") }, async () => {
   const { run, exited, stops, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000" }, ["bg"]);
   try {
     await until(() => run.stderr.includes(WAITING), "the waiting line");
@@ -255,7 +255,7 @@ test("background: a one-shot run does not end in the gap before Claude Code's ow
   } finally { cleanup(); }
 });
 
-test("background: SIGTERM or SIGHUP while a one-shot run waits stops the task in the CLI and ends the run", async (t) => {
+test("background: SIGTERM or SIGHUP while a one-shot run waits stops the task in the CLI and ends the run", { skip: posixOnly("signals") }, async (t) => {
   for (const signal of ["SIGTERM", "SIGHUP"] as const) await t.test(signal, async () => {
     const { run, exited, stops, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000" }, ["bg"]);
     try {
