@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { dashboardFixture } from "./fixtures/dashboard.js";
 import { switchAgentModel, switchModelMethod } from "../web/src/cli-models.js";
-import { patch } from "../web/src/editors/shared.js";
+import { patch } from "../web/src/editors/patch.js";
 import { createStarterConfig } from "../src/management/starter.js";
 
 const manifest = (name: string) => JSON.stringify({ api_version: 2, id: name, version: "1.0.0", name,

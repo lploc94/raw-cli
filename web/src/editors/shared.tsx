@@ -22,24 +22,7 @@ export const object = (value: unknown): Record<string, any> =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, any>)
     : {};
-export function parseObject(source: string): Record<string, any> {
-  const value: unknown = JSON.parse(source);
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Expected a JSON object");
-  return value as Record<string, any>;
-}
-export function patch(original: string, source: string) {
-  const before = parseObject(original),
-    after = parseObject(source);
-  return {
-    ...Object.fromEntries(
-      Object.keys(before)
-        .filter((key) => !Object.hasOwn(after, key))
-        .map((key) => [key, null]),
-    ),
-    ...after,
-  };
-}
+export { parseObject, patch } from "./patch.js";
 export interface DraftDocument {
   source: string;
   revision: string;
