@@ -102,7 +102,7 @@ cp "$candidate" "$active"
 chmod 600 "$active"
 ```
 
-A config chosen with `--config PATH` is checked and tried as `raw --config CANDIDATE config check` and `raw --config CANDIDATE --agent NAME "..."` with the candidate beside it, so relative paths resolve the same.
+A config chosen with `--config PATH` is checked and tried as `raw --config CANDIDATE config check` and `raw --config CANDIDATE --agent NAME "..."` with the candidate beside it, so relative paths resolve the same. Copy `PATH.packages.lock.json` (the installed-package index, when it exists) to `CANDIDATE.packages.lock.json` first, or package-bound agents fail with `unknown package alias`; remove that copy afterwards.
 
 ## Complete example
 

@@ -187,7 +187,7 @@ async function run(): Promise<void> {
     });
     return;
   }
-  const store = input(() => openSessionStore());
+  const store = input(() => openSessionStore(source));
   try {
     try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
     catch { process.stderr.write("raw: session maintenance deferred\n"); }

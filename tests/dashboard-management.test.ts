@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { dashboardFixture } from "./fixtures/dashboard.js";
-import { switchAgentModel, switchModelMethod } from "../web/src/cli-models.js";
+import { setCliRequest, switchAgentModel, switchModelMethod } from "../web/src/cli-models.js";
+import { installPackage } from "../src/packages/store.js";
+import { loadConfig } from "../src/config.js";
+import { tmpdir } from "node:os";
 import { patch } from "../web/src/editors/patch.js";
 import { createStarterConfig } from "../src/management/starter.js";
 
@@ -229,6 +232,38 @@ test("an agent moved from a CLI model to any API model saves without the CLI's r
     assert.deepEqual(switchAgentModel({ model: "chat", request: { max_output_tokens: 10 } }, "terra", isCli),
       { value: { model: "terra", request: { max_output_tokens: 10 } }, cleared: false });
   } finally { await f.close(); }
+});
+
+test("a package-bound agent's CLI effort, mode and model switch live under its overrides", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-bound-cli-"));
+  try {
+    const source = join(root, "kit");
+    mkdirSync(join(source, "agents"), { recursive: true });
+    writeFileSync(join(source, "agents", "a.json"), JSON.stringify({ system_prompt: "package", tools: { use: [] } }));
+    writeFileSync(join(source, "raw-package.json"), JSON.stringify({ schema_version: 1, name: "@test/kit", version: "1.0.0",
+      description: "Kit", files: ["agents/a.json"], exports: { agents: { a: "agents/a.json" } } }));
+    const configPath = join(root, "config.json");
+    const env = { XDG_DATA_HOME: join(root, "data") };
+    writeFileSync(configPath, "{}");
+    await installPackage({ configPath, env, source, alias: "kit" });
+    const models = { terra: { method: "codex-cli" }, chat: { provider: "custom", method: "openai-chat-completions", model_id: "x", base_url: "http://127.0.0.1:9/v1" } };
+    const load = (agent: Record<string, unknown>) => loadConfig({ configPath, env, requireModel: false,
+      configSource: JSON.stringify({ default_agent: "a", models, agents: { a: agent } }) });
+    const bound = { from: "pkg/kit/agents/a", model: "terra", overrides: { system_prompt_mode: "append" } };
+    const effort = setCliRequest(bound, "reasoning_effort", "high");
+    assert.deepEqual(effort, { ...bound, overrides: { system_prompt_mode: "append", request: { reasoning_effort: "high" } } });
+    const runtime = await load(effort);
+    assert.deepEqual([runtime.backend?.effort, runtime.backend?.systemPromptMode], ["high", "append"]);
+    // Red control: the field at the top level, as a direct agent has it, is not a binding field.
+    await assert.rejects(load({ ...bound, request: { reasoning_effort: "high" } }), /unknown package agent binding field: request/);
+    // Clearing the only field removes request, then the empty overrides.
+    assert.deepEqual(setCliRequest(setCliRequest({ from: bound.from, model: "terra" }, "mode", "read-only"), "mode", ""), { from: bound.from, model: "terra" });
+    const switched = switchAgentModel(effort, "chat", (alias) => alias === "terra");
+    assert.equal(switched.cleared, true);
+    assert.deepEqual(switched.value, { from: bound.from, model: "chat" });
+    assert.equal((await load(switched.value)).modelConfig?.modelAlias, "chat");
+    await assert.rejects(load({ ...effort, model: "chat" }), /system_prompt_mode applies to CLI models only|request/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("passive components never import code, per-file conflicts and usages prevent loss", async () => {

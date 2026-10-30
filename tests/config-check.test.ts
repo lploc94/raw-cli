@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -198,7 +198,7 @@ test("config check has no side effects: no process, no connection, no write to t
 
 test("--try-config runs a task on the candidate in the active path context and leaves the active file unchanged", async () => {
   const box = sandbox();
-  const fixture = await startMockProvider([{ frames: [openAiFrame({ content: "OK" }, "stop"), openAiDone] }]);
+  const fixture = await startMockProvider(Array.from({ length: 2 }, () => ({ frames: [openAiFrame({ content: "OK" }, "stop"), openAiDone] })));
   try {
     mkdirSync(join(box.dirs.config, "raw", "prompts"));
     write(join(box.dirs.config, "raw", "prompts", "p.md"), "candidate prompt");
@@ -213,5 +213,29 @@ test("--try-config runs a task on the candidate in the active path context and l
     assert.match(JSON.stringify(fixture.requests[0]?.body), /candidate prompt/);
     assert.deepEqual(readFileSync(box.active), before.bytes);
     assert.equal(statSync(box.active).mtimeMs, before.mtime);
+    // A repair is tried while the active file is broken: nothing of the run (sessions included) reads it.
+    write(box.active, "{ broken");
+    const repair = await raw(["--try-config", candidate, "--agent", "a", "Reply with just: OK"], box.env, "", box.dirs.work);
+    assert.equal(repair.code, 0, repair.stderr);
+    assert.equal(repair.stdout, "OK\n");
+    assert.equal(readFileSync(box.active, "utf8"), "{ broken");
   } finally { await fixture.close(); }
 });
+
+test("an alternate config's candidate beside it finds installed packages once the package index is copied with it", async () => {
+  const box = sandbox();
+  const portable = join(box.dirs.work, "raw.json"), candidate = join(box.dirs.work, "config.candidate.json");
+  write(portable, { agents: {} });
+  await installPackage({ configPath: portable, env: box.env, source: packageSource("raw-check-alt-"), alias: "kit" });
+  const text = JSON.stringify({ models: { local: API_MODEL }, agents: { bound: { from: "pkg/kit/agents/writer", model: "local" } } });
+  write(portable, text);
+  write(candidate, text);
+  assert.match((await raw(["--config", portable, "config", "check"], box.env)).stdout, /^ok +bound/m);
+  const alone = await raw(["--config", candidate, "config", "check"], box.env);
+  assert.match(alone.stdout, /^error +bound +unknown package alias: kit$/m);
+  copyFileSync(`${portable}.packages.lock.json`, `${candidate}.packages.lock.json`);
+  const copied = await raw(["--config", candidate, "config", "check"], box.env);
+  assert.equal(copied.code, 0, copied.stdout + copied.stderr);
+  assert.match(copied.stdout, /^ok +bound +local/m);
+});
+

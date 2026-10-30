@@ -31,15 +31,44 @@ export function switchModelMethod(value: Record<string, unknown>, credential: Cr
 /**
  * An agent draft after its Model select changes. From a CLI model to an API model, `request` and `system_prompt_mode` go:
  * a CLI agent's request holds the CLI's own effort and mode words and settings the CLI skipped, and API request keys and
- * values differ per destination, so none is safe to carry over. Any other switch changes only `model`.
+ * values differ per destination, so none is safe to carry over. A package binding keeps them under `overrides`, which
+ * goes too once empty. Any other switch changes only `model`.
  */
 export function switchAgentModel(agent: Record<string, unknown>, alias: string, isCli: (alias: unknown) => boolean): {
   value: Record<string, unknown>; cleared: boolean;
 } {
   const next: Record<string, unknown> = { ...agent, model: alias };
   if (!isCli(agent.model) || isCli(alias)) return { value: next, cleared: false };
-  const cleared = next.request !== undefined || next.system_prompt_mode !== undefined;
-  delete next.request;
-  delete next.system_prompt_mode;
-  return { value: next, cleared };
+  const settings = cliSettingsHolder(next);
+  const cleared = settings.request !== undefined || settings.system_prompt_mode !== undefined;
+  delete settings.request;
+  delete settings.system_prompt_mode;
+  return { value: withCliSettings(next, settings), cleared };
+}
+
+/** A copy of the object that holds an agent's own settings: the agent itself, or a package binding's `overrides`. */
+export function cliSettingsHolder(agent: Record<string, unknown>): Record<string, unknown> {
+  if (typeof agent.from !== "string") return agent;
+  const overrides = agent.overrides;
+  return overrides && typeof overrides === "object" && !Array.isArray(overrides) ? { ...(overrides as Record<string, unknown>) } : {};
+}
+
+/** The agent with its settings holder put back; a binding's empty `overrides` is removed. */
+export function withCliSettings(agent: Record<string, unknown>, settings: Record<string, unknown>): Record<string, unknown> {
+  if (typeof agent.from !== "string") return settings;
+  const { overrides: _overrides, ...rest } = agent;
+  return Object.keys(settings).length ? { ...rest, overrides: settings } : rest;
+}
+
+/** The agent after its CLI effort or mode field changes: an empty field removes the key, and an empty `request` goes too. */
+export function setCliRequest(agent: Record<string, unknown>, key: "reasoning_effort" | "mode", text: string): Record<string, unknown> {
+  const copy = { ...agent };
+  const settings = cliSettingsHolder(copy);
+  const current = settings.request;
+  const request: Record<string, unknown> = current && typeof current === "object" && !Array.isArray(current) ? { ...(current as Record<string, unknown>) } : {};
+  if (text.trim()) request[key] = text;
+  else delete request[key];
+  if (Object.keys(request).length) settings.request = request;
+  else delete settings.request;
+  return withCliSettings(copy, settings);
 }

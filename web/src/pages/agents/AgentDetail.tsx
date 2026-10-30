@@ -19,7 +19,7 @@ import { ErrorMessage, Field } from "../../ui.js";
 import { AgentActionDialog, AgentActionsMenu, type AgentAction } from "./AgentActions.js";
 import { PolicyEditor } from "./PolicyEditor.js";
 import { Selection } from "./Selection.js";
-import { switchAgentModel } from "../../cli-models.js";
+import { cliSettingsHolder, setCliRequest, switchAgentModel } from "../../cli-models.js";
 
 type Section = "overview" | "capabilities" | "policy" | "json";
 
@@ -103,22 +103,14 @@ export function AgentDetail({
   /** The CLI an alias runs (Claude Code, Codex, agy), or undefined for an API model. */
   const cliOf = (alias: unknown) => typeof alias === "string" ? config.modelSummaries?.[alias]?.backend : undefined;
   const cli = cliOf(value.model);
-  const request = object(value.request) as Record<string, unknown>;
+  // A package binding keeps the agent's own request under `overrides`.
+  const request = object(cliSettingsHolder(value).request) as Record<string, unknown>;
   const chooseModel = (alias: string) => {
     const next = switchAgentModel(value, alias, (item) => !!cliOf(item));
     setRequestCleared(next.cleared);
     draft.setSource(pretty(next.value));
   };
-  /** The CLI's effort and mode live in `request`; an empty field removes the key, and an empty `request` goes too. */
-  const setCliRequest = (key: "reasoning_effort" | "mode", text: string) => {
-    const next: Record<string, unknown> = { ...request };
-    if (text.trim()) next[key] = text;
-    else delete next[key];
-    const copy = { ...value };
-    if (Object.keys(next).length) copy.request = next;
-    else delete copy.request;
-    draft.setSource(pretty(copy));
-  };
+  const changeCliRequest = (key: "reasoning_effort" | "mode", text: string) => draft.setSource(pretty(setCliRequest(value, key, text)));
   const summary = config.agentSummaries?.[name];
   // The draft is authoritative once it parses; the saved summary covers loading and parse errors.
   const bound = draft.base && !parseError ? !!value.from : !!summary?.from;
@@ -223,14 +215,14 @@ export function AgentDetail({
                           <input
                             value={typeof request.reasoning_effort === "string" ? request.reasoning_effort : ""}
                             placeholder="CLI default"
-                            onChange={(e) => setCliRequest("reasoning_effort", e.target.value)}
+                            onChange={(e) => changeCliRequest("reasoning_effort", e.target.value)}
                           />
                         </Field>
                         <Field label="Mode">
                           <input
                             value={typeof request.mode === "string" ? request.mode : ""}
                             placeholder="CLI default"
-                            onChange={(e) => setCliRequest("mode", e.target.value)}
+                            onChange={(e) => changeCliRequest("mode", e.target.value)}
                           />
                         </Field>
                       </>

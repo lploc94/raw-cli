@@ -31,6 +31,8 @@ export interface SessionStoreOptions {
   home?: string;
   cwd?: string;
   now?: () => number;
+  /** Config text in the canonical config's place (`--try-config`): retention is read from it, not the file. */
+  configSource?: string;
 }
 
 export interface SessionSummary {
@@ -249,11 +251,13 @@ export class SessionStore {
   private readonly now: () => number;
   private readonly env: NodeJS.ProcessEnv;
   private readonly home: string | undefined;
+  private readonly configSource: string | undefined;
   private readonly cwd: string | undefined;
 
   constructor(options: SessionStoreOptions = {}) {
     this.env = options.env ?? process.env;
     this.home = options.home;
+    this.configSource = options.configSource;
     this.cwd = options.cwd;
     this.now = options.now ?? Date.now;
     const location = locateSessionStore(options);
@@ -1531,7 +1535,7 @@ export class SessionStore {
   }
 
   private cutoff(): number {
-    return this.now() - readSessionRetentionDays({ env: this.env,
+    return this.now() - readSessionRetentionDays({ env: this.env, ...(this.configSource === undefined ? {} : { configSource: this.configSource }),
       ...(this.home ? { home: this.home } : {}), ...(this.cwd ? { cwd: this.cwd } : {}) }) * 86_400_000;
   }
 

@@ -193,6 +193,13 @@ test("configure_raw try-candidate replaces the active config only after the cand
   } finally { await fixture.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test("the safe-edit script in docs/configuration.md is the tested try-candidate script", () => {
+  const docs = readFileSync(join("docs", "configuration.md"), "utf8").split("A safe edit of the active config:")[1];
+  const script = docs?.match(/\x60\x60\x60sh\n([\s\S]*?)\n\x60\x60\x60/)?.[1];
+  // The same bytes as the example whose check and try failures are proven above to leave the active config alone.
+  assert.equal(script, fence("configure_raw", "sh", "try-candidate"));
+});
+
 test("create_agent cli-agent example checks clean as an agent on a CLI model", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-cli-agent-example-"));
   try {

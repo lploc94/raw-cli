@@ -138,15 +138,21 @@ An error is whatever makes loading that agent fail, the same rule every run appl
 
 `--try-config FILE` runs any task, `--interactive`, `config list`, `config check` or `vars` with FILE's text in the active config's place, the same way. The session a task creates is an ordinary session; the candidate is not saved anywhere. It cannot be combined with `--config`, `config init`, `--acp` or `raw dashboard`, which would write the candidate's place or keep it in use.
 
-A safe edit of the active config:
+A safe edit of the active config: copy it to `config.candidate.json` beside it, edit only the candidate, then run this script with the agent to try. Each step runs only when the previous one passed; a failure leaves the active config untouched and the candidate in place.
 
 ```sh
-cp ~/.config/raw/config.json /tmp/raw-candidate.json     # 1. copy
-$EDITOR /tmp/raw-candidate.json                          # 2. edit the copy
-raw config check /tmp/raw-candidate.json                 # 3. check it
-raw --try-config /tmp/raw-candidate.json --agent codex "Reply with just: OK"   # 4. try it
-cp ~/.config/raw/config.json ~/.config/raw/config.json.bak && cp /tmp/raw-candidate.json ~/.config/raw/config.json && chmod 600 ~/.config/raw/config.json   # 5. replace
+set -eu
+active="${XDG_CONFIG_HOME:-$HOME/.config}/raw/config.json"
+candidate="$(dirname "$active")/config.candidate.json"
+# Steps 1-2 happened before: cp "$active" "$candidate", then the edit, in the candidate only.
+raw config check "$candidate" || exit 1
+raw --try-config "$candidate" --agent "$1" "Reply with just: OK" || exit 1
+cp -p "$active" "$active.bak"
+cp "$candidate" "$active"
+chmod 600 "$active"
 ```
+
+For a config chosen with `--config PATH`, put the candidate beside it and copy `PATH.packages.lock.json` (the installed-package index, when it exists) to `CANDIDATE.packages.lock.json`, then check and try with `--config CANDIDATE`; remove that copy afterwards.
 
 ## External backends
 
