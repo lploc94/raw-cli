@@ -28,7 +28,7 @@ export const attachSessionRuntimeWith = (factory: SessionAgentFactory): AttachSe
   if (signal.aborted) throw new Error("startup aborted");
   if (runtime.backend) return attachBackendRuntime(runtime, options, factory);
   // Raw's own loop replaces a kept CLI adapter: it is stopped, and what it leaves is recorded once the agent runs.
-  const notices = await releaseResident(options.resident, undefined, [...(options.notices ?? [])]);
+  const notices = [...(options.notices ?? []), ...await releaseResident(options.resident, undefined, options.carry)];
   const modelConfig = applyRequestOverride(runtime.modelConfig!, options.request ?? {});
   const provider = createProvider(modelConfig);
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
@@ -61,7 +61,7 @@ async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<
   const key = backendResidentKey({ agentName: runtime.agentName ?? spec.kind, spec, cwd: session.cwd,
     autoApprove: runtime.autoApprove, ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}) });
   const resident = options.resident?.residentKey === key ? options.resident : undefined;
-  await releaseResident(options.resident, resident, notices);
+  notices.push(...await releaseResident(options.resident, resident, options.carry));
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
   for (const warning of tools.warnings) process.stderr.write(`raw: ${warning}\n`);
   try {
@@ -90,14 +90,16 @@ async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<
 }
 
 /**
- * A kept adapter serves only the agent it was started for: unless it is `kept`, it is stopped with its tasks, and its
- * notices and the stop are added to `notices`.
+ * A kept adapter serves only the agent it was started for: unless it is `kept`, it is stopped with its tasks. Returns its
+ * notices and the stop's, given to `carry` first so they outlive an attach that fails after it.
  */
-async function releaseResident(resident: AcpBackendProvider | undefined, kept: AcpBackendProvider | undefined, notices: string[]): Promise<string[]> {
-  if (!resident || resident === kept) return notices;
+async function releaseResident(resident: AcpBackendProvider | undefined, kept: AcpBackendProvider | undefined,
+  carry: ((notices: readonly string[]) => void) | undefined): Promise<string[]> {
+  if (!resident || resident === kept) return [];
   const names = resident.backgroundTasks().filter((task) => task.state === "running" || task.state === "paused").map((task) => task.name);
-  notices.push(...resident.drainNotices());
-  await resident.close();
+  const notices = resident.drainNotices();
   if (names.length) notices.push(`${resident.label} stopped ${names.length} background task(s) because the agent changed: ${names.join(", ")}`);
+  carry?.(notices);
+  await resident.close();
   return notices;
 }

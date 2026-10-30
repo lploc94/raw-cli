@@ -198,6 +198,24 @@ test("resident: switching the agent to Raw's own loop stops the old adapter and 
   } finally { await model.close(); await f.close(); }
 });
 
+test("resident: an operation cancelled while it stops the old adapter keeps the notice for the next turn", async () => {
+  const f = await fixture("claude", { FAKE_ACP_BG_MS: "20000" });
+  const model = await startMockProvider([{ frames: [openAiFrame({ content: "after-cancel" }, "stop"), openAiDone] }]);
+  try {
+    assert.equal((await f.run("bg")).state, "completed");
+    const old = (f.service as unknown as { residents: Map<string, { provider: { isClosed: boolean } }> }).residents.get(f.session.id)!.provider;
+    writeFileSync(f.configPath, JSON.stringify({ default_agent: "ext",
+      models: { fixture: { provider: "openai", method: "openai-chat-completions", model_id: "fixture", base_url: model.url, api_key_env: "RAW_TEST_KEY" } },
+      agents: { ext: { model: "fixture", tools: { use: [] } } } }));
+    const switching = f.submit("switch");
+    await until(() => old.isClosed, "the old adapter to start closing", 15000);
+    assert.equal(f.service.cancel(switching.id), true);
+    assert.equal((await f.service.wait(switching.id)).state, "cancelled");
+    assert.equal((await f.run("next")).state, "completed");
+    assert.ok(f.history().includes("notice:Claude Code stopped 1 background task(s) because the agent changed: Background job"), JSON.stringify(f.history()));
+  } finally { await model.close(); await f.close(); }
+});
+
 test("resident: Raw's stop of the last background task succeeds and the CLI's answer to it reaches the next turn", async () => {
   const f = await fixture("claude", { FAKE_ACP_BG_MS: "20000" });
   try {

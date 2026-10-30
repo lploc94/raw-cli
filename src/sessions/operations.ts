@@ -40,6 +40,8 @@ export type AttachSessionRuntime = (options: {
   /** The session's kept backend provider, and notices for its next turn (cli-background-work). */
   resident?: AcpBackendProvider;
   notices?: readonly string[];
+  /** Keeps notices for the session's next operation until this one delivers them (an attach that fails keeps them). */
+  carry?: (notices: readonly string[]) => void;
 }) => Promise<SessionRuntime>;
 
 export type OperationEvent = { sessionId: string; operationId: string } & (
@@ -231,6 +233,7 @@ export class SessionOperations {
       const carried = this.carried.get(operation.sessionId);
       runtime = await (this.options.attach ?? attachSessionRuntime)({ store, session, operation, owner,
         ...(resident && !resident.provider.isClosed ? { resident: resident.provider } : {}), ...(carried ? { notices: carried } : {}),
+        carry: (notices) => this.carry(operation.sessionId, notices),
         signal: active.controller.signal, ...(this.options.processes ? { processes: this.options.processes } : {}), ...(this.options.interactions ? { interactions: this.options.interactions } : {}), ...(approve ? { approve } : {}), ...(this.options.env ? { env: this.options.env } : {}),
         ...(active.request && operation.kind === "turn" ? { request: active.request } : {}) });
       active.agent = runtime.agent;
