@@ -245,3 +245,41 @@ test("claude: end to end in the dashboard: todo panel, tool calls, a cancel that
     assert.equal(running(otherPid), false, "a closed runtime leaves no process");
   } finally { await f.close(); }
 });
+
+test("claude, codex: slash commands: discovery and the session list the CLI's commands, and a /command runs in the CLI",
+  { skip: !(LIVE.has("claude") && LIVE.has("codex")) && "set RAW_LIVE_BACKENDS=claude,codex" }, async () => {
+  const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  const f = await dashboardFixture({ env: { XDG_DATA_HOME: data }, attach: attachSessionRuntimeWith(createSessionAgent), config: { default_agent: "s-claude" },
+    extraAgents: { "s-claude": { cli: { kind: "claude" }, tools: { use: [] } }, "s-codex": { cli: { kind: "codex" }, tools: { use: [] } } } });
+  const names = (list: Array<{ name: string }> | undefined) => (list ?? []).map((command) => command.name);
+  const turn = async (session: string, agent: string, input: string) => {
+    const op = await f.json<SessionOperation>(`/sessions/${session}/operations`, "POST", { clientRequestId: randomBytes(8).toString("hex"), kind: "turn", agent, input });
+    for (const end = Date.now() + 300_000; ;) {
+      const state = (await f.json<SessionOperation>(`/operations/${op.id}`)).state;
+      if (["completed", "max_steps", "cancelled", "error", "interrupted"].includes(state)) { assert.equal(state, "completed", input); return; }
+      if (Date.now() >= end) throw new Error(`operation ${op.id} did not finish`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  };
+  const snapshotCommands = async (session: string) => names((await f.json<{ backendCommands?: Array<{ name: string }> }>(`/sessions/${session}`)).backendCommands);
+  try {
+    const claudeOffer = await f.json<{ commands?: Array<{ name: string }> }>("/agents/s-claude/backend-options");
+    assert.ok(names(claudeOffer.commands).includes("context"), JSON.stringify(names(claudeOffer.commands)));
+    const codexOffer = await f.json<{ commands?: Array<{ name: string }> }>("/agents/s-codex/backend-options");
+    assert.ok(names(codexOffer.commands).includes("status"), JSON.stringify(names(codexOffer.commands)));
+    const claude = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "s-claude" });
+    await turn(claude.id, "s-claude", "/context");
+    assert.ok((await snapshotCommands(claude.id)).includes("context"));
+    // The dashboard closes a runtime after its turn: the second Codex turn resumes the conversation with session/load.
+    const codex = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "s-codex" });
+    await turn(codex.id, "s-codex", "Reply with just: OK");
+    await turn(codex.id, "s-codex", "/status");
+    assert.ok((await snapshotCommands(codex.id)).includes("status"));
+    const store = openSessionStore({ env: f.env });
+    try {
+      const answers = (id: string) => JSON.stringify(store.getSessionHistory({ sessionId: id, limit: 100 }).items.filter((item) => item.kind === "assistant"));
+      assert.match(answers(claude.id), /token/i, "Claude Code's /context answers with its context usage");
+      assert.match(answers(codex.id), /model|sandbox|limit/i, "Codex's /status answers with its status");
+    } finally { store.close(); }
+  } finally { await f.close(); }
+});
