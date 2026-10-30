@@ -5,7 +5,7 @@ import type { PanelStackItem } from "../../../src/panels/stack.js";
 import type { UsageSummary } from "../../../src/llm/cache.js";
 import type { Approval } from "../../../src/dashboard/approvals.js";
 import type { CommandRecord } from "../../../src/processes/presentation.js";
-import { contextUsage, type ContextUsageInput } from "../composer/context-usage.js";
+import { compactTriggerMark, contextUsage, type ContextUsageInput } from "../composer/context-usage.js";
 import { commandFailed, commandRunning } from "./commands-state.js";
 import { formatDuration } from "./panel-state.js";
 
@@ -138,9 +138,11 @@ export function summarizeContext(context: ContextUsageInput | undefined | null):
   if (!usage) return { chips: [], lines: [{ text: `${tokens} tokens` }], summary: `${tokens} tokens` };
   const percent = Math.round(usage.percent);
   const tone = contextTone(usage.percent);
-  const text = `${tokens} / ${compactTokens(usage.limit)} tokens`;
+  const mark = usage.basis === "compact" ? compactTriggerMark(context) : "";
+  const text = `${tokens} / ${mark}${compactTokens(usage.limit)} tokens`;
+  const basis = usage.basis === "compact" ? `${mark ? "estimated " : ""}auto-compact trigger` : "context window";
   return {
-    badge: { text: `${percent}%`, tone, label: `${percent}% of the ${usage.basis === "compact" ? "auto-compact trigger" : "context window"} used` },
+    badge: { text: `${percent}%`, tone, label: `${percent}% of the ${basis} used` },
     chips: [{ text: `${percent}%`, tone }],
     // The card shows the chip and the bar (frame-overview.png); the numbers stay in the summary and in Details.
     lines: [],
