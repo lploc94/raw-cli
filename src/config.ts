@@ -34,6 +34,8 @@ export interface RawFlags {
   theme?: ThemeName;
   agent?: string;
   configPath?: string;
+  /** `--try-config FILE` (or `-` for stdin): FILE's text takes the active config's place for this run. */
+  tryConfig?: string;
   systemPrompt?: string;
   maxSteps?: number;
   maxOutputBytes?: number;
@@ -48,7 +50,7 @@ export interface RawFlags {
   before?: string;
 }
 
-export type CliCommand = "help" | "version" | "config-init" | "config-list" | "task" | "interactive" | "acp"
+export type CliCommand = "help" | "version" | "config-init" | "config-list" | "config-check" | "task" | "interactive" | "acp"
   | "vars-list" | "vars-get"
   | "sessions-list" | "sessions-show" | "sessions-delete" | "sessions-stats" | "sessions-panels";
 
@@ -119,6 +121,13 @@ export interface LoadConfigOptions {
   home?: string;
   configPath?: string;
   requireModel?: boolean;
+  /**
+   * Config text used instead of reading the config file. Every path rule still follows the active config path: relative
+   * files, canonical-only `sessions`, and the package index beside it.
+   */
+  configSource?: string;
+  /** A private directory a linked package is published to instead of the package store, so nothing in the store is written. */
+  packageScratchDir?: string;
 }
 
 export interface ConfigDocument {
@@ -223,6 +232,7 @@ function sessionsSpec(raw: unknown): number {
 }
 
 function parseConfigDocument(options: LoadConfigOptions, validateAgents: boolean): ConfigDocument {
+  if (options.configSource !== undefined) return parseConfigSource(stripBom(options.configSource), options, validateAgents);
   const path = configFilePath(options);
   let source: string;
   try {
@@ -257,10 +267,17 @@ export function readConfigDocument(options: LoadConfigOptions = {}): ConfigDocum
   return parseConfigDocument(options, true);
 }
 
+/** The config document with its root checked (JSON, fields, `ui`, `sessions`) but not its agents, models or other sections. */
+export function readConfigDocumentRoot(options: LoadConfigOptions = {}): ConfigDocument {
+  return parseConfigDocument(options, false);
+}
+
 export function readSessionRetentionDays(options: LoadConfigOptions = {}): number {
-  const { configPath: _path, flags, ...rest } = options;
+  const { configPath: _path, flags, configSource, ...rest } = options;
   const { configPath: _flagPath, ...otherFlags } = flags ?? {};
-  const canonical = parseConfigDocument({ ...rest, flags: otherFlags }, false);
+  // Config text in the canonical config's place holds the sessions settings; in another file's place it cannot.
+  const replacesCanonical = configSource !== undefined && configFilePath(options) === canonicalConfigPath(options);
+  const canonical = parseConfigDocument({ ...rest, flags: otherFlags, ...(replacesCanonical ? { configSource } : {}) }, false);
   return sessionsSpec(canonical.data.sessions);
 }
 
@@ -771,15 +788,26 @@ function validateDocument(root: JsonObject): void {
 }
 export function validateEffectiveConfigData(data: Record<string, unknown>): void { parseDocument(data); }
 
+/** The environment variable a model without `api_key` reads its key from: `api_key_env`, else the provider's own; none for a keyless endpoint. */
+function credentialEnv(modelConfig: Pick<ResolvedModelConfig, "apiKey" | "apiKeyEnv" | "provider">, env: NodeJS.ProcessEnv): string | undefined {
+  if (modelConfig.apiKey) return undefined;
+  if (modelConfig.apiKeyEnv) return modelConfig.apiKeyEnv;
+  if (modelConfig.provider === "openai") return "OPENAI_API_KEY";
+  if (modelConfig.provider === "anthropic") return "ANTHROPIC_API_KEY";
+  if (modelConfig.provider === "google") return env.GEMINI_API_KEY ? "GEMINI_API_KEY" : "GOOGLE_API_KEY";
+  if (modelConfig.provider === "openrouter") return "OPENROUTER_API_KEY";
+  return undefined;
+}
+
+/** The variable a run would fail on for lack of a key, or undefined when the model has its key or needs none. */
+export function missingCredentialEnv(modelConfig: Pick<ResolvedModelConfig, "apiKey" | "apiKeyEnv" | "provider">,
+  env: NodeJS.ProcessEnv): string | undefined {
+  const name = credentialEnv(modelConfig, env);
+  return name !== undefined && !env[name] ? name : undefined;
+}
+
 function resolveKey(modelConfig: ResolvedModelConfig, env: NodeJS.ProcessEnv): ResolvedModelConfig {
-  if (modelConfig.apiKey) return modelConfig;
-  let apiKeyEnv = modelConfig.apiKeyEnv;
-  if (!apiKeyEnv) {
-    if (modelConfig.provider === "openai") apiKeyEnv = "OPENAI_API_KEY";
-    if (modelConfig.provider === "anthropic") apiKeyEnv = "ANTHROPIC_API_KEY";
-    if (modelConfig.provider === "google") apiKeyEnv = env.GEMINI_API_KEY ? "GEMINI_API_KEY" : "GOOGLE_API_KEY";
-    if (modelConfig.provider === "openrouter") apiKeyEnv = "OPENROUTER_API_KEY";
-  }
+  const apiKeyEnv = credentialEnv(modelConfig, env);
   if (!apiKeyEnv) return modelConfig;
   const key = env[apiKeyEnv];
   if (!key) throw new Error("missing credential environment variable " + apiKeyEnv);
@@ -887,11 +915,13 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   if (wanted !== undefined && !Object.hasOwn(configuredAgents, wanted)) throw new Error("unknown agent: " + wanted);
   const agentData = wanted === undefined ? undefined : configuredAgents[wanted];
   const packageContext = createPackageResolutionContext();
+  const packageOptions = { configPath: document.path, env,
+    ...(options.packageScratchDir === undefined ? {} : { scratchHome: options.packageScratchDir }) };
   const effective = agentData && typeof agentData === "object" && !Array.isArray(agentData) && Object.hasOwn(agentData, "from")
-    ? await resolvePackageAgentBinding(agentData, { configPath: document.path, env }, packageContext) : agentData;
+    ? await resolvePackageAgentBinding(agentData, packageOptions, packageContext) : agentData;
   const packageSelection = effective === undefined ? undefined
     // An agent on a CLI model never runs Raw hooks: its hook selection is kept for the skip warning but not resolved.
-    : await resolvePackageSelections(effective, { configPath: document.path, env }, packageContext,
+    : await resolvePackageSelections(effective, packageOptions, packageContext,
       { skipHooks: runsCli(effective, document.data.models) });
   const activeAgents: Record<string, unknown> = {};
   if (wanted !== undefined) activeAgents[wanted] = packageSelection?.agent;
@@ -900,7 +930,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
     ? /^pkg\/([a-z][a-z0-9_-]*)\/agents\//.exec((agentData as { from: string }).from)?.[1] : undefined;
   const packageDefinitions = packageSelection === undefined ? { mcpIdentities: {} as Record<string, string>,
     mcpSources: {} as Record<string, { root: string; identity: string }> }
-    : await resolvePackageDefinitions(packageSelection.agent, document.data, { configPath: document.path, env }, originAlias,
+    : await resolvePackageDefinitions(packageSelection.agent, document.data, packageOptions, originAlias,
       packageContext, originAlias ? (agentData as { inputs?: JsonObject }).inputs : undefined);
   const { mcpIdentities, mcpSources, ...definitions } = packageDefinitions;
   const effectiveDocument: ConfigDocument = { ...document, data: { ...document.data, agents: activeAgents,
@@ -1025,7 +1055,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   const seen = new Set<string>();
   const valueFlags: Record<string, keyof RawFlags> = {
     "--display": "density", "--reasoning": "reasoning", "--color": "color", "--icons": "icons", "--theme": "theme",
-    "--agent": "agent", "--config": "configPath", "--system-prompt": "systemPrompt",
+    "--agent": "agent", "--config": "configPath", "--try-config": "tryConfig", "--system-prompt": "systemPrompt",
     "--max-steps": "maxSteps", "--max-output-bytes": "maxOutputBytes",
     "--request-timeout-ms": "requestTimeoutMs", "--host": "host", "--port": "port",
     "--resume": "resumeId", "--before": "before",
@@ -1077,6 +1107,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
         }
         if (key === "agent") flags.agent = next;
         if (key === "configPath") flags.configPath = next;
+        if (key === "tryConfig") flags.tryConfig = next;
         if (key === "systemPrompt") flags.systemPrompt = next;
         if (key === "host") flags.host = next;
         if (key === "resumeId") flags.resumeId = next;
@@ -1084,13 +1115,19 @@ export function parseCliArgs(argv: string[]): CliArgs {
       }
       continue;
     }
-    if (arg.startsWith("-")) throw new Error(`unknown option ${arg}`);
+    // A lone `-` is a value (stdin for `config check -`), not an option.
+    if (arg.startsWith("-") && arg !== "-") throw new Error(`unknown option ${arg}`);
     positional.push(arg);
+  }
+  if (flags.tryConfig !== undefined && flags.configPath !== undefined) {
+    throw new Error("--try-config replaces the active config; choose it or --config");
   }
   if (help) return { command: "help", flags };
   if (version) return { command: "version", flags };
   if (positional[0] === "vars") {
-    if (interactive || acp || acpTransport || Object.keys(flags).some(key => key !== "configPath" && key !== "agent")) throw new Error("vars accepts only --config and --agent");
+    if (interactive || acp || acpTransport || Object.keys(flags).some(key => key !== "configPath" && key !== "agent" && key !== "tryConfig")) {
+      throw new Error("vars accepts only --config, --try-config and --agent");
+    }
     if (positional.length === 2 && positional[1] === "list") return { command: "vars-list", flags };
     if (positional.length === 3 && positional[1] === "get" && positional[2]) return { command: "vars-get", variableName: positional[2], flags };
     throw new Error("vars requires list or get NAME");
@@ -1098,7 +1135,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   if (flags.continue && flags.resumeId) throw new Error("--continue and --resume are mutually exclusive");
   if (positional[0] === "sessions") {
     if (interactive || acp || acpTransport || flags.host || flags.port || flags.continue || flags.resumeId
-      || flags.agent || flags.configPath || flags.systemPrompt || flags.maxSteps || flags.maxOutputBytes
+      || flags.agent || flags.configPath || flags.tryConfig || flags.systemPrompt || flags.maxSteps || flags.maxOutputBytes
       || flags.requestTimeoutMs || flags.autoApprove) throw new Error("sessions cannot be combined with run options");
     if (flags.json && positional[1] !== "panels") throw new Error("--json is only available with sessions panels");
     if (positional.length === 1) return { command: "sessions-list", flags };
@@ -1120,11 +1157,21 @@ export function parseCliArgs(argv: string[]): CliArgs {
   if (flags.allSessions || flags.before) throw new Error("--all and --before require sessions");
   if (flags.json) throw new Error("--json requires sessions panels");
   if (positional[0] === "config") {
-    if (positional.length !== 2 || (positional[1] !== "init" && positional[1] !== "list") || interactive || acp
-      || flags.continue || flags.resumeId) throw new Error("config requires init or list");
-    return { command: positional[1] === "init" ? "config-init" : "config-list", flags };
+    const sub = positional[1];
+    const shape = sub === "check" ? positional.length <= 3 : positional.length === 2 && (sub === "init" || sub === "list");
+    if (!shape || interactive || acp || flags.continue || flags.resumeId) throw new Error("config requires init, list or check [FILE|-]");
+    // init writes the active config: trying a candidate there would write the candidate's place, not try it.
+    if (sub === "init" && flags.tryConfig !== undefined) throw new Error("--try-config cannot be combined with config init");
+    if (sub === "check") {
+      const file = positional[2];
+      if (file !== undefined && flags.tryConfig !== undefined) throw new Error("config check FILE is --try-config FILE; give the candidate once");
+      return { command: "config-check", flags: file === undefined ? flags : { ...flags, tryConfig: file } };
+    }
+    return { command: sub === "init" ? "config-init" : "config-list", flags };
   }
   if (acp) {
+    // An ACP server lives on: a candidate would stay in use long after it was tried.
+    if (flags.tryConfig !== undefined) throw new Error("--acp cannot be combined with --try-config");
     if (interactive || positional.length || flags.continue || flags.resumeId) throw new Error("--acp cannot be combined with a task, resume, or --interactive");
     return { command: "acp", flags, acpTransport: acpTransport ?? "stdio" };
   }

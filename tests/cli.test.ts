@@ -592,3 +592,38 @@ test("a backend agent's warnings are printed once per start, not once per turn",
     assert.equal(result.stderr.split(AGY_APPEND).length - 1, 1, result.stderr);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("--try-config is accepted by runs, config check|list and vars, and refused where a candidate would stay live or be written", async () => {
+  const { parseCliArgs } = await import("../src/config.js");
+  assert.deepEqual(parseCliArgs(["--try-config", "c.json", "task"]), { command: "task", task: "task", flags: { tryConfig: "c.json" } });
+  assert.equal(parseCliArgs(["--try-config", "c.json", "--interactive"]).command, "interactive");
+  assert.equal(parseCliArgs(["--try-config", "c.json", "config", "list"]).command, "config-list");
+  assert.equal(parseCliArgs(["--try-config", "c.json", "vars", "list"]).command, "vars-list");
+  assert.deepEqual(parseCliArgs(["config", "check"]), { command: "config-check", flags: {} });
+  assert.deepEqual(parseCliArgs(["config", "check", "c.json"]), { command: "config-check", flags: { tryConfig: "c.json" } });
+  assert.deepEqual(parseCliArgs(["config", "check", "-"]), { command: "config-check", flags: { tryConfig: "-" } });
+  assert.throws(() => parseCliArgs(["--try-config", "c.json", "--config", "d.json", "task"]),
+    { message: "--try-config replaces the active config; choose it or --config" });
+  assert.throws(() => parseCliArgs(["--try-config", "c.json", "config", "init"]), /--try-config/);
+  assert.throws(() => parseCliArgs(["--try-config", "c.json", "--acp"]), /--try-config/);
+  assert.throws(() => parseCliArgs(["--try-config", "a.json", "config", "check", "b.json"]), /--try-config/);
+  assert.throws(() => parseCliArgs(["config", "check", "a.json", "b.json"]), /config requires init, list or check/);
+  const dashboard = await raw(["dashboard", "--try-config", "c.json"]);
+  assert.equal(dashboard.code, 2);
+  assert.match(dashboard.stderr, /--try-config/);
+});
+
+test("config list shows a CLI model's method, CLI, and its model or the CLI default", async () => {
+  const root = await mkdtemp(join(tmpdir(), "raw-cli-list-"));
+  try {
+    const configPath = join(root, "config.json");
+    await writeFile(configPath, JSON.stringify({ models: { terra: { method: "codex-cli", model_id: "gpt-6.1-terra" },
+      opus: { method: "claude-code-cli" } }, agents: { codex: { model: "terra", tools: { use: [] } }, claude: { model: "opus", tools: { use: [] } } } }));
+    const listed = await raw(["--config", configPath, "config", "list"]);
+    assert.equal(listed.code, 0, listed.stderr);
+    const rows = listed.stdout.trimEnd().split("\n").map((line) => line.split("\t"));
+    assert.deepEqual(rows[0]!.slice(0, 5), ["codex", "terra", "codex-cli", "CLI", "gpt-6.1-terra"]);
+    assert.deepEqual(rows[1]!.slice(0, 5), ["claude", "opus", "claude-code-cli", "CLI", "CLI default"]);
+    assert.doesNotMatch(listed.stdout, /\?|default endpoint/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

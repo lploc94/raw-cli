@@ -116,7 +116,35 @@ rule asks for matching `rm` command strings; other Bash calls run directly.
 
 For example, the DeepSeek agent above compacts automatically because its model declares a 1048576-token context; add `"trigger_tokens": 800000` to its `compact` object to choose the threshold, or `false` to keep it manual. Raw uses a conservative serialized-request estimate and checks the full request after compact; the exact context usage remains provider-specific.
 
-raw config init writes this schema once with mode 0600 (on Windows the file takes its folder's access rules). raw config list displays agent name, model alias, upstream model_id, provider, method, sanitized endpoint, vision, selected tool IDs, tool rules and compact trigger. It never displays api_key, resolved environment values, or prompt text.
+raw config init writes this schema once with mode 0600 (on Windows the file takes its folder's access rules). raw config list displays agent name, model alias, upstream model_id, provider, method, sanitized endpoint, vision, selected tool IDs, tool rules and compact trigger; for a CLI model it shows the method, `CLI` and the `model_id` or `CLI default` in place of model, provider and endpoint. It never displays api_key, resolved environment values, or prompt text.
+
+## Check a config
+
+`raw config check` loads every agent of the active config as a run would, without running anything: no model request, MCP server, CLI start, package write or session. It prints one line per agent in config order, its warnings under it, and a total:
+
+```text
+ok      raw     flash (openai-chat-completions)
+ok      codex   terra (codex-cli)
+        warning: codex agent "codex" skips request.max_output_tokens: it configures Raw's own agent loop
+error   claude  agent claude references unknown model: opsu
+3 agents, 1 errors, 1 warnings
+```
+
+An error is whatever makes loading that agent fail, the same rule every run applies; each agent is checked alone, so one broken agent does not hide the others. A warning is something a run degrades on: a setting a CLI skips, a CLI that is not installed, an API key that is not set. A problem outside the agents (invalid JSON, a bad `models` entry, `agents` that is not an object, an unknown `default_agent`) prints a single `error   config  <message>` line. The exit code is 1 when anything errors, 0 otherwise, warnings included.
+
+`raw config check FILE` (or `-` for stdin) checks a candidate in the active config's place: relative paths such as `system_prompt_file` resolve from the active config's directory, `sessions` is allowed when the active config is the canonical one, and installed packages resolve from the active config's package index. The active file is not read for content and not changed. A linked package is packed into a private temporary directory for the check and removed afterwards; the package store is not written.
+
+`--try-config FILE` runs any task, `--interactive`, `config list`, `config check` or `vars` with FILE's text in the active config's place, the same way. The session a task creates is an ordinary session; the candidate is not saved anywhere. It cannot be combined with `--config`, `config init`, `--acp` or `raw dashboard`, which would write the candidate's place or keep it in use.
+
+A safe edit of the active config:
+
+```sh
+cp ~/.config/raw/config.json /tmp/raw-candidate.json     # 1. copy
+$EDITOR /tmp/raw-candidate.json                          # 2. edit the copy
+raw config check /tmp/raw-candidate.json                 # 3. check it
+raw --try-config /tmp/raw-candidate.json --agent codex "Reply with just: OK"   # 4. try it
+cp ~/.config/raw/config.json ~/.config/raw/config.json.bak && cp /tmp/raw-candidate.json ~/.config/raw/config.json && chmod 600 ~/.config/raw/config.json   # 5. replace
+```
 
 ## External backends
 

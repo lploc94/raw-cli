@@ -88,7 +88,7 @@ Tool calls run automatically in terminal, headless, dashboard and ACP modes, usi
 }
 ```
 
-`provider` names the service; `method` selects its wire API (`openai-chat-completions`, `openai-responses`, `anthropic-messages`, or `google-generate-content`). `model_id` is sent upstream unchanged. Use `api_key_env` to read a selected credential from the environment or `api_key` for a literal value. `raw config list` reports model/access settings without printing credentials. No old flat-agent schema is accepted. See [configuration](docs/configuration.md), [config design](docs/config-design.md), and [providers](docs/providers.md).
+`provider` names the service; `method` selects its wire API (`openai-chat-completions`, `openai-responses`, `anthropic-messages`, or `google-generate-content`). `model_id` is sent upstream unchanged. Use `api_key_env` to read a selected credential from the environment or `api_key` for a literal value. `raw config list` reports model/access settings without printing credentials. `raw config check [FILE|-]` checks every agent of the config, or of a candidate in its place, without running anything; `raw --try-config FILE ...` runs with a candidate before it replaces the active file. No old flat-agent schema is accepted. See [configuration](docs/configuration.md), [config design](docs/config-design.md), and [providers](docs/providers.md).
 
 ### Claude Code, Codex and Antigravity as backends
 

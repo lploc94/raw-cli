@@ -1,5 +1,6 @@
 import { initializeConfig } from "../src/management/config.js";
 import { createVariableResolver } from "../src/vars/resolver.js";
+import { readFileSync } from "node:fs";
 import { configFilePath, loadConfig, loadVariableConfigAsync, parseCliArgs, readConfigDocument, readSessionRetentionDays, redact } from "../src/config.js";
 import { createAcpServer } from "../src/acp/methods.js";
 import { serveAcpStdio, serveAcpWebSocket } from "../src/acp/transport.js";
@@ -7,6 +8,7 @@ import { parseUiDocument, resolveUiOptions, terminalCapabilities } from "../src/
 import { openSessionStore } from "../src/sessions/store.js";
 import { runSessionMaintenance } from "../src/sessions/maintenance.js";
 import { runPackageCli } from "../src/packages/cli.js";
+import { isCliMethod } from "../src/backends/config.js";
 import { VERSION } from "../src/version.js";
 import { onShutdown } from "../src/platform/signals.js";
 
@@ -28,7 +30,7 @@ function help(): string {
 Usage: raw [options] [task]
        raw dashboard [--port PORT] [--no-open] [--remote] [--config PATH] [--agent NAME]
        raw vars list|get NAME
-       raw config init|list
+       raw config init|list|check [FILE|-]
        raw package list|inspect|validate|pack|export|install|update|remove|link|fork
        raw agent add NAME --from pkg/ALIAS/agents/EXPORT --model MODEL_ALIAS
        raw sessions [--all] [--before CURSOR]
@@ -41,6 +43,7 @@ Usage: raw [options] [task]
 Options:
   --agent NAME               Select a configured agent
   --config PATH              Use one alternate config file
+  --try-config FILE          Run with FILE (- for stdin) in the active config's place; the active file is not read or changed
   --system-prompt TEXT       Replace the system prompt literally
   --max-steps N              Maximum inference requests (default 10000)
   --max-output-bytes N       Model-facing tool result cap (default 65536)
@@ -87,6 +90,19 @@ async function run(): Promise<void> {
   const parsed = input(() => parseCliArgs(process.argv.slice(2)));
   if (parsed.command === "help") { process.stdout.write(help()); return; }
   if (parsed.command === "version") { process.stdout.write(`${version}\n`); return; }
+  // Read once: every config read of this run sees the same candidate text, in the active config's place.
+  const tryConfig = parsed.flags.tryConfig;
+  const source = tryConfig === undefined ? {} : { configSource: input(() => {
+    try { return readFileSync(tryConfig === "-" ? 0 : tryConfig, "utf8"); }
+    catch { throw new Error(`cannot read candidate config: ${tryConfig}`); }
+  }) };
+  if (parsed.command === "config-check") {
+    const { checkConfig, formatConfigCheck } = await import("../src/config-check.js");
+    const result = formatConfigCheck(await checkConfig({ flags: parsed.flags, ...source }));
+    process.stdout.write(result.text);
+    process.exitCode = result.exitCode;
+    return;
+  }
   if (parsed.command === "config-init") {
     const path = input(() => configFilePath({ flags: parsed.flags }));
     await inputAsync(() => initializeConfig({ flags: parsed.flags }));
@@ -94,7 +110,7 @@ async function run(): Promise<void> {
     return;
   }
   if (parsed.command === "vars-list" || parsed.command === "vars-get") {
-    const config = await inputAsync(() => loadVariableConfigAsync({ flags: parsed.flags }));
+    const config = await inputAsync(() => loadVariableConfigAsync({ flags: parsed.flags, ...source }));
     const vars = createVariableResolver({ config });
     const controller = new AbortController();
     const cancel = () => controller.abort();
@@ -110,7 +126,7 @@ async function run(): Promise<void> {
     return;
   }
   if (parsed.command === "config-list") {
-    const document = input(() => readConfigDocument({ flags: parsed.flags }));
+    const document = input(() => readConfigDocument({ flags: parsed.flags, ...source }));
     const agents = document.data.agents;
     const models = document.data.models;
     if (!agents || typeof agents !== "object" || Array.isArray(agents)) {
@@ -123,14 +139,15 @@ async function run(): Promise<void> {
       let effective: Awaited<ReturnType<typeof loadConfig>> | undefined;
       let bindingError: string | undefined;
       if (typeof data.from === "string") {
-        try { effective = await loadConfig({ flags: { ...parsed.flags, agent: name }, requireModel: false }); }
+        try { effective = await loadConfig({ flags: { ...parsed.flags, agent: name }, requireModel: false, ...source }); }
         catch (error) { bindingError = error instanceof Error ? error.message : String(error); }
       }
       const alias = String(data.model ?? "?");
       const model = models && typeof models === "object" && !Array.isArray(models)
         ? (models as Record<string, unknown>)[alias] : undefined;
       const spec = model && typeof model === "object" && !Array.isArray(model) ? model as Record<string, unknown> : {};
-      const endpoint = typeof spec.base_url === "string" ? redact(spec.base_url) : "default endpoint";
+      const cli = isCliMethod(spec.method);
+      const endpoint = cli ? "CLI" : typeof spec.base_url === "string" ? redact(spec.base_url) : "default endpoint";
       const selectedTools = effective?.toolIds ?? (data.tools && typeof data.tools === "object" && !Array.isArray(data.tools)
         ? (data.tools as { use?: string[] }).use ?? [] : []);
       const selectedSkills = effective?.skillIds ?? (data.skills && typeof data.skills === "object" && !Array.isArray(data.skills)
@@ -142,7 +159,10 @@ async function run(): Promise<void> {
       const rules = policy.map((rule) => `${rule.effect}:${rule.match}${rule.when ? `:${JSON.stringify(rule.when)}` : ""}`).join(",");
       const compact = data.compact && typeof data.compact === "object" && !Array.isArray(data.compact)
         ? data.compact as Record<string, unknown> : {};
-      process.stdout.write(`${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`
+      // A CLI model has no endpoint and may leave its provider and model to the CLI.
+      const head = cli ? `${name}\t${alias}\t${String(spec.method)}\t${endpoint}\t${typeof spec.model_id === "string" ? spec.model_id : "CLI default"}`
+        : `${name}\t${alias}\t${String(spec.model_id ?? "?")}\t${String(spec.provider ?? "?")}\t${String(spec.method ?? "?")}\t${endpoint}`;
+      process.stdout.write(head
         + `\tvision=${spec.vision === true}\ttools=${selectedTools.join(",") || "none"}\tskills=${selectedSkills.join(",") || "none"}\trules=${rules || "default-allow"}`
         + `\tvars=${selectedVars.join(",") || "none"}`
         + `\ttrigger=${effective?.compact.triggerTokens ?? compact.trigger_tokens ?? "manual"}`
@@ -222,9 +242,9 @@ async function run(): Promise<void> {
       runtime = await inputAsync(() => loadConfig({ cwd: selected.cwd, flags: {
         ...parsed.flags, configPath: parsed.flags.configPath ? configFilePath({ flags: parsed.flags }) : savedConfigPath,
         ...(!parsed.flags.agent && !parsed.flags.configPath ? { agent: savedAgentName } : {}),
-      }, requireModel: true }));
+      }, requireModel: true, ...source }));
       process.stderr.write(`raw: resuming in ${selected.cwd}\n`);
-    } else runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true }));
+    } else runtime = await inputAsync(() => loadConfig({ flags: parsed.flags, requireModel: true, ...source }));
     const { runCli } = await import("../src/cli.js");
     process.exitCode = await runCli(runtime, parsed.command === "task" ? parsed.task : undefined, store, selected);
   } finally {

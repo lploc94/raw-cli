@@ -10,7 +10,11 @@ import type { RawPackageManifest, ComponentKind } from "./contract.js";
 import { applyPackageInputs, parseInputSchema } from "./inputs.js";
 import { readJsonText, renameWithRetry, stripBom } from "../platform/fs.js";
 
-export interface PackageStoreOptions { configPath: string; dataHome?: string; env?: NodeJS.ProcessEnv }
+export interface PackageStoreOptions {
+  configPath: string; dataHome?: string; env?: NodeJS.ProcessEnv;
+  /** A private data home (a config check's): a linked package is published there, never into the store. */
+  scratchHome?: string;
+}
 export interface PackageEntry {
   digest: string | null;
   name: string;
@@ -326,7 +330,8 @@ export async function resolveInstalledPackage(options: PackageAliasOptions): Pro
   const installed = readIndex(options).installations[options.alias];
   if (!installed) throw new Error(`unknown package alias: ${options.alias}`);
   if (installed.source.kind === "link") {
-    const prepared = await prepareSource({ ...options, source: installed.source.path });
+    const prepared = await prepareSource({ ...options, ...(options.scratchHome === undefined ? {} : { dataHome: options.scratchHome }),
+      source: installed.source.path });
     return prepared.published;
   }
   if (!installed.digest) throw new Error(`installed package has no artifact digest: ${options.alias}`);
@@ -342,7 +347,9 @@ export async function resolveInstalledDependency(options: PackageAliasOptions & 
   const parent = options.parent ?? await resolveInstalledPackage(options);
   const declared = parent.manifest.dependencies?.[options.dependency];
   if (!declared) throw new Error(`undeclared package dependency: ${options.alias}/${options.dependency}`);
-  const root = join(dataRoot(options), declared.digest, "content");
+  // A linked parent resolved for a check published its dependencies to the scratch home, not the store.
+  const scratch = options.scratchHome === undefined ? undefined : join(dataRoot({ ...options, dataHome: options.scratchHome }), declared.digest);
+  const root = join(scratch !== undefined && existsSync(scratch) ? scratch : join(dataRoot(options), declared.digest), "content");
   const loaded = await loadPackageManifest(root);
   if (loaded.manifest.name !== declared.name || loaded.manifest.version !== declared.version) {
     throw new Error(`installed dependency identity mismatch: ${options.alias}/${options.dependency}`);
