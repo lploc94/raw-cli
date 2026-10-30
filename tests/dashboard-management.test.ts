@@ -3,6 +3,8 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { dashboardFixture } from "./fixtures/dashboard.js";
+import { switchAgentModel, switchModelMethod } from "../web/src/cli-models.js";
+import { patch } from "../web/src/editors/shared.js";
 import { createStarterConfig } from "../src/management/starter.js";
 
 const manifest = (name: string) => JSON.stringify({ api_version: 2, id: name, version: "1.0.0", name,
@@ -155,6 +157,77 @@ test("an agent switched to a CLI model is summarised by its CLI, loads as a CLI 
     assert.equal(back.agentSummaries.raw.backend, undefined);
     assert.equal((await f.json<any>("/agents/raw")).value.model, "fixture");
     assert.equal((await f.json<any>("/agents/raw/composer")).backend, undefined);
+  } finally { await f.close(); }
+});
+
+test("model summaries name each alias's method and, for a CLI method, the CLI", async () => {
+  const f = await dashboardFixture({ config: { models: { api: { provider: "openai", method: "openai-responses", model_id: "x" },
+    sonnet: { method: "claude-code-cli", model_id: "sonnet" }, terra: { method: "codex-cli" }, gflash: { method: "antigravity-cli" } },
+    agents: { a: { model: "api", tools: { use: [] } } }, default_agent: "a" } });
+  try {
+    const view = await f.json<any>("/config");
+    assert.deepEqual({ ...view.modelSummaries }, { api: { method: "openai-responses" }, sonnet: { method: "claude-code-cli", backend: "Claude Code" },
+      terra: { method: "codex-cli", backend: "Codex" }, gflash: { method: "antigravity-cli", backend: "agy" } });
+  } finally { await f.close(); }
+});
+
+test("switching a model with a stored key or a key reference to a CLI method clears the credential, and back drops the executable", async () => {
+  for (const credential of [{ api_key: "fixture-secret" }, { api_key_env: "FIXTURE_KEY" }]) {
+    const f = await dashboardFixture({ config: { models: { m: { provider: "openai", method: "openai-chat-completions", model_id: "x",
+      base_url: "http://127.0.0.1:9/v1", context_window_tokens: 8192, ...credential } }, agents: { a: { model: "m", tools: { use: [] } } }, default_agent: "a" } });
+    try {
+      // As the model editor does: the draft never holds the credential, so the switch must ask for clear.
+      let entry = await f.json<any>("/models/m");
+      let next = switchModelMethod(entry.value, { mode: "keep" }, "codex-cli");
+      assert.deepEqual(next.credential, { mode: "clear" });
+      // A keep would leave the key in the file, where a CLI model rejects it.
+      const kept = await f.api("/models", "POST", { revision: entry.revision, action: "patch", name: "m",
+        value: patch(JSON.stringify(entry.value), JSON.stringify(next.value)), credential: { mode: "keep" } });
+      assert.equal(kept.status, 422);
+      await f.json("/models", "POST", { revision: entry.revision, action: "patch", name: "m",
+        value: patch(JSON.stringify(entry.value), JSON.stringify({ ...next.value, executable: "/opt/codex" })), credential: next.credential });
+      assert.deepEqual(JSON.parse(readFileSync(f.configPath, "utf8")).models.m, { provider: "openai", method: "codex-cli", model_id: "x", executable: "/opt/codex" });
+      entry = await f.json<any>("/models/m");
+      next = switchModelMethod(entry.value, { mode: "clear" }, "openai-chat-completions");
+      assert.deepEqual(next.credential, { mode: "keep" });
+      await f.json("/models", "POST", { revision: entry.revision, action: "patch", name: "m",
+        value: patch(JSON.stringify(entry.value), JSON.stringify({ ...next.value, base_url: "http://127.0.0.1:9/v1" })), credential: next.credential });
+      assert.deepEqual(JSON.parse(readFileSync(f.configPath, "utf8")).models.m, { provider: "openai", method: "openai-chat-completions", model_id: "x",
+        base_url: "http://127.0.0.1:9/v1" });
+    } finally { await f.close(); }
+  }
+});
+
+test("an agent moved from a CLI model to any API model saves without the CLI's request options", async () => {
+  const destinations = { chat: { provider: "openai", method: "openai-chat-completions", model_id: "x" },
+    responses: { provider: "openai", method: "openai-responses", model_id: "x" },
+    deep: { provider: "deepseek", method: "openai-chat-completions", model_id: "x", base_url: "https://api.deepseek.com/v1" },
+    claude: { provider: "anthropic", method: "anthropic-messages", model_id: "x" },
+    gemini: { provider: "google", method: "google-generate-content", model_id: "x" } };
+  const agent = { model: "terra", system_prompt: "Keep me", system_prompt_mode: "append", tools: { use: [] },
+    request: { reasoning_effort: "max", mode: "workspace-write", max_output_tokens: 8000, thinking: "enabled" } };
+  const f = await dashboardFixture({ config: { models: { terra: { method: "codex-cli" }, ...destinations },
+    agents: { a: agent }, default_agent: "a" } });
+  try {
+    const isCli = (alias: unknown) => alias === "terra";
+    for (const alias of Object.keys(destinations)) {
+      const entry = await f.json<any>("/agents/a");
+      // Without the cleanup the save fails on a key the destination does not have.
+      const naive = await f.api("/agents", "POST", { revision: entry.revision, action: "patch", name: "a",
+        value: patch(JSON.stringify(entry.value), JSON.stringify({ ...entry.value, model: alias })) });
+      assert.equal(naive.status, 422, alias);
+      const next = switchAgentModel(entry.value, alias, isCli);
+      assert.equal(next.cleared, true);
+      await f.json("/agents", "POST", { revision: entry.revision, action: "patch", name: "a",
+        value: patch(JSON.stringify(entry.value), JSON.stringify(next.value)) });
+      assert.deepEqual(JSON.parse(readFileSync(f.configPath, "utf8")).agents.a, { model: alias, system_prompt: "Keep me", tools: { use: [] } });
+      // Back to the CLI model for the next destination.
+      const back = await f.json<any>("/agents/a");
+      await f.json("/agents", "POST", { revision: back.revision, action: "patch", name: "a", value: agent });
+    }
+    // API to CLI changes only the model.
+    assert.deepEqual(switchAgentModel({ model: "chat", request: { max_output_tokens: 10 } }, "terra", isCli),
+      { value: { model: "terra", request: { max_output_tokens: 10 } }, cleared: false });
   } finally { await f.close(); }
 });
 

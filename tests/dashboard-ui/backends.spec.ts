@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect, openChat } from "./fixtures.js";
@@ -45,7 +45,7 @@ test.describe("a Claude Code backend agent at 320 px", () => {
   test.use({
     viewport: { width: 320, height: 720 },
     scenario: {
-      extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: ["builtin/todo"] } } },
+      extraAgents: { ext: { cli: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: ["builtin/todo"] } } },
       config: { default_agent: "ext" },
       attach: scriptedBackend,
       discoverBackend: async () => ({ offered: structuredClone(DISCOVERED) }),
@@ -120,7 +120,7 @@ test.describe("a Claude Code backend agent at 320 px", () => {
 test.describe("a Codex backend agent whose CLI cannot be asked", () => {
   test.use({
     viewport: { width: 320, height: 720 },
-    scenario: { extraAgents: { ext: { backend: { kind: "codex" }, system_prompt: "Be RAW.", tools: { use: [] } } }, config: { default_agent: "ext" },
+    scenario: { extraAgents: { ext: { cli: { kind: "codex" }, system_prompt: "Be RAW.", tools: { use: [] } } }, config: { default_agent: "ext" },
       discoverBackend: async () => ({ offered: {}, warning: "Codex could not start: not logged in" }) },
   });
 
@@ -132,9 +132,9 @@ test.describe("a Codex backend agent whose CLI cannot be asked", () => {
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
     await fits(page, [".composer-area"]);
     await page.getByRole("link", { name: "Agents", exact: true }).click();
-    // At this width the model line names the CLI, and the name keeps its room beside New chat.
+    // At this width the model line shows the CLI model's alias, and the name keeps its room beside New chat.
     const row = page.locator(".agent-row", { has: page.getByRole("link", { name: "ext", exact: true }) });
-    await expect(row.locator(".agent-row-model")).toHaveText("Codex");
+    await expect(row.locator(".agent-row-model")).toHaveText("ext-cli");
     const [name, actions] = await Promise.all([row.getByRole("link", { name: "ext", exact: true }).boundingBox(), row.locator(".actions").boundingBox()]);
     expect(name!.width).toBeGreaterThan(0);
     expect(name!.x + name!.width).toBeLessThanOrEqual(actions!.x);
@@ -144,25 +144,96 @@ test.describe("a Codex backend agent whose CLI cannot be asked", () => {
   });
 });
 
-test.describe("a config with only CLI backends", () => {
-  test.use({
-    viewport: { width: 320, height: 720 },
-    scenario: { config: { models: {}, agents: { ext: { backend: { kind: "claude" }, tools: { use: [] } } }, default_agent: "ext" } },
-  });
+const savedConfig = (raw: { configPath: string }) => JSON.parse(readFileSync(raw.configPath, "utf8"));
+async function save(page: Page) {
+  await page.getByRole("button", { name: "Save", exact: true }).first().click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+}
 
-  test("creates an agent that runs a CLI, with no Raw model to pick", async ({ page, raw }) => {
+test.describe("CLI connections in Settings and on the agent page at 320 px", () => {
+  test.use({ viewport: { width: 320, height: 720 } });
+
+  test("a Codex CLI model is created in Settings, an agent picks it, and its effort is edited on the agent page", async ({ page, raw }) => {
     await page.goto(raw.server.launchUrl);
-    await page.getByRole("link", { name: "Agents", exact: true }).click();
-    await page.getByRole("button", { name: "Create agent" }).click();
-    const dialog = page.getByRole("dialog", { name: "Create agent" });
-    await dialog.getByLabel("Agent name").fill("coder");
-    const runsOn = dialog.getByLabel("Runs on", { exact: true });
-    await expect(runsOn.locator("option")).toHaveText(["Claude Code", "Codex", "Antigravity (agy)"]);
-    await expect(dialog.getByLabel("Model", { exact: true })).toHaveCount(0);
-    await runsOn.selectOption("codex");
+    const origin = new URL(raw.server.launchUrl).origin;
+    await page.goto(`${origin}/settings/models`);
+    await page.getByRole("button", { name: "Create model" }).click();
+    const dialog = page.getByRole("dialog", { name: "Create model" });
+    await dialog.getByLabel("Model alias").fill("terra-long-alias-for-a-frontier-agentic-coding-model");
+    await dialog.getByLabel("Connection", { exact: true }).selectOption("codex-cli");
+    await expect(dialog.getByLabel("Model ID", { exact: true })).toHaveAttribute("placeholder", "CLI default");
+    await dialog.getByLabel("Model ID", { exact: true }).fill("gpt-6.1-terra");
     await fits(page, [".modal, [role=dialog]"]);
     await dialog.getByRole("button", { name: "Create", exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/models\/terra-long-alias/);
+    expect(savedConfig(raw).models["terra-long-alias-for-a-frontier-agentic-coding-model"]).toEqual({ method: "codex-cli", model_id: "gpt-6.1-terra" });
+    // A CLI connection has no endpoint, context or credential fields.
+    await expect(page.getByLabel("Executable", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Base URL", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Credential action", { exact: true })).toHaveCount(0);
+    await fits(page, [".editor-fields"]);
+
+    await page.goto(`${origin}/agents`);
+    await page.getByRole("button", { name: "Create agent" }).first().click();
+    const create = page.getByRole("dialog", { name: "Create agent" });
+    await create.getByLabel("Agent name").fill("coder");
+    await create.getByLabel("Model", { exact: true }).selectOption("terra-long-alias-for-a-frontier-agentic-coding-model");
+    await expect(create.getByLabel("Runs on", { exact: true })).toHaveCount(0);
+    await fits(page, [".modal, [role=dialog]"]);
+    await create.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page).toHaveURL(/\/agents\/coder$/);
-    expect(JSON.parse(readFileSync(raw.configPath, "utf8")).agents.coder).toEqual({ backend: { kind: "codex" }, tools: { use: [] } });
+    await expect(page.getByText("Runs Codex with its own login, tools and context.", { exact: false })).toBeVisible();
+    await page.getByLabel("Effort", { exact: true }).fill("high");
+    await expect(page.getByLabel("Mode", { exact: true })).toHaveAttribute("placeholder", "CLI default");
+    await fits(page, [".detail-panel .card"]);
+    await save(page);
+    expect(savedConfig(raw).agents.coder).toEqual({ model: "terra-long-alias-for-a-frontier-agentic-coding-model",
+      request: { reasoning_effort: "high" }, tools: { use: [] } });
+    // Clearing the field removes the key, and the empty request with it.
+    await page.getByLabel("Effort", { exact: true }).fill("");
+    await save(page);
+    expect(savedConfig(raw).agents.coder).toEqual({ model: "terra-long-alias-for-a-frontier-agentic-coding-model", tools: { use: [] } });
+  });
+
+  test("an agent switched from a CLI model to an API model drops its CLI request options and saves", async ({ page, raw }) => {
+    const config = savedConfig(raw);
+    config.models.terra = { method: "codex-cli", model_id: "gpt-6.1-terra" };
+    config.agents.coder = { model: "terra", system_prompt_mode: "append", tools: { use: [] },
+      request: { reasoning_effort: "max", mode: "workspace-write", max_output_tokens: 8000, thinking: "enabled" } };
+    writeFileSync(raw.configPath, JSON.stringify(config));
+    await page.goto(raw.server.launchUrl);
+    await page.goto(`${new URL(raw.server.launchUrl).origin}/agents/coder`);
+    await expect(page.getByLabel("Mode", { exact: true })).toHaveValue("workspace-write");
+    await page.getByLabel("Model", { exact: true }).selectOption("fixture");
+    await expect(page.getByText("Request options were cleared: set them for this model.")).toBeVisible();
+    await expect(page.getByLabel("Effort", { exact: true })).toHaveCount(0);
+    await save(page);
+    expect(savedConfig(raw).agents.coder).toEqual({ model: "fixture", tools: { use: [] } });
+    // Back on the CLI model the fields start empty.
+    await page.getByLabel("Model", { exact: true }).selectOption("terra");
+    await expect(page.getByLabel("Effort", { exact: true })).toHaveValue("");
+    await expect(page.getByLabel("Mode", { exact: true })).toHaveValue("");
+  });
+
+  test("switching a stored-key API model to a CLI clears the key, and back to an API method drops the executable", async ({ page, raw }) => {
+    await page.goto(raw.server.launchUrl);
+    const origin = new URL(raw.server.launchUrl).origin;
+    // The fixture model stores a literal api_key the editor never shows.
+    expect(savedConfig(raw).models.fixture.api_key).toBe("fixture-key");
+    await page.goto(`${origin}/settings/models/fixture`);
+    await page.getByLabel("Method", { exact: true }).selectOption("claude-code-cli");
+    await page.getByLabel("Model ID", { exact: true }).fill("sonnet");
+    await page.getByLabel("Provider (optional)", { exact: true }).fill("");
+    await page.getByLabel("Executable", { exact: true }).fill("/opt/claude");
+    await save(page);
+    expect(savedConfig(raw).models.fixture).toEqual({ method: "claude-code-cli", model_id: "sonnet", executable: "/opt/claude" });
+    await page.getByLabel("Method", { exact: true }).selectOption("openai-chat-completions");
+    await page.getByLabel("Provider", { exact: true }).fill("openai");
+    await page.getByLabel("Model ID", { exact: true }).fill("gpt-chat");
+    await page.getByLabel("Base URL", { exact: true }).fill("http://127.0.0.1:9/v1");
+    await expect(page.getByLabel("Credential action", { exact: true })).toHaveValue("keep");
+    await save(page);
+    expect(savedConfig(raw).models.fixture).toEqual({ method: "openai-chat-completions", provider: "openai", model_id: "gpt-chat",
+      base_url: "http://127.0.0.1:9/v1" });
   });
 });

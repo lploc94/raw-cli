@@ -14,11 +14,21 @@ import type { DashboardContext, DashboardRoute } from "./server.js";
 export interface ConfigView {
   path: string; canonicalPath: string; canonical: boolean; revision: string; exists: boolean; valid: boolean; diagnostic?: string;
   defaultAgent?: string; agents: string[]; models: string[]; vars: string[]; providers: string[]; mcp: string[];
-  sessions?: unknown; agentSummaries: Record<string, AgentSummary>;
+  sessions?: unknown; agentSummaries: Record<string, AgentSummary>; modelSummaries: Record<string, ModelSummary>;
   varSummaries: Record<string, VarSummary>; providerSummaries: Record<string, ProviderSummary>; mcpSummaries: Record<string, McpSummary>;
 }
 /** `backend`: the name of the CLI an agent on a CLI model runs (Claude Code, Codex, agy). */
 export interface AgentSummary { model?: string; backend?: string; from?: string; tools: number; skills: number; hooks: number; rules: number }
+/** `method`: the model's connection method; `backend`: the CLI's name when the method names one (Claude Code, Codex, agy). */
+export interface ModelSummary { method?: string; backend?: string }
+function modelSummaries(models: Record<string, unknown>): Record<string, ModelSummary> {
+  const summaries: Record<string, ModelSummary> = Object.create(null);
+  for (const [alias, entry] of Object.entries(models)) {
+    const method = record(entry).method, backend = cliLabel(models, alias);
+    summaries[alias] = { ...(typeof method === "string" ? { method } : {}), ...(backend ? { backend } : {}) };
+  }
+  return summaries;
+}
 const count = (value: unknown) => Array.isArray(value) ? value.length : 0;
 /** The CLI label of a model alias whose method names a CLI. */
 function cliLabel(models: Record<string, unknown>, alias: unknown): string | undefined {
@@ -96,6 +106,7 @@ export function createManagementRoutes(context: DashboardContext): DashboardRout
     agents: Object.keys(record(config.data?.agents)), models: Object.keys(record(config.data?.models)), vars: Object.keys(record(config.data?.vars)),
     providers: Object.keys(record(config.data?.var_providers)), mcp: Object.keys(record(record(config.data?.mcp).servers)),
     ...(config.data?.sessions === undefined ? {} : { sessions: config.data.sessions }), agentSummaries: agentSummaries(record(config.data?.agents), record(config.data?.models)),
+    modelSummaries: modelSummaries(record(config.data?.models)),
     ...definitionSummaries(config.data) });
   let preparingChecks = 0;
   const checks = new Map<string, { row: CheckView; controller: AbortController; done: Promise<void> }>();

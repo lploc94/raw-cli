@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { CLI_CONNECTIONS, switchModelMethod, type CredentialEdit } from "../cli-models.js";
+import { isCliMethod } from "../../../src/backends/config.js";
 import type { ConfigView } from "../../../src/dashboard/management.js";
 import { api, errorText } from "../api.js";
 import { useConfig } from "../data/queries.js";
@@ -381,7 +383,9 @@ function ModelsPage({
   const [creating, setCreating] = useState(false),
     [alias, setAlias] = useState(""),
     [modelId, setModelId] = useState(""),
+    [connection, setConnection] = useState("openai-chat-completions"),
     [error, setError] = useState("");
+  const cli = isCliMethod(connection);
   const refresh = changed;
   const gate = usePageGate({ ready: !!config, error: configError, onRetry: () => void changed(), label: "Loading models" });
   if (gate) return gate;
@@ -412,7 +416,9 @@ function ModelsPage({
               <Link href={`/settings/models/${encodeURIComponent(alias)}`}>
                 {alias}
               </Link>
-              <span className="muted">Not checked</span>
+              <span className="muted">
+                {config.modelSummaries?.[alias]?.backend ? `${config.modelSummaries[alias]!.backend} CLI` : "Not checked"}
+              </span>
             </div>
           ))}
         </div>
@@ -424,28 +430,36 @@ function ModelsPage({
         open={creating}
         onOpenChange={setCreating}
         title="Create model"
-        description="Starts with an OpenAI chat connection. Edit service, method and endpoint after creation."
+        description="An OpenAI chat connection, or a coding CLI that runs with its own login. Edit service, method and endpoint after creation."
       >
         <ErrorMessage>{error}</ErrorMessage>
         <Field label="Model alias">
           <input value={alias} onChange={(e) => setAlias(e.target.value)} />
         </Field>
+        <Field label="Connection">
+          <select value={connection} onChange={(e) => setConnection(e.target.value)}>
+            <option value="openai-chat-completions">OpenAI chat</option>
+            {CLI_CONNECTIONS.map((entry) => (
+              <option key={entry.method} value={entry.method}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Model ID">
-          <input value={modelId} onChange={(e) => setModelId(e.target.value)} />
+          <input value={modelId} placeholder={cli ? "CLI default" : undefined} onChange={(e) => setModelId(e.target.value)} />
         </Field>
         <button
           className="primary"
-          disabled={!alias || !modelId}
+          disabled={!alias || (!cli && !modelId)}
           onClick={() => {
             void api("/models", "POST", {
               revision: config?.revision,
               action: "create",
               name: alias,
-              value: {
-                provider: "openai",
-                method: "openai-chat-completions",
-                model_id: modelId,
-              },
+              value: cli
+                ? { method: connection, ...(modelId.trim() ? { model_id: modelId } : {}) }
+                : { provider: "openai", method: "openai-chat-completions", model_id: modelId },
             }).then(
               async () => {
                 await refresh();
@@ -565,6 +579,11 @@ function ModelEditor({
       if (next[key] === undefined) delete next[key];
     draft.setSource(pretty({ ...wrapper, source: pretty(next) }));
   };
+  const cli = isCliMethod(value.method);
+  const changeMethod = (method: string) => {
+    const next = switchModelMethod(value, edit as CredentialEdit, method);
+    draft.setSource(pretty({ ...wrapper, source: pretty(next.value), credential: next.credential }));
+  };
   return (
     <>
       <DraftActions draft={draft} />
@@ -573,16 +592,16 @@ function ModelEditor({
         disabled={!draft.base || draft.busy || !!invalid}
         className="editor-fields"
       >
-        <Field label="Provider">
+        <Field label={cli ? "Provider (optional)" : "Provider"}>
           <input
             value={String(value.provider ?? "")}
-            onChange={(e) => set({ provider: e.target.value })}
+            onChange={(e) => set({ provider: cli ? e.target.value || undefined : e.target.value })}
           />
         </Field>
-        <Field label="API method">
+        <Field label="Method">
           <select
             value={String(value.method ?? "openai-chat-completions")}
-            onChange={(e) => set({ method: e.target.value })}
+            onChange={(e) => changeMethod(e.target.value)}
           >
             {[
               "openai-chat-completions",
@@ -592,14 +611,33 @@ function ModelEditor({
             ].map((method) => (
               <option key={method}>{method}</option>
             ))}
+            {CLI_CONNECTIONS.map((entry) => (
+              <option key={entry.method} value={entry.method}>
+                {entry.method} — {entry.label}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Model ID">
           <input
             value={String(value.model_id ?? "")}
-            onChange={(e) => set({ model_id: e.target.value })}
+            placeholder={cli ? "CLI default" : undefined}
+            onChange={(e) => set({ model_id: cli ? e.target.value || undefined : e.target.value })}
           />
         </Field>
+        {cli ? (
+          <>
+            <Field label="Executable">
+              <input
+                value={String(value.executable ?? "")}
+                placeholder="Found on PATH"
+                onChange={(e) => set({ executable: e.target.value || undefined })}
+              />
+            </Field>
+            <p className="muted">The CLI uses its own login, endpoint and context window.</p>
+          </>
+        ) : (
+        <>
         <Field label="Base URL">
           <input
             value={String(value.base_url ?? "")}
@@ -640,6 +678,10 @@ function ModelEditor({
           />
           Vision capable
         </label>
+        </>
+        )}
+        {cli ? null : (
+        <>
         <p>
           {credential.present
             ? "Credential stored"
@@ -702,6 +744,8 @@ function ModelEditor({
               }
             />
           </Field>
+        )}
+        </>
         )}
       </fieldset>
       <details className="editor-section">

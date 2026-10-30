@@ -19,15 +19,9 @@ import { ErrorMessage, Field } from "../../ui.js";
 import { AgentActionDialog, AgentActionsMenu, type AgentAction } from "./AgentActions.js";
 import { PolicyEditor } from "./PolicyEditor.js";
 import { Selection } from "./Selection.js";
+import { switchAgentModel } from "../../cli-models.js";
 
 type Section = "overview" | "capabilities" | "policy" | "json";
-
-/** The CLIs an agent can run instead of a Raw model (docs/backends.md). */
-export const BACKENDS = [
-  { kind: "claude", label: "Claude Code" },
-  { kind: "codex", label: "Codex" },
-  { kind: "agy", label: "Antigravity (agy)" },
-] as const;
 
 export function AgentDetail({
   name,
@@ -53,6 +47,8 @@ export function AgentDetail({
   const [action, setAction] = useState<AgentAction>();
   // Local state, not the URL: every navigation while dirty opens the leave guard.
   const [section, setSection] = useState<Section>();
+  // Shown once a switch from a CLI model to an API model dropped the agent's request options.
+  const [requestCleared, setRequestCleared] = useState(false);
   const draft = useDraft(
     `agent:${name}`,
     async () => {
@@ -104,24 +100,24 @@ export function AgentDetail({
     }
     draft.setSource(pretty(next));
   };
-  const backend = value.backend && typeof value.backend === "object" ? (value.backend as Record<string, unknown>) : undefined;
-  /** An agent runs a Raw model or an external CLI; choosing one drops the other (as the server's patch does). */
-  const runOn = (kind: string) => {
-    const copy = { ...value };
-    if (kind) {
-      delete copy.model;
-      copy.backend = { ...(backend ?? {}), kind };
-    } else {
-      delete copy.backend;
-      copy.model = config.models[0] ?? "";
-    }
-    draft.setSource(pretty(copy));
+  /** The CLI an alias runs (Claude Code, Codex, agy), or undefined for an API model. */
+  const cliOf = (alias: unknown) => typeof alias === "string" ? config.modelSummaries?.[alias]?.backend : undefined;
+  const cli = cliOf(value.model);
+  const request = object(value.request) as Record<string, unknown>;
+  const chooseModel = (alias: string) => {
+    const next = switchAgentModel(value, alias, (item) => !!cliOf(item));
+    setRequestCleared(next.cleared);
+    draft.setSource(pretty(next.value));
   };
-  const setBackend = (key: "model" | "effort" | "mode", text: string) => {
-    const next: Record<string, unknown> = { ...backend };
+  /** The CLI's effort and mode live in `request`; an empty field removes the key, and an empty `request` goes too. */
+  const setCliRequest = (key: "reasoning_effort" | "mode", text: string) => {
+    const next: Record<string, unknown> = { ...request };
     if (text.trim()) next[key] = text;
     else delete next[key];
-    set({ backend: next });
+    const copy = { ...value };
+    if (Object.keys(next).length) copy.request = next;
+    else delete copy.request;
+    draft.setSource(pretty(copy));
   };
   const summary = config.agentSummaries?.[name];
   // The draft is authoritative once it parses; the saved summary covers loading and parse errors.
@@ -205,46 +201,40 @@ export function AgentDetail({
                       <div>
                         <h2>Model</h2>
                         <p>
-                          {backend
-                            ? "The CLI this agent runs; its own login, tools and context. Empty fields keep the CLI's defaults."
+                          {cli
+                            ? `Runs ${cli} with its own login, tools and context. Empty fields keep the CLI's defaults.`
                             : "The configured model this agent calls."}
                         </p>
                       </div>
                     </div>
-                    <Field label="Runs on">
-                      <select value={typeof backend?.kind === "string" ? backend.kind : ""} onChange={(e) => runOn(e.target.value)}>
-                        <option value="">A Raw model</option>
-                        {BACKENDS.map((entry) => (
-                          <option key={entry.kind} value={entry.kind}>
-                            {entry.label}
+                    <Field label="Model">
+                      <select value={String(value.model ?? "")} onChange={(e) => chooseModel(e.target.value)}>
+                        {config.models.map((alias) => (
+                          <option key={alias} value={alias}>
+                            {cliOf(alias) ? `${alias} (${cliOf(alias)} CLI)` : alias}
                           </option>
                         ))}
                       </select>
                     </Field>
-                    {backend ? (
+                    {requestCleared && !cli ? <p className="muted">Request options were cleared: set them for this model.</p> : null}
+                    {cli ? (
                       <>
-                        {(["model", "effort", "mode"] as const).map((key) => (
-                          <Field key={key} label={`CLI ${key}`}>
-                            <input
-                              value={typeof backend[key] === "string" ? String(backend[key]) : ""}
-                              placeholder="CLI default"
-                              onChange={(e) => setBackend(key, e.target.value)}
-                            />
-                          </Field>
-                        ))}
+                        <Field label="Effort">
+                          <input
+                            value={typeof request.reasoning_effort === "string" ? request.reasoning_effort : ""}
+                            placeholder="CLI default"
+                            onChange={(e) => setCliRequest("reasoning_effort", e.target.value)}
+                          />
+                        </Field>
+                        <Field label="Mode">
+                          <input
+                            value={typeof request.mode === "string" ? request.mode : ""}
+                            placeholder="CLI default"
+                            onChange={(e) => setCliRequest("mode", e.target.value)}
+                          />
+                        </Field>
                       </>
-                    ) : (
-                      <Field label="Model">
-                        <select
-                          value={String(value.model ?? "")}
-                          onChange={(e) => set({ model: e.target.value })}
-                        >
-                          {config.models.map((alias) => (
-                            <option key={alias}>{alias}</option>
-                          ))}
-                        </select>
-                      </Field>
-                    )}
+                    ) : null}
                   </section>
                   {value.from ? (
                     <div className="card notice">
