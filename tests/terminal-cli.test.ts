@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,6 +8,8 @@ import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-prov
 import { testConfig } from "./fixtures/config.js";
 import { terminalScreen } from "./fixtures/terminal-screen.js";
 import { posixOnly } from "./fixtures/platform.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
+import { fakeClaudeEnv } from "./fixtures/fake-claude.js";
 
 async function run(args: string[], env: NodeJS.ProcessEnv, pty: boolean) {
   const command = pty ? "python3" : process.execPath;
@@ -158,4 +160,97 @@ test("compact shared-terminal header is one line and resume identifies the activ
     assert.match(secondPlain, /◆ raw · agent fixture · model fixture · Resumed/);
     assert.equal(provider.requests.length, 2);
   } finally { await provider.close(); }
+});
+
+// cli-background-work Phase 5: the terminal runs the CLI's own turns, and a one-shot run waits for its background tasks.
+async function backgroundRaw(fake: NodeJS.ProcessEnv, args: string[], options: { stdin?: string; keepStdin?: boolean } = {}) {
+  const root = mkdtempSync(join(tmpdir(), "raw-terminal-bg-"));
+  const config = join(root, "config.json");
+  writeFileSync(config, JSON.stringify(cliConfig({ default_agent: "ext", agents: { ext: { cli: { kind: "claude" }, tools: { use: [] } } } })));
+  const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"), "--config", config, ...args], {
+    cwd: root, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...fakeClaudeEnv(root), HOME: join(root, "home"), USERPROFILE: join(root, "home"),
+      XDG_STATE_HOME: join(root, "state"), XDG_CONFIG_HOME: join(root, "config"), NO_COLOR: "1", ...fake } });
+  const run = { root, child, stdout: "", stderr: "", code: undefined as number | null | undefined, exitedAt: 0 };
+  child.stdout.setEncoding("utf8").on("data", (part: string) => { run.stdout += part; });
+  child.stderr.setEncoding("utf8").on("data", (part: string) => { run.stderr += part; });
+  const exited = new Promise<number | null>((resolve) => child.once("exit", (code, signal) => { run.exitedAt = Date.now(); run.code = code ?? (signal ? 128 : null); resolve(run.code); }));
+  if (options.stdin !== undefined) child.stdin.write(options.stdin);
+  if (!options.keepStdin) child.stdin.end();
+  const stops = () => { try { return readdirSync(join(root, "fake")).filter((name) => name.startsWith("calls-")).flatMap((name) =>
+    readFileSync(join(root, "fake", name), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>))
+    .filter((call) => call.method === "_session/async_task/stop").map((call) => call.asyncTaskId); } catch { return []; } };
+  return { run, exited, stops, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+async function until(check: () => boolean, what: string, ms = 20000): Promise<number> {
+  const deadline = Date.now() + ms;
+  while (!check()) { if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`); await new Promise((resolve) => setTimeout(resolve, 20)); }
+  return Date.now();
+}
+const WAITING = "raw: waiting for 1 background task(s) of Claude Code; Ctrl-C stops them\n";
+
+test("background: a one-shot run waits for the task and prints Claude Code's own turn after the first answer", async () => {
+  const { run, exited, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "300", FAKE_ACP_BG_TURN: "claude" }, ["bg"]);
+  try {
+    assert.equal(await exited, 0, run.stderr);
+    assert.match(run.stdout, /started[\s\S]*Noted: Background job finished\./);
+    assert.equal(run.stderr.split(WAITING).length - 1, 1, run.stderr);
+  } finally { cleanup(); }
+});
+
+test("background: Ctrl-C while a one-shot run waits stops the task in the CLI and exits 130", async () => {
+  const { run, exited, stops, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000" }, ["bg"]);
+  try {
+    await until(() => run.stderr.includes(WAITING), "the waiting line");
+    run.child.kill("SIGINT");
+    assert.equal(await exited, 130, run.stderr);
+    assert.match(run.stderr, /raw: stopped 1 background task\(s\)\n/);
+    assert.deepEqual(stops(), ["task-1"]);
+  } finally { cleanup(); }
+});
+
+test("background: a one-shot run without background work does not wait", async () => {
+  const { run, exited, cleanup } = await backgroundRaw({}, ["hello"]);
+  try {
+    assert.equal(await exited, 0, run.stderr);
+    assert.match(run.stdout, /echo:hello/);
+    assert.doesNotMatch(run.stderr, /waiting for/);
+  } finally { cleanup(); }
+});
+
+test("background: the REPL shows Claude Code's own turn without input, and /exit reports the tasks it stops", async (t) => {
+  await t.test("a CLI turn while the REPL waits for a line", async () => {
+    const { run, exited, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "300", FAKE_ACP_BG_TURN: "claude" }, [], { stdin: "bg\n", keepStdin: true });
+    try {
+      await until(() => run.stdout.includes("Noted: Background job finished."), "the CLI turn's answer");
+      run.child.stdin.end();
+      assert.equal(await exited, 0, run.stderr);
+    } finally { cleanup(); }
+  });
+  await t.test("/exit with a running task", async () => {
+    const { run, exited, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000" }, [], { stdin: "bg\n", keepStdin: true });
+    try {
+      await until(() => run.stdout.includes("started"), "the first answer");
+      run.child.stdin.end("/exit\n");
+      assert.equal(await exited, 0, run.stderr);
+      assert.match(run.stderr, /raw: stopped 1 background task\(s\) of Claude Code: Background job\n/);
+    } finally { cleanup(); }
+  });
+});
+
+test("background: an adapter that exits while a one-shot run waits ends it with the lost tasks and exit 1", async () => {
+  const { run, exited, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "60000", FAKE_ACP_EXIT_AFTER_BG: "1", FAKE_ACP_EXIT_AFTER_BG_MS: "800" }, ["bg"]);
+  try {
+    const waiting = await until(() => run.stderr.includes(WAITING), "the waiting line");
+    assert.equal(await exited, 1, run.stderr);
+    assert.match(run.stderr, /raw: Claude Code exited; 1 background task\(s\) were lost: Background job\n/);
+    assert.ok(run.exitedAt - waiting < 1800, `${run.exitedAt - waiting} ms after the waiting line`);
+  } finally { cleanup(); }
+});
+
+test("background: a one-shot run does not end in the gap before Claude Code's own turn", async () => {
+  const { run, exited, cleanup } = await backgroundRaw({ FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_TURN_GAP_MS: "60" }, ["bg"]);
+  try {
+    assert.equal(await exited, 0, run.stderr);
+    assert.match(run.stdout, /Noted: Background job finished\./);
+  } finally { cleanup(); }
 });

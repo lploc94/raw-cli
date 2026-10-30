@@ -2,9 +2,9 @@ import { ProcessSupervisor } from "./processes/supervisor.js";
 import { terminalInteractionAdapter } from "./interactions/terminal.js";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { RunResult } from "./agent.js";
-import { backendCompactTrigger, backendContextWindow } from "./backends/config.js";
+import { BACKEND_LABELS, backendCompactTrigger, backendContextWindow } from "./backends/config.js";
 import { createSessionAgent, sessionIdentity, type SessionAgentFactory } from "./backends/factory.js";
-import type { SessionAgent } from "./backends/types.js";
+import type { BackgroundEvent, BackgroundWork, CliTask, SessionAgent } from "./backends/types.js";
 import type { RuntimeConfig } from "./config.js";
 import { createProvider } from "./llm/client.js";
 import { createRuntimeTools } from "./tools/plugins/runtime.js";
@@ -35,6 +35,8 @@ async function textRun(session: SessionAgent, task: string, renderer: TerminalRe
     throw error;
   }
 }
+
+const liveTasks = (background: BackgroundWork): CliTask[] => background.tasks().filter((task) => task.state === "running" || task.state === "paused");
 
 function statusCode(result: RunResult): number {
   if (result.status === "completed") return 0;
@@ -160,11 +162,59 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     session = createRuntimeAgent(record.id);
     await session.start(selected ? "resume" : "create", selected && task === undefined ? undefined : hookEvent);
   } catch (error) { rl?.close(); try { await processes.close(); } finally { await tools.mcp.close(); } throw error; }
+  // A one-shot run waiting for the CLI's background work: Ctrl-C ends the wait (cli-background-work).
+  let backgroundWait: AbortController | undefined;
   const interrupt = () => {
     currentRenderer?.beforeInput();
-    if (session.abort()) return;
+    if (session.abort()) { backgroundWait?.abort(); return; }
+    if (backgroundWait) { backgroundWait.abort(); return; }
     cancelledWhileIdle = true;
     rl?.close();
+  };
+  const cliLabel = runtime.backend ? BACKEND_LABELS[runtime.backend.kind] : "the CLI";
+  /** Runs the CLI turn waiting now, rendered like a turn of the REPL. */
+  const cliTurn = async (background: BackgroundWork): Promise<RunResult> => {
+    currentRenderer = new TerminalRenderer(session, runtime, cwd, false);
+    currentRenderer.start();
+    const result = await background.runCliTurn(currentRenderer.event);
+    currentRenderer.finish(result);
+    process.stderr.write(formatFooter(result, currentRenderer, record.id, false, true));
+    currentRenderer = undefined;
+    return result;
+  };
+  /**
+   * After a one-shot turn: while the CLI has background work, its turns run as they come; Ctrl-C stops the tasks (130),
+   * and an adapter that exits ends the run (1). The status is that of the last turn run.
+   */
+  const awaitBackground = async (background: BackgroundWork, last: RunResult): Promise<number> => {
+    const live = liveTasks(background);
+    if (live.length) process.stderr.write(`raw: waiting for ${live.length} background task(s) of ${cliLabel}; Ctrl-C stops them\n`);
+    const wait = new AbortController();
+    backgroundWait = wait;
+    let exited: Extract<BackgroundEvent, { type: "exited" }> | undefined;
+    let wake: (() => void) | undefined;
+    const off = background.onEvent((event) => { if (event.type === "exited") exited = event; wake?.(); });
+    try {
+      while (true) {
+        if (exited) {
+          process.stderr.write(`raw: ${cliLabel} exited; ${exited.lost.length} background task(s) were lost: ${exited.lost.map((name) => safeTerminalText(name)).join(", ")}\n`);
+          return 1;
+        }
+        if (wait.signal.aborted) {
+          const stopping = liveTasks(background);
+          await background.stopAll();
+          process.stderr.write(`raw: stopped ${stopping.length} background task(s)\n`);
+          return 130;
+        }
+        if (background.cliTurnNote() !== undefined) { last = await cliTurn(background); continue; }
+        if (!background.hasWork()) return statusCode(last);
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          wait.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        wake = undefined;
+      }
+    } finally { off(); backgroundWait = undefined; }
   };
   const onClose = () => {
     closed = true;
@@ -182,7 +232,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       let resumable = result.code !== "persistence_error";
       if (resumable) try { resumable = store.getSession(record.id) !== undefined; } catch { resumable = false; }
       process.stderr.write(formatFooter(result, currentRenderer, record.id, resumable));
-      return statusCode(result);
+      currentRenderer = undefined;
+      return session.background && result.status !== "cancelled" ? await awaitBackground(session.background, result) : statusCode(result);
     }
     if (!rl || !lines) throw new Error("interactive input unavailable");
     new TerminalRenderer(session, runtime, cwd, true, Boolean(selected)).start();
@@ -193,8 +244,15 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
     while (!closed) {
       try { runSessionMaintenance(store, { sweepOrphans: false, reclaim: false }); }
       catch { process.stderr.write("raw: session maintenance deferred\n"); }
+      // A turn the CLI takes on its own runs while Raw waits for a line, and the prompt is shown again after it.
+      const background = session.background;
+      if (background?.cliTurnNote() !== undefined) { await cliTurn(background); continue; }
       process.stdout.write(`${paint("accent", icon("user", runtime.ui, stdoutCaps), runtime.ui, stdoutCaps)} `);
-      const line = await lines.next();
+      const idle = new AbortController();
+      const off = background?.onEvent((event) => { if (event.type === "cli_turn") idle.abort(); });
+      let line: string | undefined;
+      try { line = await lines.next(idle.signal); } finally { off?.(); }
+      if (line === undefined && idle.signal.aborted && !closed) { process.stdout.write("\n"); continue; }
       if (line === undefined) break;
       if (closed) break;
       if (!line.trim()) continue;
@@ -244,6 +302,8 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
       if (result.code === "approval_required" && !process.stdin.isTTY) return statusCode(result);
       currentRenderer = undefined;
     }
+    const stopped = session.background ? liveTasks(session.background) : [];
+    if (stopped.length) process.stderr.write(`raw: stopped ${stopped.length} background task(s) of ${cliLabel}: ${stopped.map((task) => safeTerminalText(task.name)).join(", ")}\n`);
     if (sessionResumable && store.getSession(record.id)) process.stderr.write(formatResumeCommand(record.id, runtime.ui, caps));
     return cancelledWhileIdle ? 130 : 0;
   } finally {
