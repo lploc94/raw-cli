@@ -10,6 +10,8 @@ export interface OperationIntent {
   agentName: string;
   configPath: string;
   input?: string;
+  /** `cli`: a turn the agent's CLI takes after its background work, with the CLI's note as `input` (cli-background-work). */
+  origin?: "cli";
   /** For `panel_action`: the full panel id and what the user picked (docs/panels-design.md §11). */
   action?: { panel: string; action: string; block?: string; item?: string; viewInstanceId?: string };
 }

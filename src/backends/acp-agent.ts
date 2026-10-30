@@ -49,6 +49,11 @@ const SILENT_TYPES: ReadonlySet<string> = new Set(["turn", "monitor"]);
  * ~27× the largest gap measured between a completion and the turn it starts (74 ms; spikes of cli-background-work, 2026-10-30).
  */
 export const CLAUDE_WAKE_AFTER_MS = 2000;
+/**
+ * How long a finished task's note waits for the exit code of its backgrounded call (Codex reports both in the same
+ * millisecond, spike codex-air.log 23504); past it the note goes without the exit code.
+ */
+const EXIT_CODE_WAIT_MS = 1000;
 
 /** The AIR capability a client declares in `initialize` (`air-extension.js` of claude-agent-acp). */
 const AIR_CAPABILITIES: ClientCapabilities = { _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
@@ -103,6 +108,14 @@ const CATEGORIES = [["model", "model"], ["effort", "thought_level"], ["mode", "m
 export function backendProfileDigest(spec: BackendSpec, systemPrompt: string | undefined): string {
   const prompt = createHash("sha256").update(systemPrompt ?? "").digest("hex");
   return createHash("sha256").update(JSON.stringify([spec.kind, spec.executable ?? "", prompt, spec.systemPromptMode])).digest("hex");
+}
+
+/**
+ * What a kept adapter must share with the next operation's agent to serve it: the same agent, CLI profile, directory and
+ * approval rule. Anything else starts a new adapter (Design, "Residency").
+ */
+export function backendResidentKey(options: { agentName: string; spec: BackendSpec; systemPrompt?: string; cwd: string; autoApprove: boolean }): string {
+  return JSON.stringify([options.agentName, backendProfileDigest(options.spec, options.systemPrompt), options.cwd, options.autoApprove]);
 }
 
 /** The model config Raw's records keep for a backend session: no provider Raw calls, only who runs it. */
@@ -186,8 +199,11 @@ interface Live { peer: AcpPeer; connection: ClientConnection; died: Promise<neve
  */
 export class AcpBackendProvider implements BackendProvider {
   readonly modelConfig: Readonly<ResolvedModelConfig>;
-  private readonly label: string;
+  /** The CLI's name as the user sees it (`Claude Code`, `Codex`). */
+  readonly label: string;
   private readonly profileDigest: string;
+  /** `backendResidentKey` of this provider's configuration. */
+  readonly residentKey: string;
   private live: Live | undefined;
   private launch: AcpLaunch | undefined;
   private cliSessionId: string | undefined;
@@ -239,10 +255,29 @@ export class AcpBackendProvider implements BackendProvider {
   private outside = "";
   private outsideFlush: NodeJS.Immediate | undefined;
 
-  constructor(private readonly config: AcpBackendProviderOptions) {
+  constructor(private config: AcpBackendProviderOptions) {
     this.modelConfig = backendModelConfig(config.agentName, config.spec);
     this.label = BACKEND_LABELS[config.spec.kind as BackendKind];
     this.profileDigest = backendProfileDigest(config.spec, config.systemPrompt);
+    this.residentKey = backendResidentKey(config);
+  }
+
+  /**
+   * Serves another operation of the session (Fixed decision 4 of cli-background-work): its persistence and approval
+   * channel replace the last ones; `undefined` parks the provider with neither, so it writes nothing and asks no one.
+   */
+  rebind(host: { binding: AcpBackendProviderOptions["binding"]; approve?: AcpBackendProviderOptions["approve"] } | undefined): void {
+    const { binding: _binding, approve: _approve, ...rest } = this.config;
+    this.config = { ...rest, ...(host?.binding ? { binding: host.binding } : {}), ...(host?.approve ? { approve: host.approve } : {}) };
+  }
+
+  /** Whether `close()` has run. */
+  get isClosed(): boolean { return this.closed; }
+
+  /** Notices not yet given to a turn, taken so a host that closes this provider can give them to the next one. */
+  drainNotices(): string[] {
+    this.flushOutside();
+    return this.queuedNotices.splice(0);
   }
 
   /** The adapter process of this runtime, while it runs. */
@@ -296,7 +331,10 @@ export class AcpBackendProvider implements BackendProvider {
 
   /** Values for the next turn only; the turn after it returns to the session's baseline. */
   setTurnOverride(options: BackendOptions | undefined): void { this.override = options; }
-  noticeNextTurn(messages: readonly string[]): void { this.queuedNotices.push(...messages); }
+  /** A notice already waiting is not added again (a host's startup warning given again with the notices it carried over). */
+  noticeNextTurn(messages: readonly string[]): void {
+    for (const message of messages) if (!this.queuedNotices.includes(message)) this.queuedNotices.push(message);
+  }
 
   /**
    * `AgentSession` ends a cancelled turn without waiting for its provider, so a turn starts only once the previous one
@@ -671,9 +709,14 @@ export class AcpBackendProvider implements BackendProvider {
         // the next turn starts a new adapter and loads the conversation.
         void live.connection.agent.notify("session/cancel", { sessionId }).catch(() => {});
         let grace: NodeJS.Timeout | undefined;
-        await Promise.race([response.then(() => undefined, () => undefined), live.died.catch(() => undefined),
-          new Promise<void>((resolve) => { grace = setTimeout(resolve, CANCEL_GRACE_MS); })]);
+        const answered = await Promise.race([response.then(() => true, () => true), live.died.then(() => false, () => false),
+          new Promise<boolean>((resolve) => { grace = setTimeout(() => resolve(false), CANCEL_GRACE_MS); })]);
         clearTimeout(grace);
+        // A CLI that answered the cancel keeps its background tasks, as its own Esc does (Fixed decision 5).
+        if (cancelled && answered && !live.peer.exited() && [...this.tasks.values()].some((task) => LIVE_STATES.has(task.state))) {
+          detach("cancelled", "cancelled");
+          throw error;
+        }
       }
       detach("backend_error", (error as Error).message);
       await this.stopPeer(live);
@@ -745,7 +788,12 @@ export class AcpBackendProvider implements BackendProvider {
       }
       // A call that ended its turn running in the background belongs to its task from then on.
       if (this.backgroundCalls.has(update.toolCallId)) {
-        if (update.status === "completed" || update.status === "failed") this.backgroundCalls.delete(update.toolCallId);
+        if (update.status === "completed" || update.status === "failed") {
+          this.backgroundCalls.delete(update.toolCallId);
+          // The note of its finished task can now carry the exit code.
+          const owed = task && this.obligations.find((obligation) => obligation.taskId === task.id);
+          if (owed && this.config.spec.kind !== "claude") this.makeDue(owed);
+        }
         return;
       }
     }
@@ -821,8 +869,9 @@ export class AcpBackendProvider implements BackendProvider {
         canStop: update.canStop === true, startedAt: known?.startedAt ?? Date.now(), ...(description ? { description } : {}),
         ...(toolCallId ?? known?.toolCallId ? { toolCallId: toolCallId ?? known!.toolCallId! } : {}),
         ...(path ?? known?.outputFilePath ? { outputFilePath: path ?? known!.outputFilePath! } : {}) });
-      this.emitTasks();
+      // Listeners see the state this update leaves, the CLI turn it opens included.
       if (this.tasks.get(id)!.type === "turn" && !known) this.turnSpawned(this.tasks.get(id)!);
+      this.emitTasks();
       return;
     }
     if (!known) return;
@@ -847,8 +896,9 @@ export class AcpBackendProvider implements BackendProvider {
       }
     }
     if (!changed) return;
-    this.emitTasks();
+    // The completion it owes is recorded before listeners look (a host closes an adapter with no work left).
     if (!LIVE_STATES.has(known.state)) this.taskEnded(known);
+    this.emitTasks();
   }
 
   /**
@@ -876,9 +926,18 @@ export class AcpBackendProvider implements BackendProvider {
     if (SILENT_TYPES.has(task.type) || this.stoppedByRaw.has(task.id) || this.owed.has(task.id)) return;
     if (task.state !== "completed" && task.state !== "failed") return;
     this.owed.add(task.id);
-    const obligation: Obligation = { taskId: task.id, due: this.config.spec.kind !== "claude" };
-    if (!obligation.due) obligation.timer = setTimeout(() => { obligation.due = true; this.signal(); }, CLAUDE_WAKE_AFTER_MS);
+    // Codex is woken once the call's exit code is in (its call still open waits for it); Claude Code is given time to answer itself.
+    const waitsForExit = task.toolCallId !== undefined && this.backgroundCalls.has(task.toolCallId);
+    const obligation: Obligation = { taskId: task.id, due: this.config.spec.kind !== "claude" && !waitsForExit };
+    if (!obligation.due) obligation.timer = setTimeout(() => this.makeDue(obligation), this.config.spec.kind === "claude" ? CLAUDE_WAKE_AFTER_MS : EXIT_CODE_WAIT_MS);
     this.obligations.push(obligation);
+    this.signal();
+  }
+
+  private makeDue(obligation: Obligation): void {
+    clearTimeout(obligation.timer);
+    if (obligation.due) return;
+    obligation.due = true;
     this.signal();
   }
 
@@ -904,9 +963,15 @@ export class AcpBackendProvider implements BackendProvider {
     // The CLI's own turn went with its adapter: what it asked is refused, and a followed turn ends with the exit.
     this.pendingCli?.adopt(undefined);
     this.pendingCli = undefined;
-    if (!lost.length) return;
+    // Completions the CLI was owed cannot reach it: they are named with the lost tasks.
+    const owed = this.obligations.map((obligation) => this.tasks.get(obligation.taskId)!);
+    for (const obligation of this.obligations) clearTimeout(obligation.timer);
+    this.obligations = [];
+    this.fallbackWatch = false;
+    if (!lost.length && !owed.length) return;
+    // The exit first: a host told only that no work is left would close the provider as idle and miss what was lost.
+    if (!this.closed) this.emit({ type: "exited", message, lost: [...lost, ...owed].map((task) => task.name) });
     this.emitTasks();
-    this.emit({ type: "exited", message });
   }
 
   private emitTasks(): void { this.emit({ type: "tasks", tasks: this.backgroundTasks() }); }
@@ -972,17 +1037,21 @@ export class AcpBackendProvider implements BackendProvider {
    * The host could not record the CLI's own turn: it is stopped, what it asked is refused, and its text is kept as a
    * notice (Design, "Abandoned adoption").
    */
-  async abandonCliTurn(): Promise<void> {
+  async abandonCliTurn(why = "Raw could not record it"): Promise<void> {
     const pending = this.pendingCli;
     if (!pending) return;
     this.pendingCli = undefined;
     const text = pending.buffer.flatMap((update) => update.sessionUpdate === "agent_message_chunk" && update.content.type === "text" ? [update.content.text] : []).join("");
-    if (!pending.ended) await this.stopTask(pending.taskId);
-    pending.adopt(undefined);
-    const notice = `${this.label} started a turn after a background task, but Raw could not record it; it was stopped${text ? `\n${text}` : ""}`;
+    // Kept before the stop: a host may close this provider on the stop's state update, taking the notices with it.
+    const notice = `${this.label} started a turn after a background task, but ${why}; it was stopped${text ? `\n${text}` : ""}`;
     this.queuedNotices.push(notice);
     this.emit({ type: "notice", text: notice });
+    if (!pending.ended) await this.stopTask(pending.taskId);
+    pending.adopt(undefined);
   }
+
+  /** Whether the waiting CLI turn is Claude Code's own (to follow), rather than completions to wake the CLI with. */
+  get ownTurnPending(): boolean { return this.pendingCli !== undefined; }
 
   /** A Raw run starts (a turn, a CLI turn, a panel action): no CLI turn is signalled until it ends. */
   runStarted(): void { this.running++; this.signalled = false; }
@@ -1065,6 +1134,8 @@ export class AcpBackendProvider implements BackendProvider {
     this.pendingCli?.adopt(undefined);
     this.pendingCli = undefined;
     for (const obligation of this.obligations) clearTimeout(obligation.timer);
+    this.obligations = [];
+    this.fallbackWatch = false;
     if (this.outsideFlush) clearImmediate(this.outsideFlush);
     const live = this.live;
     this.live = undefined;
@@ -1105,6 +1176,19 @@ export class AcpBackendAgent implements SessionAgent {
       runCliTurn: (onEvent) => this.runCliTurn(onEvent),
       abandonCliTurn: () => acp.abandonCliTurn(),
     };
+  }
+
+  /**
+   * Ends this operation's agent but keeps its provider when the CLI still has background work (Design, "Residency"):
+   * the provider is returned parked, with no binding or approval channel. Without such work nothing is closed and
+   * `undefined` is returned; the host closes the agent as usual.
+   */
+  async detach(): Promise<AcpBackendProvider | undefined> {
+    const acp = this.acp;
+    if (!acp || acp.isClosed || !acp.keepsAdapter()) return undefined;
+    await this.session.close();
+    acp.rebind(undefined);
+    return acp;
   }
 
   /** Runs `work` as a Raw run the provider knows of, so it signals no CLI turn meanwhile. */

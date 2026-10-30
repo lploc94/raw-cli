@@ -337,12 +337,13 @@ export class SessionStore {
       || intent.clientRequestId.length > 128 || !["turn", "compact", "panel_action"].includes(intent.kind)
       || (intent.kind === "turn" ? typeof intent.input !== "string" || !intent.input.trim() : intent.input !== undefined)
       || (intent.kind === "panel_action" ? !validAction(intent.action) : intent.action !== undefined)
+      || (intent.origin !== undefined && (intent.origin !== "cli" || intent.kind !== "turn"))
       || Buffer.byteLength(intent.input ?? "") > 1024 * 1024) {
       throw new SessionOperationError("invalid_input", "invalid session operation intent");
     }
     const normalized: OperationIntent = { sessionId: intent.sessionId, clientRequestId: intent.clientRequestId,
       kind: intent.kind, agentName: intent.agentName, configPath: intent.configPath,
-      ...(intent.input === undefined ? {} : { input: intent.input }),
+      ...(intent.input === undefined ? {} : { input: intent.input }), ...(intent.origin === undefined ? {} : { origin: intent.origin }),
       ...(intent.action === undefined ? {} : { action: { panel: intent.action.panel, action: intent.action.action,
         ...(intent.action.viewInstanceId === undefined ? {} : { viewInstanceId: intent.action.viewInstanceId }),
         ...(intent.action.block === undefined ? {} : { block: intent.action.block }), ...(intent.action.item === undefined ? {} : { item: intent.action.item }) } }) };
@@ -480,6 +481,31 @@ export class SessionStore {
     if (handed.blocks) { try { this.reclaimUnreferencedPayloads(); } catch { /* Idle maintenance retries reclamation. */ } }
     const { blocks: _blocks, ...result } = handed;
     return result;
+  }
+
+  /**
+   * Ends `previous` and accepts `intent` as the session's next operation in one transaction, moving the lease to it as
+   * `handOff` does: a CLI turn after the operation it waited for (cli-background-work), which never enters the queue.
+   */
+  handOffTo(previous: { id: string; owner: SessionOwner; state: OperationState; details?: Pick<SessionOperation, "result" | "error" | "metrics"> },
+    intent: OperationIntent): { previous: SessionOperation; operation: SessionOperation; owner: SessionOwner } {
+    const { normalized, requestHash } = this.normalizeIntent(intent);
+    return this.transaction(() => {
+      const ended = this.writeOperationState(previous.id, previous.owner, previous.state, previous.details ?? {});
+      if (normalized.sessionId !== ended.sessionId) throw new Error("the next operation belongs to another session");
+      const owner = { token: `${process.pid}-${randomUUID()}`, generation: previous.owner.generation + 1 };
+      const moved = this.database.prepare(`UPDATE sessions SET owner_token = ?, owner_generation = ?, lease_until = ?
+        WHERE id = ? AND owner_token = ? AND owner_generation = ?`)
+        .run(owner.token, owner.generation, this.now() + 15_000, ended.sessionId, previous.owner.token, previous.owner.generation);
+      if (moved.changes !== 1) throw new Error("session ownership lost");
+      const operation: SessionOperation = { ...normalized, id: randomUUID(), state: "accepted",
+        ownerGeneration: owner.generation, acceptedAt: this.now(), updatedAt: this.now() };
+      this.database.prepare(`INSERT INTO session_operations(id, session_id, client_request_id, request_hash,
+        owner_generation, state, accepted_at, updated_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(operation.id, operation.sessionId, operation.clientRequestId, requestHash, owner.generation, operation.state,
+          operation.acceptedAt, operation.updatedAt, JSON.stringify(operation));
+      return { previous: ended, operation, owner };
+    });
   }
 
   /** Starts a waiting, paused or blocked message as a turn of an idle session: the claim, the operation and `taken` commit together. */

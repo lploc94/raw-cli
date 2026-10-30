@@ -32,7 +32,8 @@ export type BackgroundEvent =
   | { type: "tasks"; tasks: CliTask[] }
   | { type: "cli_turn" }
   | { type: "notice"; text: string }
-  | { type: "exited"; message: string };
+  /** `lost` names the live tasks that went with the adapter and the finished ones the CLI was not yet told about. */
+  | { type: "exited"; message: string; lost: string[] };
 
 /** A backend CLI's background work (Claude Code, Codex): its tasks, and the turns it takes after them (CLI turns). */
 export interface BackgroundWork {

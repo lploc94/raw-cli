@@ -4,7 +4,7 @@ import { createProvider } from "../llm/client.js";
 import type { ProviderAdapter } from "../llm/types.js";
 import { applyRequestOverride } from "../request-controls.js";
 import { createRuntimeTools, type RuntimeTools } from "../tools/plugins/runtime.js";
-import { AcpBackendAgent, measureBackend } from "../backends/acp-agent.js";
+import { AcpBackendAgent, AcpBackendProvider, backendResidentKey, measureBackend } from "../backends/acp-agent.js";
 import { createSessionAgent, type SessionAgentFactory } from "../backends/factory.js";
 import type { MeasureOptions } from "./metrics.js";
 import type { AttachSessionRuntime, SessionRuntime } from "./operations.js";
@@ -53,11 +53,23 @@ export const attachSessionRuntimeWith = (factory: SessionAgentFactory): AttachSe
 /** An external backend's runtime: its own CLI per attached runtime, stopped with it (Fixed decision 8). */
 async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<AttachSessionRuntime>[0], factory: SessionAgentFactory): Promise<SessionRuntime> {
   const { store, operation, owner, signal, session } = options;
+  const notices = [...(options.notices ?? [])];
+  let resident = options.resident;
+  const spec = runtime.backend!;
+  // A kept adapter serves only the agent it was started for; another one stops it and its tasks, and says so.
+  if (resident && resident.residentKey !== backendResidentKey({ agentName: runtime.agentName ?? spec.kind, spec, cwd: session.cwd,
+    autoApprove: runtime.autoApprove, ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}) })) {
+    const names = resident.backgroundTasks().filter((task) => task.state === "running" || task.state === "paused").map((task) => task.name);
+    notices.push(...resident.drainNotices());
+    await resident.close();
+    if (names.length) notices.push(`${resident.label} stopped ${names.length} background task(s) because the agent changed: ${names.join(", ")}`);
+    resident = undefined;
+  }
   const tools = await createRuntimeTools({ runtime, cwd: session.cwd, signal, ...(options.env ? { env: options.env } : {}) });
   for (const warning of tools.warnings) process.stderr.write(`raw: ${warning}\n`);
   try {
     if (signal.aborted) throw new Error("startup aborted");
-    const agent = factory({ runtime, tools, cwd: session.cwd, ...(options.env ? { env: options.env } : {}), host: {
+    const agent = factory({ runtime, tools, cwd: session.cwd, ...(options.env ? { env: options.env } : {}), ...(resident ? { resident } : {}), host: {
       ...(options.approve ? { approve: options.approve } : {}),
       ...(options.processes ? { processes: options.processes } : {}),
       ...(options.interactions ? { interactions: options.interactions } : {}), deliverQueuedInputs: true,
@@ -66,12 +78,15 @@ async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<
     // The dashboard's choice for this turn only; the runner checks each value against what the CLI offers then.
     if (options.request?.backend && agent instanceof AcpBackendAgent) agent.setTurnOverride(options.request.backend);
     // The dashboard shows a startup warning in the chat, once per session; the server's stderr still has every start.
+    if (agent instanceof AcpBackendAgent && notices.length) agent.provider.noticeNextTurn(notices);
     if (agent instanceof AcpBackendAgent && tools.warnings.length) {
       const shown = store.backendNoticeTexts(session.id);
       agent.provider.noticeNextTurn(tools.warnings.filter((warning) => !shown.has(warning)));
     }
     const agentName = runtime.agentName ?? runtime.backend!.kind;
+    const provider = agent instanceof AcpBackendAgent && agent.provider instanceof AcpBackendProvider ? agent.provider : undefined;
     return { agent, ...(agent instanceof AcpBackendAgent ? { measure: (measure: MeasureOptions) => measureBackend(agent, agentName, measure, runtime.backend) } : {}),
+      ...(provider && agent instanceof AcpBackendAgent ? { backend: { provider, detach: () => agent.detach() } } : {}),
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },
       close: () => tools.mcp.close() };
   } catch (error) { await tools.mcp.close(); throw error; }

@@ -139,7 +139,8 @@ async function background(id) {
   const count = Number(process.env.FAKE_ACP_BG_COUNT ?? 1);
   for (let index = 0; index < count; index++) await backgroundTask(id, count > 1 ? `Background job ${index + 1}` : "Background job",
     index * Number(process.env.FAKE_ACP_BG_STAGGER_MS ?? 0));
-  if (process.env.FAKE_ACP_EXIT_AFTER_BG === "1") setTimeout(() => { process.stderr.write("fake adapter: gone\n"); process.exit(4); }, 100);
+  if (process.env.FAKE_ACP_EXIT_AFTER_BG === "1") setTimeout(() => { process.stderr.write("fake adapter: gone\n"); process.exit(4); },
+    Number(process.env.FAKE_ACP_EXIT_AFTER_BG_MS ?? 100));
 }
 
 async function backgroundTask(id, name, later) {

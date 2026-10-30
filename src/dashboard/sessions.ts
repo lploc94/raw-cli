@@ -508,6 +508,8 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
         if (method === "PATCH") return reply(store.renameSession(id, textField((await context.readJson(request)).title, "title", 200)));
         if (method === "DELETE") {
           if (store.sessionIsBusy(id)) throw new DashboardError(409, "busy", "Stop the active operation or wait for its current owner before deleting");
+          // A kept CLI adapter goes with the session, and its background tasks with it.
+          await operations.forgetSession(id);
           try { await processes.deleteSession(id); } catch (error) { throw new DashboardError(409, "busy", String(error)); }
           return reply({ deleted: true });
         }

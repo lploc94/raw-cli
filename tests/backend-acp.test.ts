@@ -343,6 +343,32 @@ test("cancel stops the adapter and its descendants, also when the CLI ignores th
   }
 });
 
+test("a cancel keeps an adapter that answered it while its background task runs, and still stops one that ignored it", async () => {
+  for (const [input, kept] of [["wait", true], ["stubborn", false]] as const) {
+    const h = await harness();
+    const { agent, provider, task } = airAgent(h, { FAKE_ACP_BG_MS: "60000" });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      const pid = provider.pid!;
+      const running = agent.run(input);
+      await until(() => h.calls().some((call) => call.method === "session/prompt" && call.input === input));
+      assert.equal(agent.abort(), true);
+      assert.equal((await running).status, "cancelled");
+      await new Promise((resolve) => setTimeout(resolve, kept ? 300 : 6500));
+      if (kept) {
+        assert.ok(alive(pid), input);
+        assert.equal(provider.pid, pid);
+        assert.equal(task()?.state, "running");
+        assert.equal((await agent.run("hello")).status, "completed");
+        assert.equal(provider.pid, pid, "the next turn uses the same adapter");
+      } else {
+        assert.ok(await gone([pid], 3000), `${input}: the adapter that ignored the cancel is stopped`);
+        assert.equal(task()?.state, "lost");
+      }
+    } finally { await agent.close(); h.cleanup(); }
+  }
+});
+
 test("a failed turn stops the adapter and its descendants also when saving the CLI's new lists fails", async () => {
   const h = await harness();
   const write = h.store.writeExternal.bind(h.store);

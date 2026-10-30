@@ -3,7 +3,7 @@ import type { RuntimeConfig } from "../config.js";
 import { createProvider } from "../llm/client.js";
 import { runtimeAgentOptions } from "../sessions/runtime.js";
 import type { RuntimeTools } from "../tools/plugins/runtime.js";
-import { AcpBackendAgent, AcpBackendProvider, type AcpLaunch, type AcpLaunchResolver, type BackendProvider } from "./acp-agent.js";
+import { AcpBackendAgent, AcpBackendProvider, backendResidentKey, type AcpLaunch, type AcpLaunchResolver, type BackendProvider } from "./acp-agent.js";
 import { AgyBackendProvider } from "./agy.js";
 import { claudeLaunch } from "./claude.js";
 import { codexLaunch } from "./codex.js";
@@ -18,6 +18,11 @@ export interface SessionAgentContext {
   host: Pick<AgentOptions, "persistence" | "processes" | "interactions" | "interactionAdapter" | "approve" | "deliverQueuedInputs">;
   /** The environment a backend CLI starts with; the process environment by default. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The session's kept ACP provider (cli-background-work): reused, rebound to this context, when its `residentKey`
+   * matches this agent's. The host closes one that does not match before it calls the factory.
+   */
+  resident?: AcpBackendProvider;
 }
 
 export type SessionAgentFactory = (context: SessionAgentContext) => SessionAgent;
@@ -43,11 +48,17 @@ export const createSessionAgent: SessionAgentFactory = (context) => {
  * owns its tools and context; Raw's loop gets only the tools offered through the bridge, and no hook, compaction or step limit.
  */
 export function createAcpSessionAgent(context: SessionAgentContext, launch: AcpLaunch | AcpLaunchResolver): AcpBackendAgent {
-  const { runtime, cwd, host } = context;
+  const { runtime, cwd, host, resident } = context;
   const spec = runtime.backend!;
-  return backendSession(context, (binding) => new AcpBackendProvider({ agentName: runtime.agentName ?? spec.kind, spec, cwd, launch,
-    ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}),
-    autoApprove: runtime.autoApprove, ...(host.approve ? { approve: host.approve } : {}), binding }));
+  const options = { agentName: runtime.agentName ?? spec.kind, spec, cwd, launch,
+    ...(runtime.systemPrompt !== undefined ? { systemPrompt: runtime.systemPrompt } : {}), autoApprove: runtime.autoApprove };
+  return backendSession(context, (binding) => {
+    if (resident && !resident.isClosed && resident.residentKey === backendResidentKey(options)) {
+      resident.rebind({ binding, ...(host.approve ? { approve: host.approve } : {}) });
+      return resident;
+    }
+    return new AcpBackendProvider({ ...options, ...(host.approve ? { approve: host.approve } : {}), binding });
+  });
 }
 
 /** An agy backend session: as an ACP one, with agy run once per turn over its stream-json mode. */
