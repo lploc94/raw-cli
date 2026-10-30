@@ -159,6 +159,11 @@ const HOOK_TEARDOWN_MS = 2000;
 const MAX_OUTPUT_CONTINUATIONS = 8;
 /** What a Stop hook's denial becomes in the transcript: a host user message, so the model can tell it is not the user. */
 const STOP_CONTINUATION_PREFIX = "[Raw hook continuation] ";
+/** The model message of a turn a backend CLI started after a background task (a CLI turn, src/backends/acp-agent.ts). */
+export const CLI_TURN_PREFIX = "[Background task] ";
+
+/** A run the host starts for a backend CLI's own work: the note is the model's message and the notice its visible line. */
+export interface RunOptions { origin?: "cli"; notice?: string }
 const OUTPUT_LIMIT_NOTICE = "[Raw output limit notice] Your previous response was cut off at the output token limit. Continue exactly where it stopped, without repeating what you already wrote.";
 
 export class AgentSession {
@@ -499,7 +504,7 @@ export class AgentSession {
     }
 
     // Typed inputs, newest first, matched to their history rows; an unmatched message with a host note's form is the host's.
-    const hostNote = (content: string) => content === OUTPUT_LIMIT_NOTICE || content.startsWith(STOP_CONTINUATION_PREFIX) || content.startsWith("[Raw skill reload notice]")
+    const hostNote = (content: string) => content === OUTPUT_LIMIT_NOTICE || content.startsWith(STOP_CONTINUATION_PREFIX) || content.startsWith(CLI_TURN_PREFIX) || content.startsWith("[Raw skill reload notice]")
       || content.startsWith(CHECKPOINT_MARKER) || content.startsWith(SUMMARY_MESSAGE_PREFIX) || isPanelReminder(content);
     const users = source.flatMap((message, index) => index >= start && message.role === "user" ? [index] : []);
     let rows = this.persistence ? this.persistence.store.recentUserInputs(this.persistence.sessionId, users.length) : [];
@@ -1015,7 +1020,12 @@ export class AgentSession {
     return task;
   }
 
-  run(input: UserInput, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+  /**
+   * Runs one turn. With `origin: "cli"` the input is a backend CLI's note (Fixed decision 6 of cli-background-work): the
+   * model message is `[Background task] <note>`, the visible record a `backend_notice`, and it runs no UserPromptSubmit,
+   * sets no title and delivers no queued message.
+   */
+  run(input: UserInput, onEvent?: (event: RunEvent) => void, options: RunOptions = {}): Promise<RunResult> {
     if (this.currentState === "closed" || this.currentState === "closing") return Promise.reject(new Error("agent session is closed"));
     if (this.currentState !== "idle") return Promise.reject(new Error("agent session is busy"));
     if (this.persistenceFailed) return Promise.reject(new Error("session persistence failed; close and resume to recover"));
@@ -1025,7 +1035,7 @@ export class AgentSession {
     this.heartbeat?.ref();
     const controller = new AbortController();
     this.controller = controller;
-    const running = this.execute(input, controller, onEvent).finally(() => {
+    const running = this.execute(input, controller, onEvent, options).finally(() => {
       this.controller = undefined;
       this.activeRun = undefined;
       this.heartbeat?.unref();
@@ -1143,7 +1153,7 @@ export class AgentSession {
       : { status: "completed", steps: 0, text: "" };
   }
 
-  private async execute(input: UserInput, controller: AbortController, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+  private async execute(input: UserInput, controller: AbortController, onEvent?: (event: RunEvent) => void, options: RunOptions = {}): Promise<RunResult> {
     let steps = 0;
     let continuations = 0;
     let continuedText = "";
@@ -1201,7 +1211,7 @@ export class AgentSession {
     // Messages the user queued while this turn runs join it at a step boundary, oldest first, each its own user message
     // through UserPromptSubmit (docs/sessions.md). Called only where the next thing is a model request.
     const deliverQueued = async (): Promise<void> => {
-      if (!this.options.deliverQueuedInputs || !this.persistence?.operationId) return;
+      if (!this.options.deliverQueuedInputs || !this.persistence?.operationId || options.origin === "cli") return;
       for (;;) {
         if (controller.signal.aborted) return;
         const queued = this.durable((store, sessionId, owner) => store.claimQueuedInput(sessionId, owner));
@@ -1424,24 +1434,33 @@ export class AgentSession {
       await this.start(this.messages.length ? "resume" : "create", emit, controller.signal);
       try { nativeUserContent(input); }
       catch (error) { return finish({ status: "error", steps, code: "unsupported_content", message: (error as Error).message }); }
-      const promptHook = await this.options.hooks?.run("UserPromptSubmit", { ...hookRequest(), input },
-        { signal: controller.signal, onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
-      if (controller.signal.aborted) return finish(interrupted());
-      if (promptHook?.blocked) return finish({ status: "error", steps,
-        code: promptHook.blocked === "denied" ? "hook_denied" : "hook_error",
-        ...(promptHook.reason ? { message: promptHook.reason } : {}) });
-      // Notes about panel actions the user ran since the last turn travel with this message and are cleared with it (§10).
-      const notes = this.persistence ? this.persistence.store.pendingNotes(this.persistence.sessionId) : [];
-      const noteText = notes.map((note) => note.text).join("\n");
-      const modelInput: UserInput = !notes.length ? input
-        : typeof input === "string" ? `${noteText}\n\n${input}` : [{ type: "text", text: noteText }, ...input];
-      this.commitMessage({ role: "user", content: structuredClone(modelInput) }, firstTask ? { originalTask: input } : {},
-        [{ kind: "user", payload: { input: structuredClone(input) } }], true, undefined, notes.map((note) => note.sequence));
-      emit({ type: "input_committed" });
-      if (firstTask) this.originalTask = structuredClone(input);
-      // A chat still carrying a placeholder title is named from its first message, even when that turn predates this fix.
-      this.durable((store, sessionId, owner) => store.setTitleFromPrompt(sessionId, owner, renderUserInput(input)));
-      await deliverQueued();
+      if (options.origin === "cli") {
+        // A CLI turn: the note is the host's message, shown as a notice (Fixed decision 6 of cli-background-work).
+        const notice = options.notice ?? renderUserInput(input);
+        this.commitMessage({ role: "user", content: CLI_TURN_PREFIX + renderUserInput(input) }, {},
+          [{ kind: "backend_notice", payload: { text: notice } }], true);
+        emit({ type: "backend_notice", message: notice });
+        emit({ type: "input_committed" });
+      } else {
+        const promptHook = await this.options.hooks?.run("UserPromptSubmit", { ...hookRequest(), input },
+          { signal: controller.signal, onReceipt: (receipt) => this.hookReceipt(receipt, emit) });
+        if (controller.signal.aborted) return finish(interrupted());
+        if (promptHook?.blocked) return finish({ status: "error", steps,
+          code: promptHook.blocked === "denied" ? "hook_denied" : "hook_error",
+          ...(promptHook.reason ? { message: promptHook.reason } : {}) });
+        // Notes about panel actions the user ran since the last turn travel with this message and are cleared with it (§10).
+        const notes = this.persistence ? this.persistence.store.pendingNotes(this.persistence.sessionId) : [];
+        const noteText = notes.map((note) => note.text).join("\n");
+        const modelInput: UserInput = !notes.length ? input
+          : typeof input === "string" ? `${noteText}\n\n${input}` : [{ type: "text", text: noteText }, ...input];
+        this.commitMessage({ role: "user", content: structuredClone(modelInput) }, firstTask ? { originalTask: input } : {},
+          [{ kind: "user", payload: { input: structuredClone(input) } }], true, undefined, notes.map((note) => note.sequence));
+        emit({ type: "input_committed" });
+        if (firstTask) this.originalTask = structuredClone(input);
+        // A chat still carrying a placeholder title is named from its first message, even when that turn predates this fix.
+        this.durable((store, sessionId, owner) => store.setTitleFromPrompt(sessionId, owner, renderUserInput(input)));
+        await deliverQueued();
+      }
       while (steps < this.options.maxSteps) {
         if (controller.signal.aborted) return finish(interrupted());
         let requestEstimate = 0;

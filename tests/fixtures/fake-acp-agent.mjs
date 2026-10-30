@@ -120,7 +120,10 @@ app.onRequest("_session/async_task/stop", (params) => params, async ({ params })
   if (!task || task.ended) return { stopped: false };
   task.ended = true;
   for (const timer of task.timers) clearTimeout(timer);
+  task.release?.();
   await taskState(params.asyncTaskId, "stopped");
+  // Claude Code then says so outside any turn (spike claude-air-stop-shell.log).
+  if (task.shape === "done") setTimeout(() => { void text(task.sessionId, `**Task stopped by user:** ${task.name}`); }, 20);
   return { stopped: true };
 });
 
@@ -130,24 +133,33 @@ app.onRequest("_session/async_task/stop", (params) => params, async ({ params })
  * marked backgrounded, and completes with its `terminal_exit` after the task). FAKE_ACP_BG_STATES are the states sent
  * after the spawn, spread over FAKE_ACP_BG_MS; FAKE_ACP_BG_TYPE and FAKE_ACP_BG_CANSTOP=0 shape the task. As claude-agent-acp
  * does, the spawn carries the first output path, progress a changed one, and with FAKE_ACP_BG_FINAL_PATH=1 the last state another.
+ * FAKE_ACP_BG_COUNT starts several tasks, each FAKE_ACP_BG_STAGGER_MS after the one before it ends.
  */
 async function background(id) {
+  const count = Number(process.env.FAKE_ACP_BG_COUNT ?? 1);
+  for (let index = 0; index < count; index++) await backgroundTask(id, count > 1 ? `Background job ${index + 1}` : "Background job",
+    index * Number(process.env.FAKE_ACP_BG_STAGGER_MS ?? 0));
+  if (process.env.FAKE_ACP_EXIT_AFTER_BG === "1") setTimeout(() => { process.stderr.write("fake adapter: gone\n"); process.exit(4); }, 100);
+}
+
+async function backgroundTask(id, name, later) {
   const shape = process.env.FAKE_ACP_BG_CALL ?? "done";
   const taskId = `task-${++taskCount}`;
   const callId = `bg-call-${taskCount}`;
-  const task = { sessionId: id, callId, shape, ended: false, timers: [] };
+  const task = { sessionId: id, callId, shape, name, ended: false, timers: [] };
   tasks.set(taskId, task);
   await update(id, { sessionUpdate: "tool_call", toolCallId: callId, name: shape === "open" ? "exec_command" : "Bash", kind: "execute",
     title: "sleep 1; echo done", status: "in_progress", rawInput: { command: "sleep 1; echo done" } });
   const backgrounded = { jetbrains: { air: { asyncTasks: { backgrounded: true } } } };
   if (shape === "open") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, _meta: backgrounded });
-  await update(id, { sessionUpdate: "async_task_spawned", asyncTaskId: taskId, name: "Background job", taskType: process.env.FAKE_ACP_BG_TYPE ?? "shell",
+  await update(id, { sessionUpdate: "async_task_spawned", asyncTaskId: taskId, name, taskType: process.env.FAKE_ACP_BG_TYPE ?? "shell",
     showInTranscript: false, canStop: process.env.FAKE_ACP_BG_CANSTOP !== "0", toolCallId: callId, outputFilePath: join(stateDir, `${taskId}.first`) });
   await update(id, { sessionUpdate: "async_task_progress", asyncTaskId: taskId, outputFilePath: join(stateDir, `${taskId}.output`) });
   if (shape === "done") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, status: "completed", _meta: backgrounded,
     content: [{ type: "content", content: { type: "text", text: `Command running in background with ID: ${taskId}.` } }] });
   const states = (process.env.FAKE_ACP_BG_STATES ?? "completed").split(",");
   const step = Number(process.env.FAKE_ACP_BG_MS ?? 300) / states.length;
+  const exitCode = Number(process.env.FAKE_ACP_BG_EXIT ?? 0);
   states.forEach((state, index) => task.timers.push(setTimeout(async () => {
     if (task.ended) return;
     const last = index === states.length - 1;
@@ -155,9 +167,47 @@ async function background(id) {
     if (!last) return;
     task.ended = true;
     if (shape === "open") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, name: "exec_command", status: "completed",
-      _meta: { terminal_exit: { exit_code: Number(process.env.FAKE_ACP_BG_EXIT ?? 0), signal: null, terminal_id: callId } } });
-  }, step * (index + 1))));
-  if (process.env.FAKE_ACP_EXIT_AFTER_BG === "1") setTimeout(() => { process.stderr.write("fake adapter: gone\n"); process.exit(4); }, 100);
+      _meta: { terminal_exit: { exit_code: exitCode, signal: null, terminal_id: callId } } });
+    // Claude Code answers a finished command with a turn of its own (`<task-notification>`); Codex does not.
+    if (process.env.FAKE_ACP_BG_TURN === "claude" && (state === "completed" || state === "failed")) {
+      setTimeout(() => { void ownTurn(id, `Background command "${name}" ${state} (exit code ${exitCode})`, name); }, Number(process.env.FAKE_ACP_TURN_GAP_MS ?? 50));
+    }
+  }, later + step * (index + 1))));
+}
+
+/**
+ * Claude Code's own turn after a background command, as claude-agent-acp 0.98.0 reports it (spike claude-air.log): a `turn`
+ * task, the turn's text, its terminal state. A prompt that arrives meanwhile waits for it (claude-air-during.log).
+ * FAKE_ACP_TURN_PERMISSION=1 asks a permission first; FAKE_ACP_TURN_MS keeps the turn open that long before its answer.
+ */
+let ownTurns = Promise.resolve();
+async function ownTurn(id, description, name) {
+  const taskId = `task-${++taskCount}`;
+  const turn = { sessionId: id, shape: "turn", name, ended: false, timers: [] };
+  tasks.set(taskId, turn);
+  let release;
+  const previous = ownTurns;
+  ownTurns = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try {
+    await update(id, { sessionUpdate: "async_task_spawned", asyncTaskId: taskId, name: "Background task notification", taskType: "turn",
+      showInTranscript: false, canStop: true, description });
+    if (process.env.FAKE_ACP_TURN_PERMISSION === "1") {
+      await text(id, "Checking. ");
+      const answer = await client.request("session/request_permission", { sessionId: id,
+        toolCall: { toolCallId: `turn-perm-${taskId}`, title: "cat output", kind: "execute", rawInput: { command: "cat output" } },
+        options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
+      const choice = answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
+      log({ method: "turn/permission", asyncTaskId: taskId, choice });
+      if (turn.ended) return;
+      await text(id, `permission:${choice} `);
+    }
+    await new Promise((resolve) => { turn.release = resolve; turn.timers.push(setTimeout(resolve, Number(process.env.FAKE_ACP_TURN_MS ?? 0))); });
+    if (turn.ended) return;
+    await text(id, `Noted: ${name} finished.`);
+    turn.ended = true;
+    await taskState(taskId, "completed");
+  } finally { release(); }
 }
 
 function grandchild(deaf = false) {
@@ -172,6 +222,8 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
   const state = sessions.get(id);
   const input = params.prompt.filter((block) => block.type === "text").map((block) => block.text).join("");
   log({ method: "session/prompt", input, images: params.prompt.filter((block) => block.type === "image").length });
+  // A prompt that arrives during the CLI's own turn is answered after it.
+  await ownTurns;
   const cancelled = new Promise((resolve) => cancels.set(id, resolve));
   const usage = { inputTokens: 10, outputTokens: 5, cachedReadTokens: 100, cachedWriteTokens: 20, totalTokens: 135 };
   if (input.includes("grandchild")) grandchild(input.includes("deaf"));
@@ -306,6 +358,12 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     await update(id, { sessionUpdate: "mystery_update", detail: 2 });
     await text(id, "DONE");
     await update(id, { sessionUpdate: "usage_update", used: 26114, size: 1000000 });
+    return { stopReason: "end_turn", usage };
+  }
+  if (newest.startsWith("Background command")) {
+    // Raw's wake prompt: the CLI reads what the command left (FAKE_ACP_WAKE_MS keeps it busy that long).
+    await delay(Number(process.env.FAKE_ACP_WAKE_MS ?? 0));
+    await text(id, `woke:${newest}`);
     return { stopReason: "end_turn", usage };
   }
   await text(id, `echo:${input}`);

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { client, PROTOCOL_VERSION, type AnyMessage, type ClientCapabilities, type ClientConnection, type ContentBlock, type McpServerStdio, type RequestPermissionRequest,
-  type RequestPermissionResponse, type SessionConfigOption, type SessionNotification } from "@agentclientprotocol/sdk";
+  type PromptResponse, type RequestPermissionResponse, type SessionConfigOption, type SessionNotification } from "@agentclientprotocol/sdk";
 import type { AgentSession, AgentState, RunEvent, RunResult } from "../agent.js";
 import type { CompactResult } from "../compact.js";
 import type { UsageSummary } from "../llm/cache.js";
@@ -19,7 +19,7 @@ import { startBridge, type RawBridge } from "./bridge/server.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import type { ToolResult } from "../tools/types.js";
 import { BACKEND_LABELS, backendCompactTrigger, backendContextWindow, type BackendKind, type BackendSpec } from "./config.js";
-import type { PanelActionRequest, SessionAgent } from "./types.js";
+import type { BackgroundEvent, BackgroundWork, CliTask, CliTaskState, PanelActionRequest, SessionAgent } from "./types.js";
 
 /** How to start one ACP agent process and what its `session/new` carries; built per backend kind (claude.ts, codex.ts). */
 export interface AcpLaunch {
@@ -38,32 +38,17 @@ export interface AcpLaunch {
   asyncTasks?: boolean;
 }
 
-/** A background task's state: the AIR states of the installed adapters (`async-tasks.js` `taskState`), and Raw's `lost`. */
-export type CliTaskState = "running" | "paused" | "completed" | "failed" | "stopped" | "lost";
+export type { BackgroundEvent, CliTask, CliTaskState } from "./types.js";
 const LIVE_STATES: ReadonlySet<CliTaskState> = new Set(["running", "paused"]);
 const AIR_STATES: ReadonlySet<string> = new Set(["running", "paused", "completed", "failed", "stopped"]);
+/** Task types whose end is not news to the model: a turn is the CLI's answer itself, a monitor a watcher of other work. */
+const SILENT_TYPES: ReadonlySet<string> = new Set(["turn", "monitor"]);
 
-/** One background task of the CLI conversation, as the adapter reported it (AIR `async_task_*`). */
-export interface CliTask {
-  id: string;
-  name: string;
-  /** `shell`, `turn`, `monitor`, … as the adapter names it. */
-  type: string;
-  description?: string;
-  state: CliTaskState;
-  canStop: boolean;
-  toolCallId?: string;
-  startedAt: number;
-  endedAt?: number;
-  exitCode?: number | null;
-  error?: string;
-  outputFilePath?: string;
-}
-
-/** What the provider reports about work outside Raw's turns. */
-export type BackgroundEvent =
-  | { type: "tasks"; tasks: CliTask[] }
-  | { type: "exited"; message: string };
+/**
+ * How long Raw waits for Claude Code to answer a finished task with a turn of its own before it sends the note itself:
+ * ~27× the largest gap measured between a completion and the turn it starts (74 ms; spikes of cli-background-work, 2026-10-30).
+ */
+export const CLAUDE_WAKE_AFTER_MS = 2000;
 
 /** The AIR capability a client declares in `initialize` (`air-extension.js` of claude-agent-acp). */
 const AIR_CAPABILITIES: ClientCapabilities = { _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
@@ -167,6 +152,29 @@ interface ActiveTurn {
   resume(): void;
 }
 
+/**
+ * A turn the CLI started on its own (Claude Code after a background task) that no Raw turn has taken yet: its updates
+ * wait here, and requests it makes wait for the turn that adopts it.
+ */
+interface PendingCliTurn {
+  taskId: string;
+  note: string;
+  buffer: SessionNotification["update"][];
+  /** The turn task's terminal state, when it ended before adoption. */
+  ended?: CliTaskState;
+  /** Settles held requests with the adopting turn, or `undefined` when the turn is not recorded. */
+  adopt(turn: ActiveTurn | undefined): void;
+  adopted: Promise<ActiveTurn | undefined>;
+  /** Ends a follow once the turn task ends. */
+  settle?: (state: CliTaskState) => void;
+}
+
+/** A finished task the CLI has not been told about yet; due when Raw delivers it itself (Codex at once, Claude Code later). */
+interface Obligation { taskId: string; due: boolean; timer?: NodeJS.Timeout }
+
+/** What the next `generate` runs for a CLI turn: follow the CLI's own turn, or wake it with the due notes. */
+type CliStart = { follow: PendingCliTurn } | { wake: Obligation[]; note: string; sent?: boolean };
+
 type McpServers = McpServerStdio[];
 
 interface Live { peer: AcpPeer; connection: ClientConnection; died: Promise<never>; loadSession: boolean; images: boolean; ready: Promise<void> }
@@ -213,6 +221,23 @@ export class AcpBackendProvider implements BackendProvider {
   private readonly backgroundCalls = new Set<string>();
   /** Task states the adapter sent that Raw does not know, each reported once. */
   private readonly unknownStates = new Set<string>();
+  /** The CLI's own turn waiting for a Raw turn, and the one being followed. */
+  private pendingCli: PendingCliTurn | undefined;
+  private following: PendingCliTurn | undefined;
+  /** Completions to deliver, oldest first; `owed` holds every task ever added, so a corrected end adds none again. */
+  private obligations: Obligation[] = [];
+  private readonly owed = new Set<string>();
+  /** Tasks Raw asked to stop: their end is not news to the model. */
+  private readonly stoppedByRaw = new Set<string>();
+  /** Set by a fallback wake of Claude Code, cleared by its next turn task: it may still answer the completion itself. */
+  private fallbackWatch = false;
+  private cliStart: CliStart | undefined;
+  /** Raw runs (turns, CLI turns, panel actions) in progress, and whether `cli_turn` was emitted since the last one began. */
+  private running = 0;
+  private signalled = false;
+  /** Text the CLI sends outside any turn, gathered until the end of the current read. */
+  private outside = "";
+  private outsideFlush: NodeJS.Immediate | undefined;
 
   constructor(private readonly config: AcpBackendProviderOptions) {
     this.modelConfig = backendModelConfig(config.agentName, config.spec);
@@ -289,12 +314,19 @@ export class AcpBackendProvider implements BackendProvider {
     while (lastAnswer >= 0 && request.messages[lastAnswer]!.role !== "assistant") lastAnswer--;
     // A startup the user cancelled has no turn left to report to.
     const notify = (message: string) => { if (!request.signal?.aborted) request.onExternal?.({ type: "notice", message }); };
+    this.flushOutside();
     if (!request.signal?.aborted) for (const message of this.queuedNotices.splice(0)) notify(message);
     const override = this.override;
     this.override = undefined;
     this.tools = request.tools;
-    try { return await this.runPrompt(request, notify, override, lastAnswer); }
-    catch (error) {
+    const start = this.cliStart;
+    this.cliStart = undefined;
+    try {
+      if (start && "follow" in start) return await this.follow(request, start.follow);
+      return await this.runPrompt(request, notify, override, lastAnswer, start);
+    } catch (error) {
+      // A wake that never reached the CLI is still owed.
+      if (start && "wake" in start && !start.sent) this.obligations.unshift(...start.wake);
       // A JSON-RPC error answer from the CLI (numeric code): its details say what went wrong, e.g. that the CLI exited.
       const answer = error as { code?: unknown; message?: string; data?: { details?: unknown } };
       if (typeof answer.code !== "number") throw error;
@@ -305,7 +337,7 @@ export class AcpBackendProvider implements BackendProvider {
   }
 
   private async runPrompt(request: ProviderRequest, notify: (message: string) => void, override: BackendOptions | undefined,
-    lastAnswer: number): Promise<ProviderTurn> {
+    lastAnswer: number, start?: Extract<CliStart, { wake: Obligation[] }>): Promise<ProviderTurn> {
     await this.resolveLaunch(request, notify);
     const mcpServers = await this.mcpServers(notify);
     await this.startup(request, async (live) => {
@@ -328,11 +360,25 @@ export class AcpBackendProvider implements BackendProvider {
     if (!images && fresh.some((message) => typeof message.content !== "string" && message.content.some((block) => block.type === "image"))) {
       notify(`${this.label} does not accept images; each is sent as a short description`);
     }
-    const prompt = fresh.flatMap((message, index) => [...(index ? [{ type: "text", text: "\n\n" } as ContentBlock] : []), ...promptBlocks(message.content, images)]);
+    // A wake sends the notes themselves; the transcript keeps them as the host's message.
+    const contents = fresh.map((message, index) => start && index === fresh.length - 1 ? start.note : message.content);
+    const prompt = contents.flatMap((content, index) => [...(index ? [{ type: "text", text: "\n\n" } as ContentBlock] : []), ...promptBlocks(content, images)]);
+    if (start) {
+      start.sent = true;
+      // Claude Code may still answer the completion itself; its adapter is kept until its next turn shows whether it does.
+      if (this.config.spec.kind === "claude") this.fallbackWatch = true;
+    }
     const turn = await this.prompt(this.live!, prompt, request);
     // The CLI may change its options while it works (a model switch); the dashboard lists what it offers at the end.
     this.saveOffered();
     return turn;
+  }
+
+  /** Records the CLI's own turn: its buffered updates first, then live ones until its turn task ends. */
+  private async follow(request: ProviderRequest, pending: PendingCliTurn): Promise<ProviderTurn> {
+    const live = this.live;
+    if (this.pendingCli !== pending || !live || !this.cliSessionId) throw new BackendError("backend_exited", `${this.label}'s turn ended before Raw could record it`);
+    return this.prompt(live, undefined, request, pending);
   }
 
   /** The launch, built once; building it may install the adapter, which is not bound by the startup deadline. */
@@ -528,7 +574,9 @@ export class AcpBackendProvider implements BackendProvider {
 
   /** A bridged tool call from the CLI: run by the active turn; the inactivity watchdog waits while Raw runs it. */
   private async bridgeCall(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
-    const turn = this.turn;
+    const pending = this.turn ? undefined : this.pendingCli;
+    const turn = this.turn ?? await pending?.adopted;
+    if (pending && !turn) throw new Error("the background turn was not recorded");
     if (!turn?.request.runTool) throw new Error("no active turn");
     turn.pause();
     try { return await turn.request.runTool({ id: `bridge-${randomUUID()}`, name, arguments: args }, signal); }
@@ -553,7 +601,8 @@ export class AcpBackendProvider implements BackendProvider {
     }
   }
 
-  private async prompt(live: Live, prompt: ContentBlock[], request: ProviderRequest): Promise<ProviderTurn> {
+  /** Sends `prompt` and records the answer; with `follow`, sends nothing and records the CLI's own turn until it ends. */
+  private async prompt(live: Live, prompt: ContentBlock[] | undefined, request: ProviderRequest, follow?: PendingCliTurn): Promise<ProviderTurn> {
     // Recorded before sending, so a store failure ends the turn before the CLI has it.
     const sessionId = this.cliSessionId!;
     this.delivered = request.messages.length;
@@ -588,7 +637,11 @@ export class AcpBackendProvider implements BackendProvider {
     });
     this.turn = turn;
     arm();
-    const response = this.exitFirst(live, live.connection.agent.request("session/prompt", { sessionId, prompt }));
+    // The CLI's own turn waiting for this one: a follow takes it, and a user turn that raced it records it first.
+    const pending = follow ?? this.pendingCli;
+    if (pending) this.adopt(pending, turn);
+    const response: Promise<{ stopReason: string; usage?: PromptResponse["usage"]; _meta?: PromptResponse["_meta"] }> = follow ? this.followEnd(follow)
+      : this.exitFirst(live, live.connection.agent.request("session/prompt", { sessionId, prompt: prompt! }));
     response.catch(() => {});
     try {
       const answer = await Promise.race([response, idle, aborted, live.died]);
@@ -605,7 +658,15 @@ export class AcpBackendProvider implements BackendProvider {
       try { this.saveOffered(); }
       catch (saveError) { (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} options not saved: ${(saveError as Error).message}\n`); }
       const cancelled = error instanceof BackendError && error.code === "aborted";
-      if (cancelled || (error instanceof BackendError && error.code === "backend_unresponsive")) {
+      const stopping = cancelled || (error instanceof BackendError && error.code === "backend_unresponsive");
+      if (follow) {
+        // A followed turn is the CLI's task: stopping it leaves the adapter and its other tasks running.
+        if (stopping) await this.stopTask(follow.taskId);
+        detach("backend_error", (error as Error).message);
+        if (live.peer.exited()) await this.stopPeer(live);
+        throw error;
+      }
+      if (stopping) {
         // The CLI is asked to stop first so it can save its conversation, then the whole tree goes (Invariant 7);
         // the next turn starts a new adapter and loads the conversation.
         void live.connection.agent.notify("session/cancel", { sessionId }).catch(() => {});
@@ -621,7 +682,43 @@ export class AcpBackendProvider implements BackendProvider {
       clearTimeout(timer);
       if (onAbort) request.signal?.removeEventListener("abort", onAbort);
       if (this.turn === turn) this.turn = undefined;
+      if (pending && this.following === pending) this.following = undefined;
+      this.pendOpenTurn();
     }
+  }
+
+  /** The turn the CLI started becomes this one's: its buffer is replayed into it, and its held requests are served by it. */
+  private adopt(pending: PendingCliTurn, turn: ActiveTurn): void {
+    if (this.pendingCli === pending) this.pendingCli = undefined;
+    this.following = pending;
+    for (const update of pending.buffer.splice(0)) for (const event of turn.mapper.map(update)) this.dispatch(turn, event);
+    pending.adopt(turn);
+  }
+
+  /** Resolves when a followed turn's task ends: `completed` ends the turn, `stopped` cancels it, `failed` is an error. */
+  private followEnd(pending: PendingCliTurn): Promise<{ stopReason: string }> {
+    return new Promise<CliTaskState>((resolve) => { if (pending.ended) resolve(pending.ended); else pending.settle = resolve; })
+      .then((state) => {
+        if (state === "failed" || state === "lost") {
+          const error = this.tasks.get(pending.taskId)?.error;
+          throw new BackendError("backend_error", `${this.label}'s turn failed${error ? `: ${error}` : ""}`);
+        }
+        return { stopReason: state === "completed" ? "end_turn" : "cancelled" };
+      });
+  }
+
+  /** A turn task still open when Raw's turn ends goes on as a CLI turn of its own (Design, "CLI turn, Claude Code"). */
+  private pendOpenTurn(): void {
+    if (this.turn || this.pendingCli || this.closed) return;
+    const open = [...this.tasks.values()].find((task) => task.type === "turn" && LIVE_STATES.has(task.state) && task.id !== this.following?.taskId);
+    if (open) this.pendCliTurn(open);
+  }
+
+  private pendCliTurn(task: CliTask): void {
+    let adopt!: (turn: ActiveTurn | undefined) => void;
+    const adopted = new Promise<ActiveTurn | undefined>((resolve) => { adopt = resolve; });
+    this.pendingCli = { taskId: task.id, note: task.description ?? task.name, buffer: [], adopt, adopted };
+    this.signal();
   }
 
   /** Ends the turn's open calls; a call the CLI moved to the background ends running, and its later updates go to its task. */
@@ -653,11 +750,13 @@ export class AcpBackendProvider implements BackendProvider {
       }
     }
     if (!turn) {
-      // Outside a turn (a `session/load` replay, a late update) nothing is recorded: Raw already has that history.
-      // Session state still changes: the options, the context and the commands the CLI reports.
+      // Outside a turn session state still changes: the options, the context and the commands the CLI reports.
       if (update.sessionUpdate === "config_option_update") this.options = update.configOptions;
       else if (update.sessionUpdate === "usage_update") this.context = { used: update.used, size: update.size };
       else if (update.sessionUpdate === "available_commands_update") this.listCommands(commandsFromAcp(update.availableCommands));
+      // The CLI's own turn waits for the Raw turn that records it; other text is kept as a notice (Invariant 1).
+      else if (this.pendingCli) this.pendingCli.buffer.push(update);
+      else if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") this.noticeOutside(update.content.text);
       return;
     }
     turn.touch();
@@ -681,6 +780,22 @@ export class AcpBackendProvider implements BackendProvider {
     this.commandsArrived?.();
     try { this.saveOffered(); }
     catch (error) { (this.config.diagnostic ?? ((line) => process.stderr.write(line)))(`raw: ${this.config.spec.kind} commands not saved: ${(error as Error).message}\n`); }
+  }
+
+  /** Text outside any turn: one notice per read, for the listeners now and for the next turn. */
+  private noticeOutside(text: string): void {
+    this.outside += text;
+    this.outsideFlush ??= setImmediate(() => this.flushOutside());
+  }
+
+  private flushOutside(): void {
+    if (this.outsideFlush) clearImmediate(this.outsideFlush);
+    this.outsideFlush = undefined;
+    const text = this.outside;
+    this.outside = "";
+    if (!text) return;
+    this.queuedNotices.push(text);
+    this.emit({ type: "notice", text });
   }
 
   /** Counts an update Raw does not handle and reports its kind once per runtime. */
@@ -707,6 +822,7 @@ export class AcpBackendProvider implements BackendProvider {
         ...(toolCallId ?? known?.toolCallId ? { toolCallId: toolCallId ?? known!.toolCallId! } : {}),
         ...(path ?? known?.outputFilePath ? { outputFilePath: path ?? known!.outputFilePath! } : {}) });
       this.emitTasks();
+      if (this.tasks.get(id)!.type === "turn" && !known) this.turnSpawned(this.tasks.get(id)!);
       return;
     }
     if (!known) return;
@@ -732,6 +848,52 @@ export class AcpBackendProvider implements BackendProvider {
     }
     if (!changed) return;
     this.emitTasks();
+    if (!LIVE_STATES.has(known.state)) this.taskEnded(known);
+  }
+
+  /**
+   * Claude Code started a turn: it answers every completion before it (they are no longer owed, and a fallback wake has
+   * its answer), and with no Raw turn running it waits to be recorded as a CLI turn.
+   */
+  private turnSpawned(task: CliTask): void {
+    for (const obligation of this.obligations) clearTimeout(obligation.timer);
+    this.obligations = [];
+    this.fallbackWatch = false;
+    if (this.turn) return;
+    const pending = this.pendingCli;
+    if (!pending) { this.pendCliTurn(task); return; }
+    // A turn after one that ended unrecorded: both are recorded as one CLI turn.
+    if (pending.ended) Object.assign(pending, { taskId: task.id, note: `${pending.note}\n${task.description ?? task.name}`, ended: undefined });
+  }
+
+  private taskEnded(task: CliTask): void {
+    if (task.type === "turn") {
+      if (this.pendingCli?.taskId === task.id) this.pendingCli.ended = task.state;
+      if (this.following?.taskId === task.id) { this.following.ended = task.state; this.following.settle?.(task.state); }
+      return;
+    }
+    // A completion Raw did not cause is news to the model: Claude Code answers it itself, else Raw delivers it.
+    if (SILENT_TYPES.has(task.type) || this.stoppedByRaw.has(task.id) || this.owed.has(task.id)) return;
+    if (task.state !== "completed" && task.state !== "failed") return;
+    this.owed.add(task.id);
+    const obligation: Obligation = { taskId: task.id, due: this.config.spec.kind !== "claude" };
+    if (!obligation.due) obligation.timer = setTimeout(() => { obligation.due = true; this.signal(); }, CLAUDE_WAKE_AFTER_MS);
+    this.obligations.push(obligation);
+    this.signal();
+  }
+
+  /** The note a completion is delivered with: `Background command "<name>" completed (exit code N).` */
+  private obligationNote({ taskId }: Obligation): string {
+    const task = this.tasks.get(taskId)!;
+    const exit = typeof task.exitCode === "number" ? ` (exit code ${task.exitCode})` : "";
+    return `Background ${task.type === "shell" ? "command" : "task"} "${task.name}" ${task.state}${exit}.`;
+  }
+
+  /** Tells the host a CLI turn waits, once until it runs, and never while a Raw run holds the session. */
+  private signal(): void {
+    if (this.running || this.signalled || this.closed || this.cliTurnNote() === undefined) return;
+    this.signalled = true;
+    this.emit({ type: "cli_turn" });
   }
 
   /** The adapter is gone: its live tasks went with it. */
@@ -739,6 +901,9 @@ export class AcpBackendProvider implements BackendProvider {
     const lost = [...this.tasks.values()].filter((task) => LIVE_STATES.has(task.state));
     for (const task of lost) Object.assign(task, { state: "lost", endedAt: Date.now(), error: message });
     this.backgroundCalls.clear();
+    // The CLI's own turn went with its adapter: what it asked is refused, and a followed turn ends with the exit.
+    this.pendingCli?.adopt(undefined);
+    this.pendingCli = undefined;
     if (!lost.length) return;
     this.emitTasks();
     this.emit({ type: "exited", message });
@@ -763,8 +928,65 @@ export class AcpBackendProvider implements BackendProvider {
   /** The conversation's background tasks, oldest first. */
   backgroundTasks(): CliTask[] { return [...this.tasks.values()].map((task) => ({ ...task })); }
 
-  /** Whether the CLI has work that outlives the turn: a live task. */
-  hasBackgroundWork(): boolean { return [...this.tasks.values()].some((task) => LIVE_STATES.has(task.state)); }
+  /** Whether the CLI has work that outlives the turn: a live task, its own turn not yet recorded, or a completion it is owed. */
+  hasBackgroundWork(): boolean {
+    return [...this.tasks.values()].some((task) => LIVE_STATES.has(task.state)) || this.pendingCli !== undefined || this.obligations.length > 0;
+  }
+
+  /** `hasBackgroundWork()`, or a fallback wake that Claude Code may still answer with a turn of its own. */
+  keepsAdapter(): boolean { return this.hasBackgroundWork() || this.fallbackWatch; }
+
+  /**
+   * The note of the CLI turn waiting to run: Claude Code's own turn, else the due completions joined, oldest first
+   * (Codex at once; Claude Code after CLAUDE_WAKE_AFTER_MS without a turn of its own).
+   */
+  cliTurnNote(): string | undefined {
+    if (this.pendingCli) return this.pendingCli.note;
+    const due = this.obligations.filter((obligation) => obligation.due);
+    return due.length ? due.map((obligation) => this.obligationNote(obligation)).join("\n") : undefined;
+  }
+
+  /** The next `generate` runs the waiting CLI turn; the due completions it delivers are taken now. */
+  beginCliTurn(): { note: string; notice: string } | undefined {
+    const note = this.closed ? undefined : this.cliTurnNote();
+    if (note === undefined) return undefined;
+    if (this.pendingCli) this.cliStart = { follow: this.pendingCli };
+    else {
+      const wake = this.obligations.filter((obligation) => obligation.due);
+      this.obligations = this.obligations.filter((obligation) => !obligation.due);
+      this.cliStart = { wake, note };
+    }
+    return { note, notice: `${this.label} continues: ${note}` };
+  }
+
+  /** After a CLI turn's run: one that never reached `generate` is abandoned (follow) or still owed (wake). */
+  async endCliTurn(): Promise<void> {
+    const start = this.cliStart;
+    this.cliStart = undefined;
+    if (!start) return;
+    if ("follow" in start) await this.abandonCliTurn();
+    else this.obligations.unshift(...start.wake);
+  }
+
+  /**
+   * The host could not record the CLI's own turn: it is stopped, what it asked is refused, and its text is kept as a
+   * notice (Design, "Abandoned adoption").
+   */
+  async abandonCliTurn(): Promise<void> {
+    const pending = this.pendingCli;
+    if (!pending) return;
+    this.pendingCli = undefined;
+    const text = pending.buffer.flatMap((update) => update.sessionUpdate === "agent_message_chunk" && update.content.type === "text" ? [update.content.text] : []).join("");
+    if (!pending.ended) await this.stopTask(pending.taskId);
+    pending.adopt(undefined);
+    const notice = `${this.label} started a turn after a background task, but Raw could not record it; it was stopped${text ? `\n${text}` : ""}`;
+    this.queuedNotices.push(notice);
+    this.emit({ type: "notice", text: notice });
+  }
+
+  /** A Raw run starts (a turn, a CLI turn, a panel action): no CLI turn is signalled until it ends. */
+  runStarted(): void { this.running++; this.signalled = false; }
+  runEnded(): void { this.running = Math.max(0, this.running - 1); this.signal(); }
 
   /** Asks the CLI to stop a live task it lets Raw stop; false for an unknown or ended task, or a closed runtime. */
   async stopTask(id: string): Promise<boolean> {
@@ -773,6 +995,8 @@ export class AcpBackendProvider implements BackendProvider {
     const sessionId = this.cliSessionId;
     if (this.closed || !task || !LIVE_STATES.has(task.state) || !task.canStop || !live || !sessionId) return false;
     // Bounded like a cancelled prompt's answer (CANCEL_GRACE_MS); past it the request is cancelled and the task left as it is.
+    // Its end is not news to the model, whichever arrives first: the answer or the state update.
+    this.stoppedByRaw.add(id);
     const cancel = new AbortController();
     let timer: NodeJS.Timeout | undefined;
     const late = new Promise<"late">((resolve) => { timer = setTimeout(() => resolve("late"), CANCEL_GRACE_MS); });
@@ -787,7 +1011,10 @@ export class AcpBackendProvider implements BackendProvider {
       }
       stopped = answer?.stopped === true;
     } catch { return false; }
-    finally { clearTimeout(timer); }
+    finally {
+      clearTimeout(timer);
+      if (!stopped && LIVE_STATES.has(task.state)) this.stoppedByRaw.delete(id);
+    }
     // The adapter reports the stop as a state update; a stop it confirmed is final either way.
     if (stopped && LIVE_STATES.has(task.state)) { Object.assign(task, { state: "stopped", endedAt: Date.now() }); this.emitTasks(); }
     return stopped;
@@ -797,7 +1024,8 @@ export class AcpBackendProvider implements BackendProvider {
   get unknownUpdates(): ReadonlyMap<string, number> { return new Map(this.unknownKinds); }
 
   private async permission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    const turn = this.turn;
+    // Asked by the CLI's own turn before a Raw turn took it: answered by that turn, or refused if none does.
+    const turn = this.turn ?? await this.pendingCli?.adopted;
     const pick = (...kinds: string[]) => kinds.map((kind) => params.options.find((option) => option.kind === kind)).find(Boolean);
     const allow = pick("allow_once", "allow_always");
     const reject = pick("reject_once", "reject_always");
@@ -834,6 +1062,10 @@ export class AcpBackendProvider implements BackendProvider {
   /** Stops the adapter and everything it started; the stored CLI session stays, so a reopened session resumes it. */
   async close(): Promise<void> {
     this.closed = true;
+    this.pendingCli?.adopt(undefined);
+    this.pendingCli = undefined;
+    for (const obligation of this.obligations) clearTimeout(obligation.timer);
+    if (this.outsideFlush) clearImmediate(this.outsideFlush);
     const live = this.live;
     this.live = undefined;
     if (live) {
@@ -855,7 +1087,46 @@ export class AcpBackendProvider implements BackendProvider {
 
 /** Raw's session agent for a backend CLI: Raw's loop owns history and turn state, the provider runs the CLI. */
 export class AcpBackendAgent implements SessionAgent {
-  constructor(private readonly session: AgentSession, readonly provider: BackendProvider) {}
+  /** The CLI's background work, for an ACP backend (Claude Code, Codex); agy has none. */
+  readonly background: BackgroundWork | undefined;
+  private readonly acp: AcpBackendProvider | undefined;
+
+  constructor(private readonly session: AgentSession, readonly provider: BackendProvider) {
+    const acp = provider instanceof AcpBackendProvider ? provider : undefined;
+    this.acp = acp;
+    this.background = acp && {
+      tasks: () => acp.backgroundTasks(),
+      onEvent: (listener) => acp.onBackground(listener),
+      stop: (id) => acp.stopTask(id),
+      stopAll: async () => { await Promise.all(acp.backgroundTasks().filter((task) => task.state === "running" || task.state === "paused").map((task) => acp.stopTask(task.id))); },
+      hasWork: () => acp.hasBackgroundWork(),
+      keepsAdapter: () => acp.keepsAdapter(),
+      cliTurnNote: () => acp.cliTurnNote(),
+      runCliTurn: (onEvent) => this.runCliTurn(onEvent),
+      abandonCliTurn: () => acp.abandonCliTurn(),
+    };
+  }
+
+  /** Runs `work` as a Raw run the provider knows of, so it signals no CLI turn meanwhile. */
+  private async held<T>(work: () => Promise<T>): Promise<T> {
+    this.acp?.runStarted();
+    try { return await work(); } finally { this.acp?.runEnded(); }
+  }
+
+  /**
+   * Runs the CLI turn waiting now (Fixed decision 6 of cli-background-work): the note is the host's message, a notice
+   * `<CLI> continues: <note>` its visible line. With none waiting it records nothing.
+   */
+  async runCliTurn(onEvent?: (event: RunEvent) => void): Promise<RunResult> {
+    const acp = this.acp;
+    if (!acp) return { status: "completed", steps: 0, text: "" };
+    return this.held(async () => {
+      const start = acp.beginCliTurn();
+      if (!start) return { status: "completed", steps: 0, text: "" } as RunResult;
+      try { return await this.session.run(start.note, onEvent, { origin: "cli", notice: start.notice }); }
+      finally { await acp.endCliTurn(); }
+    });
+  }
 
   get state(): AgentState { return this.session.state; }
   get transcript(): readonly ModelMessage[] { return this.session.transcript; }
@@ -865,11 +1136,11 @@ export class AcpBackendAgent implements SessionAgent {
   /** Values for the next turn only (Fixed decision 6). */
   setTurnOverride(options: BackendOptions | undefined): void { this.provider.setTurnOverride(options); }
   run(input: UserInput, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
-    return this.session.run(input, onEvent).finally(() => this.provider.setTurnOverride(undefined));
+    return this.held(() => this.session.run(input, onEvent)).finally(() => this.provider.setTurnOverride(undefined));
   }
   /** A panel action of a bridged tool runs in Raw; its note reaches the CLI with the next prompt. */
   runPanelAction(request: PanelActionRequest, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
-    return this.session.runPanelAction(request, onEvent);
+    return this.held(() => this.session.runPanelAction(request, onEvent));
   }
   compact(): Promise<CompactResult> {
     return Promise.reject(Object.assign(new Error("compaction is not supported by this backend: the CLI keeps its own context"),

@@ -504,3 +504,30 @@ test("an interrupt on an idle session is a normal send", async () => {
     assert.equal(h.row("idle"), undefined);
   } finally { await h.close(); }
 });
+
+test("a CLI turn (origin cli) commits the host's note, runs no UserPromptSubmit and leaves queued messages waiting", async () => {
+  const f = fixture();
+  const guard = guardHook(f.root);
+  const requests: ModelMessage[][] = [];
+  const provider: ProviderAdapter = { modelConfig, async generate(request) { requests.push(structuredClone([...request.messages])); return answer("noted"); } };
+  const accepted = f.store.acceptOperation({ ...f.intent, clientRequestId: "cli", input: "Background command \"x\" completed (exit code 0)." });
+  const owner = accepted.owner!;
+  f.store.updateOperation(accepted.operation.id, owner, "starting");
+  f.store.updateOperation(accepted.operation.id, owner, "running");
+  const agent = createAgent({ provider, cwd: f.root, deliverQueuedInputs: true, hooks: guard.hooks,
+    persistence: { store: f.store, sessionId: f.session.id, surface: "web", owner, ownership: "host", operationId: accepted.operation.id } });
+  try {
+    f.store.enqueueInput(f.session.id, owner, { ...f.intent, clientRequestId: "waiting", input: "later please", mode: "queue" });
+    const result = await agent.run("Background command \"x\" completed (exit code 0).", undefined,
+      { origin: "cli", notice: "Codex continues: Background command \"x\" completed (exit code 0)." });
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.deepEqual(lines(requests[0]!), ["user:[Background task] Background command \"x\" completed (exit code 0)."]);
+    assert.equal(f.store.findQueuedInput(f.session.id, "waiting")?.state, "queued");
+    assert.deepEqual(guard.seen(), []);
+    const items = f.store.getSessionHistory({ sessionId: f.session.id, limit: 100 }).items;
+    assert.deepEqual(items.filter((item) => item.kind === "user"), []);
+    assert.deepEqual(items.filter((item) => item.kind === "backend_notice").map((item) => item.payload.text),
+      ["Codex continues: Background command \"x\" completed (exit code 0)."]);
+    assert.equal(f.store.getSession(f.session.id)?.title, "New session", "a note does not name the chat");
+  } finally { await agent.close(); f.store.releaseSession(f.session.id, owner); f.cleanup(); }
+});

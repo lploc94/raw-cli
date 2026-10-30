@@ -730,7 +730,9 @@ test("background: Codex's open backgrounded call ends running, and its task is t
     assert.equal(provider.hasBackgroundWork(), true);
     await until(() => task()?.state === "completed");
     await until(() => task()?.exitCode === 3);
-    assert.equal(provider.hasBackgroundWork(), false);
+    // The task has ended; its completion is still to be delivered to Codex (a CLI turn).
+    assert.equal(provider.backgroundTasks().some((item) => item.state === "running"), false);
+    assert.equal(provider.cliTurnNote(), 'Background command "Background job" completed (exit code 3).');
     assert.deepEqual(states().filter((value, index, all) => value !== all[index - 1]), ["running", "completed"]);
     assert.equal(task()?.toolCallId, "bg-call-1");
     assert.ok(task()?.outputFilePath?.endsWith("task-1.output"));
@@ -785,7 +787,7 @@ test("background: task state sequences follow the adapter's state machine", asyn
     try {
       assert.equal((await agent.run("bg")).status, "completed");
       const live: boolean[] = [];
-      provider.onBackground(() => { live.push(provider.hasBackgroundWork()); });
+      provider.onBackground(() => { live.push(provider.backgroundTasks().some((item) => item.state === "running" || item.state === "paused")); });
       await new Promise((resolve) => setTimeout(resolve, 600));
       assert.equal(task()?.state, item.end);
       assert.deepEqual(states().filter((value, index, all) => value !== all[index - 1]), item.seen);
@@ -857,5 +859,299 @@ test("background: a stop the CLI never answers resolves false within the cancel 
     assert.ok(Date.now() - started < 7000, `${Date.now() - started} ms`);
     assert.equal(task()?.state, "running");
     assert.ok(h.diagnostics.some((line) => /did not answer the stop of task task-1/.test(line)), JSON.stringify(h.diagnostics));
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+// Phase 2 (cli-background-work): a CLI turn. Claude Code's own turn after a background command is followed; Codex is woken.
+const prompts = (h: Harness) => h.calls().filter((call) => call.method === "session/prompt").map((call) => call.input as string);
+const cliTurns = (events: BackgroundEvent[]) => events.filter((event) => event.type === "cli_turn").length;
+const bgNotices = (events: BackgroundEvent[]) => events.flatMap((event) => event.type === "notice" ? [event.text] : []);
+const historyOf = (h: Harness) => h.store.getSessionHistory({ sessionId: h.session.id, limit: 100 }).items
+  .map((item) => item.kind === "backend_notice" ? `notice:${String(item.payload.text)}` : item.kind === "assistant" ? `assistant:${String(item.payload.text)}`
+    : item.kind === "user" ? `user:${JSON.stringify(item.payload.input)}` : item.kind);
+const NOTE = 'Background command "Background job" completed (exit code 0)';
+
+test("CLI turn: Claude Code's own turn after a background command is followed and recorded with its note, and the next turn sends only its message", async () => {
+  const h = await harness();
+  const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_TURN: "claude" });
+  const seen = collect();
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    await until(() => cliTurns(events) === 1);
+    assert.equal(provider.cliTurnNote(), NOTE);
+    assert.equal(provider.hasBackgroundWork(), true);
+    const result = await agent.runCliTurn(seen.on);
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.text, "Noted: Background job finished.");
+    assert.equal(cliTurns(events), 1, "one signal for one turn");
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.deepEqual(historyOf(h).filter((item) => /^(user|notice|assistant):/.test(item)), ['user:"bg"', "assistant:started",
+      `notice:Claude Code continues: ${NOTE}`, "assistant:Noted: Background job finished."]);
+    assert.deepEqual(agent.transcript.at(-2), { role: "user", content: `[Background task] ${NOTE}` });
+    // Raw sent nothing for that turn: the CLI started it.
+    assert.deepEqual(prompts(h), ["bg"]);
+    assert.equal((await agent.run("after")).status, "completed");
+    assert.deepEqual(prompts(h), ["bg", "after"]);
+    assert.equal(provider.cliTurnNote(), undefined);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("CLI turn: stopping a followed turn stops its task in the CLI, the turn is cancelled and the adapter stays", async () => {
+  const h = await harness();
+  const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_TURN_MS: "30000" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    await until(() => cliTurns(events) === 1);
+    const pid = provider.pid;
+    const running = agent.runCliTurn();
+    await until(() => task("task-2")?.state === "running");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(agent.abort(), true);
+    assert.equal((await running).status, "cancelled");
+    await until(() => task("task-2")?.state === "stopped");
+    assert.deepEqual(h.calls().filter((call) => call.method === "_session/async_task/stop").map((call) => call.asyncTaskId), ["task-2"]);
+    assert.equal(provider.pid, pid);
+    assert.ok(alive(pid!));
+    assert.equal(h.calls().filter((call) => call.method === "session/cancel").length, 0);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("CLI turn: Codex is woken with the exact note of its finished command, exit code included", async () => {
+  const h = await harness({ kind: "codex" });
+  const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_EXIT: "0" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    await until(() => cliTurns(events) === 1);
+    const note = 'Background command "Background job" completed (exit code 0).';
+    assert.equal(provider.cliTurnNote(), note);
+    const result = await agent.runCliTurn();
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.text, `woke:${note}`);
+    assert.deepEqual(prompts(h), ["bg", note]);
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.equal(provider.cliTurnNote(), undefined);
+    assert.deepEqual(historyOf(h).filter((item) => item.startsWith("notice:")), [`notice:Codex continues: ${note}`]);
+    // A failed command says so.
+    const failed = await harness({ kind: "codex" });
+    const second = airAgent(failed, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_EXIT: "2", FAKE_ACP_BG_STATES: "failed" });
+    try {
+      assert.equal((await second.agent.run("bg")).status, "completed");
+      await until(() => cliTurns(second.events) === 1);
+      await until(() => second.task()?.exitCode === 2);
+      assert.equal(second.provider.cliTurnNote(), 'Background command "Background job" failed (exit code 2).');
+    } finally { await second.agent.close(); failed.cleanup(); }
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("CLI turn: a task Raw stopped leaves nothing to deliver", async () => {
+  const h = await harness({ kind: "codex" });
+  const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "20000" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    assert.equal(await provider.stopTask("task-1"), true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(task()?.state, "stopped");
+    assert.equal(cliTurns(events), 0);
+    assert.equal(provider.cliTurnNote(), undefined);
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.deepEqual(await agent.runCliTurn(), { status: "completed", steps: 0, text: "" });
+    assert.deepEqual(prompts(h), ["bg"]);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("CLI turn: Codex completions are delivered whatever the timing", async (t) => {
+  await t.test("during a user turn: no wake until that turn ends, then one", async () => {
+    const h = await harness({ kind: "codex" });
+    const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "20", FAKE_ACP_BG_ANSWER_MS: "400" });
+    try {
+      // The command ends while the turn still answers: the signal comes only once that turn has ended.
+      const states: string[] = [];
+      provider.onBackground((event) => { if (event.type === "cli_turn") states.push(agent.state); });
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => cliTurns(events) === 1);
+      assert.deepEqual(states, ["idle"]);
+      assert.equal(provider.cliTurnNote(), 'Background command "Background job" completed (exit code 0).');
+      assert.equal((await agent.runCliTurn()).status, "completed");
+      assert.equal(cliTurns(events), 1);
+      assert.deepEqual(prompts(h), ["bg", 'Background command "Background job" completed (exit code 0).']);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+  await t.test("during a wake turn: a second wake after it with only the new note", async () => {
+    const h = await harness({ kind: "codex" });
+    const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_COUNT: "2",
+      FAKE_ACP_BG_STAGGER_MS: "300", FAKE_ACP_WAKE_MS: "600" });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => cliTurns(events) === 1);
+      assert.equal(provider.cliTurnNote(), 'Background command "Background job 1" completed (exit code 0).');
+      assert.equal((await agent.runCliTurn()).status, "completed");
+      await until(() => cliTurns(events) === 2);
+      assert.equal(provider.cliTurnNote(), 'Background command "Background job 2" completed (exit code 0).');
+      assert.equal((await agent.runCliTurn()).status, "completed");
+      assert.deepEqual(prompts(h).slice(1), ['Background command "Background job 1" completed (exit code 0).',
+        'Background command "Background job 2" completed (exit code 0).']);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+  await t.test("two completions together: one wake with both notes, oldest first", async () => {
+    const h = await harness({ kind: "codex" });
+    const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "200", FAKE_ACP_BG_COUNT: "2" });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => provider.backgroundTasks().every((item) => item.state === "completed" && item.exitCode === 0));
+      const both = 'Background command "Background job 1" completed (exit code 0).\nBackground command "Background job 2" completed (exit code 0).';
+      assert.equal(provider.cliTurnNote(), both);
+      assert.equal((await agent.runCliTurn()).status, "completed");
+      assert.equal(cliTurns(events), 1);
+      assert.deepEqual(prompts(h), ["bg", both]);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+});
+
+test("CLI turn: a permission asked before Raw adopts the turn waits for it, or is refused when Raw cannot record the turn", async (t) => {
+  await t.test("adopted: the turn's approval channel answers it", async () => {
+    const h = await harness();
+    const asked: ToolApprovalRequest[] = [];
+    const agent = h.agent({ env: { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_TURN_PERMISSION: "1" }, launch: { asyncTasks: true },
+      approve: (request) => { asked.push(request); return true; } });
+    const events: BackgroundEvent[] = [];
+    (agent.provider as AcpBackendProvider).onBackground((event) => { events.push(event); });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => cliTurns(events) === 1);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      assert.deepEqual(h.calls().filter((call) => call.method === "turn/permission"), [], "not answered before adoption");
+      const result = await agent.runCliTurn();
+      assert.equal(result.status, "completed", JSON.stringify(result));
+      assert.equal(result.text, "Checking. permission:yes Noted: Background job finished.");
+      assert.deepEqual(asked.map((request) => request.title), ["cat output"]);
+      assert.deepEqual(h.calls().filter((call) => call.method === "turn/permission").map((call) => call.choice), ["yes"]);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+  await t.test("abandoned: the permission is refused, the turn task stopped, and its text kept as a notice", async () => {
+    const h = await harness();
+    const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_TURN_PERMISSION: "1" });
+    const seen = collect();
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => cliTurns(events) === 1);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await provider.abandonCliTurn();
+      await until(() => h.calls().some((call) => call.method === "turn/permission"));
+      assert.deepEqual(h.calls().filter((call) => call.method === "turn/permission").map((call) => call.choice), ["no"]);
+      await until(() => task("task-2")?.state === "stopped");
+      assert.deepEqual(h.calls().filter((call) => call.method === "_session/async_task/stop").map((call) => call.asyncTaskId), ["task-2"]);
+      const notice = "Claude Code started a turn after a background task, but Raw could not record it; it was stopped\nChecking. ";
+      assert.deepEqual(bgNotices(events), [notice]);
+      assert.equal(provider.hasBackgroundWork(), false);
+      assert.equal(provider.cliTurnNote(), undefined);
+      // The notice reaches the next turn.
+      assert.equal((await agent.run("next", seen.on)).status, "completed");
+      assert.ok(seen.events.some((event) => event.type === "backend_notice" && event.message === notice), JSON.stringify(seen.events));
+    } finally { await agent.close(); h.cleanup(); }
+  });
+});
+
+test("CLI turn: a user turn that starts while Claude Code's own turn is pending records that turn's text first", async () => {
+  const h = await harness();
+  const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_TURN_MS: "400" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    await until(() => cliTurns(events) === 1);
+    const result = await agent.run("hello");
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(result.text, "Noted: Background job finished.echo:hello");
+    assert.equal(provider.cliTurnNote(), undefined, "the user turn took it");
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.deepEqual(await agent.runCliTurn(), { status: "completed", steps: 0, text: "" });
+    assert.deepEqual(prompts(h), ["bg", "hello"]);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("CLI turn: a turn that ends before Raw adopts it is kept whole until adoption", async () => {
+  const h = await harness();
+  const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude" });
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    await until(() => task("task-2")?.state === "completed");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(provider.hasBackgroundWork(), true, "an ended turn not yet recorded is still background work");
+    assert.equal(provider.cliTurnNote(), NOTE);
+    const result = await agent.runCliTurn();
+    assert.equal(result.text, "Noted: Background job finished.");
+    assert.equal(provider.hasBackgroundWork(), false);
+    assert.equal(cliTurns(events), 1);
+    const history = historyOf(h);
+    assert.equal(history.filter((item) => item === `notice:Claude Code continues: ${NOTE}`).length, 1);
+    assert.equal(history.filter((item) => item === "assistant:Noted: Background job finished.").length, 1);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
+test("CLI turn: Claude Code's fallback wake", async (t) => {
+  await t.test("no own turn: Raw sends the note once, CLAUDE_WAKE_AFTER_MS after the completion", async () => {
+    const h = await harness();
+    const { agent, provider, events, task } = airAgent(h, { FAKE_ACP_BG_MS: "100" });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => task()?.state === "completed");
+      const ended = Date.now();
+      assert.equal(provider.hasBackgroundWork(), true, "the completion is owed");
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      assert.equal(cliTurns(events), 0);
+      assert.equal(provider.cliTurnNote(), undefined, "not due yet");
+      await until(() => cliTurns(events) === 1);
+      assert.ok(Date.now() - ended >= 1900, `${Date.now() - ended} ms`);
+      const note = 'Background command "Background job" completed.';
+      assert.equal(provider.cliTurnNote(), note);
+      assert.equal((await agent.runCliTurn()).text, `woke:${note}`);
+      assert.deepEqual(prompts(h), ["bg", note]);
+      assert.equal(provider.hasBackgroundWork(), false);
+      assert.equal(provider.keepsAdapter(), true, "Claude Code may still answer the completion itself");
+    } finally { await agent.close(); h.cleanup(); }
+  });
+  for (const gap of [60, 1500]) await t.test(`an own turn ${gap} ms after the completion: Raw sends nothing and follows it`, async () => {
+    const h = await harness();
+    const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_TURN_GAP_MS: String(gap) });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => cliTurns(events) === 1);
+      assert.equal(provider.cliTurnNote(), NOTE);
+      assert.equal((await agent.runCliTurn()).text, "Noted: Background job finished.");
+      await new Promise((resolve) => setTimeout(resolve, 2500 - gap));
+      assert.equal(cliTurns(events), 1);
+      assert.deepEqual(prompts(h), ["bg"]);
+      assert.equal(provider.keepsAdapter(), false);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+  await t.test("an own turn after Raw's fallback turn ended: the adapter is kept for it, and it is followed", async () => {
+    const h = await harness();
+    const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_MS: "100", FAKE_ACP_BG_TURN: "claude", FAKE_ACP_TURN_GAP_MS: "5000" });
+    try {
+      assert.equal((await agent.run("bg")).status, "completed");
+      await until(() => cliTurns(events) === 1);
+      const note = 'Background command "Background job" completed.';
+      assert.equal((await agent.runCliTurn()).text, `woke:${note}`);
+      assert.equal(provider.hasBackgroundWork(), false);
+      assert.equal(provider.keepsAdapter(), true);
+      await until(() => cliTurns(events) === 2, 8000);
+      assert.equal(provider.keepsAdapter(), true);
+      assert.equal(provider.cliTurnNote(), NOTE);
+      assert.equal((await agent.runCliTurn()).text, "Noted: Background job finished.");
+      assert.equal(provider.keepsAdapter(), false);
+      assert.deepEqual(prompts(h), ["bg", note]);
+    } finally { await agent.close(); h.cleanup(); }
+  });
+});
+
+test("CLI turn: text the CLI sends outside any turn is kept as a notice for the next turn", async () => {
+  const h = await harness();
+  const { agent, provider, events } = airAgent(h, { FAKE_ACP_BG_MS: "20000" });
+  const seen = collect();
+  try {
+    assert.equal((await agent.run("bg")).status, "completed");
+    assert.equal(await provider.stopTask("task-1"), true);
+    await until(() => bgNotices(events).length > 0);
+    assert.deepEqual(bgNotices(events), ["**Task stopped by user:** Background job"]);
+    assert.equal((await agent.run("next", seen.on)).status, "completed");
+    assert.ok(seen.events.some((event) => event.type === "backend_notice" && event.message === "**Task stopped by user:** Background job"));
   } finally { await agent.close(); h.cleanup(); }
 });
