@@ -10,7 +10,7 @@ Raw keeps the session: history, the dashboard, cancel and resume work as with Ra
 
 Raw talks to Claude Code and Codex through their ACP adapters (`@agentclientprotocol/claude-agent-acp` 0.98.0, `@agentclientprotocol/codex-acp` 2.3.0). Raw does not ship them: on the first use of a backend Raw installs the pinned adapter from npm into `$XDG_DATA_HOME/raw/adapters` (`~/.local/share/raw/adapters`), once per version, and says so in the turn. Optional dependencies are skipped, so the adapters' own copies of the CLIs are not downloaded; Raw points each adapter at the CLI you installed. Installing needs npm (it comes with Node.js) and the network once; when it fails the turn ends `backend_unavailable` with npm's message, and the next turn tries again.
 
-Cancelling a turn asks the CLI to stop, waits up to 5 s, then stops the adapter and everything it started. The next turn starts it again and continues the conversation.
+Cancelling a turn asks the CLI to stop and waits up to 5 s. When the CLI answers and still has background tasks running, the adapter stays so they go on, as with the CLI's own Esc; otherwise Raw stops the adapter and everything it started. The next turn starts it again if needed and continues the conversation.
 
 What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, hooks and native tool rules. The CLI keeps its own context and tools; Claude Code and Codex take the window and Codex the threshold they compact at from the config ([CLI context and compaction](configuration.md#cli-context-and-compaction)).
 
@@ -36,8 +36,21 @@ What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, h
 | `context_window_tokens` | yes (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`) | yes (`model_context_window`) | no, with a warning | `backend-claude`: "the model's window reaches Claude Code…"; `backend-codex`: "the real codex-acp hands Codex…"; `backend-config`: "a CLI model's window and a CLI agent's trigger…" |
 | `compact.trigger_tokens` | no, with a warning (estimated as window − 33000) | yes (`model_auto_compact_token_limit`) | no, with a warning | `backend-codex`: "the model's window and the agent's trigger go to Codex…"; `backend-acp`: "backend metrics: …" |
 | `tools.rules` on the CLI's own tools | no | no | no | `backend-config`: "rules that only match skipped tools warn that they cannot be enforced" |
+| Background tasks survive the turn; the CLI's own turn is recorded | yes | yes (Raw wakes it) | not covered (not verified) | `backend-acp`: "AIR: …", "background: …", "CLI turn: …"; `session-background`; `dashboard-sessions`: "CLI task: …"; `terminal-cli`: "background: …"; live: "background command" |
 
 Each CLI sends its own system prompt, tool list and context, which Raw cannot shrink. Even with a replaced prompt, a short question cost about 14k input tokens with Claude Code, 18k with Codex and 7k with agy on 2026-10-28. The numbers vary with the CLI's version, its settings and the files it reads (`CLAUDE.md`, `AGENTS.md`).
+
+## Background work
+
+Claude Code and Codex can run a command in the background: the tool call returns at once, the turn ends, and the command keeps running. Raw declares the ACP AIR async-tasks extension (`clientCapabilities._meta.jetbrains.air`, capability `asyncTasks`) to both adapters, so each reports its background tasks (started, finished, stopped) and Raw can stop one (`_session/async_task/stop`).
+
+- **The task outlives the turn.** In the dashboard the session keeps its adapter while a task runs (or a finished task has not been answered yet), and the next turn of that session reuses it. In the terminal the REPL keeps it as before, and a one-shot `raw "task"` waits for the tasks ([CLI](cli.md#background-work)).
+- **Claude Code answers on its own.** When a command finishes, Claude Code starts a turn of its own; Raw records it as a turn of the session (a CLI turn): it holds the session, is shown live with Stop, and messages you send meanwhile wait in the queue. If Claude Code has not started that turn 2 s after the completion, Raw sends the note itself, as for Codex.
+- **Codex is woken by Raw.** Codex does not start a turn on its own, so Raw sends it a turn with the note `Background command "<name>" completed (exit code N).` (or `failed`), several completions joined in one note. In the chat a CLI turn shows the notice "<CLI> continues: <note>" instead of a message of yours.
+- **The Commands tab lists the tasks** with their state (Running, Paused, Done, Failed, Stopped, Lost) and Stop when the CLI allows it. Their output stays in the CLI.
+- **Nothing is stopped silently.** When Raw must stop an adapter that still has tasks (the dashboard stops, the session is deleted, the agent changes, the adapter exits), the next turn of the session shows which tasks were stopped or lost. A task Raw stopped is not reported to the model.
+
+Not covered: agy (not verified; in the one check it ran the "background" command in the foreground), turns Claude Code starts without a background task (scheduled wakeups, `/loop`), and Codex's commands detached with `nohup … &`, which already survive and report no task. Adapters are not kept across a dashboard restart.
 
 ## Raw tools in a backend
 

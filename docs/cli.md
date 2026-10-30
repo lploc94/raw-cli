@@ -29,6 +29,13 @@ All tools execute automatically with the host account's permissions, including o
 
 Exit codes are 0 for completed turns and informational commands, 1 for runtime/provider errors, 2 for argument/config errors, 3 for max steps, and 130 for user cancellation. Recoverable tool errors that the model handles do not set process exit status. Startup and shutdown close owned MCP clients and running shell processes.
 
+## Background work
+
+An agent on Claude Code or Codex can leave a command running in the background ([backends](backends.md#background-work)).
+
+- **One-shot.** After its turn, `raw "task"` waits while the CLI has background work. With a task running it prints once on stderr `raw: waiting for N background task(s) of <CLI>; Ctrl-C stops them`. Each turn the CLI then takes (Claude Code's own, or Raw's note to Codex) is printed like a turn, its answer on stdout after the first one, and the exit status is that of the last turn. Ctrl-C stops the tasks, prints `raw: stopped N background task(s)` and exits 130. If the adapter exits meanwhile, Raw prints `raw: <CLI> exited; N background task(s) were lost: <names>` and exits 1. Limitation: when Claude Code has not answered a finished command within 2 s, Raw sends the note itself and the run ends after that turn; a turn Claude Code starts later still is not recorded.
+- **REPL.** A turn the CLI takes on its own while Raw waits for your input is printed, then the prompt comes back; a line you type during it waits for its end. `/exit`, EOF or Ctrl-C at the prompt with tasks still running stops them and prints `raw: stopped N background task(s) of <CLI>: <names>`.
+
 ## Runtime variables
 
 `raw [--config PATH] [--agent NAME] vars list` returns one JSON catalog; `vars get NAME` returns `{name,value,observed_at,cached}`. These utilities use effective agent selection without credentials, prompt files, plugins, MCP or session storage. Only config/agent flags apply. Use-only get is rejected. Errors use stderr: invalid config/arguments exit 2, resolution/access failures exit 1, cancellation exits 130. Each utility invocation starts an empty value cache. `config init` selects both variable tools and a readable `now` clock for the raw agent.

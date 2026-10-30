@@ -324,3 +324,81 @@ test("claude, codex: a background command's task lifecycle and the gap to the ne
     } finally { await agent.close(); rmSync(target.root, { recursive: true, force: true }); }
   }
 });
+
+/** The processes below `root` (POSIX `ps`), with their command lines. */
+function descendants(root: number): Array<{ pid: number; command: string }> {
+  const rows = spawnSync("ps", ["-A", "-o", "pid=,ppid=,command="], { encoding: "utf8" }).stdout.trim().split("\n").map((line) => {
+    const [, pid, ppid, command] = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line) ?? [];
+    return { pid: Number(pid), ppid: Number(ppid), command: command ?? "" };
+  });
+  const found: Array<{ pid: number; command: string }> = [];
+  const walk = (parent: number) => { for (const row of rows) if (row.ppid === parent) { found.push(row); walk(row.pid); } };
+  walk(root);
+  return found;
+}
+
+test("claude, codex: background command: it survives the turn, its completion runs a CLI turn recorded in the dashboard, Stop on a task stops it",
+  { skip: (!(LIVE.has("claude") && LIVE.has("codex")) && "set RAW_LIVE_BACKENDS=claude,codex") || (process.platform === "win32" && "POSIX shell command") }, async () => {
+  const pids = new Map<string, () => number | undefined>();
+  const attach = attachSessionRuntimeWith((context) => {
+    const agent = createSessionAgent(context);
+    const session = context.host.persistence?.sessionId;
+    if (session && !pids.has(session)) pids.set(session, () => (agent as unknown as { provider?: { pid?: number } }).provider?.pid);
+    return agent;
+  });
+  const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  const f = await dashboardFixture({ env: { XDG_DATA_HOME: data }, attach, config: { default_agent: "bg-claude" },
+    extraAgents: Object.fromEntries(CASES.filter((item) => item.kind !== "agy").map(({ kind, model }) => [`bg-${kind}`, { cli: { kind, model }, tools: { use: [] } }])) });
+  const how: Record<string, string> = { claude: "in the background (run_in_background)", codex: "as a background terminal session (not nohup, not &)" };
+  const settle = async (id: string, ms = 300_000): Promise<SessionOperation> => {
+    for (const end = Date.now() + ms; Date.now() < end; await new Promise((resolve) => setTimeout(resolve, 200))) {
+      const op = await f.json<SessionOperation>(`/operations/${id}`);
+      if (["completed", "max_steps", "cancelled", "error", "interrupted"].includes(op.state)) return op;
+    }
+    throw new Error(`operation ${id} did not finish`);
+  };
+  const turn = async (session: string, agent: string, input: string) => settle((await f.json<SessionOperation>(`/sessions/${session}/operations`, "POST",
+    { clientRequestId: randomBytes(8).toString("hex"), kind: "turn", agent, input })).id);
+  const store = openSessionStore({ env: f.env });
+  try {
+    for (const kind of ["claude", "codex"]) {
+      const agent = `bg-${kind}`;
+      const work = mkdtempSync(join(f.root, `${kind}-`));
+      const one = await f.json<SessionSummary>("/sessions", "POST", { cwd: work, agent });
+      const command = `sleep 8; V=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \\n'); echo "$V" > ${join(work, "bg-value.txt")}; echo "VALUE=$V"`;
+      const first = await turn(one.id, agent, `Run this shell command ${how[kind]}, then end your turn at once without waiting for it: ${command}\n`
+        + "When the command finishes, reply with its VALUE= line exactly.");
+      assert.equal(first.state, "completed", JSON.stringify(first));
+      let cli: SessionOperation | undefined;
+      for (const end = Date.now() + 180_000; !cli && Date.now() < end; await new Promise((resolve) => setTimeout(resolve, 500))) {
+        cli = store.listOperations(one.id).find((operation) => operation.origin === "cli" && ["completed", "error", "cancelled"].includes(operation.state));
+      }
+      assert.equal(cli?.state, "completed", `${kind}: ${JSON.stringify(cli)}`);
+      const value = readFileSync(join(work, "bg-value.txt"), "utf8").trim();
+      const items = store.getSessionHistory({ sessionId: one.id, limit: 100 }).items;
+      assert.ok(items.some((item) => item.kind === "backend_notice" && String(item.payload.text).startsWith(`${LABELS[kind]} continues:`)), JSON.stringify(items.map((item) => item.kind)));
+      assert.ok(items.some((item) => item.kind === "assistant" && String(item.payload.text).includes(`VALUE=${value}`)),
+        `${kind}: VALUE=${value} in ${JSON.stringify(items.filter((item) => item.kind === "assistant").map((item) => item.payload.text))}`);
+      const row = (await f.json<{ items: Array<{ id: string; endedAt?: number; command: string }> }>(`/sessions/${one.id}/commands`)).items.find((item) => item.id.startsWith("cli:"));
+      console.log(`${kind}: completion-to-CLI-turn gap ${row?.endedAt ? cli!.acceptedAt - row.endedAt : "unknown"} ms`);
+      // Stop on a task's row stops it in the CLI.
+      const two = await f.json<SessionSummary>("/sessions", "POST", { cwd: work, agent });
+      assert.equal((await turn(two.id, agent, `Run the shell command \`sleep 120\` ${how[kind]}, then end your turn at once without waiting for it.`)).state, "completed");
+      const rows = async () => (await f.json<{ items: Array<{ id: string; state: string }> }>(`/sessions/${two.id}/commands`)).items.filter((item) => item.id.startsWith("cli:"));
+      let live: { id: string; state: string } | undefined;
+      for (const end = Date.now() + 30_000; !live && Date.now() < end; await new Promise((resolve) => setTimeout(resolve, 300))) live = (await rows()).find((item) => item.state === "running");
+      assert.ok(live, `${kind}: no running task row: ${JSON.stringify(await rows())}`);
+      const adapter = pids.get(two.id)?.();
+      assert.ok(adapter, "the adapter of the second session");
+      const sleeps = descendants(adapter!).filter((row) => /(^|\s|\/)sleep 120\b/.test(row.command)).map((row) => row.pid);
+      assert.ok(sleeps.length, `${kind}: sleep 120 runs under the adapter`);
+      const stopped = await f.api(`/sessions/${two.id}/commands/${encodeURIComponent(live.id)}/stop`, "POST", { clientRequestId: "stop" });
+      assert.equal(stopped.status, 202);
+      assert.equal(((await stopped.json()) as { state: string }).state, "completed");
+      for (const end = Date.now() + 15_000; Date.now() < end && (await rows()).find((item) => item.id === live!.id)?.state !== "stopped";) await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal((await rows()).find((item) => item.id === live!.id)?.state, "stopped");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      assert.deepEqual(sleeps.filter((pid) => running(pid)), [], `${kind}: sleep 120 is gone`);
+    }
+  } finally { store.close(); await f.close(); }
+});
