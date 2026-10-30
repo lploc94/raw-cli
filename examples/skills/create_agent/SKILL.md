@@ -64,11 +64,18 @@ Policy belongs in this agent's `tools.rules`. Ordered allow/ask/deny rules match
 
 Optional controls: positive integers `max_steps`, `max_output_bytes`, `request_timeout_ms`; `request` for provider-specific reasoning/output; `cache` for supported hints; `compact` for retention/summarization. Automatic compact is on by default when the model declares `context_window_tokens`; `compact.trigger_tokens` sets a threshold leaving output reserve, or `false` keeps it manual; `compact.instructions` adds text to every checkpoint prompt. Consult `configure_raw` for nontrivial provider-specific fields instead of copying another provider's controls blindly.
 
+An agent can run on a coding CLI (Claude Code, Codex, agy) instead of an API model: point `model` at a CLI model (`configure_raw` lists its fields). The CLI keeps its own login, tools and context; `request.reasoning_effort` and `request.mode` (its permission mode) go to the CLI, and selected Raw tools it cannot take are skipped with a warning that `raw config check` shows.
+
+<!-- example:cli-agent -->
+```json
+{"models":{"terra":{"method":"codex-cli","model_id":"gpt-6.1-terra"}},"agents":{"reviewer":{"model":"terra","system_prompt":"Review the diff you are given; report defects only.","request":{"reasoning_effort":"high","mode":"read-only"},"tools":{"use":["builtin/todo"]}}}}
+```
+
 ## Create, verify and share
 
-1. Select a unique name and destination; back up an existing config before adding fields. Keep its mode 0600. For a portable config omit `sessions`, which is canonical-only.
+1. Select a unique name and destination. Change a copy, never the active config: copy it to `config.candidate.json` beside it, edit the candidate, run `raw config check config.candidate.json`, then try it with `raw --try-config config.candidate.json --agent NAME "Reply with just: OK"`; only when both pass, back up the active file, copy the candidate over it and keep mode 0600 (`configure_raw` "Edit and verify" has the script; with `--config PATH`, use `--config CANDIDATE` for both). A new standalone file has no active config to protect: check and try it with `--config`. For a portable config omit `sessions`, which is canonical-only.
 2. Add/reuse the model, create the prompt and selected custom assets (including `hooks/guard/` for this example), then add the agent with exact IDs. Keep the existing default unless asked; a new standalone file may set its own `default_agent`. `raw --agent writer "query"` selects explicitly; `raw "query"` follows configured selection.
-3. Run `raw --config /path/to/raw.json config list`. It verifies schema and references to model aliases, not file contents or live MCP. If the installed library is importable, use `loadConfig({configPath,requireModel:false})` to check the prompt and `createRuntimeTools({runtime,cwd})` to load selected tools/skills and connect selected MCP. Close `tools.mcp` afterward. Otherwise use a harmless task with the intended agent when model access exists and report what remains unverified.
+3. `raw config check` loads the new agent as a run would: schema, model alias, prompt file, package bindings; not live MCP. If the installed library is importable, use `loadConfig({configPath,requireModel:false})` to check the prompt and `createRuntimeTools({runtime,cwd})` to load selected tools/skills and connect selected MCP. Close `tools.mcp` afterward. Otherwise use a harmless task with the intended agent when model access exists and report what remains unverified.
 4. For a copied-config share, relocate the directory and repeat loading. For an archive, follow `references/packages.md`: export or author, validate, pack, install, bind a recipient model/inputs and run. Check owned assets, external commands and selected policy with harmless calls. Exclude private session state and machine-specific paths.
 
 Report agent/config/model, selected assets, checks and prerequisites. `raw --resume ID --agent NAME "query"` adopts the current agent on the same conversation; meaningful runtime changes rotate once, while skill changes may add a reload notice. Sharing an agent does not transfer session identity.

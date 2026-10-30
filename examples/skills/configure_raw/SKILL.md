@@ -23,6 +23,8 @@ Required strings: `provider` (service name), `method`, exact upstream `model_id`
 - `vision`: boolean, default false; required for builtin/view_image.
 - `context_window_tokens`, `max_output_tokens`: positive integers; output below context. Verify limits.
 
+A CLI model runs a coding CLI with its own login, tools and context instead of an API: `method` `claude-code-cli`, `codex-cli` or `antigravity-cli`; optional `model_id` (the CLI's model name; omitted or empty means the CLI's default), `provider`, `executable` (path or command, default `claude`/`codex`/`agy`). No `base_url`, keys, context or vision. An agent on it may set `request.reasoning_effort`, `request.mode` (the CLI's permission mode) and `system_prompt_mode` `replace` (default) or `append`; other request keys, `cache`, `compact`, `max_steps` and hooks are skipped with a warning.
+
 ## Agent: `agents.<name>`
 
 Required `model`: existing alias; `tools.use`: ordered unique exact IDs (empty allowed): `builtin/<id>`, `local/<id>`, `agent/<id>`, `mcp/<server>/<original-name>`. No wildcards. builtin=package, local=global Raw folders, agent=config-adjacent folders. Shell tools: `builtin/bash`, or `builtin/powershell` (same arguments) on Windows without Git Bash.
@@ -78,19 +80,29 @@ Canonical-only `sessions.retention_days`: positive integer, default 30. Resume u
 
 ## Edit and verify
 
-Back up, keep mode 0600, validate before replacing. Portable candidate: `raw --config candidate.json config list`. Canonical candidate with sessions:
+Never edit the active config in place. Five steps, each only after the previous passed:
+1. Copy the active config to `config.candidate.json` beside it.
+2. Make the requested change in the candidate only; preserve unrelated fields.
+3. `raw config check config.candidate.json` validates every agent by loading it as a run would (errors exit 1; warnings are skipped settings, a missing CLI or key); nothing runs.
+4. `raw --try-config config.candidate.json --agent NAME "Reply with just: OK"`: a real run of the changed agent with the candidate in the active config's place. No model access (no key, CLI not logged in): report the change as unverified, do not skip silently.
+5. Back up the active file, copy the candidate over it, keep mode 0600.
 
-<!-- example:validate-canonical -->
+A failed step stops: the active config stays untouched and the candidate is left to inspect. For the canonical config:
+
+<!-- example:try-candidate -->
 ```sh
 set -eu
-stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
-mkdir "$stage/raw"
-cp "$1" "$stage/raw/config.json"
-XDG_CONFIG_HOME="$stage" raw --config "$stage/raw/config.json" config list
+active="${XDG_CONFIG_HOME:-$HOME/.config}/raw/config.json"
+candidate="$(dirname "$active")/config.candidate.json"
+# Steps 1-2 happened before: cp "$active" "$candidate", then the edit, in the candidate only.
+raw config check "$candidate" || exit 1
+raw --try-config "$candidate" --agent "$1" "Reply with just: OK" || exit 1
+cp -p "$active" "$active.bak"
+cp "$candidate" "$active"
+chmod 600 "$active"
 ```
 
-Test changes.
+A config chosen with `--config PATH` is checked and tried as `raw --config CANDIDATE config check` and `raw --config CANDIDATE --agent NAME "..."` with the candidate beside it, so relative paths resolve the same.
 
 ## Complete example
 

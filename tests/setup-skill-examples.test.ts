@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, cpSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, cpSync, statSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
 import { test } from "node:test";
 import { loadConfig } from "../src/config.js";
+import { checkConfig } from "../src/config-check.js";
+import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { loadSelectedSkills } from "../src/skills/loader.js";
 import { createRuntimeTools } from "../src/tools/plugins/runtime.js";
 import { parseSkillMarkdown } from "../src/skills/frontmatter.js";
@@ -127,28 +129,83 @@ test("create_skill example registers a config-adjacent selected skill", async ()
   assert.match(selected[0]!.markdown, /commit hash/);
 });
 
-test("configure_raw canonical candidate validation accepts sessions and rejects invalid models without editing the source", () => {
-  const root = mkdtempSync(join(tmpdir(), "raw-config-validation-"));
+test("configure_raw try-candidate replaces the active config only after the candidate is checked and tried", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-config-candidate-"));
+  const fixture = await startMockProvider(Array.from({ length: 4 }, () => ({ frames: [openAiFrame({ content: "OK" }, "stop"), openAiDone] })));
   try {
     const bin = join(root, "bin"); mkdirSync(bin);
+    const xdg = join(root, "xdg"); mkdirSync(join(xdg, "raw"), { recursive: true });
+    const active = join(xdg, "raw", "config.json"), candidate = join(xdg, "raw", "config.candidate.json"), log = join(root, "calls.log");
     const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
-    writeFileSync(join(bin, "raw"), `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(process.cwd(), "dist/raw.js"))} "$@"\n`, { mode: 0o700 });
-    const script = join(root, "validate.sh");
-    writeFileSync(script, fence("configure_raw", "sh", "validate-canonical"));
-    const candidate = join(root, "candidate.json");
-    const document = { default_agent: "raw", models: { lab: { provider: "custom", method: "openai-chat-completions", model_id: "fixture", base_url: "http://127.0.0.1:9999/v1" } }, agents: { raw: { model: "lab", tools: { use: [] } } }, sessions: { retention_days: 30 } };
-    writeFileSync(candidate, JSON.stringify(document));
-    const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` };
-    // Windows runs the documented Bash snippet with Git Bash, not a bare "bash" that may be WSL's launcher.
+    // Each raw call records the active file's bytes as they are when it starts.
+    writeFileSync(join(bin, "raw"), `#!/bin/sh\ncat ${quote(active)} >> ${quote(log)}; echo >> ${quote(log)}\n`
+      + `exec ${quote(process.execPath)} ${quote(join(process.cwd(), "dist/raw.js"))} "$@"\n`, { mode: 0o700 });
+    const example = fence("configure_raw", "sh", "try-candidate");
+    const lab = { provider: "custom", method: "openai-chat-completions", model_id: "fixture", base_url: fixture.url, api_key: "k" };
+    const original = JSON.stringify({ default_agent: "raw", models: { lab }, agents: { raw: { model: "lab", tools: { use: [] } } }, sessions: { retention_days: 30 } });
+    const env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}`, XDG_CONFIG_HOME: xdg,
+      XDG_DATA_HOME: join(root, "data"), XDG_STATE_HOME: join(root, "state") };
     const shell = process.platform === "win32" ? join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin", "bash.exe") : "bash";
-    const good = spawnSync(shell, [script, candidate], { env, encoding: "utf8" });
-    assert.equal(good.status, 0, good.stderr);
-    assert.deepEqual(JSON.parse(readFileSync(candidate, "utf8")), document);
-    const invalid = structuredClone(document); invalid.models.lab.base_url = "not-a-url";
-    writeFileSync(candidate, JSON.stringify(invalid));
-    const bad = spawnSync(shell, [script, candidate], { env, encoding: "utf8" });
-    assert.notEqual(bad.status, 0);
-    assert.deepEqual(JSON.parse(readFileSync(candidate, "utf8")), invalid);
+    // Async: the mock provider runs in this process and must keep answering while the script runs.
+    const run = async (script: string, edit: (data: any) => void) => {
+      rmSync(log, { force: true }); rmSync(`${active}.bak`, { force: true });
+      writeFileSync(active, original, { mode: 0o600 });
+      const before = statSync(active).mtimeMs;
+      // Steps 1-2: copy, then edit the candidate only.
+      cpSync(active, candidate);
+      const data = JSON.parse(readFileSync(candidate, "utf8")); edit(data); writeFileSync(candidate, JSON.stringify(data));
+      const path = join(root, "try.sh"); writeFileSync(path, script);
+      const child = spawn(shell, [path, "raw"], { env, stdio: ["ignore", "pipe", "pipe"] });
+      let output = "";
+      child.stdout.setEncoding("utf8").on("data", (part: string) => { output += part; });
+      child.stderr.setEncoding("utf8").on("data", (part: string) => { output += part; });
+      const status = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+      return { result: { status, output }, before, edited: JSON.stringify(data) };
+    };
+    // Success: both raw calls saw the original, then the candidate replaced it, with a backup and mode 0600.
+    const good = await run(example, (data) => { data.agents.raw.system_prompt = "Tried first."; });
+    assert.equal(good.result.status, 0, good.result.output);
+    assert.equal(readFileSync(log, "utf8"), `${original}\n${original}\n`);
+    assert.equal(readFileSync(active, "utf8"), good.edited);
+    assert.equal(readFileSync(`${active}.bak`, "utf8"), original);
+    if (process.platform !== "win32") assert.equal(statSync(active).mode & 0o777, 0o600);
+    assert.match(JSON.stringify(fixture.requests.at(-1)?.body), /Tried first\./);
+    const failures: Array<[string, (data: any) => void]> = [
+      ["fails the check", (data) => { data.agents.raw.colour = "red"; }],
+      // Passes the check (a missing key is a warning) but the try run cannot start.
+      ["fails the try run", (data) => { data.models.lab = { ...lab, api_key: undefined, api_key_env: "RAW_TEST_UNSET_KEY" }; }],
+    ];
+    const untouched = (outcome: Awaited<ReturnType<typeof run>>, label: string) => {
+      assert.notEqual(outcome.result.status, 0, label + outcome.result.output);
+      assert.equal(readFileSync(active, "utf8"), original, label);
+      assert.equal(statSync(active).mtimeMs, outcome.before, label);
+      assert.equal(readFileSync(candidate, "utf8"), outcome.edited, label);
+      assert.equal(existsSync(`${active}.bak`), false, label);
+    };
+    for (const [label, edit] of failures) untouched(await run(example, edit), label);
+    // Negative control: without the gating, the same failures replace the active config, and the assertions catch it.
+    const unguarded = example.replace(/^set -eu\n/m, "").replaceAll(" || exit 1", "");
+    assert.notEqual(unguarded, example);
+    for (const [label, edit] of failures) {
+      const outcome = await run(unguarded, edit);
+      assert.throws(() => untouched(outcome, label), assert.AssertionError);
+    }
+  } finally { await fixture.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("create_agent cli-agent example checks clean as an agent on a CLI model", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-cli-agent-example-"));
+  try {
+    const configPath = join(root, "raw.json");
+    writeFileSync(configPath, fence("create_agent", "json", "cli-agent"));
+    const runtime = await loadConfig({ configPath, flags: { agent: "reviewer" }, requireModel: false });
+    assert.equal(runtime.modelConfig, undefined);
+    assert.deepEqual({ kind: runtime.backend?.kind, model: runtime.backend?.model, effort: runtime.backend?.effort, mode: runtime.backend?.mode },
+      { kind: "codex", model: "gpt-6.1-terra", effort: "high", mode: "read-only" });
+    const report = await checkConfig({ configPath, env: { PATH: "" } });
+    assert.deepEqual(report.errors, []);
+    assert.equal(report.agents[0]?.error, undefined);
+    assert.deepEqual(report.agents[0]?.warnings, ["Codex is not installed (looked for codex on PATH)"]);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -92,8 +92,8 @@ Nonempty `skills.use` requires both skill tools. Do not change `default_agent` j
 
 ## Create, verify and improve
 
-1. Establish the actual config/agent and chosen root. Check existing selected names, create `SKILL.md` and any supporting files, and make the smallest registration edit with a backup of existing config. Keep config mode 0600.
-2. Run `raw --config /work/helper/raw.json config list` (or `raw config list` for canonical config). This checks config, not skill files.
+1. Establish the actual config/agent and chosen root. Check existing selected names, create `SKILL.md` and any supporting files.
+2. Change a copy, never the active config: copy it to `config.candidate.json` beside it, edit the candidate, run `raw config check config.candidate.json`, then try it with `raw --try-config config.candidate.json --agent NAME "Reply with just: OK"`; only when both pass, back up the active file, copy the candidate over it and keep mode 0600 (`configure_raw` "Edit and verify" has the script; with `--config PATH`, use `--config CANDIDATE` for both). The candidate makes the smallest registration edit. The check covers config, not skill files.
 3. Verify loading without another model call when the `@tlelabs/raw` library is available: `loadConfig({configPath, requireModel:false})`, then `loadSelectedSkills({selectedIds: runtime.skillIds, configPath})`. Or use the configured agent's `list_skills` and `load_skill({name:"release-notes"})` in a suitable run. Confirm the selected name and body, not just a successful config parse.
 4. Assess content using a normal task, a boundary case and a near miss. For the example: draft from a known range with verifiable citations; handle an empty range; do ordinary code review without treating it as release-note generation. Review outputs and tool traces for incorrect advice or missing steps. Extra model work is diagnostic.
 5. Improve instructions around evidenced errors. Compare versions on the same inputs/model when useful; record which version produced the result. A mock list/load test proves wiring, not writing quality, and no model test guarantees every future action.
