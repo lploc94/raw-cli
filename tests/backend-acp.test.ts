@@ -896,6 +896,8 @@ const historyOf = (h: Harness) => h.store.getSessionHistory({ sessionId: h.sessi
   .map((item) => item.kind === "backend_notice" ? `notice:${String(item.payload.text)}` : item.kind === "assistant" ? `assistant:${String(item.payload.text)}`
     : item.kind === "user" ? `user:${JSON.stringify(item.payload.input)}` : item.kind);
 const NOTE = 'Background command "Background job" completed (exit code 0)';
+/** What a wake sends the CLI: the notes, then the request to read the output (Decision 2026-10-30). */
+const sent = (note: string, many = false) => `${note}\n${many ? "Read their output" : "Read its output"} before you answer.`;
 
 test("CLI turn: Claude Code's own turn after a background command is followed and recorded with its note, and the next turn sends only its message", async () => {
   const h = await harness();
@@ -952,8 +954,8 @@ test("CLI turn: Codex is woken with the exact note of its finished command, exit
     assert.equal(provider.cliTurnNote(), note);
     const result = await agent.runCliTurn();
     assert.equal(result.status, "completed", JSON.stringify(result));
-    assert.equal(result.text, `woke:${note}`);
-    assert.deepEqual(prompts(h), ["bg", note]);
+    assert.equal(result.text, `woke:${sent(note)}`);
+    assert.deepEqual(prompts(h), ["bg", sent(note)]);
     assert.equal(provider.hasBackgroundWork(), false);
     assert.equal(provider.cliTurnNote(), undefined);
     assert.deepEqual(historyOf(h).filter((item) => item.startsWith("notice:")), [`notice:Codex continues: ${note}`]);
@@ -1026,7 +1028,7 @@ test("CLI turn: Codex completions are delivered whatever the timing", async (t) 
       assert.equal(provider.cliTurnNote(), 'Background command "Background job" completed (exit code 0).');
       assert.equal((await agent.runCliTurn()).status, "completed");
       assert.equal(cliTurns(events), 1);
-      assert.deepEqual(prompts(h), ["bg", 'Background command "Background job" completed (exit code 0).']);
+      assert.deepEqual(prompts(h), ["bg", sent('Background command "Background job" completed (exit code 0).')]);
     } finally { await agent.close(); h.cleanup(); }
   });
   await t.test("during a wake turn: a second wake after it with only the new note", async () => {
@@ -1041,8 +1043,8 @@ test("CLI turn: Codex completions are delivered whatever the timing", async (t) 
       await until(() => cliTurns(events) === 2);
       assert.equal(provider.cliTurnNote(), 'Background command "Background job 2" completed (exit code 0).');
       assert.equal((await agent.runCliTurn()).status, "completed");
-      assert.deepEqual(prompts(h).slice(1), ['Background command "Background job 1" completed (exit code 0).',
-        'Background command "Background job 2" completed (exit code 0).']);
+      assert.deepEqual(prompts(h).slice(1), [sent('Background command "Background job 1" completed (exit code 0).'),
+        sent('Background command "Background job 2" completed (exit code 0).')]);
     } finally { await agent.close(); h.cleanup(); }
   });
   await t.test("two completions together: one wake with both notes, oldest first", async () => {
@@ -1055,7 +1057,7 @@ test("CLI turn: Codex completions are delivered whatever the timing", async (t) 
       assert.equal(provider.cliTurnNote(), both);
       assert.equal((await agent.runCliTurn()).status, "completed");
       assert.equal(cliTurns(events), 1);
-      assert.deepEqual(prompts(h), ["bg", both]);
+      assert.deepEqual(prompts(h), ["bg", sent(both, true)]);
     } finally { await agent.close(); h.cleanup(); }
   });
 });
@@ -1155,8 +1157,8 @@ test("CLI turn: Claude Code's fallback wake", async (t) => {
       assert.ok(Date.now() - ended >= 1900, `${Date.now() - ended} ms`);
       const note = 'Background command "Background job" completed.';
       assert.equal(provider.cliTurnNote(), note);
-      assert.equal((await agent.runCliTurn()).text, `woke:${note}`);
-      assert.deepEqual(prompts(h), ["bg", note]);
+      assert.equal((await agent.runCliTurn()).text, `woke:${sent(note)}`);
+      assert.deepEqual(prompts(h), ["bg", sent(note)]);
       assert.equal(provider.hasBackgroundWork(), false);
       assert.equal(provider.keepsAdapter(), true, "Claude Code may still answer the completion itself");
     } finally { await agent.close(); h.cleanup(); }
@@ -1182,7 +1184,7 @@ test("CLI turn: Claude Code's fallback wake", async (t) => {
       assert.equal((await agent.run("bg")).status, "completed");
       await until(() => cliTurns(events) === 1);
       const note = 'Background command "Background job" completed.';
-      assert.equal((await agent.runCliTurn()).text, `woke:${note}`);
+      assert.equal((await agent.runCliTurn()).text, `woke:${sent(note)}`);
       assert.equal(provider.hasBackgroundWork(), false);
       assert.equal(provider.keepsAdapter(), true);
       await until(() => cliTurns(events) === 2, 8000);
@@ -1190,7 +1192,7 @@ test("CLI turn: Claude Code's fallback wake", async (t) => {
       assert.equal(provider.cliTurnNote(), NOTE);
       assert.equal((await agent.runCliTurn()).text, "Noted: Background job finished.");
       assert.equal(provider.keepsAdapter(), false);
-      assert.deepEqual(prompts(h), ["bg", note]);
+      assert.deepEqual(prompts(h), ["bg", sent(note)]);
     } finally { await agent.close(); h.cleanup(); }
   });
 });

@@ -1035,7 +1035,11 @@ export class AcpBackendProvider implements BackendProvider {
     else {
       const wake = this.obligations.filter((obligation) => obligation.due);
       this.obligations = this.obligations.filter((obligation) => !obligation.due);
-      this.cliStart = { wake, note };
+      // The note names no output and no session (codex-acp keeps the terminal's id to itself): the model is told to
+      // read it rather than answer from memory (Decision 2026-10-30 of cli-background-work).
+      const prompt = `${note}\n${wake.length > 1 ? "Read their output" : "Read its output"} before you answer.`;
+      this.cliStart = { wake, note: prompt };
+      return { note: prompt, notice: `${this.label} continues: ${note}` };
     }
     return { note, notice: `${this.label} continues: ${note}` };
   }

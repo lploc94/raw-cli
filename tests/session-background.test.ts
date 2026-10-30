@@ -65,6 +65,8 @@ async function until(check: () => boolean, what: string, ms = 15000): Promise<vo
 }
 const settled = (operation: SessionOperation | undefined) => operation !== undefined && ["completed", "cancelled", "error", "max_steps", "interrupted"].includes(operation.state);
 const NOTE = 'Background command "Background job" completed (exit code 0)';
+/** What a wake sends the CLI: the note, then the request to read the output (Decision 2026-10-30). */
+const sent = (note: string) => `${note}\nRead its output before you answer.`;
 
 test("resident: a background task outlives its operation, and the next turn reuses the same adapter", async () => {
   const f = await fixture("claude", { FAKE_ACP_BG_MS: "20000" });
@@ -106,8 +108,8 @@ test("CLI turn: Codex is woken as an operation with the note, and the adapter cl
     await until(() => settled(f.cliOperations()[0]), "the CLI turn's operation");
     const note = 'Background command "Background job" completed (exit code 0).';
     assert.equal(f.cliOperations()[0]!.state, "completed");
-    assert.deepEqual(f.prompts(), ["bg", note]);
-    assert.deepEqual(f.history().slice(-2), [`notice:Codex continues: ${note}`, `assistant:woke:${note}`]);
+    assert.deepEqual(f.prompts(), ["bg", sent(note)]);
+    assert.deepEqual(f.history().slice(-2), [`notice:Codex continues: ${note}`, `assistant:woke:${sent(note)}`]);
     await until(() => !alive(pid!), "the adapter to close");
   } finally { await f.close(); }
 });
@@ -135,7 +137,7 @@ test("CLI turn: queued messages wait for it, and it runs before them", async (t)
       await until(() => f.operations().length === 3 && settled(f.operations()[2]), "the queued turn");
       const note = 'Background command "Background job" completed (exit code 0).';
       assert.deepEqual(f.operations().map((operation) => operation.origin ?? "user"), ["user", "cli", "user"]);
-      assert.deepEqual(f.prompts(), ["bg", note, "queued message"]);
+      assert.deepEqual(f.prompts(), ["bg", sent(note), "queued message"]);
     } finally { await f.close(); }
   });
 });
@@ -278,7 +280,7 @@ test("CLI turn: Claude Code's turn after a gap is recorded once, through the fal
       const [pid] = f.pids();
       await until(() => settled(f.cliOperations()[0]), "the fallback wake");
       const note = 'Background command "Background job" completed.';
-      assert.deepEqual(f.prompts(), ["bg", note]);
+      assert.deepEqual(f.prompts(), ["bg", sent(note)]);
       if (panel) {
         const action = f.service.submit({ sessionId: f.session.id, clientRequestId: "panel", kind: "panel_action", agentName: "ext", configPath: f.configPath,
           action: { panel: "builtin/todo", action: "clear" } });
