@@ -634,7 +634,25 @@ function ModelEditor({
                 onChange={(e) => set({ executable: e.target.value || undefined })}
               />
             </Field>
-            <p className="muted">The CLI uses its own login, endpoint and context window.</p>
+            {value.method !== "antigravity-cli" && (
+              <Field label="Context window tokens">
+                <input
+                  type="number"
+                  value={String(value.context_window_tokens ?? "")}
+                  placeholder="CLI setting"
+                  onChange={(e) =>
+                    set({
+                      context_window_tokens: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
+                    })
+                  }
+                />
+              </Field>
+            )}
+            <p className="muted">
+              The CLI uses its own login and endpoint. A context window here is the one the CLI compacts against.
+            </p>
           </>
         ) : (
         <>

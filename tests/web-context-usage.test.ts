@@ -27,6 +27,12 @@ test("the ring and its card: the tokens, the limit and what it is, the messages 
   assert.equal(trigger.of, "/ 4k tokens until auto compact");
   assert.equal(trigger.line, "1 message kept · auto compact at 4k");
   assert.equal(trigger.percent, 75);
+  // Claude Code's trigger is Raw's estimate: marked, and still the basis of the ring.
+  const estimated = contextCard({ estimatedTokens: 100_000, source: "provider", contextWindow: 360_000, compactTrigger: 327_000,
+    compactTriggerEstimated: true }, { stale: false, messages: 4 });
+  assert.equal(estimated.of, "/ ≈327k tokens until auto compact");
+  assert.equal(estimated.line, "4 messages kept · auto compact at ≈327k");
+  assert.equal(estimated.percent, 31);
 });
 
 test("a provider-reported size has no estimate mark; old measurements without a source do", () => {

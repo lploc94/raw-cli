@@ -3,8 +3,8 @@ import { BACKEND_LABELS, CLI_METHODS, isCliMethod } from "../../src/backends/con
 /** The model methods that name a coding CLI, with the label the dashboard shows for each. */
 export const CLI_CONNECTIONS = Object.entries(CLI_METHODS).map(([method, kind]) => ({ method, label: `${BACKEND_LABELS[kind]} CLI` }));
 
-/** Model keys only an API connection has: a CLI keeps its own endpoint and context. */
-const API_ONLY_MODEL_KEYS = ["base_url", "context_window_tokens", "max_output_tokens", "vision"];
+/** Model keys only an API connection has: a CLI keeps its own endpoint. `context_window_tokens` is shared. */
+const API_ONLY_MODEL_KEYS = ["base_url", "max_output_tokens", "vision"];
 
 export interface CredentialEdit { mode: string; env?: string; value?: string }
 

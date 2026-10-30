@@ -1,5 +1,5 @@
 import { compactTokens, contextTone } from "../panels/summaries.js";
-import { contextUsage, type ContextUsageInput } from "./context-usage.js";
+import { compactTriggerMark, contextUsage, type ContextUsageInput } from "./context-usage.js";
 
 /** The composer's context ring and its Context card (docs/chat-design.md §8). */
 export interface ContextCard {
@@ -26,7 +26,7 @@ export function contextCard(
   const tokens = `${context.source === "provider" ? "" : "~"}${compactTokens(context.estimatedTokens)}`;
   const line = [
     messages === undefined ? undefined : `${messages} ${messages === 1 ? "message" : "messages"} kept`,
-    context.compactTrigger ? `auto compact at ${compactTokens(context.compactTrigger)}` : "auto compact off",
+    context.compactTrigger ? `auto compact at ${compactTriggerMark(context)}${compactTokens(context.compactTrigger)}` : "auto compact off",
     stale ? "last measured" : undefined,
   ].filter(Boolean).join(" · ");
   if (!usage) return { label: `Context: ${tokens} tokens, no limit known`, tone: "accent", tokens, of: "tokens", line };
@@ -38,7 +38,7 @@ export function contextCard(
     percent,
     tone,
     tokens,
-    of: `/ ${compactTokens(usage.limit)} tokens${usage.basis === "compact" ? " until auto compact" : ""}`,
+    of: `/ ${usage.basis === "compact" ? compactTriggerMark(context) : ""}${compactTokens(usage.limit)} tokens${usage.basis === "compact" ? " until auto compact" : ""}`,
     line,
   };
 }

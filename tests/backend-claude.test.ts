@@ -61,6 +61,7 @@ test("the launch installs the pinned adapter once, without optional binaries, an
     assert.equal(launch.args[0], join(adapterDirectory(CLAUDE_ADAPTER, env), "node_modules", "@agentclientprotocol", "claude-agent-acp", "dist", "index.js"));
     assert.ok(existsSync(launch.args[0]!));
     assert.equal(launch.env.CLAUDE_CODE_EXECUTABLE, findExecutable("claude", env, root));
+    assert.equal(Object.hasOwn(launch.env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW"), false);
     assert.ok(!Object.keys(launch.env).some((key) => /RAW_BRIDGE|TOKEN/i.test(key)));
     assert.deepEqual(launch.sessionMeta, { systemPrompt: "Be RAW." });
     assert.deepEqual(calls.map((call) => call.args), [["install", "--omit=optional", "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact",
@@ -85,6 +86,18 @@ test("an explicit empty prompt Claude Code cannot take warns; no prompt or an ap
     assert.equal(await warned({ cli: { kind: "claude" } }), false);
     assert.equal(await warned({ cli: { kind: "claude" }, system_prompt: "Be RAW." }), false);
     assert.equal(await warned({ cli: { kind: "claude", system_prompt_mode: "append" }, system_prompt: "" }), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the model's window reaches Claude Code as CLAUDE_CODE_AUTO_COMPACT_WINDOW, over one the user set", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
+  try {
+    const env = { PATH: fakeClaude(root), XDG_DATA_HOME: join(root, "data"), CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000" };
+    const launch = async (agent: Record<string, unknown>) =>
+      (await claudeLaunch(await runtimeFor(root, agent), root, { env, npm: fakeNpm([]) })({ notify: () => {} })).env;
+    assert.equal((await launch({ cli: { kind: "claude", context_window_tokens: 360000 } })).CLAUDE_CODE_AUTO_COMPACT_WINDOW, "360000");
+    // Without a window, the user's own setting passes through untouched.
+    assert.equal((await launch({ cli: { kind: "claude" } })).CLAUDE_CODE_AUTO_COMPACT_WINDOW, "1000000");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -71,7 +71,7 @@ async function attachBackendRuntime(runtime: RuntimeConfig, options: Parameters<
       agent.provider.noticeNextTurn(tools.warnings.filter((warning) => !shown.has(warning)));
     }
     const agentName = runtime.agentName ?? runtime.backend!.kind;
-    return { agent, ...(agent instanceof AcpBackendAgent ? { measure: (measure: MeasureOptions) => measureBackend(agent, agentName, measure) } : {}),
+    return { agent, ...(agent instanceof AcpBackendAgent ? { measure: (measure: MeasureOptions) => measureBackend(agent, agentName, measure, runtime.backend) } : {}),
       capabilities: { tools: [...runtime.toolIds], skills: [...runtime.skillIds], vars: runtime.variableConfig.variables.map((item) => item.name) },
       close: () => tools.mcp.close() };
   } catch (error) { await tools.mcp.close(); throw error; }

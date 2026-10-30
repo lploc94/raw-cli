@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { AGENT_KEYS, loadConfig } from "../src/config.js";
 import { AGENT_KEY_USE, BRIDGED_BUILTINS, NATIVE_DUPLICATES, classifyForBackend } from "../src/backends/compat.js";
+import { CLAUDE_COMPACT_BUFFER, backendCompactTrigger } from "../src/backends/config.js";
 import { installPackage } from "../src/packages/store.js";
 import { editAgent } from "../src/management/agents.js";
 import { exportAgentPackage } from "../src/packages/export.js";
@@ -63,7 +64,9 @@ test("CLI model entries and CLI agents reject malformed fields with messages nam
     [{ method: "codex-cli", model_id: [] }, "model c.model_id must be a string"],
     [{ method: "codex-cli", provider: "" }, "model c.provider must be a nonempty string"],
     [{ method: "codex-cli", executable: " " }, "model c.executable must be a nonempty string"],
-    ...["base_url", "api_key", "api_key_env", "context_window_tokens", "max_output_tokens", "vision"]
+    [{ method: "codex-cli", context_window_tokens: 0 }, "model c.context_window_tokens must be a positive integer"],
+    [{ method: "claude-code-cli", context_window_tokens: "360k" }, "model c.context_window_tokens must be a positive integer"],
+    ...["base_url", "api_key", "api_key_env", "max_output_tokens", "vision"]
       .map((key): [unknown, string] => [{ method: "codex-cli", [key]: key === "vision" ? true : key.endsWith("tokens") ? 1000 : "x" },
         `unknown model c field: ${key}`]),
   ];
@@ -76,17 +79,22 @@ test("CLI model entries and CLI agents reject malformed fields with messages nam
     [{ model: "codex", system_prompt_mode: null, tools: { use: [] } }, 'agent a.system_prompt_mode must be "replace" or "append"'],
     [{ model: "local", system_prompt_mode: "append", tools: { use: [] } }, "agent a.system_prompt_mode applies to CLI models only"],
     [{ model: "local", request: { mode: "auto" }, tools: { use: [] } }, "unknown agent a.request field: mode"],
+    [{ model: "codex", compact: { trigger_tokens: -1 }, tools: { use: [] } }, "agent a.compact.trigger_tokens must be a positive integer"],
+    [{ model: "codex", compact: { trigger: 5 }, tools: { use: [] } }, "unknown agent a.compact field: trigger"],
+    [{ model: "codex", compact: 5, tools: { use: [] } }, "agent a.compact must be an object"],
+    [{ model: "w", compact: { trigger_tokens: 200000 }, tools: { use: [] } }, "agent a.compact.trigger_tokens must be below the model's context_window_tokens"],
     [{ backend: { kind: "codex" }, tools: { use: [] } }, "unknown agent a field: backend"],
     [{ model: "codex", backend: { kind: "codex" }, tools: { use: [] } }, "unknown agent a field: backend"],
   ];
-  for (const [value, message] of agentCases) await assert.rejects(load(value), { message });
+  for (const [value, message] of agentCases) await assert.rejects(load(value, { w: { method: "codex-cli", context_window_tokens: 200000 } }), { message });
 });
 
 test("loop-only settings and hooks on a CLI agent load and are reported, not rejected; effort and mode apply", async () => {
   const runtime = await load({ model: "codex", request: { reasoning_effort: "high", max_output_tokens: 32768, thinking: "enabled" },
-    cache: { mode: "x" }, compact: { trigger_tokens: 5 }, max_steps: 3, hooks: { use: ["local/check"] }, tools: { use: ["builtin/bash", "builtin/todo"] } });
+    cache: { mode: "x" }, compact: { trigger_tokens: 5, keep_recent_turns: 3 }, max_steps: 3, hooks: { use: ["local/check"] }, tools: { use: ["builtin/bash", "builtin/todo"] } });
   assert.equal(runtime.backend?.effort, "high");
-  assert.deepEqual(runtime.backendIgnoredSettings, ["request.max_output_tokens", "request.thinking", "cache", "compact", "max_steps"]);
+  assert.equal(runtime.backend?.compactTrigger, 5);
+  assert.deepEqual(runtime.backendIgnoredSettings, ["request.max_output_tokens", "request.thinking", "compact.keep_recent_turns", "cache", "max_steps"]);
   const result = classifyForBackend(runtime);
   assert.deepEqual(result.bridged, ["builtin/todo"]);
   assert.deepEqual(result.warnings, [
@@ -94,13 +102,54 @@ test("loop-only settings and hooks on a CLI agent load and are reported, not rej
     'codex agent "a" skips hooks: Raw hooks do not run for an external backend',
     'codex agent "a" skips request.max_output_tokens: it configures Raw\'s own agent loop',
     'codex agent "a" skips request.thinking: it configures Raw\'s own agent loop',
+    'codex agent "a" skips compact.keep_recent_turns: it configures Raw\'s own agent loop',
     'codex agent "a" skips cache: it configures Raw\'s own agent loop',
-    'codex agent "a" skips compact: it configures Raw\'s own agent loop',
     'codex agent "a" skips max_steps: it configures Raw\'s own agent loop',
   ]);
   const clean = await load({ model: "codex", request: { reasoning_effort: "high", mode: "auto" }, tools: { use: [] } });
   assert.deepEqual(clean.backendIgnoredSettings, []);
   assert.deepEqual(classifyForBackend(clean).warnings, []);
+});
+
+test("a CLI model's window and a CLI agent's trigger reach the spec; each CLI reports what it cannot take", async () => {
+  const models = { w: { method: "claude-code-cli", context_window_tokens: 360000 }, x: { method: "codex-cli", context_window_tokens: 200000 },
+    y: { method: "antigravity-cli", context_window_tokens: 200000 } };
+  const agent = (model: string, compact?: unknown) => ({ model, ...(compact === undefined ? {} : { compact }), tools: { use: [] } });
+  const codex = await load(agent("x", { trigger_tokens: 150000 }), models);
+  assert.deepEqual({ ...codex.backend }, { kind: "codex", systemPromptMode: "replace", contextWindow: 200000, compactTrigger: 150000 });
+  assert.deepEqual(classifyForBackend(codex).warnings, []);
+  assert.deepEqual(backendCompactTrigger(codex.backend!), { tokens: 150000, estimated: false });
+  // Claude Code takes the window only, and compacts its own buffer below it.
+  const claude = await load(agent("w", { trigger_tokens: 300000 }), models);
+  assert.deepEqual({ ...claude.backend }, { kind: "claude", systemPromptMode: "replace", contextWindow: 360000, compactTrigger: 300000 });
+  assert.deepEqual(classifyForBackend(claude).warnings, ['claude agent "a" skips compact.trigger_tokens: Claude Code compacts at its context window '
+    + "minus its own buffer; set context_window_tokens on the model"]);
+  assert.deepEqual(backendCompactTrigger(claude.backend!), { tokens: 360000 - CLAUDE_COMPACT_BUFFER, estimated: true });
+  assert.equal(CLAUDE_COMPACT_BUFFER, 33000);
+  // A Claude trigger above the window is skipped, not rejected; a window no larger than the buffer gives no estimate.
+  await load(agent("w", { trigger_tokens: 500000 }), models);
+  assert.equal(backendCompactTrigger({ kind: "claude", systemPromptMode: "replace", contextWindow: 33000 }), undefined);
+  const agy = await load(agent("y", { trigger_tokens: 100000 }), models);
+  assert.deepEqual(classifyForBackend(agy).warnings, ['agy agent "a" skips compact.trigger_tokens: agy takes no compaction setting',
+    'agy agent "a" skips context_window_tokens: agy takes no context window setting']);
+  assert.equal(backendCompactTrigger(agy.backend!), undefined);
+  // Without a window or trigger, nothing is set and the CLI keeps its own.
+  const bare = await load(agent("codex", { trigger_tokens: false }));
+  assert.deepEqual({ ...bare.backend }, { kind: "codex", systemPromptMode: "replace" });
+  assert.deepEqual(bare.backendIgnoredSettings, ["compact.trigger_tokens"]);
+  assert.equal(backendCompactTrigger(bare.backend!), undefined);
+  // A Codex trigger without a window keeps Codex's own window, which may cap it: an estimate.
+  assert.deepEqual(backendCompactTrigger((await load(agent("codex", { trigger_tokens: 90000 }))).backend!), { tokens: 90000, estimated: true });
+  // A window alone says nothing of the trigger: one the user's CODEX_CONFIG sets still applies.
+  assert.equal(backendCompactTrigger((await load(agent("x"), models)).backend!), undefined);
+  // Codex caps its limit at 90% of the window (Codex 0.165.0 auto_compact_token_limit): a trigger above it compacts there,
+  // with a warning, not an error.
+  for (const [trigger, tokens] of [[179999, 179999], [180000, 180000], [180001, 180000], [199999, 180000]] as const) {
+    const capped = await load(agent("x", { trigger_tokens: trigger }), models);
+    assert.deepEqual(backendCompactTrigger(capped.backend!), { tokens, estimated: false }, String(trigger));
+    assert.deepEqual(classifyForBackend(capped).warnings, trigger > 180000
+      ? [`codex agent "a" compacts at 180000, not compact.trigger_tokens ${trigger}: Codex compacts at 90% of its window at most`] : []);
+  }
 });
 
 test("the shell warning names each backend", async () => {

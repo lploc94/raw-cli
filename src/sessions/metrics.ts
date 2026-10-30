@@ -25,6 +25,8 @@ export interface SessionMetrics {
     inputBudget?: number;
     outputReserve: number;
     compactTrigger?: number;
+    /** The trigger is Raw's estimate of where the CLI compacts, not a setting the CLI reported or took (Claude Code). */
+    compactTriggerEstimated?: boolean;
   };
 }
 

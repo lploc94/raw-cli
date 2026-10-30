@@ -189,14 +189,16 @@ test("switching a model with a stored key or a key reference to a CLI method cle
       assert.equal(kept.status, 422);
       await f.json("/models", "POST", { revision: entry.revision, action: "patch", name: "m",
         value: patch(JSON.stringify(entry.value), JSON.stringify({ ...next.value, executable: "/opt/codex" })), credential: next.credential });
-      assert.deepEqual(JSON.parse(readFileSync(f.configPath, "utf8")).models.m, { provider: "openai", method: "codex-cli", model_id: "x", executable: "/opt/codex" });
+      // The window is shared: the CLI compacts against it.
+      assert.deepEqual(JSON.parse(readFileSync(f.configPath, "utf8")).models.m, { provider: "openai", method: "codex-cli", model_id: "x",
+        context_window_tokens: 8192, executable: "/opt/codex" });
       entry = await f.json<any>("/models/m");
       next = switchModelMethod(entry.value, { mode: "clear" }, "openai-chat-completions");
       assert.deepEqual(next.credential, { mode: "keep" });
       await f.json("/models", "POST", { revision: entry.revision, action: "patch", name: "m",
         value: patch(JSON.stringify(entry.value), JSON.stringify({ ...next.value, base_url: "http://127.0.0.1:9/v1" })), credential: next.credential });
       assert.deepEqual(JSON.parse(readFileSync(f.configPath, "utf8")).models.m, { provider: "openai", method: "openai-chat-completions", model_id: "x",
-        base_url: "http://127.0.0.1:9/v1" });
+        context_window_tokens: 8192, base_url: "http://127.0.0.1:9/v1" });
     } finally { await f.close(); }
   }
 });

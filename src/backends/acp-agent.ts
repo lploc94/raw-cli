@@ -18,7 +18,7 @@ import { offeredFromConfigOptions, type BackendOffered } from "./options.js";
 import { startBridge, type RawBridge } from "./bridge/server.js";
 import type { ToolDefinition } from "../tools/registry.js";
 import type { ToolResult } from "../tools/types.js";
-import { BACKEND_LABELS, type BackendKind, type BackendSpec } from "./config.js";
+import { BACKEND_LABELS, backendCompactTrigger, backendContextWindow, type BackendKind, type BackendSpec } from "./config.js";
 import type { PanelActionRequest, SessionAgent } from "./types.js";
 
 /** How to start one ACP agent process and what its `session/new` carries; built per backend kind (claude.ts, codex.ts). */
@@ -661,12 +661,19 @@ export class AcpBackendAgent implements SessionAgent {
   toolDisplay(name: string): ToolDisplay | undefined { return this.session.toolDisplay(name); }
 }
 
-/** Session metrics of a backend session: the CLI's own context report, no output reserve or compaction trigger. */
-export function measureBackend(agent: AcpBackendAgent, agentName: string, options: MeasureOptions): SessionMetrics {
-  const { tokens, source, window } = agent.contextUsage();
+/**
+ * Session metrics of a backend session: the CLI's own context report, no output reserve. A window the model sets for a CLI
+ * that takes one wins over the reported one (Claude Code reports the model's largest window, whatever it compacts against), and the trigger is the
+ * CLI's, from `backendCompactTrigger`.
+ */
+export function measureBackend(agent: AcpBackendAgent, agentName: string, options: MeasureOptions, spec?: BackendSpec): SessionMetrics {
+  const { tokens, source, window: reported } = agent.contextUsage();
+  const window = (spec ? backendContextWindow(spec) : undefined) ?? reported;
+  const trigger = spec ? backendCompactTrigger(spec) : undefined;
   return { measuredAt: Date.now(), elapsedMs: Math.max(0, Math.round(performance.now() - options.startedAt)),
     model: agent.provider.usedModel ?? agent.provider.currentValue("model") ?? agent.provider.modelConfig.model, agentName,
     startedTools: options.startedTools, failedTools: options.failedTools, session: agent.stats(), turn: agent.stats(options.firstRequest),
     context: { estimatedTokens: tokens, source, outputReserve: 0,
-      ...(window ? { contextWindow: window, percentage: tokens / window * 100, inputBudget: window } : {}) } };
+      ...(window ? { contextWindow: window, percentage: tokens / window * 100, inputBudget: window } : {}),
+      ...(trigger ? { compactTrigger: trigger.tokens, ...(trigger.estimated ? { compactTriggerEstimated: true } : {}) } : {}) } };
 }

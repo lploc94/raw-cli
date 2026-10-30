@@ -10,6 +10,8 @@ export interface CliAgentOptions {
   mode?: string;
   executable?: string;
   system_prompt_mode?: "replace" | "append";
+  /** The model's `context_window_tokens`. */
+  context_window_tokens?: number;
   /** Model alias; defaults to `cli-<kind>`. */
   alias?: string;
 }
@@ -20,7 +22,8 @@ export function cliAgent(options: CliAgentOptions, rest: Record<string, unknown>
 } {
   const alias = options.alias ?? `cli-${options.kind}`;
   const model = { method: CLI_METHOD[options.kind], ...(options.model === undefined ? {} : { model_id: options.model }),
-    ...(options.executable === undefined ? {} : { executable: options.executable }) };
+    ...(options.executable === undefined ? {} : { executable: options.executable }),
+    ...(options.context_window_tokens === undefined ? {} : { context_window_tokens: options.context_window_tokens }) };
   const restRequest = rest.request && typeof rest.request === "object" ? rest.request as Record<string, unknown> : {};
   const request = { ...restRequest, ...(options.effort === undefined ? {} : { reasoning_effort: options.effort }),
     ...(options.mode === undefined ? {} : { mode: options.mode }) };

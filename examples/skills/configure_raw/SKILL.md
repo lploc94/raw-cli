@@ -23,7 +23,7 @@ Required strings: `provider` (service name), `method`, exact upstream `model_id`
 - `vision`: boolean, default false; required for builtin/view_image.
 - `context_window_tokens`, `max_output_tokens`: positive integers; output below context. Verify limits.
 
-A CLI model runs a coding CLI with its own login, tools and context instead of an API: `method` `claude-code-cli`, `codex-cli` or `antigravity-cli`; optional `model_id` (the CLI's model name; omitted or empty means the CLI's default), `provider`, `executable` (path or command, default `claude`/`codex`/`agy`). No `base_url`, keys, context or vision. An agent on it may set `request.reasoning_effort`, `request.mode` (the CLI's permission mode) and `system_prompt_mode` `replace` (default) or `append`; other request keys, `cache`, `compact`, `max_steps` and hooks are skipped with a warning.
+A CLI model runs a coding CLI with its own login, tools and context instead of an API: `method` `claude-code-cli`, `codex-cli` or `antigravity-cli`; optional `model_id` (the CLI's model name; omitted or empty means the CLI's default), `provider`, `executable` (path or command, default `claude`/`codex`/`agy`). Optional `context_window_tokens`: the window Claude Code and Codex compact against (agy: skipped). No `base_url`, keys, `max_output_tokens` or vision. An agent on it may set `request.reasoning_effort`, `request.mode` (the CLI's permission mode), `system_prompt_mode` `replace` (default) or `append`, and `compact.trigger_tokens` (Codex only, below the window; Claude Code compacts 33000 below its window); other request and compact keys, `cache`, `max_steps` and hooks are skipped with a warning.
 
 ## Agent: `agents.<name>`
 

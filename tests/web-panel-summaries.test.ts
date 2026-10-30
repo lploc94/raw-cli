@@ -149,6 +149,9 @@ test("context use is measured against the compact trigger or the window, coloure
   const trigger = summarizeContext({ estimatedTokens: 50_000, source: "provider", contextWindow: 200_000, compactTrigger: 52_000 });
   assert.deepEqual(trigger?.badge, { text: "96%", tone: "error", label: "96% of the auto-compact trigger used" });
   assert.equal(trigger?.summary, "50k / 52k tokens");
+  const estimated = summarizeContext({ estimatedTokens: 100_000, source: "provider", contextWindow: 360_000, compactTrigger: 327_000, compactTriggerEstimated: true });
+  assert.deepEqual(estimated?.badge, { text: "31%", tone: "muted", label: "31% of the estimated auto-compact trigger used" });
+  assert.equal(estimated?.summary, "100k / ≈327k tokens");
   const cool = summarizeContext({ estimatedTokens: 1000, contextWindow: 200_000 });
   assert.equal(cool?.badge?.tone, "muted");
   assert.equal(cool?.progress?.tone, "accent");

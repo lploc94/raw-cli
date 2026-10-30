@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { RunEvent } from "../src/agent.js";
-import { AcpBackendAgent, type AcpLaunch } from "../src/backends/acp-agent.js";
+import { AcpBackendAgent, measureBackend, type AcpLaunch } from "../src/backends/acp-agent.js";
 import { createAcpSessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { openSessionStore, type SessionStore, type SessionSummary } from "../src/sessions/store.js";
@@ -106,6 +106,40 @@ test("a scripted turn becomes Raw's events and history, one result per CLI tool 
     const messages = agent.transcript;
     assert.deepEqual(messages, [{ role: "user", content: "tools" }, { role: "assistant", text: "I'll run it.DONE", toolCalls: [] }]);
   } finally { await agent.close(); h.cleanup(); }
+});
+
+test("backend metrics: the model's window wins over the CLI's report, and the trigger is Codex's own or Claude Code's estimate", () => {
+  const stats = { requests: 0 } as never;
+  const fake = (context: { used: number; size: number } | undefined) => ({ contextUsage: () => context
+    ? { tokens: context.used, source: "provider" as const, window: context.size } : { tokens: 0, source: "estimate" as const },
+    provider: { usedModel: "m", currentValue: () => undefined, modelConfig: { model: "default" } }, stats: () => stats }) as unknown as AcpBackendAgent;
+  const options = { startedAt: performance.now(), firstRequest: 0, startedTools: 0, failedTools: 0 };
+  const reported = fake({ used: 100000, size: 1000000 });
+  // Claude Code reports the model's largest window; the configured one is what it compacts against.
+  const claude = measureBackend(reported, "c", options, { kind: "claude", systemPromptMode: "replace", contextWindow: 360000 }).context;
+  assert.deepEqual({ ...claude, percentage: Math.round(claude.percentage!) }, { estimatedTokens: 100000, source: "provider", outputReserve: 0,
+    contextWindow: 360000, percentage: 28, inputBudget: 360000, compactTrigger: 327000, compactTriggerEstimated: true });
+  const codex = measureBackend(fake({ used: 1000, size: 190000 }), "x", options,
+    { kind: "codex", systemPromptMode: "replace", contextWindow: 200000, compactTrigger: 150000 }).context;
+  assert.equal(codex.contextWindow, 200000);
+  assert.equal(codex.compactTrigger, 150000);
+  assert.equal(Object.hasOwn(codex, "compactTriggerEstimated"), false);
+  // Nothing configured: the CLI's report as it was, no trigger.
+  const bare = measureBackend(reported, "c", options, { kind: "claude", systemPromptMode: "replace" }).context;
+  assert.equal(bare.contextWindow, 1000000);
+  assert.equal(Object.hasOwn(bare, "compactTrigger"), false);
+  // agy takes no window: a configured one is not shown as a limit.
+  const agy = measureBackend(fake({ used: 1000, size: 50000 }), "y", options, { kind: "agy", systemPromptMode: "replace", contextWindow: 200000 }).context;
+  assert.equal(agy.contextWindow, 50000);
+  assert.equal(measureBackend(fake(undefined), "y", options, { kind: "agy", systemPromptMode: "replace", contextWindow: 200000 }).context.contextWindow, undefined);
+  // Codex with a window alone: no trigger shown, since an inherited CODEX_CONFIG limit may apply; above the cap, the cap.
+  assert.equal(Object.hasOwn(measureBackend(reported, "x", options, { kind: "codex", systemPromptMode: "replace", contextWindow: 200000 }).context, "compactTrigger"), false);
+  const capped = measureBackend(reported, "x", options, { kind: "codex", systemPromptMode: "replace", contextWindow: 200000, compactTrigger: 195000 }).context;
+  assert.deepEqual([capped.compactTrigger, capped.compactTriggerEstimated], [180000, undefined]);
+  const alone = measureBackend(reported, "x", options, { kind: "codex", systemPromptMode: "replace", compactTrigger: 90000 }).context;
+  assert.deepEqual([alone.compactTrigger, alone.compactTriggerEstimated], [90000, true]);
+  // A window before the CLI's first report still gives a limit.
+  assert.equal(measureBackend(fake(undefined), "c", options, { kind: "claude", systemPromptMode: "replace", contextWindow: 360000 }).context.contextWindow, 360000);
 });
 
 const notices = (events: RunEvent[]) => events.filter((event) => event.type === "backend_notice").map((event) => (event as { message: string }).message);

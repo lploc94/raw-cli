@@ -99,7 +99,7 @@ An agent can run an external coding CLI instead of Raw's own loop: declare the C
   "agents": { "claude": { "model": "sonnet", "system_prompt": "You are a careful reviewer.", "tools": { "use": ["builtin/todo"] } } } }
 ```
 
-`model_id` is the CLI's own model name (omit it for the CLI's default); `request.reasoning_effort` and `request.mode` go to the CLI. Anything the CLI cannot do (hooks, compaction, Raw tools on agy) is skipped with a warning, never an error. See [backends](docs/backends.md) for setup, the capability table and [an example config](examples/agents/cli-backends/).
+`model_id` is the CLI's own model name (omit it for the CLI's default); `request.reasoning_effort` and `request.mode` go to the CLI. `context_window_tokens` on the model sets the window Claude Code and Codex compact against, and `compact.trigger_tokens` the threshold on Codex. Anything the CLI cannot do (hooks, Raw's `/compact`, Raw tools on agy) is skipped with a warning, never an error. See [backends](docs/backends.md) for setup, the capability table and [an example config](examples/agents/cli-backends/).
 
 ## Tools, images and MCP
 

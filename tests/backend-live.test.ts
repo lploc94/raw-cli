@@ -152,6 +152,41 @@ function running(pid: number): boolean {
   return false;
 }
 
+test("claude, codex: the model's window and the agent's trigger reach the CLI and the dashboard's context metrics",
+  { skip: !(LIVE.has("claude") && LIVE.has("codex")) && "set RAW_LIVE_BACKENDS=claude,codex" }, async () => {
+  const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  const f = await dashboardFixture({ env: { XDG_DATA_HOME: data }, attach: attachSessionRuntimeWith(createSessionAgent), config: { default_agent: "w-claude" },
+    extraAgents: { "w-claude": { cli: { kind: "claude", context_window_tokens: 360000 }, tools: { use: [] } },
+      "w-codex": { cli: { kind: "codex", context_window_tokens: 200000 }, compact: { trigger_tokens: 150000 }, tools: { use: [] } } } });
+  const run = async (agent: string, input: string) => {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent });
+    const op = await f.json<SessionOperation>(`/sessions/${session.id}/operations`, "POST", { clientRequestId: randomBytes(8).toString("hex"), kind: "turn", agent, input });
+    for (const end = Date.now() + 300_000; ;) {
+      const state = (await f.json<SessionOperation>(`/operations/${op.id}`)).state;
+      if (["completed", "max_steps", "cancelled", "error", "interrupted"].includes(state)) { assert.equal(state, "completed"); break; }
+      if (Date.now() >= end) throw new Error(`operation ${op.id} did not finish`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const metrics = (await f.json<{ metrics: { context: Record<string, unknown> } }>(`/sessions/${session.id}/metrics`)).metrics.context;
+    return { session: session.id, metrics };
+  };
+  try {
+    const claude = await run("w-claude", "Run this exact shell command and reply with only its output: printenv CLAUDE_CODE_AUTO_COMPACT_WINDOW");
+    assert.equal(claude.metrics.contextWindow, 360000);
+    assert.equal(claude.metrics.compactTrigger, 327000);
+    assert.equal(claude.metrics.compactTriggerEstimated, true);
+    const store = openSessionStore({ env: f.env });
+    try {
+      const answer = JSON.stringify(store.getSessionHistory({ sessionId: claude.session, limit: 100 }).items.filter((item) => item.kind === "assistant"));
+      assert.match(answer, /360000/);
+    } finally { store.close(); }
+    const codex = await run("w-codex", "Reply with just: OK");
+    assert.equal(codex.metrics.contextWindow, 200000);
+    assert.equal(codex.metrics.compactTrigger, 150000);
+    assert.equal(codex.metrics.compactTriggerEstimated, undefined);
+  } finally { await f.close(); }
+});
+
 test("claude: end to end in the dashboard: todo panel, tool calls, a cancel that stops only its own runtime",
   { skip: !LIVE.has("claude") && "set RAW_LIVE_BACKENDS=claude" }, async () => {
   const agents: Array<{ pid: number | undefined; session: string }> = [];

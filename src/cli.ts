@@ -2,6 +2,7 @@ import { ProcessSupervisor } from "./processes/supervisor.js";
 import { terminalInteractionAdapter } from "./interactions/terminal.js";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { RunResult } from "./agent.js";
+import { backendCompactTrigger, backendContextWindow } from "./backends/config.js";
 import { createSessionAgent, sessionIdentity, type SessionAgentFactory } from "./backends/factory.js";
 import type { SessionAgent } from "./backends/types.js";
 import type { RuntimeConfig } from "./config.js";
@@ -126,13 +127,14 @@ export async function runCli(runtime: RuntimeConfig, task: string | undefined,
   }
   const formatFooter = (result: RunResult, renderer: TerminalRenderer, id: string, resumable: boolean, repl = false) => {
     const context = session.contextUsage();
-    const window = runtime.modelConfig?.contextWindow ?? context.window;
+    const window = runtime.modelConfig?.contextWindow ?? (runtime.backend ? backendContextWindow(runtime.backend) : undefined) ?? context.window;
+    const trigger = runtime.compact.triggerTokens ?? (runtime.backend ? backendCompactTrigger(runtime.backend)?.tokens : undefined);
     const reserve = runtime.modelConfig ? effectiveOutputTokens(runtime.modelConfig) : 0;
     return formatTurnFooter({ status: result.status, ...(result.code ? { code: result.code } : {}),
       elapsedMs: renderer.elapsedMs, startedToolCalls: renderer.startedToolCalls, notRunToolCalls: renderer.notRunToolCalls,
       stats: session.stats(), contextTokens: context.tokens, contextReported: context.source === "provider",
       ...(window === undefined ? {} : { contextWindow: window, inputBudget: effectiveInputBudget(window, reserve) }),
-      ...(runtime.compact.triggerTokens === undefined ? {} : { compactTrigger: runtime.compact.triggerTokens }),
+      ...(trigger === undefined ? {} : { compactTrigger: trigger }),
       sessionId: id, resumable, repl, ui: runtime.ui, caps });
   };
   const createSavedSession = (title: string) => store.createSession({ cwd, title, ...sessionIdentity(runtime),

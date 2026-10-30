@@ -167,8 +167,12 @@ test.describe("CLI connections in Settings and on the agent page at 320 px", () 
     await dialog.getByRole("button", { name: "Create", exact: true }).click();
     await expect(page).toHaveURL(/\/settings\/models\/terra-long-alias/);
     expect(savedConfig(raw).models["terra-long-alias-for-a-frontier-agentic-coding-model"]).toEqual({ method: "codex-cli", model_id: "gpt-6.1-terra" });
-    // A CLI connection has no endpoint, context or credential fields.
+    // A CLI connection has no endpoint or credential fields; Codex takes a context window.
     await expect(page.getByLabel("Executable", { exact: true })).toBeVisible();
+    await page.getByLabel("Context window tokens", { exact: true }).fill("200000");
+    await save(page);
+    expect(savedConfig(raw).models["terra-long-alias-for-a-frontier-agentic-coding-model"]).toEqual({ method: "codex-cli", model_id: "gpt-6.1-terra",
+      context_window_tokens: 200000 });
     await expect(page.getByLabel("Base URL", { exact: true })).toHaveCount(0);
     await expect(page.getByLabel("Credential action", { exact: true })).toHaveCount(0);
     await fits(page, [".editor-fields"]);
@@ -226,7 +230,12 @@ test.describe("CLI connections in Settings and on the agent page at 320 px", () 
     await page.getByLabel("Provider (optional)", { exact: true }).fill("");
     await page.getByLabel("Executable", { exact: true }).fill("/opt/claude");
     await save(page);
-    expect(savedConfig(raw).models.fixture).toEqual({ method: "claude-code-cli", model_id: "sonnet", executable: "/opt/claude" });
+    // The window stays: Claude Code compacts against it.
+    await expect(page.getByLabel("Context window tokens", { exact: true })).toHaveValue("8192");
+    expect(savedConfig(raw).models.fixture).toEqual({ method: "claude-code-cli", model_id: "sonnet", context_window_tokens: 8192, executable: "/opt/claude" });
+    // agy takes no window: the field is not offered.
+    await page.getByLabel("Method", { exact: true }).selectOption("antigravity-cli");
+    await expect(page.getByLabel("Context window tokens", { exact: true })).toHaveCount(0);
     await page.getByLabel("Method", { exact: true }).selectOption("openai-chat-completions");
     await page.getByLabel("Provider", { exact: true }).fill("openai");
     await page.getByLabel("Model ID", { exact: true }).fill("gpt-chat");
@@ -234,6 +243,6 @@ test.describe("CLI connections in Settings and on the agent page at 320 px", () 
     await expect(page.getByLabel("Credential action", { exact: true })).toHaveValue("keep");
     await save(page);
     expect(savedConfig(raw).models.fixture).toEqual({ method: "openai-chat-completions", provider: "openai", model_id: "gpt-chat",
-      base_url: "http://127.0.0.1:9/v1" });
+      context_window_tokens: 8192, base_url: "http://127.0.0.1:9/v1" });
   });
 });

@@ -207,8 +207,10 @@ its location without writing that other file. Diagnostics copy uses an allowlist
 Model saves perform validation only; Start test chat uses the ordinary composer.
 Settings → Models adds a model through **Connection**: an API method, or
 Claude Code CLI, Codex CLI or Antigravity CLI. A CLI model edits only Provider
-(optional), Model ID (empty for the CLI's default) and Executable; switching a
-model to a CLI drops its endpoint, limits, vision and stored credential.
+(optional), Model ID (empty for the CLI's default), Executable and, for Claude
+Code and Codex, Context window tokens (the window the CLI compacts against);
+switching a model to a CLI drops its endpoint, output limit, vision and stored
+credential, and keeps its context window.
 Vars Read and MCP Discover are explicit, cancellable actions. Merely opening
 Library or saving a definition does not execute a provider or connect to MCP.
 

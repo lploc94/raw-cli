@@ -1,5 +1,10 @@
 /** The part of the session's context metrics the usage indicator needs. */
-export interface ContextUsageInput { estimatedTokens: number; source?: "provider" | "estimate" | undefined; contextWindow?: number | undefined; compactTrigger?: number | undefined }
+export interface ContextUsageInput { estimatedTokens: number; source?: "provider" | "estimate" | undefined; contextWindow?: number | undefined; compactTrigger?: number | undefined;
+  /** The trigger is Raw's estimate of where the CLI compacts (Claude Code), shown with `≈`. */
+  compactTriggerEstimated?: boolean | undefined }
+
+/** `≈` before an estimated trigger. */
+export const compactTriggerMark = (context: ContextUsageInput): string => context.compactTriggerEstimated ? "≈" : "";
 
 export interface ContextUsage {
   /** What the tokens are measured against: the auto-compact trigger when the agent sets one, else the model's context window. */

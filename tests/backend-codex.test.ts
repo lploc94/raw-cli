@@ -75,6 +75,19 @@ test("the prompt replaces Codex's with a file, is appended as developer instruct
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("the model's window and the agent's trigger go to Codex beside the prompt, each only when set", async () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-codex-"));
+  try {
+    const both = await runtimeFor(root, { cli: { kind: "codex", context_window_tokens: 200000 }, compact: { trigger_tokens: 150000 }, system_prompt: "Be RAW." });
+    assert.deepEqual(codexConfig(both, "/p/prompt.md"), { model_context_window: 200000, model_auto_compact_token_limit: 150000,
+      model_instructions_file: "/p/prompt.md", include_environment_context: false, include_permissions_instructions: false });
+    assert.deepEqual(codexConfig(await runtimeFor(root, { cli: { kind: "codex", context_window_tokens: 200000 } }), "/p/prompt.md"),
+      { model_context_window: 200000 });
+    assert.deepEqual(codexConfig(await runtimeFor(root, { cli: { kind: "codex" }, compact: { trigger_tokens: 90000 } }), "/p/prompt.md"),
+      { model_auto_compact_token_limit: 90000 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("the real codex-acp hands Codex exactly the agent's prompt settings, from a file only this runtime owns", async (t) => {
   if (!await realAdapter()) return t.skip("codex-acp could not be installed (offline)");
   const root = mkdtempSync(join(tmpdir(), "raw-codex-"));
@@ -102,6 +115,12 @@ test("the real codex-acp hands Codex exactly the agent's prompt settings, from a
       { CODEX_CONFIG: JSON.stringify({ model_reasoning_summary: "none", developer_instructions: "theirs" }) });
     assert.equal(inherited.config.model_reasoning_summary, "none");
     assert.equal(inherited.config.developer_instructions, "Be RAW.");
+    // The window and trigger reach the thread Codex starts, over a value the user's CODEX_CONFIG set.
+    const context = await threadConfig(join(root, "c"), { cli: { kind: "codex", context_window_tokens: 200000 }, compact: { trigger_tokens: 150000 } },
+      { CODEX_CONFIG: JSON.stringify({ model_context_window: 999, model_reasoning_summary: "none" }) });
+    assert.equal(context.config.model_context_window, 200000);
+    assert.equal(context.config.model_auto_compact_token_limit, 150000);
+    assert.equal(context.config.model_reasoning_summary, "none");
   // On Windows the fake Codex the stopped job held may still be closing its working directory.
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }
 });

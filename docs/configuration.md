@@ -56,7 +56,7 @@ Required: provider, method, model_id. Optional: base_url, api_key or api_key_env
 api_key is a literal key. api_key_env is the name of an environment variable. Only the selected model resolves its credential. Known service defaults are OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY, OPENROUTER_API_KEY and a local Ollama endpoint. A custom service requires an explicit base_url and key source if the endpoint requires authentication. Config list validates all entries without resolving inactive credentials or printing secrets.
 Official SDK endpoint defaults apply only when provider and method are the matching service pair. Any other combination requires an explicit base_url so credentials never go to an adapter default for a different service.
 
-A CLI model runs a coding CLI instead of an API ([external backends](#external-backends)): `method` is `claude-code-cli`, `codex-cli` or `antigravity-cli`. Optional: `model_id` (the CLI's own model name; omitted or empty runs the CLI's default), `provider` (a label only) and `executable` (the CLI binary when it is not `claude`, `codex` or `agy` on `PATH`). The CLI keeps its own login, endpoint and context, so `base_url`, `api_key`, `api_key_env`, `context_window_tokens`, `max_output_tokens` and `vision` are unknown fields on a CLI model.
+A CLI model runs a coding CLI instead of an API ([external backends](#external-backends)): `method` is `claude-code-cli`, `codex-cli` or `antigravity-cli`. Optional: `model_id` (the CLI's own model name; omitted or empty runs the CLI's default), `provider` (a label only) and `executable` (the CLI binary when it is not `claude`, `codex` or `agy` on `PATH`). `context_window_tokens` is optional too: the window Claude Code and Codex compact against (see [context and compaction](#cli-context-and-compaction)). The CLI keeps its own login and endpoint, so `base_url`, `api_key`, `api_key_env`, `max_output_tokens` and `vision` are unknown fields on a CLI model.
 
 ## Agent fields
 
@@ -179,7 +179,31 @@ An agent can run an external coding CLI instead of Raw's own loop: Claude Code (
 
 The model's `model_id`, and the agent's `request.reasoning_effort` and `request.mode` (the CLI's permission mode), are passed to the CLI as strings; the CLI's own list of values decides, and a value it does not list gives a warning and the CLI's default. An empty `model_id` runs the CLI's default model. The agent's `system_prompt_mode` is `"replace"` (default: the agent's prompt replaces the CLI's) or `"append"`; it is a config error on an agent with an API model.
 
-Selected tools the CLI already provides (`builtin/read_file`, `write_file`, `edit_file`, `apply_patch`, `bash`, `powershell`, `view_image`), `hooks.use`, `request` keys other than `reasoning_effort` and `mode`, and the loop-only settings `cache`, `compact` and `max_steps` are skipped with a warning; the agent still runs. `raw config check` lists those warnings without starting the CLI. A package agent binding names a CLI model in `model` like any other. See [backends](backends.md).
+Selected tools the CLI already provides (`builtin/read_file`, `write_file`, `edit_file`, `apply_patch`, `bash`, `powershell`, `view_image`), `hooks.use`, `request` keys other than `reasoning_effort` and `mode`, `compact` keys other than `trigger_tokens`, and the loop-only settings `cache` and `max_steps` are skipped with a warning; the agent still runs. `raw config check` lists those warnings without starting the CLI. A package agent binding names a CLI model in `model` like any other. See [backends](backends.md).
+
+### CLI context and compaction
+
+The CLI compacts its own conversation; Raw's `/compact` does not apply. Two settings are passed to it:
+
+| Setting | Claude Code | Codex | agy |
+| --- | --- | --- | --- |
+| model `context_window_tokens` | `CLAUDE_CODE_AUTO_COMPACT_WINDOW`; wins over `autoCompactWindow` in `~/.claude/settings.json` | `model_context_window` in the thread config | skipped with a warning |
+| agent `compact.trigger_tokens` | skipped with a warning: Claude Code compacts 33000 tokens below its window | `model_auto_compact_token_limit` in the thread config; must be below the model's window, and Codex caps it at 90% of the window (a higher one warns) | skipped with a warning |
+
+Without them each CLI keeps its own settings. The chat shows the configured window (not for agy), and the trigger: with a Codex trigger and window, Codex's limit as Codex computes it (the trigger capped at 90% of the window); with a Codex trigger alone the trigger as an estimate (`≈`), since Codex caps it by its own window; with a Codex window alone none, since a limit your own `CODEX_CONFIG` sets may apply; or for Claude Code an estimate of 33000 below the window, shown as `≈327k` and "Auto compact at (estimated)". Claude Code reports the model's largest window (1M for Opus) whatever it compacts against, so Raw shows its own value when one is set. `"trigger_tokens": false` has no CLI equivalent and is skipped.
+
+```json
+{
+  "models": {
+    "claude-code": { "method": "claude-code-cli", "context_window_tokens": 360000 },
+    "terra": { "method": "codex-cli", "model_id": "gpt-6.1-terra", "context_window_tokens": 200000 }
+  },
+  "agents": {
+    "claude": { "model": "claude-code", "tools": { "use": [] } },
+    "codex": { "model": "terra", "compact": { "trigger_tokens": 150000 }, "tools": { "use": [] } }
+  }
+}
+```
 
 ## Runtime flags
 

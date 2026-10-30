@@ -8,7 +8,7 @@ import type { Preferences } from "./preferences.js";
 import { CopyButton } from "./ui.js";
 import { SidePanel, type SidePanelProps } from "./panels/SidePanel.js";
 import { compactTokens, reportsTokens, summarizeContext } from "./panels/summaries.js";
-import { contextUsage } from "./composer/context-usage.js";
+import { compactTriggerMark, contextUsage } from "./composer/context-usage.js";
 
 const resume = (id: string) => `raw --resume ${id} "Your next message"`;
 const count = (value: number) => value.toLocaleString();
@@ -66,9 +66,9 @@ function Details({
   const line = [
     messages === undefined ? undefined : `${messages} ${messages === 1 ? "message" : "messages"} kept`,
     summary ? "summary stored" : "no summary yet",
-    context?.compactTrigger ? `auto compact at ${compactTokens(context.compactTrigger)}` : "auto compact off",
+    context?.compactTrigger ? `auto compact at ${compactTriggerMark(context)}${compactTokens(context.compactTrigger)}` : "auto compact off",
   ].filter(Boolean).join(" · ");
-  const limits: Array<[string, number | undefined]> = [["Context window", context?.contextWindow], ["Input budget", context?.inputBudget], ["Output reserve", context?.outputReserve], ["Auto compact at", context?.compactTrigger || undefined]];
+  const limits: Array<[string, number | undefined]> = [["Context window", context?.contextWindow], ["Input budget", context?.inputBudget], ["Output reserve", context?.outputReserve], [context?.compactTriggerEstimated ? "Auto compact at (estimated)" : "Auto compact at", context?.compactTrigger || undefined]];
   return (
     <div className="details">
       <section className="sp-card details-card" data-card="context" aria-labelledby="details-context">

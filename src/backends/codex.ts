@@ -17,14 +17,19 @@ export function codexPromptRoot(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * The thread config that carries the agent's system prompt (Fixed decision 2, Decision 2026-10-29): codex-acp merges
- * `CODEX_CONFIG` into every thread it starts. Replace names a prompt file and drops the environment and permission
- * notes Codex adds; append adds the text as developer instructions; an agent without a prompt sets nothing.
+ * The thread config that carries the agent's system prompt (Fixed decision 2, Decision 2026-10-29) and the model's window
+ * and compaction limit: codex-acp merges `CODEX_CONFIG` into every thread it starts. Replace names a prompt file and drops
+ * the environment and permission notes Codex adds; append adds the text as developer instructions; an agent without a
+ * prompt, window or limit sets nothing.
  */
 export function codexConfig(runtime: RuntimeConfig, promptFile: string): Record<string, unknown> | undefined {
-  if (!runtime.systemPrompt) return undefined;
-  if (runtime.backend!.systemPromptMode === "append") return { developer_instructions: runtime.systemPrompt };
-  return { model_instructions_file: promptFile, include_environment_context: false, include_permissions_instructions: false };
+  const { contextWindow, compactTrigger, systemPromptMode } = runtime.backend!;
+  const context = { ...(contextWindow === undefined ? {} : { model_context_window: contextWindow }),
+    ...(compactTrigger === undefined ? {} : { model_auto_compact_token_limit: compactTrigger }) };
+  const prompt = !runtime.systemPrompt ? {} : systemPromptMode === "append" ? { developer_instructions: runtime.systemPrompt }
+    : { model_instructions_file: promptFile, include_environment_context: false, include_permissions_instructions: false };
+  const config = { ...context, ...prompt };
+  return Object.keys(config).length ? config : undefined;
 }
 
 /** Removes prompt directories a Raw that ended without closing its runtime left behind, once they are older than `days`. */
@@ -63,7 +68,7 @@ export function codexLaunch(runtime: RuntimeConfig, cwd: string, deps: Pick<Inst
       prepare();
       cleanup = () => rmSync(directory, { recursive: true, force: true });
     }
-    // A CODEX_CONFIG the user set keeps its other settings; the prompt settings are the agent's.
+    // A CODEX_CONFIG the user set keeps its other settings; the prompt, window and limit are the agent's.
     let inherited: Record<string, unknown> = {};
     try { const parsed: unknown = env.CODEX_CONFIG ? JSON.parse(env.CODEX_CONFIG) : {}; if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) inherited = parsed as Record<string, unknown>; }
     catch { notify("CODEX_CONFIG is not a JSON object; Codex starts without it"); }

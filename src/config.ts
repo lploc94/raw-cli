@@ -586,17 +586,20 @@ interface CliModelSpec {
   /** Informational only. */
   provider?: string;
   executable?: string;
+  /** Passed to Claude Code and Codex as the window they compact against. */
+  contextWindow?: number;
 }
 
 function cliModelSpec(name: string, raw: unknown): CliModelSpec {
   const where = "model " + name;
   const value = object(raw, where);
-  keys(value, ["method", "model_id", "provider", "executable"], where);
+  keys(value, ["method", "model_id", "provider", "executable", "context_window_tokens"], where);
   if (value.model_id !== undefined && typeof value.model_id !== "string") throw new Error(where + ".model_id must be a string");
   return { kind: CLI_METHODS[value.method as string]!,
     ...(typeof value.model_id === "string" && value.model_id.trim() ? { modelId: value.model_id } : {}),
     ...(value.provider !== undefined ? { provider: string(value.provider, where + ".provider") } : {}),
-    ...(value.executable !== undefined ? { executable: string(value.executable, where + ".executable") } : {}) };
+    ...(value.executable !== undefined ? { executable: string(value.executable, where + ".executable") } : {}),
+    ...(value.context_window_tokens !== undefined ? { contextWindow: positive(value.context_window_tokens, where + ".context_window_tokens") } : {}) };
 }
 
 /** `ratio` of the input budget: the context minus the output reserve and the safety margin. */
@@ -693,14 +696,23 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
 }
 
 /** CLI agent keys that Raw's loop settings would use; the CLI does not, so they are reported, not applied. */
-const CLI_SKIPPED_KEYS = ["cache", "compact", "max_steps"];
+const CLI_SKIPPED_KEYS = ["cache", "max_steps"];
 
 /**
- * An agent whose model is a CLI: `request.reasoning_effort` and `request.mode` go to the CLI, and the
- * model's `model_id`/`executable` name what it runs; Raw's model and loop settings are kept only to be reported.
+ * An agent whose model is a CLI: `request.reasoning_effort`, `request.mode` and `compact.trigger_tokens` go to the CLI, and
+ * the model's `model_id`/`executable`/`context_window_tokens` name what it runs; Raw's model and loop settings are kept only
+ * to be reported.
  */
 function cliAgentSpec(where: string, value: JsonObject, cli: CliModelSpec): AgentSpec {
   const request = value.request === undefined ? {} : object(value.request, where + ".request");
+  const compact = value.compact === undefined ? {} : object(value.compact, where + ".compact");
+  keys(compact, ["keep_recent_turns", "keep_recent_tokens", "max_output_tokens", "trigger_tokens", "clear_tokens", "instructions", "strategy"], where + ".compact");
+  // `false` (Raw's manual compaction) has no CLI equivalent: the CLI keeps its default, and the key is reported.
+  const trigger = compact.trigger_tokens === undefined || compact.trigger_tokens === false ? undefined
+    : positive(compact.trigger_tokens, where + ".compact.trigger_tokens");
+  if (cli.kind === "codex" && trigger !== undefined && cli.contextWindow !== undefined && trigger >= cli.contextWindow) {
+    throw new Error(where + ".compact.trigger_tokens must be below the model's context_window_tokens");
+  }
   const promptMode = value.system_prompt_mode === undefined ? "replace" : value.system_prompt_mode;
   if (promptMode !== "replace" && promptMode !== "append") throw new Error(`${where}.system_prompt_mode must be "replace" or "append"`);
   const backend: BackendSpec = Object.freeze({ kind: cli.kind,
@@ -708,7 +720,9 @@ function cliAgentSpec(where: string, value: JsonObject, cli: CliModelSpec): Agen
     ...(request.reasoning_effort === undefined ? {} : { effort: string(request.reasoning_effort, where + ".request.reasoning_effort") }),
     ...(request.mode === undefined ? {} : { mode: string(request.mode, where + ".request.mode") }),
     systemPromptMode: promptMode,
-    ...(cli.executable === undefined ? {} : { executable: cli.executable }) });
+    ...(cli.executable === undefined ? {} : { executable: cli.executable }),
+    ...(cli.contextWindow === undefined ? {} : { contextWindow: cli.contextWindow }),
+    ...(trigger === undefined ? {} : { compactTrigger: trigger }) });
   const tools = toolSpec(value.tools, where + ".tools");
   const skillIds = skillSpec(value.skills, where + ".skills");
   const hookIds = hookSpec(value.hooks, where + ".hooks");
@@ -717,6 +731,7 @@ function cliAgentSpec(where: string, value: JsonObject, cli: CliModelSpec): Agen
   }
   if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
   const ignored = [...Object.keys(request).filter((key) => key !== "reasoning_effort" && key !== "mode").map((key) => `request.${key}`),
+    ...Object.keys(compact).filter((key) => key !== "trigger_tokens" || compact[key] === false).map((key) => `compact.${key}`),
     ...CLI_SKIPPED_KEYS.filter((key) => value[key] !== undefined)];
   const result: AgentSpec = { backend, backendIgnoredSettings: Object.freeze(ignored), compact: compactSpec(undefined, where + ".compact"),
     toolIds: tools.ids, skillIds, hookIds, toolRules: tools.rules,

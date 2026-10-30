@@ -25,7 +25,10 @@ export function claudeLaunch(runtime: RuntimeConfig, cwd: string, deps: Pick<Ins
     const adapter = await installedAdapter(CLAUDE_ADAPTER, { env, notify, ...(signal ? { signal } : {}), ...(deps.npm ? { npm: deps.npm } : {}) });
     const sessionMeta = claudeSessionMeta(runtime);
     if (runtime.backendPromptGiven && !runtime.systemPrompt && runtime.backend!.systemPromptMode === "replace") notify(CLAUDE_EMPTY_PROMPT);
-    return { command: process.execPath, args: [adapter], env: { ...env, CLAUDE_CODE_EXECUTABLE: executable },
+    // The model's window wins over the user's `autoCompactWindow` and a CLAUDE_CODE_AUTO_COMPACT_WINDOW already set.
+    const window = runtime.backend!.contextWindow;
+    return { command: process.execPath, args: [adapter],
+      env: { ...env, CLAUDE_CODE_EXECUTABLE: executable, ...(window === undefined ? {} : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(window) }) },
       ...(sessionMeta ? { sessionMeta } : {}), authHint: "run `claude` once and log in" };
   };
 }

@@ -12,7 +12,7 @@ Raw talks to Claude Code and Codex through their ACP adapters (`@agentclientprot
 
 Cancelling a turn asks the CLI to stop, waits up to 5 s, then stops the adapter and everything it started. The next turn starts it again and continues the conversation.
 
-What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, hooks and native tool rules. The CLI keeps its own context and tools.
+What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, hooks and native tool rules. The CLI keeps its own context and tools; Claude Code and Codex take the window and Codex the threshold they compact at from the config ([CLI context and compaction](configuration.md#cli-context-and-compaction)).
 
 ## What each backend supports
 
@@ -31,7 +31,9 @@ What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, h
 | Panels (todo and tool panels) | yes | yes | no | `backend-bridge`: "a bridged todo call produces the same panel event as Raw's loop…"; live: "bridge todo" |
 | `ask_user` | yes | yes | no | `backend-bridge`: "in the dashboard, a bridged todo fills the session's todo panel and ask_user waits…" |
 | Hooks | no | no | no | `backend-config`: "loop-only settings and hooks on a backend agent load and are reported, not rejected" |
-| Compaction | no | no | no | `backend-acp`: "compaction is reported as unsupported for a backend…" |
+| Compaction by Raw (`/compact`) | no, the CLI compacts | no, the CLI compacts | no | `backend-acp`: "compaction is reported as unsupported for a backend…" |
+| `context_window_tokens` | yes (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`) | yes (`model_context_window`) | no, with a warning | `backend-claude`: "the model's window reaches Claude Code…"; `backend-codex`: "the real codex-acp hands Codex…"; `backend-config`: "a CLI model's window and a CLI agent's trigger…" |
+| `compact.trigger_tokens` | no, with a warning (estimated as window − 33000) | yes (`model_auto_compact_token_limit`) | no, with a warning | `backend-codex`: "the model's window and the agent's trigger go to Codex…"; `backend-acp`: "backend metrics: …" |
 | `tools.rules` on the CLI's own tools | no | no | no | `backend-config`: "rules that only match skipped tools warn that they cannot be enforced" |
 
 Each CLI sends its own system prompt, tool list and context, which Raw cannot shrink. Even with a replaced prompt, a short question cost about 14k input tokens with Claude Code, 18k with Codex and 7k with agy on 2026-10-28. The numbers vary with the CLI's version, its settings and the files it reads (`CLAUDE.md`, `AGENTS.md`).

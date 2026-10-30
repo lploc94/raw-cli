@@ -1,6 +1,6 @@
 import type { RuntimeConfig } from "../config.js";
 import { ruleMatches } from "../tools/registry.js";
-import { BACKEND_LABELS, type BackendKind } from "./config.js";
+import { BACKEND_LABELS, codexCompactCap, type BackendKind } from "./config.js";
 
 /** Built-ins whose job every supported CLI already does with its own tools; Raw skips them for a backend. */
 export const NATIVE_DUPLICATES: Readonly<Record<string, string>> = Object.freeze({
@@ -18,11 +18,11 @@ export const BRIDGED_BUILTINS: readonly string[] = Object.freeze(["builtin/todo"
   "builtin/read_var", "builtin/list_skills", "builtin/load_skill", "builtin/process"]);
 
 /** What an agent on a CLI model does with each agent key: `used`, or `skipped` because it configures Raw's own loop.
- * `request` is used for `reasoning_effort` and `mode`; its other keys are skipped one by one. */
+ * `request` is used for `reasoning_effort` and `mode`, `compact` for `trigger_tokens`; their other keys are skipped one by one. */
 export const AGENT_KEY_USE: Readonly<Record<string, "used" | "skipped">> = Object.freeze({
   model: "used", tools: "used", skills: "used", vars: "used", system_prompt: "used", system_prompt_file: "used", system_prompt_mode: "used",
   max_output_bytes: "used", request_timeout_ms: "used",
-  request: "used", cache: "skipped", compact: "skipped", max_steps: "skipped", hooks: "skipped",
+  request: "used", compact: "used", cache: "skipped", max_steps: "skipped", hooks: "skipped",
 });
 
 export interface BackendCompatibility {
@@ -57,7 +57,16 @@ export function classifyForBackend(runtime: Pick<RuntimeConfig, "agentName" | "b
   }
   if (runtime.hookIds.length) skip("hooks", "Raw hooks do not run for an external backend");
   for (const key of runtime.backendIgnoredSettings ?? []) skip(key, "it configures Raw's own agent loop");
+  if (backend.compactTrigger !== undefined && kind !== "codex") {
+    skip("compact.trigger_tokens", kind === "claude" ? "Claude Code compacts at its context window minus its own buffer; set context_window_tokens on the model"
+      : `${label} takes no compaction setting`);
+  }
+  if (backend.contextWindow !== undefined && kind === "agy") skip("context_window_tokens", `${label} takes no context window setting`);
   const warnings = skipped.map((item) => `${who} skips ${item.id}: ${item.reason}`);
+  if (kind === "codex" && backend.compactTrigger !== undefined && backend.contextWindow !== undefined
+    && backend.compactTrigger > codexCompactCap(backend.contextWindow)) {
+    warnings.push(`${who} compacts at ${codexCompactCap(backend.contextWindow)}, not compact.trigger_tokens ${backend.compactTrigger}: Codex compacts at 90% of its window at most`);
+  }
   // The CLI keeps its own tools whatever Raw selects, so a rule is checked against every native identity.
   const nativeIds = Object.keys(NATIVE_DUPLICATES);
   for (const rule of runtime.toolRules) {
