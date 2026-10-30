@@ -2,7 +2,7 @@ import type { RuntimeConfig } from "../config.js";
 import type { AcpLaunch, AcpLaunchResolver } from "./acp-agent.js";
 import { CLAUDE_ADAPTER, findExecutable, installedAdapter, type InstallContext } from "./adapters.js";
 
-export const CLAUDE_MISSING = "Install Claude Code and log in (`claude`), or set backend.executable";
+export const CLAUDE_MISSING = "Install Claude Code and log in (`claude`), or set executable on its CLI model";
 /** claude-agent-acp ignores an empty `systemPrompt`, so an explicit empty replacement cannot be honoured (Invariant 5). */
 export const CLAUDE_EMPTY_PROMPT = "Claude Code cannot run with an empty system prompt; it keeps its own";
 

@@ -7,6 +7,7 @@ import { CODEX_ADAPTER, installedAdapter } from "../src/backends/adapters.js";
 import { CODEX_EMPTY_PROMPT, codexConfig, codexLaunch, codexPromptRoot, sweepCodexPrompts } from "../src/backends/codex.js";
 import { createAcpSessionAgent } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 const FAKE_CODEX = join(import.meta.dirname, "fixtures", "fake-codex-app-server.mjs");
 const FAKE_ACP = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
@@ -24,7 +25,7 @@ function realAdapter(): Promise<string | undefined> {
 
 async function runtimeFor(root: string, agent: Record<string, unknown>): Promise<RuntimeConfig> {
   const configPath = join(root, "config.json");
-  writeFileSync(configPath, JSON.stringify({ default_agent: "x", agents: { x: { tools: { use: [] }, ...agent } } }));
+  writeFileSync(configPath, JSON.stringify(cliConfig({ default_agent: "x", agents: { x: { tools: { use: [] }, ...agent } } })));
   return loadConfig({ configPath, env: {} });
 }
 
@@ -64,13 +65,13 @@ async function threadConfig(root: string, agent: Record<string, unknown>, extra:
 test("the prompt replaces Codex's with a file, is appended as developer instructions, or is not sent", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-codex-"));
   try {
-    const replace = await runtimeFor(root, { backend: { kind: "codex" }, system_prompt: "Be RAW." });
+    const replace = await runtimeFor(root, { cli: { kind: "codex" }, system_prompt: "Be RAW." });
     assert.deepEqual(codexConfig(replace, "/p/prompt.md"),
       { model_instructions_file: "/p/prompt.md", include_environment_context: false, include_permissions_instructions: false });
-    const append = await runtimeFor(root, { backend: { kind: "codex", system_prompt_mode: "append" }, system_prompt: "Be RAW." });
+    const append = await runtimeFor(root, { cli: { kind: "codex", system_prompt_mode: "append" }, system_prompt: "Be RAW." });
     assert.deepEqual(codexConfig(append, "/p/prompt.md"), { developer_instructions: "Be RAW." });
-    assert.equal(codexConfig(await runtimeFor(root, { backend: { kind: "codex" } }), "/p/prompt.md"), undefined);
-    assert.equal(codexConfig(await runtimeFor(root, { backend: { kind: "codex" }, system_prompt: "" }), "/p/prompt.md"), undefined);
+    assert.equal(codexConfig(await runtimeFor(root, { cli: { kind: "codex" } }), "/p/prompt.md"), undefined);
+    assert.equal(codexConfig(await runtimeFor(root, { cli: { kind: "codex" }, system_prompt: "" }), "/p/prompt.md"), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -78,7 +79,7 @@ test("the real codex-acp hands Codex exactly the agent's prompt settings, from a
   if (!await realAdapter()) return t.skip("codex-acp could not be installed (offline)");
   const root = mkdtempSync(join(tmpdir(), "raw-codex-"));
   try {
-    const replace = await threadConfig(join(root, "r"), { backend: { kind: "codex" }, system_prompt: TRICKY });
+    const replace = await threadConfig(join(root, "r"), { cli: { kind: "codex" }, system_prompt: TRICKY });
     assert.deepEqual(replace.argv, ["app-server"]);
     assert.equal(replace.config.include_environment_context, false);
     assert.equal(replace.config.include_permissions_instructions, false);
@@ -86,18 +87,18 @@ test("the real codex-acp hands Codex exactly the agent's prompt settings, from a
     assert.ok(file.startsWith(join(root, "r", "state", "raw", "backends", "codex")), file);
     assert.equal(replace.duringRun.length, 1);
     assert.deepEqual(replace.afterClose, []);
-    const append = await threadConfig(join(root, "a"), { backend: { kind: "codex", system_prompt_mode: "append" }, system_prompt: TRICKY });
+    const append = await threadConfig(join(root, "a"), { cli: { kind: "codex", system_prompt_mode: "append" }, system_prompt: TRICKY });
     assert.equal(append.config.developer_instructions, TRICKY);
     assert.equal(append.config.model_instructions_file, undefined);
     assert.deepEqual(append.duringRun, []);
-    const none = await threadConfig(join(root, "n"), { backend: { kind: "codex" } });
+    const none = await threadConfig(join(root, "n"), { cli: { kind: "codex" } });
     assert.equal(none.config.model_instructions_file, undefined);
     assert.equal(none.config.developer_instructions, undefined);
-    const empty = await threadConfig(join(root, "e"), { backend: { kind: "codex" }, system_prompt: "" });
+    const empty = await threadConfig(join(root, "e"), { cli: { kind: "codex" }, system_prompt: "" });
     assert.equal(empty.config.model_instructions_file, undefined);
     assert.ok(empty.notices.includes(CODEX_EMPTY_PROMPT));
     // The user's own CODEX_CONFIG keeps its other settings; the prompt settings are the agent's.
-    const inherited = await threadConfig(join(root, "u"), { backend: { kind: "codex", system_prompt_mode: "append" }, system_prompt: "Be RAW." },
+    const inherited = await threadConfig(join(root, "u"), { cli: { kind: "codex", system_prompt_mode: "append" }, system_prompt: "Be RAW." },
       { CODEX_CONFIG: JSON.stringify({ model_reasoning_summary: "none", developer_instructions: "theirs" }) });
     assert.equal(inherited.config.model_reasoning_summary, "none");
     assert.equal(inherited.config.developer_instructions, "Be RAW.");
@@ -109,7 +110,7 @@ test("the prompt file holds the prompt byte for byte while the runtime lives, an
   const root = mkdtempSync(join(tmpdir(), "raw-codex-"));
   try {
     const env = { PATH: fakeCodex(root), XDG_DATA_HOME: join(root, "data"), XDG_STATE_HOME: join(root, "state") };
-    const runtime = await runtimeFor(root, { backend: { kind: "codex" }, system_prompt: TRICKY });
+    const runtime = await runtimeFor(root, { cli: { kind: "codex" }, system_prompt: TRICKY });
     const npm = async (_args: string[], cwd: string) => {
       const entry = join(cwd, "node_modules", ...CODEX_ADAPTER.name.split("/"), CODEX_ADAPTER.entry);
       mkdirSync(join(entry, ".."), { recursive: true });
@@ -143,7 +144,7 @@ test("each adapter start marks the runtime's prompt directory in use, so the swe
   const root = mkdtempSync(join(tmpdir(), "raw-codex-"));
   try {
     const env = { PATH: fakeCodex(root), XDG_DATA_HOME: join(root, "data"), XDG_STATE_HOME: join(root, "state") };
-    const runtime = await runtimeFor(root, { backend: { kind: "codex" }, system_prompt: TRICKY });
+    const runtime = await runtimeFor(root, { cli: { kind: "codex" }, system_prompt: TRICKY });
     const npm = async (_args: string[], cwd: string) => {
       const entry = join(cwd, "node_modules", ...CODEX_ADAPTER.name.split("/"), CODEX_ADAPTER.entry);
       mkdirSync(join(entry, ".."), { recursive: true });

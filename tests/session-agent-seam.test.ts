@@ -9,6 +9,7 @@ import { summarizeUsage } from "../src/llm/cache.js";
 import { SessionOperations, type AttachSessionRuntime } from "../src/sessions/operations.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { FakeSessionAgent } from "./fixtures/fake-session-agent.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "raw-seam-"));
@@ -75,7 +76,7 @@ async function runSeamCli(args: string[], input: string, root: string, interrupt
 
 function backendConfig(root: string): string {
   const path = join(root, "config.json");
-  writeFileSync(path, JSON.stringify({ default_agent: "ext", agents: { ext: { backend: { kind: "claude", model: "haiku" }, tools: { use: [] } } } }));
+  writeFileSync(path, JSON.stringify(cliConfig({ default_agent: "ext", agents: { ext: { cli: { kind: "claude", model: "haiku" }, tools: { use: [] } } } })));
   return path;
 }
 

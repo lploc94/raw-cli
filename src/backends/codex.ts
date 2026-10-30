@@ -6,7 +6,7 @@ import type { RuntimeConfig } from "../config.js";
 import type { AcpLaunch, AcpLaunchResolver } from "./acp-agent.js";
 import { CODEX_ADAPTER, findExecutable, installedAdapter, type InstallContext } from "./adapters.js";
 
-export const CODEX_MISSING = "Install Codex and log in (`codex`), or set backend.executable";
+export const CODEX_MISSING = "Install Codex and log in (`codex`), or set executable on its CLI model";
 /** Codex fails to start a thread on an empty instructions file, so an explicit empty replacement cannot be honoured. */
 export const CODEX_EMPTY_PROMPT = "Codex cannot run with an empty system prompt; it keeps its own";
 

@@ -17,6 +17,7 @@ import type { SessionOperation } from "../src/sessions/operations.js";
 import { openSessionStore } from "../src/sessions/store.js";
 import { createRuntimeTools } from "../src/tools/plugins/runtime.js";
 import { dashboardFixture } from "./fixtures/dashboard.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
 const TODO = { title: "Ship", todos: [{ content: "Write tests", status: "in_progress" }, { content: "Docs", status: "pending" }] };
@@ -47,7 +48,7 @@ type Step = string | ((agent: ReturnType<typeof createAcpSessionAgent>) => Promi
 async function backendTurn(root: string, agent: Record<string, unknown>, inputs: Step[],
   options: { approve?: () => boolean; onEvent?: (event: RunEvent, agent: { abort(): boolean }) => void } = {}) {
   const configPath = join(root, "config.json");
-  writeFileSync(configPath, JSON.stringify({ default_agent: "c", agents: { c: { backend: { kind: "claude" }, ...agent } } }));
+  writeFileSync(configPath, JSON.stringify(cliConfig({ default_agent: "c", agents: { c: { cli: { kind: "claude" }, ...agent } } })));
   const runtime = await loadConfig({ configPath, env: { XDG_CONFIG_HOME: root } });
   const tools = await createRuntimeTools({ runtime, cwd: root });
   const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
@@ -96,10 +97,10 @@ test("a backend skips a selected tool that cannot load, with a warning, and keep
   const root = mkdtempSync(join(tmpdir(), "raw-bridge-"));
   try {
     const configPath = join(root, "config.json");
-    const write = (agent: Record<string, unknown>) => writeFileSync(configPath, JSON.stringify({ default_agent: "c",
+    const write = (agent: Record<string, unknown>) => writeFileSync(configPath, JSON.stringify(cliConfig({ default_agent: "c",
       models: { local: { provider: "ollama", method: "openai-chat-completions", model_id: "test", base_url: "http://127.0.0.1:1/v1" } },
-      agents: { c: { tools: { use: ["builtin/todo", "agent/missing"] }, ...agent } } }));
-    write({ backend: { kind: "claude" } });
+      agents: { c: { tools: { use: ["builtin/todo", "agent/missing"] }, ...agent } } })));
+    write({ cli: { kind: "claude" } });
     const tools = await createRuntimeTools({ runtime: await loadConfig({ configPath, env: { XDG_CONFIG_HOME: root } }), cwd: root });
     try {
       assert.deepEqual(tools.selectedNames, ["todo"]);
@@ -268,7 +269,7 @@ test("a bridged tool that ignores cancel still gets its cancelled result before 
 test("in the dashboard, a bridged todo fills the session's todo panel and ask_user waits for the dashboard's answer", async () => {
   const dir = mkdtempSync(join(tmpdir(), "raw-bridge-dash-"));
   const f = await dashboardFixture({ env: fakeClaude(dir), extraAgents: {
-    cc: { backend: { kind: "claude" }, tools: { use: ["builtin/todo", "builtin/ask_user"] }, request_timeout_ms: 60000 } } });
+    cc: { cli: { kind: "claude" }, tools: { use: ["builtin/todo", "builtin/ask_user"] }, request_timeout_ms: 60000 } } });
   try {
     const session = await f.json<{ id: string }>("/sessions", "POST", { cwd: f.root, agent: "cc" });
     const todo = await f.json<SessionOperation>(`/sessions/${session.id}/operations`, "POST",
@@ -297,7 +298,7 @@ test("in the dashboard, a bridged todo fills the session's todo panel and ask_us
 test("cancelling a turn during a bridged call ends the call and the turn, and nothing is recorded after the run's end", async () => {
   const dir = mkdtempSync(join(tmpdir(), "raw-bridge-dash-"));
   const f = await dashboardFixture({ env: fakeClaude(dir), extraAgents: {
-    cc: { backend: { kind: "claude" }, tools: { use: ["builtin/ask_user"] }, request_timeout_ms: 60000 } } });
+    cc: { cli: { kind: "claude" }, tools: { use: ["builtin/ask_user"] }, request_timeout_ms: 60000 } } });
   try {
     const session = await f.json<{ id: string }>("/sessions", "POST", { cwd: f.root, agent: "cc" });
     const ask = await f.json<SessionOperation>(`/sessions/${session.id}/operations`, "POST",

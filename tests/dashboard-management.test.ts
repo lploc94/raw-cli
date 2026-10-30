@@ -132,27 +132,29 @@ test("a prompt patch that removes one source and sets the other keeps the new so
   } finally { await f.close(); }
 });
 
-test("the agent editor saves a backend block in place of the model, reloads it, and switches back", async () => {
+test("an agent switched to a CLI model is summarised by its CLI, loads as a CLI agent, and switches back", async () => {
   const f = await dashboardFixture();
   try {
     let rev = (await f.json<any>("/config")).revision;
-    // As the editor sends it: the model removed, the backend set.
+    rev = (await f.json<any>("/models", "POST", { revision: rev, action: "create", name: "terra",
+      value: { method: "codex-cli", model_id: "gpt-6.1-terra" } })).revision;
+    // As the editor sends it: the model alias changes, the CLI effort goes in request.
     const saved = await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw",
-      value: { model: null, backend: { kind: "codex", model: "gpt-6.1-terra", effort: "high" } } });
+      value: { model: "terra", request: { reasoning_effort: "high" } } });
     rev = saved.revision;
     assert.equal(saved.agentSummaries.raw.backend, "Codex");
-    assert.equal(saved.agentSummaries.raw.model, undefined);
+    assert.equal(saved.agentSummaries.raw.model, "terra");
     const reloaded = await f.json<any>("/agents/raw");
-    assert.deepEqual(reloaded.value.backend, { kind: "codex", model: "gpt-6.1-terra", effort: "high" });
-    assert.equal(Object.hasOwn(reloaded.value, "model"), false);
-    // The config loads as a backend agent.
+    assert.equal(reloaded.value.model, "terra");
+    assert.deepEqual(reloaded.value.request, { reasoning_effort: "high" });
+    // The config loads as a CLI agent.
     const composer = await f.json<any>("/agents/raw/composer");
     assert.deepEqual(composer.backend, { kind: "codex", label: "Codex" });
-    // Back to a Raw model: the backend goes, even when the patch names only the model.
-    await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw", value: { model: "fixture" } });
-    const back = await f.json<any>("/agents/raw");
-    assert.equal(back.value.model, "fixture");
-    assert.equal(Object.hasOwn(back.value, "backend"), false);
+    // Back to a Raw model: the summary has no CLI.
+    const back = await f.json<any>("/agents", "POST", { revision: rev, action: "patch", name: "raw", value: { model: "fixture", request: null } });
+    assert.equal(back.agentSummaries.raw.backend, undefined);
+    assert.equal((await f.json<any>("/agents/raw")).value.model, "fixture");
+    assert.equal((await f.json<any>("/agents/raw/composer")).backend, undefined);
   } finally { await f.close(); }
 });
 

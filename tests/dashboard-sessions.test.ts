@@ -558,7 +558,7 @@ const LISTED: BackendOffered = {
 
 test("a backend agent's composer offers what the CLI offers as selects, and says so when the CLI cannot be asked", async () => {
   let failing = false;
-  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude" }, system_prompt: "Be RAW.", tools: { use: [] } } },
+  const f = await dashboardFixture({ extraAgents: { ext: { cli: { kind: "claude" }, system_prompt: "Be RAW.", tools: { use: [] } } },
     discoverBackend: async () => failing ? { offered: {}, warning: "Claude Code could not start: not logged in" } : { offered: structuredClone(LISTED) } });
   try {
     const meta = await f.json<{ backend?: { kind: string; label: string }; controls: unknown[] }>("/agents/ext/composer");
@@ -593,7 +593,7 @@ function stalledInstall() {
   };
   const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   return { env: { PATH: `${join(bin, "bin")}:${process.env.PATH}` }, started, alive, remove: () => rmSync(bin, { recursive: true, force: true }),
-    agent: (extra: Record<string, unknown> = {}) => ({ backend: { kind: "claude", executable: process.execPath }, system_prompt: "Be RAW.", tools: { use: [] }, ...extra }) };
+    agent: (extra: Record<string, unknown> = {}) => ({ cli: { kind: "claude", executable: process.execPath }, system_prompt: "Be RAW.", tools: { use: [] }, ...extra }) };
 }
 
 test("closing the dashboard stops a backend discovery, the adapter install included, and waits until it has exited", { skip: process.platform === "win32" }, async () => {
@@ -625,7 +625,7 @@ setInterval(() => {}, 1000);
   // A killed process its new parent has not reaped yet is a zombie: it answers signal 0 but runs nothing.
   const alive = (pid: number) => { try { process.kill(pid, 0); } catch { return false; }
     return !execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z"); };
-  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "agy", executable: join(dir, "agy") }, tools: { use: [] } } } });
+  const f = await dashboardFixture({ extraAgents: { ext: { cli: { kind: "agy", executable: join(dir, "agy") }, tools: { use: [] } } } });
   try {
     const asking = f.api("/agents/ext/backend-options").catch(() => undefined);
     let started: number[] = [];
@@ -653,7 +653,7 @@ test("a backend discovery runs within the agent's request_timeout_ms, the adapte
 });
 
 test("a backend turn takes request.backend for itself only; the route checks its shape, the runner the CLI's lists", async () => {
-  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
+  const f = await dashboardFixture({ extraAgents: { ext: { cli: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
     attach: scriptedBackend });
   try {
     const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
@@ -690,7 +690,7 @@ test("a backend turn takes request.backend for itself only; the route checks its
 });
 
 test("a backend agent's startup warnings show in the chat once per session, not once per turn", async () => {
-  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.",
+  const f = await dashboardFixture({ extraAgents: { ext: { cli: { kind: "claude", model: "small" }, system_prompt: "Be RAW.",
     tools: { use: ["builtin/bash"] }, max_steps: 3 } }, attach: scriptedBackend });
   try {
     const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "ext" });
@@ -708,7 +708,7 @@ test("a backend agent's startup warnings show in the chat once per session, not 
 });
 
 test("the session's lists follow a model the CLI switched to during the turn, also when the turn then fails", async () => {
-  const f = await dashboardFixture({ extraAgents: { ext: { backend: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
+  const f = await dashboardFixture({ extraAgents: { ext: { cli: { kind: "claude", model: "small" }, system_prompt: "Be RAW.", tools: { use: [] } } },
     attach: scriptedBackend });
   try {
     for (const [input, state] of [["switch-model", "completed"], ["switch-then-fail", "error"]]) {

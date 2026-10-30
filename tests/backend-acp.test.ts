@@ -10,6 +10,7 @@ import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { openSessionStore, type SessionStore, type SessionSummary } from "../src/sessions/store.js";
 import type { UserImageBlock } from "../src/llm/types.js";
 import type { ToolApprovalRequest } from "../src/tools/primitives.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
 
@@ -26,7 +27,7 @@ async function harness(backend: Record<string, unknown> = { kind: "claude" }, ag
   const root = mkdtempSync(join(tmpdir(), "raw-backend-acp-"));
   const state = join(root, "fake");
   const configPath = join(root, "config.json");
-  writeFileSync(configPath, JSON.stringify({ default_agent: "ext", agents: { ext: { backend, system_prompt: "Be RAW.", tools: { use: [] }, ...agent } } }));
+  writeFileSync(configPath, JSON.stringify(cliConfig({ default_agent: "ext", agents: { ext: { cli: backend, system_prompt: "Be RAW.", tools: { use: [] }, ...agent } } })));
   const runtime = await loadConfig({ configPath, env: {} });
   const storeEnv = { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root };
   let store = openSessionStore({ env: storeEnv });

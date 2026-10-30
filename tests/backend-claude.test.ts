@@ -8,12 +8,13 @@ import { CLAUDE_EMPTY_PROMPT, CLAUDE_MISSING, claudeLaunch, claudeSessionMeta } 
 import { createAcpSessionAgent, sessionIdentity } from "../src/backends/factory.js";
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { openSessionStore } from "../src/sessions/store.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-acp-agent.mjs");
 
 async function runtimeFor(root: string, agent: Record<string, unknown>): Promise<RuntimeConfig> {
   const configPath = join(root, "config.json");
-  writeFileSync(configPath, JSON.stringify({ default_agent: "c", agents: { c: { tools: { use: [] }, ...agent } } }));
+  writeFileSync(configPath, JSON.stringify(cliConfig({ default_agent: "c", agents: { c: { tools: { use: [] }, ...agent } } })));
   return loadConfig({ configPath, env: {} });
 }
 
@@ -40,10 +41,10 @@ function fakeClaude(root: string): string {
 test("the system prompt replaces Claude Code's, is appended to it, or is not sent", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
   try {
-    assert.deepEqual(claudeSessionMeta(await runtimeFor(root, { backend: { kind: "claude" }, system_prompt: "Be RAW." })), { systemPrompt: "Be RAW." });
-    assert.deepEqual(claudeSessionMeta(await runtimeFor(root, { backend: { kind: "claude", system_prompt_mode: "append" }, system_prompt: "Be RAW." })),
+    assert.deepEqual(claudeSessionMeta(await runtimeFor(root, { cli: { kind: "claude" }, system_prompt: "Be RAW." })), { systemPrompt: "Be RAW." });
+    assert.deepEqual(claudeSessionMeta(await runtimeFor(root, { cli: { kind: "claude", system_prompt_mode: "append" }, system_prompt: "Be RAW." })),
       { systemPrompt: { append: "Be RAW." } });
-    assert.equal(claudeSessionMeta(await runtimeFor(root, { backend: { kind: "claude" } })), undefined);
+    assert.equal(claudeSessionMeta(await runtimeFor(root, { cli: { kind: "claude" } })), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -51,7 +52,7 @@ test("the launch installs the pinned adapter once, without optional binaries, an
   const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
   try {
     const env = { PATH: fakeClaude(root), XDG_DATA_HOME: join(root, "data") };
-    const runtime = await runtimeFor(root, { backend: { kind: "claude" }, system_prompt: "Be RAW." });
+    const runtime = await runtimeFor(root, { cli: { kind: "claude" }, system_prompt: "Be RAW." });
     const calls: Array<{ args: string[]; cwd: string }> = [];
     const notices: string[] = [];
     const resolve = claudeLaunch(runtime, root, { env, npm: fakeNpm(calls) });
@@ -80,10 +81,10 @@ test("an explicit empty prompt Claude Code cannot take warns; no prompt or an ap
       await claudeLaunch(await runtimeFor(root, agent), root, { env, npm: fakeNpm([]) })({ notify: (message) => notices.push(message) });
       return notices.includes(CLAUDE_EMPTY_PROMPT);
     };
-    assert.equal(await warned({ backend: { kind: "claude" }, system_prompt: "" }), true);
-    assert.equal(await warned({ backend: { kind: "claude" } }), false);
-    assert.equal(await warned({ backend: { kind: "claude" }, system_prompt: "Be RAW." }), false);
-    assert.equal(await warned({ backend: { kind: "claude", system_prompt_mode: "append" }, system_prompt: "" }), false);
+    assert.equal(await warned({ cli: { kind: "claude" }, system_prompt: "" }), true);
+    assert.equal(await warned({ cli: { kind: "claude" } }), false);
+    assert.equal(await warned({ cli: { kind: "claude" }, system_prompt: "Be RAW." }), false);
+    assert.equal(await warned({ cli: { kind: "claude", system_prompt_mode: "append" }, system_prompt: "" }), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -139,7 +140,7 @@ test("a cancel that comes with the install notice starts no npm, and the turn en
   try {
     const marker = join(root, "npm-started");
     const env = { PATH: `${fakeClaude(root)}:${npmScript(root, `/usr/bin/touch "${marker}"; /bin/sleep 60`)}`, XDG_DATA_HOME: join(root, "data") };
-    const runtime = await runtimeFor(root, { backend: { kind: "claude" } });
+    const runtime = await runtimeFor(root, { cli: { kind: "claude" } });
     const agent = createAcpSessionAgent({ runtime, tools: undefined as never, cwd: root, host: {} }, claudeLaunch(runtime, root, { env }));
     try {
       const result = await agent.run("hello", (event) => {
@@ -203,12 +204,12 @@ async function turn(root: string, agent: Record<string, unknown>, launchEnv: Nod
 test("no claude ends the turn backend_unavailable with how to fix it; a CLI without a login ends it backend_auth", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
   try {
-    const missing = await turn(root, { backend: { kind: "claude", executable: join(root, "nowhere", "claude") } }, { XDG_DATA_HOME: join(root, "data") });
+    const missing = await turn(root, { cli: { kind: "claude", executable: join(root, "nowhere", "claude") } }, { XDG_DATA_HOME: join(root, "data") });
     assert.equal(missing.result.code, "backend_unavailable");
     assert.equal(missing.result.message, `Claude Code is not available: ${CLAUDE_MISSING}`);
     missing.store.close();
     const env = { PATH: fakeClaude(root), XDG_DATA_HOME: join(root, "data"), FAKE_ACP_AUTH: "1" };
-    const auth = await turn(root, { backend: { kind: "claude" } }, env);
+    const auth = await turn(root, { cli: { kind: "claude" } }, env);
     assert.equal(auth.result.code, "backend_auth");
     assert.equal(auth.result.message, "Claude Code needs a login: run `claude` once and log in");
     auth.store.close();
@@ -218,7 +219,7 @@ test("no claude ends the turn backend_unavailable with how to fix it; a CLI with
 test("the model the CLI reports for a prompt is kept with the usage record and shown as the session's model", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
   try {
-    const { result, agent, store, session } = await turn(root, { backend: { kind: "claude", model: "big" } },
+    const { result, agent, store, session } = await turn(root, { cli: { kind: "claude", model: "big" } },
       { PATH: fakeClaude(root), XDG_DATA_HOME: join(root, "data") });
     assert.equal(result.status, "completed", JSON.stringify(result));
     assert.equal(agent.provider.usedModel, "fake-big-1");
@@ -247,12 +248,12 @@ test("the terminal prints what to do when the backend is unavailable", async () 
   const root = mkdtempSync(join(tmpdir(), "raw-claude-"));
   try {
     const config = join(root, "config.json");
-    writeFileSync(config, JSON.stringify({ default_agent: "c", agents: { c: { backend: { kind: "claude", executable: join(root, "none", "claude") }, tools: { use: [] } } } }));
+    writeFileSync(config, JSON.stringify(cliConfig({ default_agent: "c", agents: { c: { cli: { kind: "claude", executable: join(root, "none", "claude") }, tools: { use: [] } } } })));
     const { spawnSync } = await import("node:child_process");
     const run = spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), join(import.meta.dirname, "..", "bin", "raw.ts"), "--config", config, "hi"],
       { cwd: root, env: { ...process.env, XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: join(root, "data") }, encoding: "utf8" });
     assert.equal(run.status, 1);
-    assert.match(run.stderr, /raw: Claude Code is not available: Install Claude Code and log in \(`claude`\), or set backend\.executable/);
+    assert.match(run.stderr, /raw: Claude Code is not available: Install Claude Code and log in \(`claude`\), or set executable on its CLI model/);
     assert.match(run.stderr, /Failed · backend_unavailable/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

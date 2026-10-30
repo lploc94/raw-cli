@@ -41,9 +41,10 @@ if (argv[0] !== "models") {
   process.stdin.on("end", () => { void turn(); });
 }
 
-/** The tool names agy 1.4.10 lists but cannot resolve: exactly those its recorded failure names. */
+/** The tool names agy 1.4.10 lists but cannot resolve: exactly those its recorded failure names, plus `FAKE_AGY_UNRESOLVED`
+ * (comma-separated), which stands for an agy version that no longer has some of Raw's default tools. */
 const unresolved = () => [...readFileSync(join(recordings, "unknown-tools.jsonl"), "utf8").matchAll(/^unknown component: tool "([^"]+)"|^error: .*?tool "([^"]+)"/gm)]
-  .map((match) => match[1] ?? match[2]);
+  .map((match) => match[1] ?? match[2]).concat((process.env.FAKE_AGY_UNRESOLVED ?? "").split(",").filter(Boolean));
 
 function agentFile(name) {
   const home = process.platform === "win32" ? process.env.USERPROFILE : process.env.HOME;

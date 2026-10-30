@@ -20,7 +20,7 @@ import { createPackageResolutionContext, resolvePackageAgentBinding, resolvePack
 import { parseSelectionReference } from "./packages/references.js";
 import { parseUiDocument, resolveUiOptions, validateUiFlag, type UiOptions, type Density, type ReasoningDisplay, type ColorDisplay, type IconsDisplay, type ThemeName } from "./terminal/options.js";
 import { stripBom } from "./platform/fs.js";
-import { parseBackendSpec, type BackendSpec } from "./backends/config.js";
+import { CLI_METHODS, isCliMethod, type BackendKind, type BackendSpec } from "./backends/config.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -85,7 +85,7 @@ export interface RuntimeConfig {
   readonly modelConfig?: Readonly<ResolvedModelConfig>;
   /** Set when the agent runs an external coding CLI instead of Raw's loop; `modelConfig` is then undefined. */
   readonly backend?: BackendSpec;
-  /** Configured agent keys the backend does not use (`request`, `cache`, `compact`, `max_steps`). */
+  /** Configured agent settings the CLI does not use (`request.<key>` other than effort and mode, `cache`, `compact`, `max_steps`). */
   readonly backendIgnoredSettings?: readonly string[];
   /** For a backend: whether a prompt was given at all, so an explicit `""` differs from none (`systemPrompt` is `""` for both). */
   readonly backendPromptGiven?: boolean;
@@ -297,7 +297,7 @@ interface ModelSpec {
 }
 
 interface AgentSpec {
-  /** Unset for an agent that runs an external backend. */
+  /** Unset for an agent on a CLI model. */
   modelAlias?: string;
   backend?: BackendSpec;
   /** Configured keys a backend agent does not use (they configure Raw's loop only). */
@@ -528,9 +528,12 @@ function modelSpec(name: string, raw: unknown): ModelSpec {
   const where = "model " + name;
   const value = object(raw, where);
   keys(value, ["provider", "method", "model_id", "base_url", "api_key", "api_key_env", "context_window_tokens", "max_output_tokens", "vision"], where);
+  if (typeof value.method !== "string" || !apiMethods.has(value.method as ApiMethod)) {
+    throw new Error(`${where}.method must be one of: ${[...apiMethods, ...Object.keys(CLI_METHODS)].join(", ")}`);
+  }
+  const method = value.method as ApiMethod;
   const provider = string(value.provider, where + ".provider");
   if (provider === "openai-compatible") throw new Error(where + ".provider must identify a service, not an API method");
-  const method = enumValue(value.method, apiMethods, where + ".method");
   const result: ModelSpec = {
     provider,
     method,
@@ -556,6 +559,27 @@ function modelSpec(name: string, raw: unknown): ModelSpec {
   }
   if (!result.baseUrl && !usesOfficialEndpoint(provider, method)) throw new Error(where + ".base_url is required for this provider/method combination");
   return result;
+}
+
+/** A model entry whose `method` names a coding CLI: the CLI keeps its own login, endpoint and context. */
+interface CliModelSpec {
+  kind: BackendKind;
+  /** Unset (absent or blank `model_id`) runs the CLI's default model. */
+  modelId?: string;
+  /** Informational only. */
+  provider?: string;
+  executable?: string;
+}
+
+function cliModelSpec(name: string, raw: unknown): CliModelSpec {
+  const where = "model " + name;
+  const value = object(raw, where);
+  keys(value, ["method", "model_id", "provider", "executable"], where);
+  if (value.model_id !== undefined && typeof value.model_id !== "string") throw new Error(where + ".model_id must be a string");
+  return { kind: CLI_METHODS[value.method as string]!,
+    ...(typeof value.model_id === "string" && value.model_id.trim() ? { modelId: value.model_id } : {}),
+    ...(value.provider !== undefined ? { provider: string(value.provider, where + ".provider") } : {}),
+    ...(value.executable !== undefined ? { executable: string(value.executable, where + ".executable") } : {}) };
 }
 
 /** `ratio` of the input budget: the context minus the output reserve and the safety margin. */
@@ -596,14 +620,16 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
 }
 
 /** Every key a direct agent definition may carry. */
-export const AGENT_KEYS: readonly string[] = Object.freeze(["model", "backend", "request", "max_steps", "max_output_bytes",
-  "request_timeout_ms", "cache", "compact", "tools", "skills", "hooks", "system_prompt", "system_prompt_file", "vars"]);
+export const AGENT_KEYS: readonly string[] = Object.freeze(["model", "request", "max_steps", "max_output_bytes",
+  "request_timeout_ms", "cache", "compact", "tools", "skills", "hooks", "system_prompt", "system_prompt_file", "system_prompt_mode", "vars"]);
 
-function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>): AgentSpec {
+function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, ModelSpec>, cliModels: ReadonlyMap<string, CliModelSpec>): AgentSpec {
   const where = "agent " + name;
   const value = object(raw, where);
   keys(value, AGENT_KEYS, where);
-  if (value.backend !== undefined) return backendAgentSpec(where, value);
+  const cliModel = typeof value.model === "string" ? cliModels.get(value.model) : undefined;
+  if (cliModel) return cliAgentSpec(where, value, cliModel);
+  if (value.system_prompt_mode !== undefined) throw new Error(where + ".system_prompt_mode applies to CLI models only");
   const modelAlias = string(value.model, where + ".model");
   const model = models.get(modelAlias);
   if (!model) throw new Error(where + " references unknown model: " + modelAlias);
@@ -649,10 +675,23 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
   return result;
 }
 
-/** An agent run by an external CLI: Raw's model and loop settings do not apply, so they are kept only to be reported. */
-function backendAgentSpec(where: string, value: JsonObject): AgentSpec {
-  if (value.model !== undefined) throw new Error(where + " must choose model or backend");
-  const backend = parseBackendSpec(value.backend, where + ".backend");
+/** CLI agent keys that Raw's loop settings would use; the CLI does not, so they are reported, not applied. */
+const CLI_SKIPPED_KEYS = ["cache", "compact", "max_steps"];
+
+/**
+ * An agent whose model is a CLI: `request.reasoning_effort` and `request.mode` go to the CLI, and the
+ * model's `model_id`/`executable` name what it runs; Raw's model and loop settings are kept only to be reported.
+ */
+function cliAgentSpec(where: string, value: JsonObject, cli: CliModelSpec): AgentSpec {
+  const request = value.request === undefined ? {} : object(value.request, where + ".request");
+  const promptMode = value.system_prompt_mode === undefined ? "replace" : value.system_prompt_mode;
+  if (promptMode !== "replace" && promptMode !== "append") throw new Error(`${where}.system_prompt_mode must be "replace" or "append"`);
+  const backend: BackendSpec = Object.freeze({ kind: cli.kind,
+    ...(cli.modelId === undefined ? {} : { model: cli.modelId }),
+    ...(request.reasoning_effort === undefined ? {} : { effort: string(request.reasoning_effort, where + ".request.reasoning_effort") }),
+    ...(request.mode === undefined ? {} : { mode: string(request.mode, where + ".request.mode") }),
+    systemPromptMode: promptMode,
+    ...(cli.executable === undefined ? {} : { executable: cli.executable }) });
   const tools = toolSpec(value.tools, where + ".tools");
   const skillIds = skillSpec(value.skills, where + ".skills");
   const hookIds = hookSpec(value.hooks, where + ".hooks");
@@ -660,7 +699,8 @@ function backendAgentSpec(where: string, value: JsonObject): AgentSpec {
     throw new Error(where + " with skills.use requires builtin/list_skills and builtin/load_skill in tools.use");
   }
   if (value.system_prompt !== undefined && value.system_prompt_file !== undefined) throw new Error(where + " must choose system_prompt or system_prompt_file");
-  const ignored = ["request", "cache", "compact", "max_steps"].filter((key) => value[key] !== undefined);
+  const ignored = [...Object.keys(request).filter((key) => key !== "reasoning_effort" && key !== "mode").map((key) => `request.${key}`),
+    ...CLI_SKIPPED_KEYS.filter((key) => value[key] !== undefined)];
   const result: AgentSpec = { backend, backendIgnoredSettings: Object.freeze(ignored), compact: compactSpec(undefined, where + ".compact"),
     toolIds: tools.ids, skillIds, hookIds, toolRules: tools.rules,
     ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
@@ -670,19 +710,25 @@ function backendAgentSpec(where: string, value: JsonObject): AgentSpec {
   return result;
 }
 
-function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; agents: Map<string, AgentSpec>; servers: Map<string, McpServerConfig>; defaultName?: string } {
+function parseDocument(root: JsonObject): { models: Map<string, ModelSpec>; cliModels: Map<string, CliModelSpec>; agents: Map<string, AgentSpec>;
+  servers: Map<string, McpServerConfig>; defaultName?: string } {
   const varDefinitions = parseVariableDefinitions(root.vars, root.var_providers, ".");
   const servers = mcpServersSpec(root.mcp);
   const modelsData = root.models === undefined ? {} : object(root.models, "models");
   const models = new Map<string, ModelSpec>();
-  for (const [name, raw] of Object.entries(modelsData)) models.set(string(name, "model alias"), modelSpec(name, raw));
+  const cliModels = new Map<string, CliModelSpec>();
+  for (const [name, raw] of Object.entries(modelsData)) {
+    const alias = string(name, "model alias");
+    if (raw && typeof raw === "object" && !Array.isArray(raw) && isCliMethod((raw as JsonObject).method)) cliModels.set(alias, cliModelSpec(name, raw));
+    else models.set(alias, modelSpec(name, raw));
+  }
   const agentsData = root.agents === undefined ? {} : object(root.agents, "agents");
   const agents = new Map<string, AgentSpec>();
-  for (const [name, raw] of Object.entries(agentsData)) agents.set(string(name, "agent name"), agentSpec(name, raw, models));
+  for (const [name, raw] of Object.entries(agentsData)) agents.set(string(name, "agent name"), agentSpec(name, raw, models, cliModels));
   for (const [name, raw] of Object.entries(agentsData)) selectVariables((raw as JsonObject).vars, varDefinitions.variables, `agents.${name}.vars`);
   const defaultName = root.default_agent === undefined ? undefined : string(root.default_agent, "default_agent");
   if (defaultName !== undefined && !agents.has(defaultName)) throw new Error("unknown agent: " + defaultName);
-  return { models, agents, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
+  return { models, cliModels, agents, servers, ...(defaultName !== undefined ? { defaultName } : {}) };
 }
 
 function validateDocument(root: JsonObject): void {
@@ -817,6 +863,15 @@ export async function loadMcpCheckConfig(options: LoadConfigOptions, name: strin
   return { server, ...(definitions.mcpIdentities[name] ? { identity: definitions.mcpIdentities[name] } : {}) };
 }
 
+/** Whether an agent's `model` names a CLI model entry in `models`. */
+function runsCli(agent: unknown, models: unknown): boolean {
+  if (!agent || typeof agent !== "object" || Array.isArray(agent)) return false;
+  const alias = (agent as JsonObject).model;
+  if (typeof alias !== "string" || !models || typeof models !== "object" || Array.isArray(models)) return false;
+  const entry = Object.hasOwn(models, alias) ? (models as JsonObject)[alias] : undefined;
+  return !!entry && typeof entry === "object" && !Array.isArray(entry) && isCliMethod((entry as JsonObject).method);
+}
+
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<RuntimeConfig> {
   const env = options.env ?? process.env;
   if (env.RAW_PROFILE !== undefined) throw new Error("RAW_PROFILE was removed; use RAW_AGENT");
@@ -835,9 +890,9 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Runti
   const effective = agentData && typeof agentData === "object" && !Array.isArray(agentData) && Object.hasOwn(agentData, "from")
     ? await resolvePackageAgentBinding(agentData, { configPath: document.path, env }, packageContext) : agentData;
   const packageSelection = effective === undefined ? undefined
-    // An external backend never runs Raw hooks: its hook selection is kept for the skip warning but not resolved.
+    // An agent on a CLI model never runs Raw hooks: its hook selection is kept for the skip warning but not resolved.
     : await resolvePackageSelections(effective, { configPath: document.path, env }, packageContext,
-      { skipHooks: typeof effective === "object" && effective !== null && (effective as { backend?: unknown }).backend !== undefined });
+      { skipHooks: runsCli(effective, document.data.models) });
   const activeAgents: Record<string, unknown> = {};
   if (wanted !== undefined) activeAgents[wanted] = packageSelection?.agent;
   const originAlias = agentData && typeof agentData === "object" && !Array.isArray(agentData)

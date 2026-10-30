@@ -15,7 +15,7 @@ import { offeredFromAgyCatalog } from "./options.js";
 import { AgyEventMapper, type AgyTurnEvent } from "./agy-events.js";
 import type { BackendSpec } from "./config.js";
 
-export const AGY_MISSING = "Install Antigravity (`agy`) and log in, or set backend.executable";
+export const AGY_MISSING = "Install Antigravity (`agy`) and log in, or set executable on its CLI model";
 export const AGY_APPEND = "agy cannot add to its own system prompt; the agent's prompt replaces it";
 export const AGY_EMPTY_PROMPT = "agy cannot run with an empty system prompt; it keeps its own";
 const FRESH = "This agy conversation starts here; it does not see earlier turns";
@@ -188,7 +188,7 @@ export function agyModelArgs(options: BackendOptions, catalog: AgyModel[] | unde
     ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
 
-/** `backend.mode` as agy's flags: `skip-permissions` approves every tool; any other value is agy's `--mode`. */
+/** The agent's `request.mode` as agy's flags: `skip-permissions` approves every tool; any other value is agy's `--mode`. */
 export function agyModeArgs(mode: string | undefined): string[] {
   if (!mode) return [];
   return mode === "skip-permissions" ? ["--dangerously-skip-permissions"] : ["--mode", mode];
@@ -459,7 +459,7 @@ export class AgyBackendProvider implements ProviderAdapter, BackendProvider {
     const { spec, systemPrompt } = this.config;
     const executable = findExecutable(spec.executable ?? "agy", this.env, this.config.cwd);
     if (!executable) throw new BackendError("backend_unavailable", `agy is not available: ${AGY_MISSING}`);
-    const tools = spec.tools ?? AGY_DEFAULT_TOOLS;
+    const tools = AGY_DEFAULT_TOOLS;
     let agent: string | undefined;
     if (systemPrompt) {
       if (spec.systemPromptMode === "append") notify(AGY_APPEND);

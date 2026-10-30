@@ -13,6 +13,7 @@ import { createAgySessionAgent, sessionIdentity } from "../src/backends/factory.
 import { loadConfig, type RuntimeConfig } from "../src/config.js";
 import { fakeAgy } from "./fixtures/fake-agy-bin.js";
 import { openSessionStore, type SessionStore, type SessionSummary } from "../src/sessions/store.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 const FAKE = join(import.meta.dirname, "fixtures", "fake-agy.mjs");
 const RECORDINGS = join(import.meta.dirname, "fixtures", "agy");
@@ -37,8 +38,8 @@ async function harness(backend: Record<string, unknown> = {}, agent: Record<stri
   const state = join(root, "fake");
   const configPath = join(root, "config.json");
   const executable = fakeAgy(root);
-  writeFileSync(configPath, JSON.stringify({ default_agent: "ext", agents: { ext: { backend: { kind: "agy", executable, ...backend },
-    tools: { use: [] }, ...agent } } }));
+  writeFileSync(configPath, JSON.stringify(cliConfig({ default_agent: "ext", agents: { ext: { cli: { kind: "agy", executable, ...backend },
+    tools: { use: [] }, ...agent } } })));
   const runtime = await loadConfig({ configPath, env: {} });
   const storeEnv = { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root };
   let store = openSessionStore({ env: storeEnv });
@@ -254,19 +255,19 @@ test("an agent without a prompt runs agy's own; an empty one and append mode are
 });
 
 test("the agent file lists the tools, is named by its content, and stays after every runtime closed", async () => {
-  const h = await harness({ tools: ["run_command", "view_file"] }, { system_prompt: TRICKY });
+  const h = await harness({}, { system_prompt: TRICKY });
   const agent = h.agent();
   try {
     await ask(agent, "echo file");
     const root = agyPluginRoot({ HOME: h.home, USERPROFILE: h.home });
-    const { name, content } = agyAgentFile("ext", TRICKY, ["run_command", "view_file"]);
+    const { name, content } = agyAgentFile("ext", TRICKY, AGY_DEFAULT_TOOLS);
     assert.match(name, /^raw-[0-9a-f]{16}$/);
     assert.equal(readFileSync(join(root, "agents", `${name}.md`), "utf8"), content);
-    assert.ok(content.startsWith(`---\nname: ${name}\ndescription: "Raw agent ext"\ntools: ["run_command","view_file"]\n---\n`));
+    assert.ok(content.startsWith(`---\nname: ${name}\ndescription: "Raw agent ext"\ntools: ${JSON.stringify(AGY_DEFAULT_TOOLS)}\n---\n`));
     assert.ok(content.endsWith(TRICKY));
     assert.deepEqual(JSON.parse(readFileSync(join(root, "plugin.json"), "utf8")).name, "raw");
     assert.notEqual(agyAgentFile("ext", TRICKY, ["run_command"]).name, name);
-    assert.notEqual(agyAgentFile("other", TRICKY, ["run_command", "view_file"]).name, name);
+    assert.notEqual(agyAgentFile("other", TRICKY, AGY_DEFAULT_TOOLS).name, name);
     await agent.close();
     const again = h.agent();
     await ask(again, "echo reuse");
@@ -313,17 +314,19 @@ test("concurrent writers of one agent file both end with the complete file, and 
 });
 
 test("a tool name agy cannot resolve is dropped from the agent and the turn runs again, once", async () => {
-  const h = await harness({ tools: ["run_command", "write_to_file", "browser_get_dom", "sed_file"] });
+  // An agy that cannot resolve two of the default tools.
+  const h = await harness({}, undefined, { FAKE_AGY_UNRESOLVED: "generate_image,search_marketplace" });
   const agent = h.agent();
   try {
     const turn = await ask(agent, "unknown-tools");
     assert.equal(turn.result.status, "completed", JSON.stringify(turn.result));
     assert.equal(turn.text, "[RAW_AGY_OK] done\n");
-    assert.deepEqual(turn.notices, ["agy does not know the tools browser_get_dom, sed_file; the agent runs without them"]);
+    assert.deepEqual(turn.notices, ["agy does not know the tools generate_image, search_marketplace; the agent runs without them"]);
     const [failed, retried] = h.calls();
     assert.equal(h.calls().length, 2);
     assert.notEqual(flagValue(failed!.argv, "--agent"), flagValue(retried!.argv, "--agent"));
-    assert.equal(flagValue(retried!.argv, "--agent"), agyAgentFile("ext", "Be RAW.", ["run_command", "write_to_file"]).name);
+    assert.equal(flagValue(retried!.argv, "--agent"), agyAgentFile("ext", "Be RAW.",
+      AGY_DEFAULT_TOOLS.filter((name) => name !== "generate_image" && name !== "search_marketplace")).name);
     // The runtime keeps the smaller list.
     await ask(agent, "unknown-tools");
     assert.equal(flagValue(h.calls()[2]!.argv, "--agent"), flagValue(retried!.argv, "--agent"));
@@ -343,10 +346,10 @@ test("a tool name agy cannot resolve is dropped from the agent and the turn runs
 });
 
 test("an agy error result ends the turn with agy's message", async () => {
-  const h = await harness({ tools: ["browser_get_dom"] }, { system_prompt: "Be RAW." });
+  const h = await harness({}, { system_prompt: "Be RAW." });
   const agent = h.agent();
   try {
-    // The only tool is unknown: after the retry nothing is left to drop, and agy's error ends the turn.
+    // The recorded error names only tools outside the agent's list: nothing is left to drop, and agy's error ends the turn.
     const turn = await ask(agent, "replay unknown-tools");
     assert.equal(turn.result.status, "error");
     assert.equal(turn.result.code, "backend_error");

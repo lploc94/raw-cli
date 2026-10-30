@@ -10,6 +10,7 @@ import type { SessionOperation } from "../src/sessions/operation-types.js";
 import { attachSessionRuntimeWith } from "../src/sessions/runtime.js";
 import { openSessionStore, type SessionSummary } from "../src/sessions/store.js";
 import { dashboardFixture } from "./fixtures/dashboard.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 // Real CLIs, real accounts, network: run with RAW_LIVE_BACKENDS=claude,codex,agy on a machine where they are logged in.
 const LIVE = new Set((process.env.RAW_LIVE_BACKENDS ?? "").split(",").map((kind) => kind.trim()).filter(Boolean));
@@ -22,8 +23,8 @@ function live(kind: string, backend: Record<string, unknown>, tag: string, tools
   const work = join(root, "work");
   mkdirSync(work);
   const config = join(root, "config.json");
-  writeFileSync(config, JSON.stringify({ default_agent: `${kind}-live`, agents: { [`${kind}-live`]: { backend,
-    system_prompt: `You are ${tag}. Begin every reply with the exact text ${tag}. Use your own tools for file work.`, tools: { use: tools } } } }));
+  writeFileSync(config, JSON.stringify(cliConfig({ default_agent: `${kind}-live`, agents: { [`${kind}-live`]: { cli: backend,
+    system_prompt: `You are ${tag}. Begin every reply with the exact text ${tag}. Use your own tools for file work.`, tools: { use: tools } } } })));
   // Adapters are installed into the user's data directory once, as a real first use would; sessions stay in the temp root.
   const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
   return { root, work, config, env: { ...process.env, XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: data } };
@@ -117,8 +118,8 @@ const E2E_PROMPT = "Begin every answer with [RAW_E2E].";
 
 function e2e(kind: string, model: string): Live {
   const target = live(kind, { kind, model }, "[RAW_E2E]");
-  writeFileSync(target.config, JSON.stringify({ default_agent: `e2e-${kind}`, agents: { [`e2e-${kind}`]: { backend: { kind, model },
-    system_prompt: E2E_PROMPT, tools: { use: ["builtin/todo", "builtin/bash"] } } } }));
+  writeFileSync(target.config, JSON.stringify(cliConfig({ default_agent: `e2e-${kind}`, agents: { [`e2e-${kind}`]: { cli: { kind, model },
+    system_prompt: E2E_PROMPT, tools: { use: ["builtin/todo", "builtin/bash"] } } } })));
   return target;
 }
 
@@ -162,7 +163,7 @@ test("claude: end to end in the dashboard: todo panel, tool calls, a cancel that
   });
   const data = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
   const f = await dashboardFixture({ env: { XDG_DATA_HOME: data }, attach, config: { default_agent: "e2e-claude" },
-    extraAgents: { "e2e-claude": { backend: { kind: "claude", model: "haiku" }, system_prompt: E2E_PROMPT, tools: { use: ["builtin/todo", "builtin/bash"] } } } });
+    extraAgents: { "e2e-claude": { cli: { kind: "claude", model: "haiku" }, system_prompt: E2E_PROMPT, tools: { use: ["builtin/todo", "builtin/bash"] } } } });
   const settle = async (id: string, ms = 300_000): Promise<SessionOperation> => {
     for (const end = Date.now() + ms; Date.now() < end;) {
       const op = await f.json<SessionOperation>(`/operations/${id}`);

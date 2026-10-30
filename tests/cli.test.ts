@@ -13,6 +13,7 @@ import { fakeAgy } from "./fixtures/fake-agy-bin.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { posixOnly } from "./fixtures/platform.js";
 import { onShutdown, shutdownSignals } from "../src/platform/signals.js";
+import { cliConfig } from "./fixtures/cli-agent.js";
 
 process.env.XDG_CONFIG_HOME = mkdtempSync(join(tmpdir(), "raw-cli-test-config-"));
 process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), "raw-cli-test-state-"));
@@ -569,8 +570,8 @@ test("a backend agent's warnings are printed once per start, not once per turn",
   try {
     const configPath = join(root, "config.json");
     // agy takes no Raw tools (a start warning), and appends no prompt (a notice when the runtime first resolves agy).
-    await writeFile(configPath, JSON.stringify({ default_agent: "ext", agents: { ext: { backend: { kind: "agy", executable: fakeAgy(root),
-      system_prompt_mode: "append" }, system_prompt: "Be RAW.", tools: { use: ["builtin/todo"] } } } }));
+    await writeFile(configPath, JSON.stringify(cliConfig({ default_agent: "ext", agents: { ext: { cli: { kind: "agy", executable: fakeAgy(root),
+      system_prompt_mode: "append" }, system_prompt: "Be RAW.", tools: { use: ["builtin/todo"] } } } })));
     // The REPL gets its second message once the first is answered: stdin closing would stop a running turn.
     const child = spawn(process.execPath, ["--import", import.meta.resolve("tsx"), join(process.cwd(), "bin/raw.ts"), "--config", configPath], {
       cwd: root, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home"), USERPROFILE: join(root, "home"),
