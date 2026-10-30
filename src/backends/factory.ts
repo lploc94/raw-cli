@@ -25,7 +25,7 @@ export type SessionAgentFactory = (context: SessionAgentContext) => SessionAgent
 /** How each ACP backend kind starts; a kind without one is not available yet. */
 const ACP_LAUNCHES: Partial<Record<BackendKind, (runtime: RuntimeConfig, cwd: string, deps: { env?: NodeJS.ProcessEnv }) => AcpLaunchResolver>> = { claude: claudeLaunch, codex: codexLaunch };
 
-/** Raw's own loop for an agent with a model; an external CLI for an agent with a `backend`. */
+/** Raw's own loop for an agent with a model; an external CLI for an agent on a CLI model. */
 export const createSessionAgent: SessionAgentFactory = (context) => {
   const { runtime, tools, cwd, host } = context;
   if (runtime.backend?.kind === "agy") return createAgySessionAgent(context);

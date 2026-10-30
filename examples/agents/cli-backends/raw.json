@@ -1,18 +1,26 @@
 {
   "default_agent": "claude",
+  "models": {
+    "sonnet": { "method": "claude-code-cli", "model_id": "sonnet" },
+    "terra": { "method": "codex-cli", "model_id": "gpt-6.1-terra" },
+    "flash": { "method": "antigravity-cli", "model_id": "gemini-3.8-flash" }
+  },
   "agents": {
     "claude": {
-      "backend": { "kind": "claude", "model": "sonnet", "effort": "high" },
+      "model": "sonnet",
+      "request": { "reasoning_effort": "high" },
       "system_prompt_file": "prompt.md",
       "tools": { "use": ["builtin/todo", "builtin/ask_user"] }
     },
     "codex": {
-      "backend": { "kind": "codex", "model": "gpt-6.1-terra", "effort": "high", "mode": "workspace-write" },
+      "model": "terra",
+      "request": { "reasoning_effort": "high", "mode": "workspace-write" },
       "system_prompt_file": "prompt.md",
       "tools": { "use": ["builtin/todo", "builtin/ask_user"] }
     },
     "agy": {
-      "backend": { "kind": "agy", "model": "gemini-3.8-flash", "effort": "high", "mode": "accept-edits" },
+      "model": "flash",
+      "request": { "reasoning_effort": "high", "mode": "accept-edits" },
       "system_prompt_file": "prompt.md",
       "tools": { "use": [] }
     }

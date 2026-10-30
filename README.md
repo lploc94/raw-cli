@@ -92,13 +92,14 @@ Tool calls run automatically in terminal, headless, dashboard and ACP modes, usi
 
 ### Claude Code, Codex and Antigravity as backends
 
-An agent can run an external coding CLI instead of Raw's own loop: give it a `backend` block in place of `model`. The CLI keeps its own login, tools and context; Raw keeps the session, the terminal and dashboard views, cancel and `--continue`, replaces the CLI's system prompt with the agent's, and offers Raw tools such as `builtin/todo` to Claude Code and Codex through its own MCP server.
+An agent can run an external coding CLI instead of Raw's own loop: declare the CLI as a model (method `claude-code-cli`, `codex-cli` or `antigravity-cli`) and point the agent's `model` at it. The CLI keeps its own login, tools and context; Raw keeps the session, the terminal and dashboard views, cancel and `--continue`, replaces the CLI's system prompt with the agent's, and offers Raw tools such as `builtin/todo` to Claude Code and Codex through its own MCP server.
 
 ```json
-{ "agents": { "claude": { "backend": { "kind": "claude", "model": "sonnet" }, "system_prompt": "You are a careful reviewer.", "tools": { "use": ["builtin/todo"] } } } }
+{ "models": { "sonnet": { "method": "claude-code-cli", "model_id": "sonnet" } },
+  "agents": { "claude": { "model": "sonnet", "system_prompt": "You are a careful reviewer.", "tools": { "use": ["builtin/todo"] } } } }
 ```
 
-`kind` is `claude`, `codex` or `agy`. Anything the CLI cannot do (hooks, compaction, Raw tools on agy) is skipped with a warning, never an error. See [backends](docs/backends.md) for setup, the capability table and [an example config](examples/agents/cli-backends/).
+`model_id` is the CLI's own model name (omit it for the CLI's default); `request.reasoning_effort` and `request.mode` go to the CLI. Anything the CLI cannot do (hooks, compaction, Raw tools on agy) is skipped with a warning, never an error. See [backends](docs/backends.md) for setup, the capability table and [an example config](examples/agents/cli-backends/).
 
 ## Tools, images and MCP
 

@@ -138,12 +138,13 @@ changes these actions wait, and a bar at the bottom offers Discard and Save. The
 editor is split into tabs:
 
 - **Overview**: the model and the instructions. Text sends a literal system
-  prompt; File reads a Markdown file relative to the config. **Runs on** picks
-  a Raw model or a CLI (Claude Code, Codex, Antigravity; [backends](backends.md));
-  for a CLI, **CLI model**, **CLI effort** and **CLI mode** are free text and
-  empty keeps the CLI's default. The agent's header shows the CLI as a badge,
-  and the list shows it beside the name (on a narrow screen, in place of the
-  model).
+  prompt; File reads a Markdown file relative to the config. **Model** lists
+  every model, a CLI connection labelled with its CLI (`terra (Codex CLI)`;
+  [backends](backends.md)). On a CLI model, **Effort** and **Mode** are free
+  text for `request.reasoning_effort` and `request.mode`, and empty keeps the
+  CLI's default; moving the agent from a CLI model to an API model clears its
+  request options, with a notice. The agent's header and its row in the list
+  show the CLI as a badge.
 - **Capabilities**: ordered Tools, Skills, Hooks and Variables. Reorder or
   remove an entry in place, add one from the catalog. Selecting a skill also adds
   the list/load skill tools it needs.
@@ -204,6 +205,10 @@ starter as `raw config init`; invalid config opens the source repair editor.
 Retention belongs to the canonical config, so alternate-config dashboards show
 its location without writing that other file. Diagnostics copy uses an allowlist.
 Model saves perform validation only; Start test chat uses the ordinary composer.
+Settings → Models adds a model through **Connection**: an API method, or
+Claude Code CLI, Codex CLI or Antigravity CLI. A CLI model edits only Provider
+(optional), Model ID (empty for the CLI's default) and Executable; switching a
+model to a CLI drops its endpoint, limits, vision and stored credential.
 Vars Read and MCP Discover are explicit, cancellable actions. Merely opening
 Library or saving a definition does not execute a provider or connect to MCP.
 

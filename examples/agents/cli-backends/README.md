@@ -10,9 +10,9 @@ raw --config /path/to/cli-backends/raw.json --agent codex "Add a test for the pa
 raw --config /path/to/cli-backends/raw.json --agent agy "List the TODO comments"
 ```
 
-There are no models or credentials here: each CLI uses its own login. On the
+The models are CLI models (`claude-code-cli`, `codex-cli`, `antigravity-cli`) with no endpoint or credentials: each CLI uses its own login. Drop a `model_id` to run the CLI's default model. Check the file without starting anything with `raw --config /path/to/cli-backends/raw.json config check`. On the
 first run of `claude` or `codex` Raw installs the pinned ACP adapter from npm
 once. `builtin/todo` and `builtin/ask_user` reach Claude Code and Codex through
-Raw's MCP server; agy gets no Raw tools, so its list is empty. The model, effort
-and mode values are examples: each CLI lists its own, and a value it does not
+Raw's MCP server; agy gets no Raw tools, so its list is empty. The `model_id`,
+`request.reasoning_effort` and `request.mode` values are examples: each CLI lists its own, and a value it does not
 list gives a warning and its default. See [docs/backends.md](../../../docs/backends.md).
