@@ -28,11 +28,18 @@ async function fixture(kind: "claude" | "codex", fakeEnv: NodeJS.ProcessEnv = {}
   const session = store.createSession({ cwd: root, title: "New session", ...sessionIdentity(runtime) });
   const env: NodeJS.ProcessEnv = { ...fakeEnv };
   let failCliAttach = false;
+  const closeDelay: Partial<Record<"compact" | "turn", number>> = {};
   const real = attachSessionRuntimeWith((context) => createAcpSessionAgent(context,
     { command: process.execPath, args: [FAKE], env: { ...process.env, FAKE_ACP_STATE: state, ...env }, asyncTasks: true }));
   const attach: AttachSessionRuntime = async (options) => {
     if (failCliAttach && options.operation.origin === "cli") throw new Error("simulated attach failure");
-    return real(options);
+    const runtime = await real(options);
+    const delay = options.operation.origin === "cli" ? undefined : closeDelay[options.operation.kind as "compact" | "turn"];
+    if (delay) {
+      const close = runtime.close.bind(runtime);
+      runtime.close = async () => { await new Promise((resolve) => setTimeout(resolve, delay)); await close(); };
+    }
+    return runtime;
   };
   const service = new SessionOperations({ store, attach, env: { RAW_TEST_KEY: "key" } });
   let count = 0;
@@ -40,8 +47,12 @@ async function fixture(kind: "claude" | "codex", fakeEnv: NodeJS.ProcessEnv = {}
   const f = {
     root, store, session, service, env, configPath, writeConfig, storeEnv,
     failCliAttach: (value: boolean) => { failCliAttach = value; },
+    /** Delays the cleanup of the user's operations of that kind. */
+    delayClose: (kind: "compact" | "turn", ms: number) => { closeDelay[kind] = ms; },
     submit: (input: string) => service.submit(intent(input)),
     enqueue: (input: string) => service.enqueue(intent(input), { mode: "queue" }),
+    compactNow: (request: { clientRequestId?: string; agentName?: string; configPath?: string } = {}) => service.compactNow({ sessionId: session.id,
+      clientRequestId: request.clientRequestId ?? `r${++count}`, kind: "compact", agentName: request.agentName ?? "ext", configPath: request.configPath ?? configPath }),
     run: async (input: string) => service.wait(f.submit(input).id),
     operations: () => store.listOperations(session.id).sort((a, b) => a.acceptedAt - b.acceptedAt),
     cliOperations: () => f.operations().filter((operation) => operation.origin === "cli"),
@@ -124,6 +135,189 @@ test("CLI turn: Codex is woken as an operation with the note, and the adapter cl
     assert.deepEqual(f.prompts(), ["bg", sent(note)]);
     assert.deepEqual(f.history().slice(-2), [`notice:Codex continues: ${note}`, `assistant:woke:${sent(note)}`]);
     await until(() => !alive(pid!), "the adapter to close");
+  } finally { await f.close(); }
+});
+
+// Compact now on Claude Code and Codex (spike cli-compact-now, 2026-10-31): the CLI's own `/compact`; a running turn is
+// stopped for it, and a CLI turn then tells the CLI to go on, before the messages waiting behind.
+const COMPACT_NOW = "/compact The user asked to compact now, in the middle of your work; your turn was stopped for it. Keep in the summary "
+  + "what you were doing, what is done and what is left: after the compaction you will be asked to continue.";
+const RESUME = "The user compacted the context in the middle of your work; your turn was stopped for it. "
+  + "Continue the task you were working on, from where you stopped.";
+
+test("compact now: an idle CLI session sends the CLI's /compact, and nothing follows it", async (t) => {
+  for (const kind of ["claude", "codex"] as const) await t.test(kind, async () => {
+    const f = await fixture(kind);
+    try {
+      assert.equal((await f.run("hello")).state, "completed");
+      const started = f.compactNow();
+      assert.ok("operation" in started, JSON.stringify(started));
+      const done = await f.service.wait(started.operation.id);
+      assert.equal(done.state, "completed", JSON.stringify(done));
+      assert.equal(done.kind, "compact");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.deepEqual(f.prompts(), ["hello", "/compact"]);
+      assert.equal(f.cliOperations().length, 0);
+      const label = kind === "claude" ? "Claude Code" : "Codex";
+      assert.ok(f.history().includes(`notice:${label} compacts its context`), JSON.stringify(f.history()));
+    } finally { await f.close(); }
+  });
+});
+
+test("compact now: a running turn is stopped, the CLI compacts keeping its task, goes on in a CLI turn, then the waiting message runs", async (t) => {
+  for (const kind of ["claude", "codex"] as const) await t.test(kind, async () => {
+    const f = await fixture(kind, { FAKE_ACP_COMPACT_MS: "200" });
+    try {
+      const first = f.submit("wait for it");
+      await until(() => f.prompts().length === 1, "the first prompt");
+      assert.ok("queued" in f.enqueue("later"));
+      const started = f.compactNow();
+      assert.deepEqual(started, { interrupting: first.id });
+      await until(() => f.operations().length === 4 && settled(f.operations()[3]), "the waiting message's turn");
+      assert.deepEqual(f.operations().map((operation) => [operation.kind, operation.origin ?? "user", operation.state]),
+        [["turn", "user", "cancelled"], ["compact", "user", "completed"], ["turn", "cli", "completed"], ["turn", "user", "completed"]]);
+      assert.deepEqual(f.prompts(), ["wait for it", COMPACT_NOW, RESUME, "later"]);
+      const label = kind === "claude" ? "Claude Code" : "Codex";
+      assert.deepEqual(f.history().filter((item) => item.startsWith("notice:")), [
+        `notice:${label} compacts its context now, as you asked, and then goes on with its task`, `notice:${label} continues: ${RESUME}`]);
+      assert.ok(f.history().includes("assistant:resumed the task"));
+    } finally { await f.close(); }
+  });
+});
+
+test("compact now: Stop on the compaction ends it, and no turn goes on after it", async () => {
+  const f = await fixture("claude", { FAKE_ACP_COMPACT_MS: "30000" });
+  try {
+    const first = f.submit("wait for it");
+    await until(() => f.prompts().length === 1, "the first prompt");
+    assert.deepEqual(f.compactNow(), { interrupting: first.id });
+    await until(() => f.operations()[1]?.state === "compacting" && f.prompts().length === 2, "the compaction to run");
+    assert.equal(f.service.cancel(f.operations()[1]!.id), true);
+    await until(() => settled(f.operations()[1]), "the compaction to end");
+    assert.equal(f.operations()[1]!.state, "cancelled");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(f.operations().length, 2);
+    assert.deepEqual(f.prompts(), ["wait for it", COMPACT_NOW]);
+  } finally { await f.close(); }
+});
+
+test("compact now: a message the CLI never got waits for the prompt after /compact, which goes alone", async (t) => {
+  for (const kind of ["claude", "codex"] as const) await t.test(kind, async () => {
+    const f = await fixture(kind, { FAKE_ACP_INIT_DELAY: "800" });
+    try {
+      const first = f.submit("finish original task");
+      await until(() => f.store.getOperation(first.id)?.committedUserPosition !== undefined, "the message to be committed");
+      assert.equal(f.prompts().length, 0);
+      assert.deepEqual(f.compactNow(), { interrupting: first.id });
+      await until(() => f.operations().length === 3 && settled(f.operations()[2]), "the CLI turn after the compaction");
+      assert.deepEqual(f.operations().map((operation) => [operation.kind, operation.state]), [["turn", "cancelled"], ["compact", "completed"], ["turn", "completed"]]);
+      assert.deepEqual(f.prompts(), [COMPACT_NOW, `finish original task\n\n${RESUME}`]);
+    } finally { await f.close(); }
+  });
+});
+
+test("compact now: a message the CLI never got outlives the adapter that sent /compact, and a cancelled compaction", async (t) => {
+  for (const kind of ["claude", "codex"] as const) await t.test(`idle compaction, ${kind}`, async () => {
+    const f = await fixture(kind, { FAKE_ACP_INIT_DELAY: "350" });
+    try {
+      const first = f.submit("finish original task");
+      await until(() => f.store.getOperation(first.id)?.committedUserPosition !== undefined, "the message to be committed");
+      f.service.cancel(first.id);
+      await f.service.wait(first.id);
+      const compact = f.compactNow();
+      assert.ok("operation" in compact);
+      assert.equal((await f.service.wait(compact.operation.id)).state, "completed");
+      assert.equal((await f.run("continue task")).state, "completed");
+      assert.deepEqual(f.prompts(), ["/compact", "finish original task\n\ncontinue task"]);
+      assert.equal(f.pids().length, 2, "the compaction's adapter closed and the next turn started another");
+    } finally { await f.close(); }
+  });
+  await t.test("cancelled compaction", async () => {
+    const f = await fixture("claude", { FAKE_ACP_INIT_DELAY: "350", FAKE_ACP_COMPACT_MS: "30000" });
+    try {
+      const first = f.submit("finish original task");
+      await until(() => f.store.getOperation(first.id)?.committedUserPosition !== undefined, "the message to be committed");
+      assert.deepEqual(f.compactNow(), { interrupting: first.id });
+      await until(() => f.prompts().length === 1 && f.operations()[1]?.state === "compacting", "the compaction to run");
+      f.service.cancel(f.operations()[1]!.id);
+      await f.service.wait(f.operations()[1]!.id);
+      assert.equal((await f.run("continue task")).state, "completed");
+      assert.deepEqual(f.prompts(), [COMPACT_NOW, "finish original task\n\ncontinue task"]);
+    } finally { await f.close(); }
+  });
+});
+
+test("compact now: a compaction whose handoff fails starts before the CLI's waiting turn, which follows it", async () => {
+  const f = await fixture("codex", { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "30", FAKE_ACP_BG_ANSWER_MS: "100" });
+  try {
+    f.delayClose("turn", 350);
+    const first = f.submit("bg");
+    // The completion arrives while the turn runs: its CLI turn waits for the turn's end, as the compaction does.
+    await until(() => (f.service as unknown as { cliPending: Set<string> }).cliPending.has(f.session.id), "the completion to wait for the turn");
+    const handOffTo = f.store.handOffTo.bind(f.store);
+    let failures = 2;
+    f.store.handOffTo = ((...args: Parameters<typeof handOffTo>) => {
+      if (failures-- > 0) throw new Error("simulated handoff failure");
+      return handOffTo(...args);
+    }) as typeof handOffTo;
+    assert.deepEqual(f.compactNow({ clientRequestId: "compact" }), { interrupting: first.id });
+    await until(() => f.operations().length === 3 && f.operations().every(settled), "the compaction and the CLI turn");
+    // The turn may already be cleaning up when the compaction is asked for: it then ends completed.
+    assert.deepEqual(f.operations().slice(1).map((operation) => [operation.kind, operation.origin ?? "user", operation.state]),
+      [["compact", "user", "completed"], ["turn", "cli", "completed"]]);
+    assert.equal(f.store.findOperation(f.session.id, "compact")?.kind, "compact");
+    assert.equal(f.prompts()[1], COMPACT_NOW);
+    assert.ok(f.prompts()[2]!.endsWith(RESUME), JSON.stringify(f.prompts()));
+  } finally { await f.close(); }
+});
+
+test("compact now: Stop on the turn before the compaction starts drops it", async () => {
+  const f = await fixture("claude");
+  try {
+    const first = f.submit("wait for it");
+    await until(() => f.prompts().length === 1, "the first prompt");
+    assert.deepEqual(f.compactNow(), { interrupting: first.id });
+    assert.equal(f.service.cancel(first.id), true);
+    await until(() => settled(f.operations()[0]), "the turn to end");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.deepEqual(f.operations().map((operation) => [operation.kind, operation.state]), [["turn", "cancelled"]]);
+    assert.deepEqual(f.prompts(), ["wait for it"]);
+  } finally { await f.close(); }
+});
+
+test("compact now: Stop while the compaction's operation cleans up keeps the CLI from going on", async () => {
+  const f = await fixture("claude");
+  try {
+    f.delayClose("compact", 1500);
+    const first = f.submit("wait for it");
+    await until(() => f.prompts().length === 1, "the first prompt");
+    assert.deepEqual(f.compactNow(), { interrupting: first.id });
+    await until(() => f.prompts().length === 2, "the compaction to be sent");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(f.operations()[1]!.state, "compacting");
+    assert.equal(f.service.cancel(f.operations()[1]!.id), true);
+    await until(() => settled(f.operations()[1]), "the compaction to end");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.equal(f.operations().length, 2);
+    assert.deepEqual(f.prompts(), ["wait for it", COMPACT_NOW]);
+  } finally { await f.close(); }
+});
+
+test("compact now: the running agent is compacted, and a pending compaction answers its own request only", async () => {
+  const f = await fixture("claude", { FAKE_ACP_COMPACT_MS: "300" });
+  try {
+    const first = f.submit("wait for it");
+    await until(() => f.prompts().length === 1, "the first prompt");
+    assert.throws(() => f.compactNow({ agentName: "other" }), (error: { code?: string }) => error.code === "agent_mismatch");
+    assert.equal(f.operations()[0]!.state, "running", "a mismatched compaction stops nothing");
+    assert.deepEqual(f.compactNow({ clientRequestId: "c1" }), { interrupting: first.id });
+    assert.deepEqual(f.compactNow({ clientRequestId: "c1" }), { interrupting: first.id });
+    assert.throws(() => f.compactNow({ clientRequestId: "c1", configPath: `${f.configPath}.other` }), (error: { code?: string }) => error.code === "conflict");
+    assert.throws(() => f.compactNow({ clientRequestId: "c2" }), (error: { code?: string }) => error.code === "busy");
+    await until(() => f.operations().length === 3 && settled(f.operations()[2]), "the CLI turn after the compaction");
+    assert.deepEqual(f.operations().map((operation) => [operation.kind, operation.clientRequestId.startsWith("cli-") ? "cli" : operation.clientRequestId]),
+      [["turn", "r1"], ["compact", "c1"], ["turn", "cli"]]);
+    assert.equal(f.store.findOperation(f.session.id, "c2"), undefined);
   } finally { await f.close(); }
 });
 

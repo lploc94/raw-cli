@@ -239,6 +239,16 @@ app.onRequest("session/prompt", async ({ params, client: peer }) => {
     await cancelled;
     return { stopReason: "cancelled" };
   }
+  // The CLI's own compaction, as claude-agent-acp 0.98.0 and codex-acp 2.3.0 report it (spike cli-compact-now): a
+  // "Compact conversation" call, the smaller context, the end of the turn. FAKE_ACP_COMPACT_MS keeps it busy that long.
+  if (newest.startsWith("/compact")) {
+    await update(id, { sessionUpdate: "tool_call", toolCallId: `compact-${Date.now()}`, title: "Compact conversation", kind: "think", status: "in_progress" });
+    const stopped = await Promise.race([delay(Number(process.env.FAKE_ACP_COMPACT_MS ?? 0)).then(() => false), cancelled.then(() => true)]);
+    if (stopped) return { stopReason: "cancelled" };
+    await update(id, { sessionUpdate: "usage_update", used: 7750, size: 1000000 });
+    return { stopReason: "end_turn", usage };
+  }
+  if (newest.startsWith("The user compacted")) { await text(id, "resumed the task"); return { stopReason: "end_turn", usage }; }
   if (newest === "bg") {
     await background(id);
     // The model may go on answering after its background command has finished.

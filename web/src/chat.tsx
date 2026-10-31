@@ -495,8 +495,9 @@ export function Chat({
     if (
       !state ||
       submitting.current ||
-      // A turn message waits for the agent; only another process holding the session refuses it.
-      (kind === "compact" ? busy : state.ownership === "elsewhere") ||
+      // A turn message waits for the agent; only another process holding the session refuses it. Claude Code and Codex
+      // compact at once: the server stops their running turn for it, and they go on after it.
+      (kind === "compact" ? busy && (!cli || state.ownership !== "here") : state.ownership === "elsewhere") ||
       !agent ||
       (kind === "turn" && (att.uploading || (!draft.trim() && !hasContent)))
     )
@@ -525,8 +526,9 @@ export function Chat({
         sessionStorage.setItem(`raw.dashboard.pending.${id}`, clientRequestId);
       } catch {}
       try {
-        const op = await api<SessionOperation>(`/sessions/${id}/operations`, "POST", { clientRequestId, kind, agent });
-        receipt(op);
+        const reply = await api<SessionOperation | { interrupting: string }>(`/sessions/${id}/operations`, "POST", { clientRequestId, kind, agent });
+        // A compaction that stops the running turn has no receipt yet: it starts when that turn ends.
+        if (!("interrupting" in reply)) receipt(reply);
         try {
           sessionStorage.removeItem(`raw.dashboard.pending.${id}`);
         } catch {}
@@ -807,9 +809,11 @@ export function Chat({
     ? "Session is loading"
     : !agent
       ? "Choose an agent first"
-      : busy
-        ? "Wait for the current work to finish"
-        : undefined;
+      : backend && (!cli || (cli.commands && !cli.commands.some((command) => command.name === "compact")))
+        ? `${backend.label} has no compact command`
+        : busy && (!cli || state.ownership !== "here" || current?.kind === "compact")
+          ? "Wait for the current work to finish"
+          : undefined;
   const files = useMemo(
     () => fileProvider(id, att.addFileRef),
     [id, att.addFileRef],

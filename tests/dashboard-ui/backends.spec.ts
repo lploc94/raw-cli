@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { test, expect, openChat } from "./fixtures.js";
+import { test, expect, openChat, openContext } from "./fixtures.js";
 import { createAcpSessionAgent } from "../../src/backends/factory.js";
 import { commandsFromAcp, type BackendOffered } from "../../src/backends/options.js";
 import { attachSessionRuntimeWith } from "../../src/sessions/runtime.js";
@@ -150,6 +150,20 @@ test.describe("a Claude Code backend agent at 320 px", () => {
     await fits(page, [".conversation-scroll", ".composer-area"]);
     await allow.click();
     await expect(answers(page).last()).toContainText("permission:yes");
+  });
+
+  test("Compact now while Claude Code works stops its turn, compacts, and Claude Code goes on with the task", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await send(page, "wait for it");
+    await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+    const card = await openContext(page);
+    const compact = card.getByRole("button", { name: "Compact now", exact: true });
+    await expect(compact).toBeEnabled();
+    await compact.click();
+    await expect(page.getByText("Claude Code compacts its context now, as you asked, and then goes on with its task")).toBeVisible();
+    await expect(answers(page).last()).toContainText("resumed the task");
+    await expect(page.getByText(/Claude Code continues: The user compacted the context/)).toBeVisible();
+    await fits(page, [".conversation-scroll", ".composer-area"]);
   });
 });
 

@@ -498,11 +498,18 @@ test("runtime metadata keeps external through other writers and removes it on re
   } finally { await agent.close(); h.cleanup(); }
 });
 
-test("compaction is reported as unsupported for a backend; a panel action runs in Raw (here: no tool offers that panel)", async () => {
+test("compaction sends the CLI's own /compact, the next turn sends only its message; a panel action runs in Raw (here: no tool offers that panel)", async () => {
   const h = await harness();
   const agent = h.agent();
+  const prompts = () => h.calls().filter((call) => call.method === "session/prompt").map((call) => call.input);
   try {
-    await assert.rejects(agent.compact(), /not supported by this backend/);
+    assert.equal((await agent.run("hello")).status, "completed");
+    assert.deepEqual(await agent.compact(), { status: "compacted" });
+    assert.deepEqual(agent.contextUsage(), { tokens: 7750, source: "provider", window: 1000000 });
+    assert.equal((await agent.run("after")).status, "completed");
+    assert.deepEqual(prompts(), ["hello", "/compact", "after"]);
+    // Only a compaction that stopped a turn is followed by a CLI turn.
+    assert.equal(agent.provider instanceof AcpBackendProvider && agent.provider.cliTurnNote(), undefined);
     // Bridged tools' panel actions: tests/backend-bridge.test.ts.
     assert.equal((await agent.runPanelAction({ panel: "builtin/todo#main", action: "check" })).code, "stale_panel");
   } finally { await agent.close(); h.cleanup(); }

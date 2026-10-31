@@ -86,6 +86,9 @@ export class SessionOperations {
   private readonly closing = new Set<Promise<void>>();
   /** Sessions whose CLI turn waits for this process's running operation to end. */
   private readonly cliPending = new Set<string>();
+  /** Compactions that stop the running turn of a CLI backend (`compactNow`), by session, and the operations they became. */
+  private readonly compactNext = new Map<string, { intent: OperationIntent; hash: string; resume?: boolean }>();
+  private readonly resuming = new Set<string>();
   private readonly observers = new Set<(event: OperationEvent) => void>();
   private closed = false;
   constructor(private readonly options: {
@@ -134,7 +137,7 @@ export class SessionOperations {
           ...(options.blocks ? { blocks: options.blocks } : {}), ...(options.request ? { request: options.request } : {}) });
         this.publishInputs(intent.sessionId, holder.operationId);
         // Marked and stopped in one synchronous call, so the ending turn's successor choice sees this message.
-        if (options.mode === "interrupt") this.cancel(holder.operationId);
+        if (options.mode === "interrupt") this.stop(holder.operationId);
         return { queued };
       } catch (error) {
         // The turn ended between the lookup and the write: the session is free, so this message starts the next turn.
@@ -142,6 +145,36 @@ export class SessionOperations {
       }
     }
     return { operation: this.submit(intent, options.blocks, options.request) };
+  }
+
+  /**
+   * Compacts the session's context now. An idle session starts the compaction at once. While a turn of this process runs
+   * on Claude Code or Codex, that turn is stopped, the CLI compacts its context keeping its task, and a CLI turn then
+   * tells it to go on, before any waiting message. Raw's own loop, and a session held elsewhere, answer `busy`.
+   */
+  compactNow(intent: OperationIntent): { operation: SessionOperation } | { interrupting: string } {
+    if (this.closed) throw new SessionOperationError("closed", "session operations are closed");
+    this.options.store.recoverOperations();
+    const { store } = this.options;
+    const holder = this.holder(intent.sessionId);
+    const pending = this.compactNext.get(intent.sessionId);
+    // The compaction already on its way answers its own request again; another request waits for it to end.
+    if (holder && pending) {
+      if (pending.intent.clientRequestId !== intent.clientRequestId) throw new SessionOperationError("busy", "a compaction is already on its way for this session");
+      if (pending.hash !== store.requestHash(intent)) throw new SessionOperationError("conflict", "client request ID conflicts with an earlier submitted intent");
+      return { interrupting: holder.operationId };
+    }
+    const running = holder && store.getOperation(holder.operationId);
+    if (holder && running?.kind === "turn" && this.residents.get(intent.sessionId)?.attached) {
+      // The compaction is of the conversation that runs: another agent would start a conversation of its own.
+      if (running.agentName !== intent.agentName || running.configPath !== intent.configPath) {
+        throw new SessionOperationError("agent_mismatch", `The running turn uses ${running.agentName}; compact with that agent`);
+      }
+      this.compactNext.set(intent.sessionId, { intent, hash: store.requestHash(intent), resume: true });
+      this.stop(holder.operationId);
+      return { interrupting: holder.operationId };
+    }
+    return { operation: this.submit(intent) };
   }
 
   /** Sends a waiting, paused or blocked message now: it interrupts the running turn, or starts a turn when the session is idle. */
@@ -153,7 +186,7 @@ export class SessionOperations {
       try {
         const queued = this.options.store.markInterrupt(sessionId, holder.owner, inputId);
         this.publishInputs(sessionId, holder.operationId);
-        this.cancel(holder.operationId);
+        this.stop(holder.operationId);
         return { queued };
       } catch (error) { if (!(error instanceof Error && error.message === "session ownership lost")) throw error; }
     }
@@ -207,6 +240,7 @@ export class SessionOperations {
     let metrics: SessionMetrics | undefined;
     let startedTools = 0; let failedTools = 0; let firstRequest = 0;
     let cliRan = false;
+    const resume = this.resuming.delete(operation.id);
     const publishState = (next: OperationState) => {
       operation = store.updateOperation(operation.id, owner, next);
       this.publish({ type: "operation", sessionId: operation.sessionId, operationId: operation.id, operation });
@@ -261,7 +295,7 @@ export class SessionOperations {
         result = run; state = run.status;
         if (run.status === "error") error = { code: run.code ?? "action_error", message: run.message ?? "the action failed" };
       } else {
-        result = await runtime.agent.compact(runtime.compactOptions ?? {}, event);
+        result = await runtime.agent.compact({ ...(runtime.compactOptions ?? {}), ...(resume ? { resume: true } : {}) }, event);
         state = result.status === "cancelled" ? "cancelled" : "completed";
       }
     } catch (cause) {
@@ -294,11 +328,33 @@ export class SessionOperations {
     } catch (cause) {
       state = "error"; error = { code: "cleanup_error", message: cause instanceof Error ? cause.message : String(cause) };
     }
+    // A Stop during the cleanup of a compaction that stopped a turn: the CLI is not told to go on.
+    if (resume && active.controller.signal.aborted && backend && !backend.isClosed) {
+      backend.dropResume();
+      if (backend.cliTurnNote() === undefined) this.cliPending.delete(operation.sessionId);
+      this.closeIfIdle(operation.sessionId);
+    }
     const details = { ...(result ? { result } : {}), ...(error ? { error } : {}), ...(metrics ? { metrics } : {}) };
     // The interrupting message starts the next turn whatever the ending; otherwise a completed turn hands the session to
     // the oldest waiting message, and any other ending, or a Stop that arrived during cleanup, pauses them all.
     let pauseReason: string | undefined;
     const waiting = this.closed ? [] : store.queuedInputs(operation.sessionId).filter((item) => item.state === "queued");
+    // A compaction that stopped this turn runs next, before everything else; the CLI turn after it goes on with the task.
+    const compact = this.closed ? undefined : this.compactNext.get(operation.sessionId);
+    if (compact) {
+      try {
+        const handed = store.handOffTo({ id: operation.id, owner, state, details }, compact.intent);
+        this.compactNext.delete(operation.sessionId);
+        if (compact.resume) this.resuming.add(handed.operation.id);
+        this.publish({ type: "operation", sessionId: operation.sessionId, operationId: operation.id, operation: handed.previous });
+        this.launch(handed.operation, handed.owner);
+        return handed.previous;
+      } catch (cause) {
+        // The session is released below; the compaction is then submitted as on an idle session.
+        this.publish({ type: "host_error", sessionId: operation.sessionId, operationId: operation.id,
+          message: `The compaction could not start after the turn: ${cause instanceof Error ? cause.message : String(cause)}` });
+      }
+    }
     const interrupt = waiting.find((item) => item.mode === "interrupt");
     // A CLI turn waiting for this operation runs next, after an interrupting message and before the queued ones.
     const cliIntent = !interrupt && !this.closed && this.cliPending.delete(operation.sessionId) ? this.cliIntent(operation.sessionId) : undefined;
@@ -336,6 +392,18 @@ export class SessionOperations {
       throw cause;
     } finally {
       store.releaseSession(operation.sessionId, owner);
+      // A compaction asked for after this turn chose its successor starts on the free session, as on an idle one, and
+      // before a waiting CLI turn, which then waits for it.
+      const late = this.compactNext.get(operation.sessionId);
+      if (late && !this.closed) {
+        this.compactNext.delete(operation.sessionId);
+        setImmediate(() => { try {
+          const started = this.submit(late.intent);
+          if (late.resume && started.state === "accepted") this.resuming.add(started.id);
+        } catch (cause) {
+          this.publish({ type: "host_error", sessionId: operation.sessionId, operationId: operation.id, message: `The compaction could not start: ${cause instanceof Error ? cause.message : String(cause)}` });
+        } });
+      }
       if (this.cliPending.delete(operation.sessionId)) setImmediate(() => this.cliTurn(operation.sessionId));
     }
   }
@@ -461,6 +529,7 @@ export class SessionOperations {
   /** The session is deleted: its CLI's tasks are stopped and its kept adapter closed. */
   async forgetSession(sessionId: string): Promise<void> {
     this.cliPending.delete(sessionId);
+    this.compactNext.delete(sessionId);
     this.carried.delete(sessionId);
     const resident = this.residents.get(sessionId);
     if (!resident) return;
@@ -479,7 +548,14 @@ export class SessionOperations {
     if (!terminalOperationStates.has(operation.state)) throw new SessionOperationError("busy", "operation is owned elsewhere");
     return operation;
   }
+  /** The user's Stop: it also drops the compaction that was to follow the stopped turn (`compactNow`). */
   cancel(operationId: string): boolean {
+    const active = this.active.get(operationId);
+    if (!active) return false;
+    if (this.holder(active.sessionId)?.operationId === operationId) this.compactNext.delete(active.sessionId);
+    return this.stop(operationId);
+  }
+  private stop(operationId: string): boolean {
     const active = this.active.get(operationId);
     if (!active) return false;
     active.controller.abort(); active.agent?.abort(); return true;

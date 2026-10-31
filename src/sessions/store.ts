@@ -109,6 +109,8 @@ export interface ExternalSession {
   baseline: { model?: string; effort?: string; mode?: string };
   /** How many of the session's messages were already sent to this CLI conversation, answered or not (a cancelled turn's input). */
   delivered?: number;
+  /** Positions of messages before `delivered` the CLI never got: the CLI's `/compact` went alone, and its next prompt sends them first. */
+  deferred?: number[];
   /** What the CLI offered for model, effort and mode when last asked, for the dashboard's controls (display only). */
   offered?: BackendOffered;
   /** The commands the CLI last listed for its prompt, for the dashboard's `/` menu (display only). */
@@ -1233,8 +1235,9 @@ export class SessionStore {
       this.ownerRow(sessionId, owner);
       const position = Number(this.database.prepare("SELECT coalesce(max(position), -1) + 1 AS next FROM model_context WHERE session_id = ?").get(sessionId)?.next);
       if (operationId !== undefined) {
+        // A CLI backend compacts in a turn of its own (`/compact`), so a compacting operation commits its message too.
         const consumed = this.database.prepare(`UPDATE session_operations SET committed_user_position = ?
-          WHERE id = ? AND session_id = ? AND owner_generation = ? AND state = 'running' AND committed_user_position IS NULL`)
+          WHERE id = ? AND session_id = ? AND owner_generation = ? AND state IN ('running', 'compacting') AND committed_user_position IS NULL`)
           .run(position, operationId, sessionId, owner.generation);
         if (consumed.changes !== 1 || message.role !== "user") throw new Error("operation input already consumed or ownership lost");
       }

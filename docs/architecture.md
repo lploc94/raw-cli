@@ -69,7 +69,7 @@ Lifecycle of a turn:
 | `available_commands_update`, `session_info_update`, `current_mode_update` | ignored |
 | any other kind | dropped before the SDK, one stderr line per kind |
 
-Permission requests go to the host's approval channel; without one, `auto_approve` allows and otherwise Raw refuses with a notice. `compact` answers `unsupported_backend`; a panel action runs in Raw, and the CLI hears of it with the next prompt.
+Permission requests go to the host's approval channel; without one, `auto_approve` allows and otherwise Raw refuses with a notice. `compact` sends Claude Code's or Codex's own `/compact` as a turn (agy answers `unsupported_backend`); a panel action runs in Raw, and the CLI hears of it with the next prompt.
 
 Raw's own tools reach Claude Code and Codex through the bridge (`src/backends/bridge/`): a loopback MCP server per runtime with a random token, which the CLI starts through `raw __bridge-proxy` (stdio). A bridged call runs inside the active turn through `ProviderRequest.runTool`, the same dispatch path as Raw's loop (rules, approvals, panels, `ask_user`, output cap), one call at a time.
 

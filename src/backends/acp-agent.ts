@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { client, PROTOCOL_VERSION, type AnyMessage, type ClientCapabilities, type ClientConnection, type ContentBlock, type McpServerStdio, type RequestPermissionRequest,
   type PromptResponse, type RequestPermissionResponse, type SessionConfigOption, type SessionNotification } from "@agentclientprotocol/sdk";
 import type { AgentSession, AgentState, RunEvent, RunResult } from "../agent.js";
-import type { CompactResult } from "../compact.js";
+import type { CompactOptions, CompactResult } from "../compact.js";
 import type { UsageSummary } from "../llm/cache.js";
 import { imagePlaceholderText, type ExternalTurnEvent, type ModelMessage, type ProviderAdapter, type ProviderRequest, type ProviderTurn,
   type ResolvedModelConfig, type UserInput } from "../llm/types.js";
@@ -47,6 +47,15 @@ const AIR_STATES: ReadonlySet<string> = new Set(["running", "paused", "completed
  * ~27× the largest gap measured between a completion and the turn it starts (74 ms; spikes of cli-background-work, 2026-10-30).
  */
 export const CLAUDE_WAKE_AFTER_MS = 2000;
+/**
+ * What `/compact` asks of the CLI when the compaction stopped its turn, and the note of the CLI turn after it. Claude Code
+ * takes the text after `/compact` as its summary instructions; Codex runs the compaction either way (spike cli-compact-now,
+ * 2026-10-31), so the note says what happened too.
+ */
+const COMPACT_NOW_HINT = "The user asked to compact now, in the middle of your work; your turn was stopped for it. Keep in the summary "
+  + "what you were doing, what is done and what is left: after the compaction you will be asked to continue.";
+const COMPACT_RESUME_NOTE = "The user compacted the context in the middle of your work; your turn was stopped for it. "
+  + "Continue the task you were working on, from where you stopped.";
 /**
  * How long a finished task's note waits for the exit code of its backgrounded call (Codex reports both in the same
  * millisecond, spike codex-air.log 23504); past it the note goes without the exit code.
@@ -188,7 +197,7 @@ const bufferedText = (pending: PendingCliTurn) => pending.buffer.flatMap((update
 interface Obligation { taskId: string; due: boolean; timer?: NodeJS.Timeout }
 
 /** What the next `generate` runs for a CLI turn: follow the CLI's own turn, or wake it with the due notes. */
-type CliStart = { follow: PendingCliTurn } | { wake: Obligation[]; note: string; sent?: boolean };
+type CliStart = { follow: PendingCliTurn } | { wake: Obligation[]; note: string; resume?: string; compact?: boolean; sent?: boolean };
 
 type McpServers = McpServerStdio[];
 
@@ -244,6 +253,10 @@ export class AcpBackendProvider implements BackendProvider {
   private following: PendingCliTurn | undefined;
   /** Completions to deliver, oldest first; `owed` holds every task ever added, so a corrected end adds none again. */
   private obligations: Obligation[] = [];
+  /** After a compaction that stopped the CLI's turn: the note of the CLI turn that tells it to go on (`resumeAfterCompact`). */
+  private resumeNote: string | undefined;
+  /** `ExternalSession.deferred` of the open CLI conversation. */
+  private deferred: number[] = [];
   private readonly owed = new Set<string>();
   /** Tasks Raw asked to stop: their end is not news to the model. */
   private readonly stoppedByRaw = new Set<string>();
@@ -372,7 +385,7 @@ export class AcpBackendProvider implements BackendProvider {
       return await this.runPrompt(request, notify, override, lastAnswer, start);
     } catch (error) {
       // A wake that never reached the CLI is still owed.
-      if (start && "wake" in start && !start.sent) this.obligations.unshift(...start.wake);
+      if (start && "wake" in start && !start.sent) this.restoreWake(start);
       // A JSON-RPC error answer from the CLI (numeric code): its details say what went wrong, e.g. that the CLI exited.
       const answer = error as { code?: unknown; message?: string; data?: { details?: unknown } };
       if (typeof answer.code !== "number") throw error;
@@ -399,20 +412,29 @@ export class AcpBackendProvider implements BackendProvider {
     this.saveOffered();
     // The CLI already has what an earlier turn sent, also when that turn was cancelled before it answered.
     const delivered = this.delivered !== undefined && this.delivered <= request.messages.length ? this.delivered : 0;
-    const fresh = request.messages.slice(Math.max(lastAnswer + 1, delivered))
-      .filter((message): message is Extract<ModelMessage, { role: "user" }> => message.role === "user");
+    const from = Math.max(lastAnswer + 1, delivered);
+    const freshAt = request.messages.flatMap((message, index) => index >= from && message.role === "user" ? [index] : []);
+    const fresh = freshAt.map((index) => request.messages[index] as Extract<ModelMessage, { role: "user" }>);
     if (!fresh.length) throw new BackendError("backend_error", "there is no new message to send");
     const images = this.live!.images;
     if (!images && fresh.some((message) => typeof message.content !== "string" && message.content.some((block) => block.type === "image"))) {
       notify(`${this.label} does not accept images; each is sent as a short description`);
     }
     // A wake sends the notes themselves; the transcript keeps them as the host's message.
-    const contents = fresh.map((message, index) => start && index === fresh.length - 1 ? start.note : message.content);
+    const contents: UserInput[] = fresh.map((message, index) => start && index === fresh.length - 1 ? start.note : message.content);
+    // The CLI reads `/compact` only as the whole prompt (codex-acp parses the first text block): messages the CLI does
+    // not have yet wait, recorded with the conversation, for the prompt after it.
+    const deferred = this.deferred.filter((index) => index < from && request.messages[index]?.role === "user");
+    if (start?.compact) { this.deferred = [...deferred, ...freshAt.slice(0, -1)]; contents.splice(0, contents.length - 1); }
+    else {
+      contents.unshift(...deferred.map((index) => (request.messages[index] as Extract<ModelMessage, { role: "user" }>).content));
+      this.deferred = [];
+    }
     const prompt = contents.flatMap((content, index) => [...(index ? [{ type: "text", text: "\n\n" } as ContentBlock] : []), ...promptBlocks(content, images)]);
     if (start) {
       start.sent = true;
       // Claude Code may still answer the completion itself; its adapter is kept until its next turn shows whether it does.
-      if (this.config.spec.kind === "claude") this.fallbackWatch = true;
+      if (this.config.spec.kind === "claude" && start.wake.length) this.fallbackWatch = true;
     }
     const turn = await this.prompt(this.live!, prompt, request);
     // The CLI may change its options while it works (a model switch); the dashboard lists what it offers at the end.
@@ -562,6 +584,7 @@ export class AcpBackendProvider implements BackendProvider {
         this.cliSessionId = stored.cliSessionId;
         this.baseline = { ...stored.baseline };
         this.delivered = stored.delivered;
+        this.deferred = stored.deferred ?? [];
         return;
       } catch (error) {
         // A CLI that no longer has the conversation starts a new one; a CLI that died ends the startup.
@@ -584,8 +607,10 @@ export class AcpBackendProvider implements BackendProvider {
     this.baseline = baseline;
     // What an earlier CLI conversation of this session was sent, a cancelled turn's input too, is not sent to this one.
     this.delivered = stored?.delivered ?? this.delivered;
+    // Messages that no conversation got yet go to this one.
+    this.deferred = stored?.deferred ?? this.deferred;
     const external: ExternalSession = { kind: this.config.spec.kind, cliSessionId: created.sessionId, profileDigest: this.profileDigest, baseline,
-      ...(this.delivered !== undefined ? { delivered: this.delivered } : {}) };
+      ...(this.delivered !== undefined ? { delivered: this.delivered } : {}), ...(this.deferred.length ? { deferred: this.deferred } : {}) };
     if (binding) binding.store.writeExternal(binding.sessionId, binding.owner, external);
     if (hadTurns || stored) notify(`This ${this.label} conversation starts here; it does not see earlier turns`);
   }
@@ -654,7 +679,10 @@ export class AcpBackendProvider implements BackendProvider {
     this.delivered = request.messages.length;
     const binding = this.config.binding?.();
     const stored = binding?.store.readExternal(binding.sessionId, binding.owner);
-    if (binding && stored?.cliSessionId === sessionId) binding.store.writeExternal(binding.sessionId, binding.owner, { ...stored, delivered: this.delivered });
+    if (binding && stored?.cliSessionId === sessionId) {
+      const { deferred: _sent, ...rest } = stored;
+      binding.store.writeExternal(binding.sessionId, binding.owner, { ...rest, delivered: this.delivered, ...(this.deferred.length ? { deferred: this.deferred } : {}) });
+    }
     let rejectIdle!: (error: Error) => void;
     const idle = new Promise<never>((_resolve, reject) => { rejectIdle = reject; });
     let timer: NodeJS.Timeout | undefined;
@@ -988,6 +1016,8 @@ export class AcpBackendProvider implements BackendProvider {
     for (const obligation of this.obligations) clearTimeout(obligation.timer);
     this.obligations = [];
     this.fallbackWatch = false;
+    // The conversation to go on with went with the adapter.
+    this.resumeNote = undefined;
     if (!lost.length && !owed.length && !pending) return;
     // The exit first: a host told only that no work is left would close the provider as idle and miss what was lost.
     if (!this.closed) this.emit({ type: "exited", message, lost: [...lost, ...owed].map((task) => task.name) });
@@ -1013,9 +1043,13 @@ export class AcpBackendProvider implements BackendProvider {
   /** The conversation's background tasks, oldest first. */
   backgroundTasks(): CliTask[] { return [...this.tasks.values()].map((task) => ({ ...task })); }
 
-  /** Whether the CLI has work that outlives the turn: a live task, its own turn not yet recorded, or a completion it is owed. */
+  /**
+   * Whether the CLI has work that outlives the turn: a live task, its own turn not yet recorded, a completion it is owed,
+   * or a task to go on with after a compaction.
+   */
   hasBackgroundWork(): boolean {
-    return [...this.tasks.values()].some((task) => LIVE_STATES.has(task.state)) || this.pendingCli !== undefined || this.obligations.length > 0;
+    return [...this.tasks.values()].some((task) => LIVE_STATES.has(task.state)) || this.pendingCli !== undefined || this.obligations.length > 0
+      || this.resumeNote !== undefined;
   }
 
   /** `hasBackgroundWork()`, a fallback wake that Claude Code may still answer with a turn of its own, or a stop not yet answered. */
@@ -1027,11 +1061,12 @@ export class AcpBackendProvider implements BackendProvider {
    */
   cliTurnNote(): string | undefined {
     if (this.pendingCli) return this.pendingCli.note;
-    const due = this.obligations.filter((obligation) => obligation.due);
-    return due.length ? due.map((obligation) => this.obligationNote(obligation)).join("\n") : undefined;
+    const due = this.obligations.filter((obligation) => obligation.due).map((obligation) => this.obligationNote(obligation));
+    const notes = [...due, ...(this.resumeNote === undefined ? [] : [this.resumeNote])];
+    return notes.length ? notes.join("\n") : undefined;
   }
 
-  /** The next `generate` runs the waiting CLI turn; the due completions it delivers are taken now. */
+  /** The next `generate` runs the waiting CLI turn; the due completions it delivers, and a resume after compaction, are taken now. */
   beginCliTurn(): { note: string; notice: string } | undefined {
     const note = this.closed ? undefined : this.cliTurnNote();
     if (note === undefined) return undefined;
@@ -1039,23 +1074,52 @@ export class AcpBackendProvider implements BackendProvider {
     else {
       const wake = this.obligations.filter((obligation) => obligation.due);
       this.obligations = this.obligations.filter((obligation) => !obligation.due);
+      const resume = this.resumeNote;
+      this.resumeNote = undefined;
       // The note names no output and no session (codex-acp keeps the terminal's id to itself): the model is told to
       // read it rather than answer from memory (Decision 2026-10-30 of cli-background-work).
-      const prompt = `${note}\n${wake.length > 1 ? "Read their output" : "Read its output"} before you answer.`;
-      this.cliStart = { wake, note: prompt };
+      const notes = wake.map((obligation) => this.obligationNote(obligation)).join("\n");
+      const read = wake.length ? `${notes}\n${wake.length > 1 ? "Read their output" : "Read its output"} before you answer.` : "";
+      const prompt = [read, resume].filter(Boolean).join("\n");
+      this.cliStart = { wake, note: prompt, ...(resume === undefined ? {} : { resume }) };
       return { note: prompt, notice: `${this.label} continues: ${note}` };
     }
     return { note, notice: `${this.label} continues: ${note}` };
   }
 
-  /** After a CLI turn's run: one that never reached `generate` is abandoned (follow) or still owed (wake). */
+  /** After a CLI turn's run: one that never reached `generate` is abandoned (follow) or still owed (wake, resume). */
   async endCliTurn(): Promise<void> {
     const start = this.cliStart;
     this.cliStart = undefined;
     if (!start) return;
     if ("follow" in start) await this.abandonCliTurn();
-    else this.obligations.unshift(...start.wake);
+    else this.restoreWake(start);
   }
+
+  /** A wake or resume that never reached the CLI waits for the next CLI turn. */
+  private restoreWake(start: Extract<CliStart, { wake: Obligation[] }>): void {
+    this.obligations.unshift(...start.wake);
+    if (start.resume !== undefined) this.resumeNote ??= start.resume;
+  }
+
+  /**
+   * The next `generate` sends the CLI's own `/compact` (Raw does not compact a CLI's context); `resume` is the note of
+   * the CLI turn that follows a compaction that stopped a turn (`compactNow`), queued once the compaction completes.
+   */
+  beginCompact(prompt: string): void { this.cliStart = { wake: [], note: prompt, compact: true }; }
+
+  /** The compaction's run ended: a start it never took is dropped. */
+  endCompact(): void { this.cliStart = undefined; }
+
+  /** After a compaction that stopped the CLI's turn, the CLI is told to go on with its task in a CLI turn of its own. */
+  resumeAfterCompact(note: string): void {
+    if (this.closed) return;
+    this.resumeNote = note;
+    this.signal();
+  }
+
+  /** The user stopped the compaction before its operation ended: the CLI is not told to go on. */
+  dropResume(): void { this.resumeNote = undefined; }
 
   /**
    * The host could not record the CLI's own turn: it is stopped, what it asked is refused, and its text is kept as a
@@ -1260,9 +1324,30 @@ export class AcpBackendAgent implements SessionAgent {
   runPanelAction(request: PanelActionRequest, onEvent?: (event: RunEvent) => void): Promise<RunResult> {
     return this.held(() => this.session.runPanelAction(request, onEvent));
   }
-  compact(): Promise<CompactResult> {
-    return Promise.reject(Object.assign(new Error("compaction is not supported by this backend: the CLI keeps its own context"),
-      { code: "unsupported_backend" }));
+  /**
+   * Claude Code and Codex compact their own context: Raw sends the CLI's `/compact` as a CLI turn (spike
+   * cli-compact-now, 2026-10-31). After a compaction that stopped a turn (`resume`), the CLI is told to keep its task in
+   * the summary, and a CLI turn of its own then tells it to go on. agy has no compaction.
+   */
+  compact(options: CompactOptions = {}, onEvent?: (event: RunEvent) => void): Promise<CompactResult> {
+    const acp = this.acp;
+    if (!acp) {
+      return Promise.reject(Object.assign(new Error("compaction is not supported by this backend: the CLI keeps its own context"),
+        { code: "unsupported_backend" }));
+    }
+    return this.held(async () => {
+      const prompt = options.resume ? `/compact ${COMPACT_NOW_HINT}` : "/compact";
+      acp.beginCompact(prompt);
+      let result: RunResult;
+      try {
+        result = await this.session.run(prompt, onEvent, { origin: "cli",
+          notice: options.resume ? `${acp.label} compacts its context now, as you asked, and then goes on with its task` : `${acp.label} compacts its context` });
+      } finally { acp.endCompact(); }
+      if (result.status === "cancelled") return { status: "cancelled" };
+      if (result.status !== "completed") throw Object.assign(new Error(result.message ?? `${acp.label} could not compact its context`), { code: result.code ?? "compact_error" });
+      if (options.resume) acp.resumeAfterCompact(COMPACT_RESUME_NOTE);
+      return { status: "compacted" };
+    });
   }
   abort(): boolean { return this.session.abort(); }
   async close(onEvent?: (event: RunEvent) => void): Promise<void> {

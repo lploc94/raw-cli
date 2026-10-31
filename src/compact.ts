@@ -20,6 +20,8 @@ export interface CompactOptions {
   instructions?: string;
   /** `"native"` tries the provider's own compaction first (`compact.strategy`, design §6.9.1). */
   strategy?: CompactStrategy;
+  /** A CLI backend's compaction stopped its turn (`SessionOperations.compactNow`): the CLI keeps its task and goes on after it. */
+  resume?: boolean;
 }
 
 export type CompactStrategy = "checkpoint" | "native";

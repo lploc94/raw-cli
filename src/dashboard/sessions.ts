@@ -556,7 +556,12 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
           if (body.kind === "compact" && (ids.length || files.length)) throw new DashboardError(400, "invalid_input", "compact does not accept attachments");
           if (body.kind === "compact" && body.request !== undefined) throw new DashboardError(400, "invalid_input", "compact does not accept request overrides");
           // A replayed request id returns the existing receipt and never re-reads staged items or validates a new override.
-          if (body.kind !== "turn" || store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
+          if (store.findOperation(id, clientRequestId)) return reply(operations.submit(intent), 202);
+          // Compact now: a running turn of a CLI backend is stopped for it and goes on after it.
+          if (body.kind === "compact") {
+            const started = operations.compactNow(intent);
+            return reply("operation" in started ? started.operation : started, 202);
+          }
           const prepared = await prepareTurn(id, intent, body, ids, files, () => store.findOperation(id, clientRequestId) ? operations.submit(intent) : undefined);
           if ("replay" in prepared) return reply(prepared.replay, 202);
           const accepted = operations.submit(intent, prepared.blocks, prepared.override); staging.release(ids);

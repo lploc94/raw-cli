@@ -12,7 +12,7 @@ Raw talks to Claude Code and Codex through their ACP adapters (`@agentclientprot
 
 Cancelling a turn asks the CLI to stop and waits up to 5 s. When the CLI answers and still has background tasks running, the adapter stays so they go on, as with the CLI's own Esc; otherwise Raw stops the adapter and everything it started. The next turn starts it again if needed and continues the conversation.
 
-What Raw does not do for a backend: compaction (`/compact`), Raw's step limit, hooks and native tool rules. The CLI keeps its own context and tools; Claude Code and Codex take the window and Codex the threshold they compact at from the config ([CLI context and compaction](configuration.md#cli-context-and-compaction)). The context size the dashboard shows follows each report the CLI sends during a turn (ACP `usage_update`), not only the turn's end.
+What Raw does not do for a backend: Raw's own compaction, Raw's step limit, hooks and native tool rules. The CLI keeps its own context and tools; **Compact now** in the dashboard sends Claude Code's or Codex's own `/compact` (agy has none). While the CLI works, Compact now stops its turn, sends `/compact` with the request to keep what it was doing, what is done and what is left in the summary, and once the compaction ends a CLI turn tells it to go on with its task, before the messages waiting behind; a Stop on the compaction ends it there. Claude Code and Codex take the window and Codex the threshold they compact at from the config ([CLI context and compaction](configuration.md#cli-context-and-compaction)). The context size the dashboard shows follows each report the CLI sends during a turn (ACP `usage_update`), not only the turn's end.
 
 ## What each backend supports
 
