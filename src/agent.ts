@@ -80,6 +80,8 @@ export type RunEvent = (
       /** The panel receipts committed with this result, for surfaces that print them (docs/panels-design.md §13.2). */
       panelReceipts?: PanelReceipt[] }
   | { type: "usage"; raw: unknown }
+  /** An external backend reported a new context size during the turn (src/backends): `contextUsage()` has it. */
+  | { type: "context" }
   | { type: "compact_start"; estimatedTokens: number; details?: CompactionDetails }
   | { type: "compact_end"; result: CompactResult; details?: CompactionDetails }
   | { type: "compact_error"; details: CompactionDetails }
@@ -1409,6 +1411,7 @@ export class AgentSession {
       // Once the run is ending nothing more belongs to it, whatever the CLI still reports.
       if (ended) return;
       try {
+        if (event.type === "context") { emit({ type: "context" }); return; }
         if (event.type === "notice") {
           this.recordVisible("backend_notice", { text: event.message });
           emit({ type: "backend_notice", message: event.message });

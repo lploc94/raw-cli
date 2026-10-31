@@ -216,7 +216,8 @@ export class SessionStreams {
       || event.type === "compact_warning") this.publish(sessionId, "compaction", event, operationId);
     // Core commits can follow the synchronous callback. Flush after that commit and before a snapshot.
     queueMicrotask(() => { try { this.syncHistory(sessionId); } catch { /* Closing the host cannot abort execution through an observer. */ } });
-    if (event.type === "usage" || event.type === "run_end") {
+    // A CLI backend's context report comes during its turn, its usage only at the end: both refresh the metrics.
+    if (event.type === "usage" || event.type === "context" || event.type === "run_end") {
       const metrics = this.context.operations!.metrics(operationId); if (metrics) this.publish(sessionId, "metrics", metrics, operationId);
     }
   }

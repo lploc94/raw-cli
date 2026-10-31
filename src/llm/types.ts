@@ -44,7 +44,9 @@ import type { VisibleToolCall, VisibleToolResult } from "../sessions/visible.js"
 export type ExternalTurnEvent =
   | { type: "tool_start"; id: string; name: string; arguments: Record<string, unknown>; display: VisibleToolCall }
   | { type: "tool_result"; id: string; name: string; result: ToolResult; display: VisibleToolResult; call: VisibleToolCall; started: boolean }
-  | { type: "notice"; message: string };
+  | { type: "notice"; message: string }
+  /** The CLI reported a new context size during the turn; read it from the agent's `contextUsage()`. */
+  | { type: "context" };
 
 export interface ModelToolCall {
   id: string;

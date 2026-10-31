@@ -154,3 +154,30 @@ test("the events route answers GET and POST with the same frames, including resu
     }
   } finally { await f.close(); }
 });
+
+test("a CLI backend's context report during its turn refreshes the metrics before the turn ends", async () => {
+  const modelConfig = { agentName: "raw", provider: "claude", method: "acp" as const, model: "fixture" };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const f = await dashboardFixture({ attach: async ({ store, session, owner, operation }) => ({ modelConfig, compactOptions: {}, async close() {},
+    agent: createAgent({ cwd: session.cwd, registry: new ToolRegistry(),
+      provider: { modelConfig, generate: async (request) => {
+        request.onExternal?.({ type: "context" });
+        await gate;
+        return { text: "done", toolCalls: [], finishReason: "stop" };
+      } },
+      persistence: { store, sessionId: session.id, owner, surface: "web", ownership: "host", operationId: operation.id } }) }) });
+  let stream: Awaited<ReturnType<typeof eventStream>> | undefined;
+  try {
+    const session = await f.json<SessionSummary>("/sessions", "POST", { cwd: f.root, agent: "raw" });
+    stream = await eventStream(f.server, session.id); await stream.next();
+    await f.json(`/sessions/${session.id}/operations`, "POST", { clientRequestId: "context", kind: "turn", agent: "raw", input: "go" });
+    let metricsWhileRunning = false;
+    for (let count = 0; count < 40 && !metricsWhileRunning; count++) {
+      const event = await stream.next();
+      assert.ok(!(event.type === "operation" && ["completed", "error"].includes(String(event.data.state))), "the turn ended first");
+      if (event.type === "metrics") metricsWhileRunning = true;
+    }
+    assert.ok(metricsWhileRunning);
+  } finally { release(); stream?.close(); await f.close(); }
+});

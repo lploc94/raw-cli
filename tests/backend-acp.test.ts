@@ -110,6 +110,20 @@ test("a scripted turn becomes Raw's events and history, one result per CLI tool 
   } finally { await agent.close(); h.cleanup(); }
 });
 
+test("backend metrics: each context report during the turn is a context event, with the new size already readable", async () => {
+  const h = await harness();
+  const agent = h.agent();
+  const seen: Array<{ tokens: number; window: number | undefined }> = [];
+  try {
+    const result = await agent.run("tools", (event) => {
+      if (event.type === "context") { const { tokens, window } = agent.contextUsage(); seen.push({ tokens, window }); }
+    });
+    assert.equal(result.status, "completed");
+    // The fake's three `usage_update`s, in the order claude-agent-acp 0.98.0 sent them, before the turn's end.
+    assert.deepEqual(seen, [{ tokens: 20984, window: 360000 }, { tokens: 21478, window: 360000 }, { tokens: 26114, window: 1000000 }]);
+  } finally { await agent.close(); h.cleanup(); }
+});
+
 test("backend metrics: the model's window wins over the CLI's report, and the trigger is Codex's own or Claude Code's estimate", () => {
   const stats = { requests: 0 } as never;
   const fake = (context: { used: number; size: number } | undefined) => ({ contextUsage: () => context

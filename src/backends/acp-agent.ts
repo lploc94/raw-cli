@@ -823,7 +823,7 @@ export class AcpBackendProvider implements BackendProvider {
     const { request } = turn;
     if (event.type === "text") { turn.text += event.text; request.onTextDelta?.(event.text); }
     else if (event.type === "reasoning") request.onReasoningDelta?.(event.text);
-    else if (event.type === "context") this.context = { used: event.used, size: event.size };
+    else if (event.type === "context") { this.context = { used: event.used, size: event.size }; request.onExternal?.({ type: "context" }); }
     else if (event.type === "config") this.options = event.options;
     else if (event.type === "commands") this.listCommands(event.commands);
     else if (event.type === "unknown") this.reportUnknown(event.kind);
