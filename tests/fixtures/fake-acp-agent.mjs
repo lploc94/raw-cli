@@ -169,9 +169,12 @@ async function backgroundTask(id, name, later) {
     task.ended = true;
     if (shape === "open") await update(id, { sessionUpdate: "tool_call_update", toolCallId: callId, name: "exec_command", status: "completed",
       _meta: { terminal_exit: { exit_code: exitCode, signal: null, terminal_id: callId } } });
-    // Claude Code answers a finished command with a turn of its own (`<task-notification>`); Codex does not.
-    if (process.env.FAKE_ACP_BG_TURN === "claude" && (state === "completed" || state === "failed")) {
-      setTimeout(() => { void ownTurn(id, `Background command "${name}" ${state} (exit code ${exitCode})`, name); }, Number(process.env.FAKE_ACP_TURN_GAP_MS ?? 50));
+    // Claude Code answers a finished command, and a monitor's exit or expiry, with a turn of its own (`<task-notification>`,
+    // spikes claude-monitor-exit.log, claude-monitor-timeout.log); Codex does not.
+    const monitor = process.env.FAKE_ACP_BG_TYPE === "monitor";
+    if (process.env.FAKE_ACP_BG_TURN === "claude" && (monitor || state === "completed" || state === "failed")) {
+      const description = monitor ? `Monitor "${name}" ${state}` : `Background command "${name}" ${state} (exit code ${exitCode})`;
+      setTimeout(() => { void ownTurn(id, description, name); }, Number(process.env.FAKE_ACP_TURN_GAP_MS ?? 50));
     }
   }, later + step * (index + 1))));
 }

@@ -100,6 +100,19 @@ test("CLI turn: Claude Code's own turn becomes an operation of the session, and 
   } finally { await f.close(); }
 });
 
+test("CLI turn: a monitor that expires with nothing else running keeps the adapter for Claude Code's own turn", async () => {
+  const f = await fixture("claude", { FAKE_ACP_BG_TYPE: "monitor", FAKE_ACP_BG_CANSTOP: "0", FAKE_ACP_BG_MS: "200",
+    FAKE_ACP_BG_STATES: "stopped", FAKE_ACP_BG_TURN: "claude" });
+  try {
+    assert.equal((await f.run("bg")).state, "completed");
+    const [pid] = f.pids();
+    await until(() => settled(f.cliOperations()[0]), "the CLI turn's operation");
+    assert.equal(f.cliOperations()[0]!.state, "completed");
+    assert.deepEqual(f.history().slice(-2), ['notice:Claude Code continues: Monitor "Background job" stopped', "assistant:Noted: Background job finished."]);
+    await until(() => !alive(pid!), "the adapter to close");
+  } finally { await f.close(); }
+});
+
 test("CLI turn: Codex is woken as an operation with the note, and the adapter closes after it", async () => {
   const f = await fixture("codex", { FAKE_ACP_BG_CALL: "open", FAKE_ACP_BG_MS: "200" });
   try {

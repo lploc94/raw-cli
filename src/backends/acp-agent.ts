@@ -41,8 +41,6 @@ export interface AcpLaunch {
 export type { BackgroundEvent, CliTask, CliTaskState } from "./types.js";
 const LIVE_STATES: ReadonlySet<CliTaskState> = new Set(["running", "paused"]);
 const AIR_STATES: ReadonlySet<string> = new Set(["running", "paused", "completed", "failed", "stopped"]);
-/** Task types whose end is not news to the model: a turn is the CLI's answer itself, a monitor a watcher of other work. */
-const SILENT_TYPES: ReadonlySet<string> = new Set(["turn", "monitor"]);
 
 /**
  * How long Raw waits for Claude Code to answer a finished task with a turn of its own before it sends the note itself:
@@ -249,6 +247,8 @@ export class AcpBackendProvider implements BackendProvider {
   private readonly owed = new Set<string>();
   /** Tasks Raw asked to stop: their end is not news to the model. */
   private readonly stoppedByRaw = new Set<string>();
+  /** Tasks other than monitors that stopped during a turn: the model stopped them (KillShell), so their end is not news. */
+  private readonly stoppedInTurn = new Set<string>();
   /** Stop requests not yet answered. */
   private stopping = 0;
   /** Set by a fallback wake of Claude Code, cleared by its next turn task: it may still answer the completion itself. */
@@ -930,9 +930,13 @@ export class AcpBackendProvider implements BackendProvider {
       if (this.following?.taskId === task.id) { this.following.ended = task.state; this.following.settle?.(task.state); }
       return;
     }
-    // A completion Raw did not cause is news to the model: Claude Code answers it itself, else Raw delivers it.
-    if (SILENT_TYPES.has(task.type) || this.stoppedByRaw.has(task.id) || this.owed.has(task.id)) return;
-    if (task.state !== "completed" && task.state !== "failed") return;
+    // An end Raw did not cause is news to the model, a monitor's exit or expiry included: Claude Code answers it itself
+    // (spikes claude-monitor-exit.log, claude-monitor-timeout.log), else Raw delivers it. A monitor expires on its own clock,
+    // inside a turn or not; another task stopped inside a turn is the model's own stop (KillShell), and stays so when its
+    // later updates arrive after the turn.
+    if (this.stoppedByRaw.has(task.id) || this.owed.has(task.id)) return;
+    if (task.state === "stopped" && task.type !== "monitor" && this.turn) this.stoppedInTurn.add(task.id);
+    if (task.state === "stopped" ? this.stoppedInTurn.has(task.id) : task.state !== "completed" && task.state !== "failed") return;
     this.owed.add(task.id);
     // Codex is woken once the call's exit code is in (its call still open waits for it); Claude Code is given time to answer itself.
     const waitsForExit = task.toolCallId !== undefined && this.backgroundCalls.has(task.toolCallId);
