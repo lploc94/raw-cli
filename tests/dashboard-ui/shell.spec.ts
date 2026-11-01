@@ -119,6 +119,9 @@ test("launch token, navigation, palette and browser preferences preserve config 
   expect(
     await page.evaluate(() => sessionStorage.getItem("raw.dashboard.token")),
   ).toBe(raw.server.token);
+  expect(
+    await page.evaluate(() => localStorage.getItem("raw.dashboard.token")),
+  ).toBe(raw.server.token);
   await page.keyboard.press("ControlOrMeta+k");
   await expect(
     page.getByRole("dialog", { name: "Quick navigation" }),
@@ -130,7 +133,11 @@ test("launch token, navigation, palette and browser preferences preserve config 
   await page.getByLabel("Theme", { exact: true }).selectOption("dark");
   await page.getByLabel("Density", { exact: true }).selectOption("compact");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.evaluate(() => sessionStorage.removeItem("raw.dashboard.token"));
   await page.reload();
+  expect(
+    await page.evaluate(() => sessionStorage.getItem("raw.dashboard.token")),
+  ).toBe(raw.server.token);
   await expect(page.getByLabel("Theme", { exact: true })).toHaveValue("dark");
   expect(readFileSync(raw.configPath, "utf8")).toBe(config);
   expect(raw.provider.requests.length).toBe(0);

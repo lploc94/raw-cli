@@ -13,7 +13,7 @@ raw dashboard --config /path/to/raw.json --agent deepseek
 
 One dashboard manages one displayed config file. The invoking directory is its initial workspace. A workspace changes relative runtime paths, not OS filesystem permissions. Missing credentials or missing/invalid config do not prevent the setup/repair interface from loading. No model, tool or MCP connection starts just to display the application.
 
-The launch token is in the URL fragment. The browser keeps it in tab session storage, removes the fragment from the address bar and authenticates API/stream requests through an Authorization header. A server restart creates a new token; reopen the new launch link. Do not publish a launch link to others. The server binds only IPv4 loopback and does not provide accounts or LAN sharing. A public address exists only while you run it with `--remote` (below); without that flag nothing leaves your machine.
+The launch token is in the URL fragment. The browser keeps it in browser storage (`localStorage` with `sessionStorage` fallback), removes the fragment from the address bar and authenticates API/stream requests through an Authorization header. A server restart creates a new token; reopen the new launch link. Do not publish a launch link to others. The server binds only IPv4 loopback and does not provide accounts or LAN sharing. A public address exists only while you run it with `--remote` (below); without that flag nothing leaves your machine.
 
 ## Open it on your phone (`--remote`)
 

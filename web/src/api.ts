@@ -1,13 +1,17 @@
 import type { DashboardEvent } from "../../src/dashboard/streams.js";
 import { eventsRequest } from "./stream-request.js";
 
+const TOKEN_KEY = "raw.dashboard.token";
 let accessToken = "";
 export function initializeToken(): void {
   const token = new URLSearchParams(location.hash.slice(1)).get("token");
   if (token) {
     accessToken = token;
     try {
-      sessionStorage.setItem("raw.dashboard.token", token);
+      localStorage.setItem(TOKEN_KEY, token);
+    } catch {}
+    try {
+      sessionStorage.setItem(TOKEN_KEY, token);
     } catch {
       /* This tab can still work with memory-only authentication. */
     }
@@ -16,10 +20,23 @@ export function initializeToken(): void {
       "",
       location.pathname + location.search,
     );
-  } else
+    return;
+  }
+  let stored = "";
+  try {
+    stored = sessionStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {}
+  if (!stored) {
     try {
-      accessToken = sessionStorage.getItem("raw.dashboard.token") ?? "";
+      stored = localStorage.getItem(TOKEN_KEY) ?? "";
     } catch {}
+    if (stored) {
+      try {
+        sessionStorage.setItem(TOKEN_KEY, stored);
+      } catch {}
+    }
+  }
+  accessToken = stored;
 }
 export class ApiError extends Error {
   constructor(
