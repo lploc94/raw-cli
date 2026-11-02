@@ -1656,15 +1656,20 @@ export class AgentSession {
                   }
                 };
                 let shrunk = false;
-                const first = await runCompact(reactiveSettings);
+                let first = await runCompact(reactiveSettings);
                 if (first === "stop") return finish(interrupted());
+                if (first !== "failed" && (first.status === "noop" || first.status === "not_smaller")
+                  && reactiveSettings.keepRecentTokens !== 1 && this.messages.some((m) => m.role !== "user")) {
+                  first = await runCompact({ ...reactiveSettings, keepRecentTokens: 1 });
+                  if (first === "stop") return finish(interrupted());
+                }
                 if (first !== "failed" && first.status === "compacted") shrunk = true;
                 const threshold = compact?.triggerTokens ?? inputBudget;
                 if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
                   if (inputBudget !== undefined && this.clearWork(inputBudget, 0, "fallback")) shrunk = true;
                   if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
                     const reason = first === "failed" ? "the checkpoint request failed" : "the context exceeded the provider's context window";
-                    const mech = await runCompact({ ...reactiveSettings, mechanical: reason });
+                    const mech = await runCompact({ ...reactiveSettings, keepRecentTokens: 1, mechanical: reason });
                     if (mech === "stop") return finish(interrupted());
                     if (mech !== "failed" && mech.status === "compacted") shrunk = true;
                   }

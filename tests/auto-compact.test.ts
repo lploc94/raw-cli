@@ -620,5 +620,44 @@ test("reactive compaction falls back to a mechanical checkpoint when the summari
   assert.equal(resB.status, "error");
   assert.equal(mainCallsB, 1);
   assert.match(resB.message ?? "", /maximum context length/);
+
+  // Subcase C: unknown contextWindow (undefined) and default retention (compact omitted) relaxes keepRecentTokens to 1 and recovers.
+  const cwdC = await mkdtemp(join(tmpdir(), "raw-reactive-unknown-win-"));
+  let mainCallsC = 0;
+  let summariesC = 0;
+  let rejectedBytesC = 0;
+  let retriedBytesC = 0;
+  const providerC: ProviderAdapter = {
+    modelConfig: { agentName: "p", provider: "openai", method: "openai-chat-completions", model: "custom-model", maxOutputTokens: 200 },
+    async generate(request) {
+      if (isCompactionRequest(request)) {
+        summariesC++;
+        assert.equal(request.system, COMPACT_SYSTEM_PROMPT);
+        return result("Condensed prior turns.");
+      }
+      mainCallsC++;
+      if (mainCallsC <= 2) return result("字".repeat(1500));
+      if (mainCallsC === 3) {
+        rejectedBytesC = Buffer.byteLength(JSON.stringify(request.messages));
+        throw Object.assign(new Error("Request exceeds the available context size"), { status: 400, code: "exceed_context_size_error" });
+      }
+      retriedBytesC = Buffer.byteLength(JSON.stringify(request.messages));
+      return result("recovered without configured contextWindow");
+    },
+  };
+  const agentC = createAgent({
+    provider: providerC,
+    cwd: cwdC,
+    system: "tiny",
+    registry: new ToolRegistry(),
+  });
+  await agentC.run("first");
+  await agentC.run("second");
+  const resC = await agentC.run("third");
+  assert.equal(resC.status, "completed");
+  assert.equal(resC.text, "recovered without configured contextWindow");
+  assert.equal(mainCallsC, 4);
+  assert.equal(summariesC, 1);
+  assert.ok(retriedBytesC > 0 && retriedBytesC < rejectedBytesC);
 });
 
