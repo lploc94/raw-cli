@@ -30,8 +30,9 @@ const TERMINAL_QUOTA_CODES = new Set([
   "daily_limit_exceeded", "monthly_limit_exceeded", "spend_limit_reached",
   "credit_balance_too_low", "account_deactivated", "billing_not_active",
 ]);
-const TERMINAL_QUOTA_PATTERN = /\b(?:insufficient[_ ]quota|billing[_ ]hard[_ ]limit|exceeded your current quota|credit balance is too low|out of credits|plan and billing|monthly spend limit|daily limit exceeded)\b|"QuotaFailure"[\s\S]*?"subject"\s*:\s*"billing"/i;
-const TRANSIENT_RATE_PATTERN = /\b(?:per minute|per second|rpm|tpm|ipm|tokens per min|requests per min|concurrent|try again in \d+\s*(?:ms|millisecond|s|sec|second|m|min|minute))\b/i;
+const HARD_TERMINAL_QUOTA_PATTERN = /\b(?:billing[_ ]hard[_ ]limit|credit balance is too low|out of credits|monthly spend limit|daily limit exceeded)\b|PerDay|PerMonth|"QuotaFailure"[\s\S]*?"subject"\s*:\s*"billing"/i;
+const SOFT_QUOTA_PATTERN = /\b(?:insufficient[_ ]quota|exceeded your current quota|plan and billing)\b/i;
+const TRANSIENT_RATE_PATTERN = /\b(?:per minute|per second|rpm|tpm|ipm|tokens per min|requests per min|concurrent|try again in \d+\s*(?:ms|millisecond|s|sec|second|m|min|minute))\b|PerMinute|PerSecond|"retryDelay"\s*:\s*"\d+(?:\.\d+)?s"/i;
 const TRANSIENT_SSE_CODES = new Set([
   "overloaded_error", "rate_limit_error", "rate_limit_exceeded", "server_error", "api_error",
 ]);
@@ -65,7 +66,8 @@ export function isTerminalQuotaError(error: unknown): boolean {
   for (const code of codes) {
     if (TERMINAL_QUOTA_CODES.has(code)) return true;
   }
-  if (TERMINAL_QUOTA_PATTERN.test(message) && !TRANSIENT_RATE_PATTERN.test(message)) return true;
+  if (HARD_TERMINAL_QUOTA_PATTERN.test(message)) return true;
+  if (SOFT_QUOTA_PATTERN.test(message) && !TRANSIENT_RATE_PATTERN.test(message)) return true;
   return false;
 }
 

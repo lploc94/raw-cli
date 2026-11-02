@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createProvider } from "../src/llm/client.js";
+import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
+import { createProvider, MAX_TIMER_MS } from "../src/llm/client.js";
 import type { ModelMessage, ProviderName, ResolvedModelConfig, UserInput } from "../src/llm/types.js";
 import { makePng } from "./fixtures/images.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
@@ -91,17 +93,53 @@ test("client errors, incomplete stream and cancellation are terminal with no ret
   const refusal = await startMockProvider([{ frames: [openAiFrame({ refusal: "no" }, "stop"), openAiDone] }]);
   try { await assert.rejects(createProvider(agent("openai", refusal.url)).generate(request), /no/); assert.equal(refusal.requests.length, 1); }
   finally { await refusal.close(); }
-  for (const method of ["openai-chat-completions", "openai-responses", "anthropic-messages", "google-generate-content"] as const) {
-    const provider: ProviderName = method === "anthropic-messages" ? "anthropic" : method === "google-generate-content" ? "google" : "openai";
-    const hanging = await startMockProvider([{ hold: true }]);
-    try {
-      await assert.rejects(
-        createProvider({ ...agent(provider, hanging.url), method }).generate({ ...request, timeoutMs: 80 }),
-        (err: unknown) => err instanceof Error && (err as { code?: unknown }).code === "timeout" && /timed out/.test(err.message),
-      );
-      assert.equal(hanging.requests.length, 1);
-    } finally { await hanging.close(); }
+  const origOpenAiFetchWithTimeout = OpenAI.prototype.fetchWithTimeout;
+  const origAnthropicFetchWithTimeout = Anthropic.prototype.fetchWithTimeout;
+  const observedSdkTimeouts: Array<{ method: string; op: string; ms: number }> = [];
+  let activeMethod = "";
+  let activeOp = "";
+  OpenAI.prototype.fetchWithTimeout = function (url, init, ms, controller) {
+    observedSdkTimeouts.push({ method: activeMethod, op: activeOp, ms });
+    return origOpenAiFetchWithTimeout.call(this, url, init, ms, controller);
+  };
+  Anthropic.prototype.fetchWithTimeout = function (url, init, ms, controller) {
+    observedSdkTimeouts.push({ method: activeMethod, op: activeOp, ms });
+    return origAnthropicFetchWithTimeout.call(this, url, init, ms, controller);
+  };
+  try {
+    for (const method of ["openai-chat-completions", "openai-responses", "anthropic-messages", "google-generate-content"] as const) {
+      const provider: ProviderName = method === "anthropic-messages" ? "anthropic" : method === "google-generate-content" ? "google" : "openai";
+      const hanging = await startMockProvider([{ hold: true }, { hold: true }]);
+      try {
+        const adapter = createProvider({ ...agent(provider, hanging.url), method });
+        activeMethod = method;
+        activeOp = "generate";
+        await assert.rejects(
+          adapter.generate({ ...request, timeoutMs: 80 }),
+          (err: unknown) => err instanceof Error && (err as { code?: unknown }).code === "timeout" && /timed out/.test(err.message),
+        );
+        assert.equal(hanging.requests.length, 1);
+        if (adapter.compact) {
+          activeOp = "compact";
+          await assert.rejects(
+            adapter.compact({ system: "sys", messages: request.messages, tools: [], timeoutMs: 80 }),
+            (err: unknown) => err instanceof Error && (err as { code?: unknown }).code === "timeout" && /timed out/.test(err.message),
+          );
+          assert.equal(hanging.requests.length, 2);
+        }
+      } finally { await hanging.close(); }
+    }
+  } finally {
+    OpenAI.prototype.fetchWithTimeout = origOpenAiFetchWithTimeout;
+    Anthropic.prototype.fetchWithTimeout = origAnthropicFetchWithTimeout;
   }
+  assert.deepEqual(observedSdkTimeouts, [
+    { method: "openai-chat-completions", op: "generate", ms: MAX_TIMER_MS },
+    { method: "openai-responses", op: "generate", ms: MAX_TIMER_MS },
+    { method: "openai-responses", op: "compact", ms: MAX_TIMER_MS },
+    { method: "anthropic-messages", op: "generate", ms: MAX_TIMER_MS },
+    { method: "anthropic-messages", op: "compact", ms: MAX_TIMER_MS },
+  ]);
   const abortFixture = await startMockProvider([{ hold: true }]);
   try {
     const controller = new AbortController();

@@ -103,6 +103,56 @@ test("429 terminal quota errors and x-should-retry headers control retryability"
   assert.equal(isTerminalQuotaError({ status: 429, type: "billing_hard_limit_reached", message: "Billing hard limit has been reached" }), true);
   assert.equal(isTerminalQuotaError({ status: 429, message: "Your credit balance is too low to access the Anthropic API." }), true);
   assert.equal(isTerminalQuotaError({ status: 429, code: "rate_limit_exceeded", message: "Rate limit reached on tokens per min (TPM). Please try again in 2s." }), false);
+
+  const geminiMinuteQuotaBody = {
+    error: {
+      code: 429,
+      message: "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.",
+      status: "RESOURCE_EXHAUSTED",
+      details: [
+        {
+          "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+          violations: [{
+            quotaMetric: "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+            quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+            quotaDimensions: { location: "global", model: "gemini-2.5-pro" },
+            quotaValue: "5",
+          }],
+        },
+        { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "0.05s" },
+      ],
+    },
+  };
+  const geminiMinuteFixture = await startMockProvider([
+    { status: 429, body: geminiMinuteQuotaBody },
+    { frames: [geminiText("gemini-recovered", "STOP")] },
+  ]);
+  try {
+    assert.equal((await gemini(geminiMinuteFixture.url).generate(request())).text, "gemini-recovered");
+    assert.equal(geminiMinuteFixture.requests.length, 2);
+  } finally { await geminiMinuteFixture.close(); }
+
+  const geminiDailyFixture = await startMockProvider([
+    {
+      status: 429,
+      body: {
+        error: {
+          code: 429,
+          message: "You exceeded your current quota, please check your plan and billing details.",
+          status: "RESOURCE_EXHAUSTED",
+          details: [
+            { "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" }] },
+            { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "0.05s" },
+          ],
+        },
+      },
+    },
+    { frames: [geminiText("should-not-retry", "STOP")] },
+  ]);
+  try {
+    await assert.rejects(gemini(geminiDailyFixture.url).generate(request()));
+    assert.equal(geminiDailyFixture.requests.length, 1);
+  } finally { await geminiDailyFixture.close(); }
 });
 
 test("pre-output SSE errors and premature stream closes retry across adapters without duplicate usage, while post-delta errors do not retry", async () => {
