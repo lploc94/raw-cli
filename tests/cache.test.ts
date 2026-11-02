@@ -53,7 +53,7 @@ test("OpenAI stable key, Anthropic cache_control, Google implicit and generic ab
 });
 
 test("explicit cache settings are validated, no-hints suppresses metadata, and llama.cpp is opt-in", async () => {
-  const fixture = await startMockProvider(Array.from({ length: 6 }, () => ({ frames: finalFrames("openai") })));
+  const fixture = await startMockProvider((["openai", "openai", "anthropic", "openai", "openai"] as const).map((p) => ({ frames: finalFrames(p) })));
   try {
     const req = { system: "stable", messages: [{ role: "user" as const, content: "hello" }], tools: [], timeoutMs: 1000, cacheKey: "derived" };
     await createProvider({ ...makeProfile("openai", fixture.url, { mode: "auto", key: "user-key", retention: "24h" }), model: "gpt-4.1" }).generate(req);
@@ -61,7 +61,7 @@ test("explicit cache settings are validated, no-hints suppresses metadata, and l
     assert.equal((fixture.requests[0]?.body as Record<string, unknown>).prompt_cache_retention, "24h");
     await createProvider(makeProfile("openai", fixture.url, { mode: "no-hints", key: "ignored" })).generate(req);
     assert.equal((fixture.requests[1]?.body as Record<string, unknown>).prompt_cache_key, undefined);
-    await createProvider(makeProfile("anthropic", fixture.url, { mode: "no-hints" })).generate(req).catch(() => {}); // fixture dialect differs; request still captured
+    await createProvider(makeProfile("anthropic", fixture.url, { mode: "no-hints" })).generate(req);
     assert.equal((fixture.requests[2]?.body as Record<string, unknown>).cache_control, undefined);
     await createProvider(makeProfile("llamacpp", fixture.url, { mode: "auto", backend: "llama.cpp" })).generate(req);
     assert.equal((fixture.requests[3]?.body as Record<string, unknown>).cache_prompt, true);
