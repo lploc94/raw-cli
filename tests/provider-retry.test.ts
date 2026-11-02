@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { createProvider, isTerminalQuotaError, parseDurationOrDateMs, ProviderError, retryAfterMs, retryable, withProviderAbort } from "../src/llm/client.js";
+import { createAgent, type RunEvent } from "../src/agent.js";
+import { createProvider, describeRetryReason, isTerminalQuotaError, parseDurationOrDateMs, ProviderError, retryAfterMs, retryable, withProviderAbort } from "../src/llm/client.js";
+import type { ProviderAdapter } from "../src/llm/types.js";
+import { acpUpdate } from "../src/sessions/display.js";
+import { openSessionStore } from "../src/sessions/store.js";
+import { projectHistoryItem } from "../src/sessions/view.js";
+import { ToolRegistry } from "../src/tools/registry.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 
 const provider = (baseUrl: string) => createProvider({ agentName: "fixture", provider: "openai", method: "openai-chat-completions",
@@ -405,4 +414,82 @@ test("cycle-safe cause chain and AggregateError traversal retries nested socket 
   assert.equal(retryable(cycle), false);
   assert.equal(retryable(new ProviderError("incomplete_stream", "cut")), true);
   assert.equal(retryable(new ProviderError("invalid_stream", "bad")), false);
+});
+
+test("describeRetryReason, withProviderAbort, and AgentSession emit credential-safe provider_retry events and record visible status history", async () => {
+  const secretError = {
+    status: 503,
+    headers: now,
+    code: "sk-live-secret-token",
+    type: "sk-live-secret-token",
+    error: { code: "sk-live-secret-token", type: "sk-live-secret-token", message: "Bearer sk-live-secret-token" },
+    message: "503 key sk-live-secret-token",
+  };
+  assert.deepEqual(describeRetryReason(secretError), { status: 503, reason: "HTTP 503" });
+  assert.deepEqual(describeRetryReason({ status: 429, code: "rate_limit_error" }), { status: 429, reason: "HTTP 429 (rate_limit_error)" });
+  assert.deepEqual(describeRetryReason(new ProviderError("incomplete_stream", "cut")), { reason: "incomplete_stream" });
+  assert.deepEqual(describeRetryReason(new Error("outer", { cause: { code: "ECONNRESET" } })), { reason: "connection error (ECONNRESET)" });
+
+  const dir = await mkdtemp(join(tmpdir(), "raw-retry-obs-"));
+  const store = openSessionStore({ env: { XDG_STATE_HOME: dir, XDG_CONFIG_HOME: dir } });
+  const sessionId = store.createSession({ cwd: dir, title: "retry-obs" }).id;
+  try {
+    let callCount = 0;
+    const mockAdapter: ProviderAdapter = {
+      modelConfig: { agentName: "fixture", provider: "openai", method: "openai-chat-completions", model: "fixture", contextWindow: 8000, maxOutputTokens: 128 },
+      async generate(req) {
+        return withProviderAbort(req, async () => {
+          callCount++;
+          if (callCount === 1) throw secretError;
+          if (callCount === 2) throw Object.assign(new Error("429 key sk-live-secret-token"), { status: 429, headers: now, code: "rate_limit_error" });
+          if (callCount === 5) throw Object.assign(new Error("502 gateway key sk-live-secret-token"), { status: 502, headers: now });
+          return { text: callCount <= 4 ? "turn-answer ".repeat(200) : "Summary.", toolCalls: [], finishReason: "stop", usage: { prompt_tokens: 10, completion_tokens: 5 } };
+        });
+      },
+    };
+    const agent = createAgent({
+      cwd: dir,
+      provider: mockAdapter,
+      registry: new ToolRegistry(),
+      system: "sys",
+      persistence: { store, sessionId, surface: "cli" },
+      compact: { keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 64 },
+    });
+    const events: RunEvent[] = [];
+    const runRes = await agent.run("hello", (ev) => events.push(ev));
+    assert.equal(runRes.status, "completed");
+    await agent.run("second turn");
+    const retryEvents = events.filter((e): e is Extract<RunEvent, { type: "provider_retry" }> => e.type === "provider_retry");
+    assert.equal(retryEvents.length, 2);
+    assert.equal(retryEvents[0]?.attempt, 1);
+    assert.equal(retryEvents[0]?.maxRetries, 3);
+    assert.equal(retryEvents[0]?.status, 503);
+    assert.equal(retryEvents[0]?.reason, "HTTP 503");
+    assert.equal(retryEvents[1]?.attempt, 2);
+    assert.equal(retryEvents[1]?.maxRetries, 3);
+    assert.equal(retryEvents[1]?.status, 429);
+    assert.equal(retryEvents[1]?.reason, "HTTP 429 (rate_limit_error)");
+    assert.ok(!JSON.stringify(events).includes("sk-live-secret-token"));
+
+    const acp = acpUpdate(retryEvents[0]!);
+    assert.deepEqual(acp, { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: retryEvents[0]!.message } });
+
+    const compactEvents: RunEvent[] = [];
+    const compactRes = await agent.compact({ keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 64 }, (ev) => compactEvents.push(ev));
+    assert.equal(compactRes.status, "compacted");
+    const compactRetries = compactEvents.filter((e): e is Extract<RunEvent, { type: "provider_retry" }> => e.type === "provider_retry");
+    assert.equal(compactRetries.length, 1);
+    assert.equal(compactRetries[0]?.reason, "HTTP 502");
+    assert.ok(!JSON.stringify(compactEvents).includes("sk-live-secret-token"));
+
+    const history = store.historyAfter(sessionId, 0, store.historyWatermark(sessionId));
+    const statusItems = history.filter((item) => item.kind === "status").map((item) => projectHistoryItem(item));
+    assert.equal(statusItems.length, 3);
+    assert.match(statusItems[0]?.text ?? "", /Retrying provider request \(attempt 1\/3 .* HTTP 503\)/);
+    assert.match(statusItems[1]?.text ?? "", /Retrying provider request \(attempt 2\/3 .* HTTP 429 \(rate_limit_error\)\)/);
+    assert.match(statusItems[2]?.text ?? "", /Retrying provider request \(attempt 1\/3 .* HTTP 502\)/);
+    assert.ok(!JSON.stringify(history).includes("sk-live-secret-token"));
+  } finally {
+    store.close();
+  }
 });

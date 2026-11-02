@@ -95,6 +95,14 @@ export type ModelMessage =
   /** `arguments`: the normalized arguments, when normalization changed the call (host-only; the raw call stays on the assistant message). */
   | { role: "tool"; callId: string; name: string; result: ToolResult; arguments?: Record<string, unknown> };
 
+export interface ProviderRetryInfo {
+  attempt: number;
+  maxRetries: number;
+  delayMs: number;
+  status?: number;
+  reason: string;
+}
+
 export interface ProviderRequest {
   system: string;
   messages: readonly ModelMessage[];
@@ -109,6 +117,7 @@ export interface ProviderRequest {
   onTextDelta?: (delta: string) => void;
   onReasoningDelta?: (delta: string) => void;
   onUsage?: (raw: unknown) => void;
+  onRetry?: (info: ProviderRetryInfo) => void;
   /** Tool calls the provider ran itself and notices about the run; only an external backend sends them. */
   onExternal?: (event: ExternalTurnEvent) => void;
   /** Runs one of `tools` for an external backend (the Raw bridge) inside this turn, recorded as Raw's own calls are. */
@@ -145,6 +154,7 @@ export interface NativeCompactRequest {
   instructions?: string;
   maxOutputTokens?: number;
   onUsage?: (raw: unknown) => void;
+  onRetry?: (info: ProviderRetryInfo) => void;
   cacheKey?: string;
 }
 

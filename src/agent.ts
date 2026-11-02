@@ -20,7 +20,7 @@ import { projectImageLimits, projectReplayMessages, projectVisionMessages, reque
 import { nativeUserContent } from "./llm/content.js";
 import { ProviderError } from "./llm/client.js";
 import type { CompactSettings } from "./config.js";
-import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type UserInput } from "./llm/types.js";
+import { renderUserInput, type ModelMessage, type ModelToolCall, type ProviderAdapter, type ProviderRetryInfo, type UserInput } from "./llm/types.js";
 import { ToolRegistry, type ToolDefinition } from "./tools/registry.js";
 import { capResult, DEFAULT_MAX_OUTPUT_BYTES, errorResult } from "./tools/results.js";
 import { effectiveOutputTokens } from "./llm/output.js";
@@ -97,6 +97,8 @@ export type RunEvent = (
       durationMs: number; message?: string; code?: string }
   /** A warning or notice from an external backend about this run (src/backends), recorded as `backend_notice`. */
   | { type: "backend_notice"; message: string }
+  /** A transient provider failure is waiting on backoff before retrying the request. */
+  | ({ type: "provider_retry"; message: string } & ProviderRetryInfo)
 ) & { turnId?: string; segmentId?: string };
 
 export interface CompactionDetails {
@@ -492,7 +494,7 @@ export class AgentSession {
    * the newest stay verbatim, and the user's messages, working state, checkpoint and resume text lead the new context.
    */
   private async compactWork(provider: ProviderAdapter, settings: CompactWorkSettings, controller: AbortController, details: CompactionDetails,
-    onUsage?: (raw: unknown) => void, onWarning?: (message: string) => void): Promise<CompactResult> {
+    onUsage?: (raw: unknown) => void, onWarning?: (message: string) => void, onRetry?: (info: ProviderRetryInfo) => void): Promise<CompactResult> {
     const beforeBytes = Buffer.byteLength(JSON.stringify(this.messages), "utf8");
     // Roles and identities come from the stored messages; what is sent comes from their replay projection, index for index.
     const source = structuredClone(this.messages);
@@ -802,7 +804,8 @@ export class AgentSession {
               messages: this.sendMessages().slice(0, cut), timeoutMs: this.options.requestTimeoutMs, signal: controller.signal,
               cacheKey: this.cacheKey, maxOutputTokens: outputBudget,
               ...(anthropic ? { instructions: nativeInstructions({ words: checkpointWords(outputBudget), instructions: settings.instructions }) } : {}),
-              onUsage: (raw) => recordUsage(-1, raw) }), abortable()]);
+              onUsage: (raw) => recordUsage(-1, raw),
+              ...(onRetry ? { onRetry } : {}) }), abortable()]);
             if (this.persistenceError) throw this.persistenceError;
             if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
             const portable = nativePortableText(result.summary, this.summaryText);
@@ -833,6 +836,7 @@ export class AgentSession {
             ...(toolChoiceKeepsCache(provider.modelConfig) ? { toolChoice: "none" as const } : {}) } } : {}),
           onRequestStart: startUsage,
           onUsage: recordUsage,
+          ...(onRetry ? { onRetry } : {}),
         }), abortable()]);
         if (this.persistenceError) throw this.persistenceError;
         if (controller.signal.aborted || work.status === "cancelled") return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
@@ -943,6 +947,14 @@ export class AgentSession {
     return true;
   }
 
+  private notifyRetry(info: ProviderRetryInfo, signal: AbortSignal, emit?: (event: RunEvent) => void): void {
+    if (signal.aborted) return;
+    const delayLabel = info.delayMs >= 1000 ? `${(info.delayMs / 1000).toFixed(1).replace(/\.0$/, "")}s` : `${Math.max(0, Math.round(info.delayMs))}ms`;
+    const message = `Retrying provider request (attempt ${info.attempt}/${info.maxRetries} in ${delayLabel}: ${info.reason})`;
+    this.recordVisible("status", { text: message });
+    emit?.({ type: "provider_retry", ...info, message });
+  }
+
   private async compactAttempt(provider: ProviderAdapter, settings: CompactWorkSettings, controller: AbortController,
     cause: CompactionDetails["cause"], onEvent?: (event: RunEvent) => void): Promise<CompactResult> {
     const details: CompactionDetails = { id: randomUUID(), cause, status: "running", keepRecentTurns: settings.keepRecentTurns,
@@ -953,7 +965,8 @@ export class AgentSession {
     try {
       emit({ type: "compact_start", estimatedTokens: details.beforeTokens, details });
       const result = await this.compactWork(provider, settings, controller, details, (raw) => emit({ type: "usage", raw }),
-        (message) => emit({ type: "compact_warning", message, details: { ...details } }));
+        (message) => emit({ type: "compact_warning", message, details: { ...details } }),
+        (info) => this.notifyRetry(info, controller.signal, emit));
       Object.assign(details, { status: result.status, afterTokens: this.estimatedContextTokens(),
         beforeBytes: result.beforeBytes ?? details.beforeBytes, afterBytes: result.status === "compacted" ? result.afterBytes : details.beforeBytes });
       if (result.status !== "compacted") this.recordVisible("compaction", { ...details });
@@ -1582,6 +1595,7 @@ export class AgentSession {
             onTextDelta: (text) => { if (!controller.signal.aborted) emit({ type: "text_delta", text }); },
             onReasoningDelta: (text) => { if (!controller.signal.aborted) emit({ type: "reasoning_delta", text }); },
             onUsage: recordUsage,
+            onRetry: (info) => this.notifyRetry(info, controller.signal, emit),
             // Only an external CLI runs tools of its own; other providers' requests stay as they were.
             ...(this.options.provider.modelConfig.method === "acp" ? { onExternal: external, runTool } : {}),
           }), aborted]);

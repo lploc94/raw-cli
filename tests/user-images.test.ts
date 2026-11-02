@@ -96,7 +96,7 @@ test("invalid, mistyped, truncated and oversize user images fail before any requ
 const stub = (vision: boolean, seen: unknown[] = [], window?: { contextWindow: number; maxOutputTokens: number }): ProviderAdapter => ({
   modelConfig: { agentName: "t", provider: "ollama", method: "openai-chat-completions", model: "fixture", vision, ...window },
   async generate(request): Promise<ProviderTurn> {
-    const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta, onReasoningDelta: _onReasoningDelta, ...wire } = request;
+    const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta, onReasoningDelta: _onReasoningDelta, onRetry: _onRetry, ...wire } = request;
     seen.push(structuredClone(wire));
     return { text: "ok", toolCalls: [], finishReason: "stop" };
   },

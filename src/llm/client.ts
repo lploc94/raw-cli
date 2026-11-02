@@ -36,6 +36,11 @@ const TRANSIENT_RATE_PATTERN = /\b(?:per minute|per second|rpm|tpm|ipm|tokens pe
 const TRANSIENT_SSE_CODES = new Set([
   "overloaded_error", "rate_limit_error", "rate_limit_exceeded", "server_error", "api_error",
 ]);
+const SAFE_RETRY_CODES = new Set([
+  ...RETRYABLE_CODES,
+  ...TRANSIENT_SSE_CODES,
+  "incomplete_stream", "APIConnectionError", "APIConnectionTimeoutError",
+]);
 
 function readHeader(headers: unknown, name: string): string | undefined {
   if (!headers || typeof headers !== "object") return undefined;
@@ -195,6 +200,38 @@ export function retryAfterMs(error: unknown, now = Date.now()): number | undefin
   return applicable.length ? Math.max(...applicable) : undefined;
 }
 
+export function describeRetryReason(error: unknown): { status?: number; reason: string } {
+  if (!error || typeof error !== "object") return { reason: "transient provider error" };
+  const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : undefined;
+  const { codes } = extractErrorFields(error);
+  const safeCode = codes.find((c) => SAFE_RETRY_CODES.has(c) || SAFE_RETRY_CODES.has(c.toUpperCase()));
+  const normalizedCode = safeCode ? (SAFE_RETRY_CODES.has(safeCode) ? safeCode : safeCode.toUpperCase()) : undefined;
+  if (status !== undefined) {
+    return { status, reason: normalizedCode ? `HTTP ${status} (${normalizedCode})` : `HTTP ${status}` };
+  }
+  if (error instanceof ProviderError && error.code === "incomplete_stream") {
+    return { reason: "incomplete_stream" };
+  }
+  if (normalizedCode) return { reason: `SSE ${normalizedCode}` };
+  const visited = new Set<object>();
+  const queue: unknown[] = [error];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || visited.has(current)) continue;
+    visited.add(current);
+    const node = current as { name?: unknown; code?: unknown; cause?: unknown; errors?: unknown };
+    if (typeof node.code === "string" && RETRYABLE_CODES.has(node.code)) return { reason: `connection error (${node.code})` };
+    if (node.name === "APIConnectionError" || node.name === "APIConnectionTimeoutError") return { reason: `connection error (${node.name})` };
+    if (node.cause && typeof node.cause === "object") queue.push(node.cause);
+    if (Array.isArray(node.errors)) {
+      for (const child of node.errors) {
+        if (child && typeof child === "object") queue.push(child);
+      }
+    }
+  }
+  return { reason: "transient provider error" };
+}
+
 /**
  * Runs one provider request. `timeoutMs` bounds silence, not length: the timer restarts whenever the adapter reports
  * stream activity through `touch`, so a long answer that keeps streaming is never cut off, while a stalled connection
@@ -203,7 +240,7 @@ export function retryAfterMs(error: unknown, now = Date.now()): number | undefin
  * honoring server retry headers up to `timeoutMs`.
  */
 export async function withProviderAbort<T = ProviderTurn>(
-  request: Pick<ProviderRequest, "timeoutMs" | "signal">,
+  request: Pick<ProviderRequest, "timeoutMs" | "signal" | "onRetry">,
   run: (signal: AbortSignal, touch: () => void, commit: () => void) => Promise<T>,
 ): Promise<T> {
   if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMER_MS) {
@@ -242,6 +279,10 @@ export async function withProviderAbort<T = ProviderTurn>(
     const serverDelay = retryAfterMs(failure);
     if (serverDelay !== undefined && serverDelay > request.timeoutMs) throw failure;
     const delay = serverDelay ?? Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** attempt * (0.75 + Math.random() / 2));
+    const delayMs = Math.round(delay);
+    const { status, reason } = describeRetryReason(failure);
+    request.onRetry?.({ attempt: attempt + 1, maxRetries: PROVIDER_RETRIES, delayMs, ...(status !== undefined ? { status } : {}), reason });
+    if (request.signal?.aborted) throw new ProviderError("aborted", "provider request aborted");
     await new Promise<void>((resolve) => {
       const wait = setTimeout(done, delay);
       function done() { clearTimeout(wait); request.signal?.removeEventListener("abort", done); resolve(); }

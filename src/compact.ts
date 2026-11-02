@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import type { AgentSession } from "./agent.js";
 import { normalizeUsage } from "./llm/cache.js";
-import { base64ByteLength, isNativeCompaction, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type ProviderTurn, type UserInput } from "./llm/types.js";
+import { base64ByteLength, isNativeCompaction, type ModelMessage, type ModelRequestOptions, type ProviderAdapter, type ProviderRetryInfo, type ProviderTurn, type UserInput } from "./llm/types.js";
 import type { ToolDefinition } from "./tools/registry.js";
 import { elideMiddle, utf8Prefix, utf8Suffix } from "./tools/results.js";
 import { SPILL_PATH_RESERVE, savedLabel, spillText } from "./tools/spill.js";
@@ -363,6 +363,7 @@ export async function summarizeTranscript(
     /** Largest output a retry may use: what the context after compaction has room for. */
     maxRetryOutputTokens?: number | undefined;
     onRequestStart?: (index: number) => void; onUsage?: (index: number, raw: unknown) => void;
+    onRetry?: ((info: ProviderRetryInfo) => void) | undefined;
     /**
      * The main request to summarize from (design §6.6), tried first when the summary is written by the agent's own model:
      * its system prompt, tools and messages unchanged, so a provider can reuse the cached prefix.
@@ -409,6 +410,7 @@ export async function summarizeTranscript(
             ...(same.toolChoice ? { toolChoice: same.toolChoice } : {}),
             signal: options.signal, cacheKey: same.cacheKey,
             onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(index, raw); },
+            ...(options.onRetry ? { onRetry: options.onRetry } : {}),
           });
           if (!options.signal.aborted && turn.usage !== undefined) options.onUsage?.(index, turn.usage);
           if (options.signal.aborted) return { status: "cancelled" };
@@ -485,6 +487,7 @@ export async function summarizeTranscript(
         signal: options.signal,
         cacheKey: options.cacheKey,
         onUsage: (raw) => { if (!options.signal.aborted) options.onUsage?.(index, raw); },
+        ...(options.onRetry ? { onRetry: options.onRetry } : {}),
       });
       if (!options.signal.aborted && turn.usage !== undefined) options.onUsage?.(index, turn.usage);
       if (options.signal.aborted) return { status: "cancelled" };
