@@ -4,7 +4,7 @@ import { effectiveOutputTokens } from "./output.js";
 import { isNativeCompaction, renderUserInput, truncatedArgumentsError, type ModelMessage, type NativeCompactRequest, type ProviderAdapter,
   type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
-import { ProviderError, withProviderAbort } from "./client.js";
+import { MAX_TIMER_MS, ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
 /**
@@ -73,6 +73,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
   const client = new Anthropic({
     apiKey: modelConfig.apiKey ?? "",
     ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}),
+    timeout: MAX_TIMER_MS,
     maxRetries: 0,
   });
   return {
@@ -93,7 +94,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
           betas: [ANTHROPIC_COMPACTION_BETA],
           compaction: { type: "summarize", ...(request.instructions ? { instructions: request.instructions } : {}) },
           ...params,
-        } as never, { signal, timeout: request.timeoutMs, maxRetries: 0 }) as unknown as {
+        } as never, { signal, maxRetries: 0 }) as unknown as {
           stop_reason?: unknown; content?: unknown; usage?: { iterations?: unknown } };
         touch();
         // The summary's own usage is the `compaction` iteration; the top-level counts are zero because nothing is answered.
@@ -110,7 +111,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
       });
     },
     async generate(request): Promise<ProviderTurn> {
-      return withProviderAbort(request, async (signal, touch) => {
+      return withProviderAbort(request, async (signal, touch, commit) => {
         const { configured, tools, params } = sharedSettings(modelConfig, request);
         // Anthropic requires max_tokens; an assumed default that an older model rejects is lowered to its stated maximum.
         const assumed = request.maxOutputTokens !== undefined ? request.maxOutputTokensAssumed === true
@@ -132,7 +133,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
           stream: true,
           ...params,
           ...(tools.length && request.toolChoice ? { tool_choice: { type: request.toolChoice } } : {}),
-        }, { signal, timeout: request.timeoutMs, maxRetries: 0, ...beta });
+        }, { signal, maxRetries: 0, ...beta });
         let stream: Awaited<ReturnType<typeof create>>;
         try { stream = await create(); }
         catch (error) {
@@ -150,6 +151,9 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         let stopReason: string | undefined;
         let stopped = false;
         let started = false;
+        let completed = false;
+        let committed = false;
+        const markCommitted = () => { committed = true; commit(); };
         let usage: Record<string, unknown> = {};
         try {
         for await (const event of stream) {
@@ -167,6 +171,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
             activeBlocks.add(event.index);
             if (event.content_block.type === "text" && event.content_block.text) {
               text += event.content_block.text;
+              markCommitted();
               request.onTextDelta?.(event.content_block.text);
             }
           }
@@ -178,11 +183,11 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
               if (block.type !== "text") throw new ProviderError("invalid_stream", "text delta on nontext block");
               block.text = String(block.text ?? "") + delta.text;
               text += delta.text;
-              if (delta.text) request.onTextDelta?.(delta.text);
+              if (delta.text) { markCommitted(); request.onTextDelta?.(delta.text); }
             } else if (delta.type === "thinking_delta") {
               if (block.type !== "thinking") throw new ProviderError("invalid_stream", "thinking delta on nonthinking block");
               block.thinking = String(block.thinking ?? "") + delta.thinking;
-              if (delta.thinking) request.onReasoningDelta?.(delta.thinking);
+              if (delta.thinking) { markCommitted(); request.onReasoningDelta?.(delta.thinking); }
             } else if (delta.type === "signature_delta") {
               if (block.type !== "thinking") throw new ProviderError("invalid_stream", "signature delta on nonthinking block");
               block.signature = String(block.signature ?? "") + delta.signature;
@@ -230,9 +235,10 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         if (new Set(toolCalls.map((call) => call.id)).size !== toolCalls.length) throw new ProviderError("invalid_stream", "duplicate Anthropic tool call ID");
         if (stopReason === "tool_use" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool stop without calls");
         if (stopReason === "end_turn" && toolCalls.length) throw new ProviderError("invalid_stream", "tool calls with end_turn stop");
+        completed = true;
         return { text, toolCalls, finishReason: stopReason, ...(truncated ? { truncated } : {}), opaque, usage };
         } finally {
-          if (!signal.aborted && Object.keys(usage).length) request.onUsage?.(usage);
+          if (!signal.aborted && (completed || committed) && Object.keys(usage).length) request.onUsage?.(usage);
         }
       });
     },

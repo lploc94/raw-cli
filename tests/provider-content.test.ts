@@ -91,9 +91,17 @@ test("client errors, incomplete stream and cancellation are terminal with no ret
   const refusal = await startMockProvider([{ frames: [openAiFrame({ refusal: "no" }, "stop"), openAiDone] }]);
   try { await assert.rejects(createProvider(agent("openai", refusal.url)).generate(request), /no/); assert.equal(refusal.requests.length, 1); }
   finally { await refusal.close(); }
-  const hanging = await startMockProvider([{ hold: true }]);
-  try { await assert.rejects(createProvider(agent("openai", hanging.url)).generate({ ...request, timeoutMs: 40 })); assert.equal(hanging.requests.length, 1); }
-  finally { await hanging.close(); }
+  for (const method of ["openai-chat-completions", "openai-responses", "anthropic-messages", "google-generate-content"] as const) {
+    const provider: ProviderName = method === "anthropic-messages" ? "anthropic" : method === "google-generate-content" ? "google" : "openai";
+    const hanging = await startMockProvider([{ hold: true }]);
+    try {
+      await assert.rejects(
+        createProvider({ ...agent(provider, hanging.url), method }).generate({ ...request, timeoutMs: 80 }),
+        (err: unknown) => err instanceof Error && (err as { code?: unknown }).code === "timeout" && /timed out/.test(err.message),
+      );
+      assert.equal(hanging.requests.length, 1);
+    } finally { await hanging.close(); }
+  }
   const abortFixture = await startMockProvider([{ hold: true }]);
   try {
     const controller = new AbortController();

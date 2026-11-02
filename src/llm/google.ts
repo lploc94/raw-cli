@@ -67,7 +67,7 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
   return {
     modelConfig,
     async generate(request): Promise<ProviderTurn> {
-      return withProviderAbort(request, async (signal, touch) => {
+      return withProviderAbort(request, async (signal, touch, commit) => {
         cacheSettings(modelConfig, request.cacheKey);
         const configured = modelConfig.request?.kind === "google" ? modelConfig.request : undefined;
         const stream = await withRetryDelay(client.models.generateContentStream({
@@ -94,6 +94,9 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
         let text = "";
         let finishReason: string | undefined;
         let usage: unknown;
+        let completed = false;
+        let committed = false;
+        const markCommitted = () => { committed = true; commit(); };
         const parts: Part[] = [];
         const rawCalls: { id?: string; name: string; arguments: Record<string, unknown> }[] = [];
         try {
@@ -107,8 +110,8 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
           if (candidate.finishReason) finishReason = candidate.finishReason;
           for (const part of candidate.content?.parts ?? []) {
             parts.push(part);
-            if (part.thought) { if (part.text) request.onReasoningDelta?.(part.text); continue; }
-            if (part.text) { text += part.text; request.onTextDelta?.(part.text); }
+            if (part.thought) { if (part.text) { markCommitted(); request.onReasoningDelta?.(part.text); } continue; }
+            if (part.text) { text += part.text; markCommitted(); request.onTextDelta?.(part.text); }
             if (part.functionCall) {
               const call = part.functionCall;
               const args = call.args === undefined ? {} : call.args;
@@ -134,9 +137,10 @@ export function createGoogleProvider(modelConfig: Readonly<ResolvedModelConfig>)
           usedIds.add(id);
           return { id, name: call.name, arguments: call.arguments, syntheticId: true };
         });
+        completed = true;
         return { text, toolCalls, finishReason, ...(truncated ? { truncated } : {}), opaque: parts, ...(usage !== undefined ? { usage } : {}) };
         } finally {
-          if (!signal.aborted && usage !== undefined) request.onUsage?.(usage);
+          if (!signal.aborted && (completed || committed) && usage !== undefined) request.onUsage?.(usage);
         }
       });
     },

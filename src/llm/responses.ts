@@ -4,7 +4,7 @@ import type { ResponseInput, ResponseOutputItem } from "openai/resources/respons
 import { renderUserInput, truncatedArgumentsError, type ModelMessage, type ModelToolCall, type NativeCompactRequest, type ProviderAdapter,
   type ResolvedModelConfig, type ProviderTurn } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
-import { ProviderError, withProviderAbort } from "./client.js";
+import { MAX_TIMER_MS, ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
 function inputItems(request: { messages: readonly ModelMessage[] }): ResponseInput {
@@ -68,7 +68,7 @@ function completedTurn(output: readonly ResponseOutputItem[], usage: unknown, tr
 
 export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
   const fallbackCacheKey = randomUUID();
-  const client = new OpenAI({ apiKey: modelConfig.apiKey ?? "unused", ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}), maxRetries: 0 });
+  const client = new OpenAI({ apiKey: modelConfig.apiKey ?? "unused", ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}), timeout: MAX_TIMER_MS, maxRetries: 0 });
   return { modelConfig,
   /** `/responses/compact` (design §6.9.1): the compacted window, every item as returned. */
   async compact(request: NativeCompactRequest) {
@@ -81,7 +81,7 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
         input: inputItems(request),
         ...cache.openai,
         ...(options?.serviceTier ? { service_tier: options.serviceTier } : {}),
-      }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
+      }, { signal, maxRetries: 0 });
       touch();
       if (response.usage !== undefined && !signal.aborted) request.onUsage?.(response.usage);
       const output: unknown[] = Array.isArray(response.output) ? response.output : [];
@@ -93,7 +93,7 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
     });
   },
   async generate(request): Promise<ProviderTurn> {
-    return withProviderAbort(request, async (signal, touch) => {
+    return withProviderAbort(request, async (signal, touch, commit) => {
       const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
       const options = modelConfig.request?.kind === "openai" ? modelConfig.request : undefined;
       const stream = await client.responses.create({
@@ -113,16 +113,21 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
         ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: "function" as const, name: tool.name,
           description: tool.description, parameters: tool.inputSchema as Record<string, unknown>, strict: false })) } : {}),
         ...(request.tools.length && request.toolChoice ? { tool_choice: request.toolChoice } : {}),
-      }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
+      }, { signal, maxRetries: 0 });
       let completed: ResponseOutputItem[] | undefined;
       let usage: unknown;
+      let turnCompleted = false;
+      let committed = false;
+      const markCommitted = () => { committed = true; commit(); };
       try {
         for await (const event of stream) {
           touch();
           if (signal.aborted) throw new ProviderError("aborted", "Responses stream aborted");
-          if (event.type === "response.output_text.delta") request.onTextDelta?.(event.delta);
+          if (event.type === "response.output_text.delta") {
+            if (event.delta) { markCommitted(); request.onTextDelta?.(event.delta); }
+          }
           else if (event.type === "response.reasoning_summary_text.delta" || event.type === "response.reasoning_text.delta") {
-            request.onReasoningDelta?.(event.delta);
+            if (event.delta) { markCommitted(); request.onReasoningDelta?.(event.delta); }
           }
           else if (event.type === "response.completed") {
             if (completed) throw new ProviderError("invalid_stream", "duplicate Responses completion");
@@ -130,20 +135,32 @@ export function createResponsesProvider(modelConfig: Readonly<ResolvedModelConfi
             usage = event.response.usage;
           } else if (event.type === "response.failed") {
             usage = event.response.usage;
-            throw new ProviderError("provider_finish", "Responses request failed");
+            const err = (event.response as { error?: { code?: unknown; message?: unknown } }).error;
+            throw new ProviderError(
+              "provider_finish",
+              typeof err?.message === "string" && err.message ? err.message : "Responses request failed",
+              { code: err?.code, type: err?.code, message: err?.message },
+            );
           } else if (event.type === "response.incomplete") {
             usage = event.response.usage;
             const reason = event.response.incomplete_details?.reason;
             if (reason !== "max_output_tokens") throw new ProviderError("provider_finish", `Responses request incomplete${reason ? `: ${reason}` : ""}`);
             if (completed) throw new ProviderError("invalid_stream", "duplicate Responses completion");
-            return completedTurn(event.response.output, usage, true);
+            const turn = completedTurn(event.response.output, usage, true);
+            turnCompleted = true;
+            return turn;
           }
-          else if (event.type === "error") throw new ProviderError("provider_error", event.message);
+          else if (event.type === "error") {
+            const code = (event as { code?: unknown }).code;
+            throw new ProviderError("provider_error", event.message, { code, type: code, message: event.message });
+          }
         }
         if (!completed) throw new ProviderError("incomplete_stream", "Responses stream ended without completion");
-        return completedTurn(completed, usage);
+        const turn = completedTurn(completed, usage);
+        turnCompleted = true;
+        return turn;
       } finally {
-        if (!signal.aborted && usage !== undefined) request.onUsage?.(usage);
+        if (!signal.aborted && (turnCompleted || committed) && usage !== undefined) request.onUsage?.(usage);
       }
     });
   } };

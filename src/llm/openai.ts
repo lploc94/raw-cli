@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatCompletionContentPart, ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { renderUserInput, truncatedArgumentsError, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
-import { ProviderError, withProviderAbort } from "./client.js";
+import { MAX_TIMER_MS, ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
 function inputMessages(request: ProviderRequest, provider: ResolvedModelConfig["provider"]): ChatCompletionMessageParam[] {
@@ -54,12 +54,13 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
   const client = new OpenAI({
     apiKey: modelConfig.apiKey ?? (modelConfig.provider === "ollama" ? "ollama" : "unused"),
     ...(modelConfig.baseUrl ? { baseURL: modelConfig.baseUrl } : {}),
+    timeout: MAX_TIMER_MS,
     maxRetries: 0,
   });
   return {
     modelConfig,
     async generate(request): Promise<ProviderTurn> {
-      return withProviderAbort(request, async (signal, touch) => {
+      return withProviderAbort(request, async (signal, touch, commit) => {
         const cache = cacheSettings(modelConfig, request.cacheKey, fallbackCacheKey);
         const messages = inputMessages(request, modelConfig.provider);
         const tools: ChatCompletionTool[] = request.tools.map((tool) => ({
@@ -86,10 +87,13 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
           ...(outputLimit !== undefined ? (modelConfig.provider === "openai"
             ? { max_completion_tokens: outputLimit }
             : { max_tokens: outputLimit }) : {}),
-        }, { signal, timeout: request.timeoutMs, maxRetries: 0 });
+        }, { signal, maxRetries: 0 });
         let text = "";
         let finishReason: string | undefined;
         let usage: unknown;
+        let completed = false;
+        let committed = false;
+        const markCommitted = () => { committed = true; commit(); };
         const reasoningDetails: unknown[] = [];
         let reasoningContent = "";
         const calls = new Map<number, { id: string; name: string; arguments: string }>();
@@ -108,13 +112,13 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
             }
             if (modelConfig.provider === "deepseek") {
               const part = (delta as unknown as { reasoning_content?: unknown }).reasoning_content;
-              if (typeof part === "string") { reasoningContent += part; request.onReasoningDelta?.(part); }
+              if (typeof part === "string" && part) { reasoningContent += part; markCommitted(); request.onReasoningDelta?.(part); }
             }
             if (modelConfig.provider !== "deepseek") {
               const part = (delta as unknown as { reasoning?: unknown }).reasoning;
-              if (typeof part === "string") request.onReasoningDelta?.(part);
+              if (typeof part === "string" && part) { markCommitted(); request.onReasoningDelta?.(part); }
             }
-            if (delta.content) { text += delta.content; request.onTextDelta?.(delta.content); }
+            if (delta.content) { text += delta.content; markCommitted(); request.onTextDelta?.(delta.content); }
             for (const part of delta.tool_calls ?? []) {
               if (part.index < 0 || !Number.isSafeInteger(part.index)) throw new ProviderError("invalid_stream", "invalid tool index");
               const current = calls.get(part.index) ?? { id: "", name: "", arguments: "" };
@@ -163,12 +167,13 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
         }
         if (finishReason === "tool_calls" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool finish without calls");
         if (finishReason === "stop" && toolCalls.length) throw new ProviderError("invalid_stream", "calls without tool finish");
+        completed = true;
         return { text, toolCalls, finishReason, ...(truncated ? { truncated } : {}),
           ...(reasoningDetails.length ? { opaque: { reasoning_details: reasoningDetails } } : {}),
           ...(reasoningContent ? { opaque: { reasoning_content: reasoningContent } } : {}),
           ...(usage !== undefined ? { usage } : {}) };
         } finally {
-          if (!signal.aborted && usage !== undefined) request.onUsage?.(usage);
+          if (!signal.aborted && (completed || committed) && usage !== undefined) request.onUsage?.(usage);
         }
       });
     },
