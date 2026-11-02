@@ -7,7 +7,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "./llm/prompt.js";
 import { createHash, randomUUID } from "node:crypto";
 import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anchor.js";
 import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFacts, cutNames, cutText, cutToolResult, cutUserInput, defaultCompactOutputTokens, emptyFacts,
-  estimateRequestTokens, isCheckpointMessage, isReasoningRejection, LEDGER_CAP_TOKENS, ledgerPointer, ledgerText, LEGACY_LEDGER_NOTE,
+  estimateRequestTokens, isCheckpointMessage, isContextOverflow, isReasoningRejection, LEDGER_CAP_TOKENS, ledgerPointer, ledgerText, LEGACY_LEDGER_NOTE,
   LEGACY_NOTE_SOURCE, mechanicalCheckpoint, MIN_CHECKPOINT_OUTPUT_TOKENS, NATIVE_CHECKPOINT_BODY, nativeInstructions, nativePortableText, renderLedger, renderWorkingState, resultText, SUMMARY_CUT_NOTICE, SUMMARY_MESSAGE_PREFIX,
   summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, writtenCheckpoint, type CompactionLedgerState, type CompactOptions, type CompactResult,
   type CompactStrategy, type LedgerEntry, type RenderOptions, withoutHostData } from "./compact.js";
@@ -128,6 +128,8 @@ interface CompactWorkSettings {
   /** A fallback compaction (§6.7): no summary request; the checkpoint is the previous one with a note giving this reason. */
   mechanical?: string | undefined;
   strategy?: CompactStrategy | undefined;
+  /** Reactive overflow compaction skips reusing the overflowed main request (`sameContext`). */
+  skipSameContext?: boolean | undefined;
 }
 
 export interface AgentOptions {
@@ -831,7 +833,7 @@ export class AgentSession {
           maxOutputTokensDefaulted: settings.maxOutputTokensDefaulted || outputBudget !== settings.maxOutputTokens,
           timeoutMs: this.options.requestTimeoutMs, signal: controller.signal, cacheKey: `${this.cacheKey}:compact`,
           // The agent's own model can summarize from the main request itself and reuse its cached prefix (§6.6).
-          ...(provider === this.options.provider ? { sameContext: { system: this.options.system, tools: this.schemaView,
+          ...(provider === this.options.provider && !settings.skipSameContext ? { sameContext: { system: this.options.system, tools: this.schemaView,
             messages: this.sendMessages(), cacheKey: this.cacheKey,
             ...(toolChoiceKeepsCache(provider.modelConfig) ? { toolChoice: "none" as const } : {}) } } : {}),
           onRequestStart: startUsage,
@@ -1599,8 +1601,8 @@ export class AgentSession {
             // Only an external CLI runs tools of its own; other providers' requests stay as they were.
             ...(this.options.provider.modelConfig.method === "acp" ? { onExternal: external, runTool } : {}),
           }), aborted]);
-          const retry = this.replayRetryArmed;
-          if (retry) {
+          let reasoningRetry = this.replayRetryArmed;
+          if (reasoningRetry) {
             // The first request after a compaction consumes the retry, in this runtime or a later one.
             this.replayRetryArmed = false;
             if (this.ledgerState?.retryArmed) {
@@ -1609,14 +1611,80 @@ export class AgentSession {
               this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { ledger }));
             }
           }
-          try { turn = await request(); }
-          catch (error) {
-            // Replayed reasoning the provider rejects after compaction is projected to text, as a model switch does (§6.2).
-            if (!retry || controller.signal.aborted || !isReasoningRejection(error) || this.replayBefore >= this.messages.length) throw error;
-            const replayBefore = this.messages.length;
-            this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { replayBefore }));
-            this.replayBefore = replayBefore;
-            turn = await request();
+          let overflowRetried = false;
+          for (;;) {
+            try {
+              turn = await request();
+              break;
+            } catch (error) {
+              if (controller.signal.aborted) throw error;
+              // Replayed reasoning the provider rejects after compaction is projected to text, as a model switch does (§6.2).
+              if (reasoningRetry && isReasoningRejection(error) && this.replayBefore < this.messages.length) {
+                reasoningRetry = false;
+                const replayBefore = this.messages.length;
+                this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { replayBefore }));
+                this.replayBefore = replayBefore;
+                continue;
+              }
+              if (!overflowRetried && isContextOverflow(error)) {
+                overflowRetried = true;
+                const modelConfig = this.options.provider.modelConfig;
+                const currentBase = estimateRequestTokens(this.options.system, this.sendMessages(), this.schemaView);
+                const inputBudget = modelConfig.contextWindow !== undefined
+                  ? effectiveInputBudget(modelConfig.contextWindow, effectiveOutputTokens(modelConfig))
+                  : undefined;
+                if (inputBudget !== undefined && currentBase > 0) {
+                  this.tokenCalibration = Math.max(this.tokenCalibration, inputBudget / currentBase * 1.1);
+                  this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+                    { tokenCalibration: this.tokenCalibration }));
+                }
+                const reactiveSettings: CompactWorkSettings = {
+                  keepRecentTurns: 0,
+                  keepRecentTokens: compact?.keepRecentTokens,
+                  maxOutputTokens: compact?.maxOutputTokens ?? defaultCompactOutputTokens(modelConfig),
+                  maxOutputTokensDefaulted: compact?.maxOutputTokens === undefined || compact.maxOutputTokensDefaulted === true,
+                  instructions: compact?.instructions,
+                  strategy: compact?.strategy,
+                  skipSameContext: true,
+                };
+                const runCompact = async (work: CompactWorkSettings): Promise<CompactResult | "failed" | "stop"> => {
+                  try {
+                    const res = await this.compactAttempt(this.options.provider, work, controller, "automatic", emit);
+                    return controller.signal.aborted || res.status === "cancelled" ? "stop" : res;
+                  } catch {
+                    return this.persistenceError || controller.signal.aborted ? "stop" : "failed";
+                  }
+                };
+                let shrunk = false;
+                const first = await runCompact(reactiveSettings);
+                if (first === "stop") return finish(interrupted());
+                if (first !== "failed" && first.status === "compacted") shrunk = true;
+                const threshold = compact?.triggerTokens ?? inputBudget;
+                if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
+                  if (inputBudget !== undefined && this.clearWork(inputBudget, 0, "fallback")) shrunk = true;
+                  if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
+                    const reason = first === "failed" ? "the checkpoint request failed" : "the context exceeded the provider's context window";
+                    const mech = await runCompact({ ...reactiveSettings, mechanical: reason });
+                    if (mech === "stop") return finish(interrupted());
+                    if (mech !== "failed" && mech.status === "compacted") shrunk = true;
+                  }
+                }
+                if (!shrunk) throw error;
+                if (this.replayRetryArmed) {
+                  reasoningRetry = true;
+                  this.replayRetryArmed = false;
+                  if (this.ledgerState?.retryArmed) {
+                    const { retryArmed: _consumed, ...ledger } = this.ledgerState;
+                    this.ledgerState = ledger;
+                    this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { ledger }));
+                  }
+                }
+                baseEstimate = this.nextRequestSize().base;
+                summarizedAt = steps;
+                continue;
+              }
+              throw error;
+            }
           }
         } finally { controller.signal.removeEventListener("abort", onAbort); }
         if (controller.signal.aborted) return finish(interrupted());

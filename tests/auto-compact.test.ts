@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createAgent } from "../src/agent.js";
 import { loadConfig } from "../src/config.js";
 import { ToolRegistry, createTestToolRegistry } from "./fixtures/registry.js";
-import { COMPACT_SYSTEM_PROMPT, CompactionOverheadError, estimateRequestTokens, summarizeTranscript } from "../src/compact.js";
+import { COMPACT_SYSTEM_PROMPT, CompactionOverheadError, estimateRequestTokens, isContextOverflow, summarizeTranscript } from "../src/compact.js";
 import type { ProviderAdapter, ProviderRequest, ProviderTurn } from "../src/llm/types.js";
 import { compactionInput, isCompactionRequest } from "./fixtures/compaction.js";
 
@@ -495,3 +495,130 @@ test("phase 4/R1: an abort when the mechanical fallback starts cancels the turn 
     assert.deepEqual(unhandled, []);
   } finally { process.off("unhandledRejection", onUnhandled); }
 });
+
+test("isContextOverflow recognizes provider context-window errors (including input length + max_tokens overflow) and rejects output-token, thinking, or rate-limit errors", () => {
+  // Positive cases across OpenAI, Responses, Anthropic, Google, and llama.cpp / OpenRouter / DeepSeek:
+  assert.equal(isContextOverflow(Object.assign(new Error("400 This model's maximum context length is 128000 tokens. However, your messages resulted in 135000 tokens."), { status: 400, code: "context_length_exceeded" })), true);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 Your input exceeds the context window of this model. Please adjust your input and try again."), { status: 400, type: "invalid_request_error", code: "context_length_exceeded" })), true);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 205123 tokens > 200000 maximum\"}}"), { status: 400 })), true);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"input length and `max_tokens` exceed context limit: 195000 + 8192 > 200000\"}}"), { status: 400 })), true);
+  assert.equal(isContextOverflow(Object.assign(new Error("got status: 400 Bad Request. {\"error\":{\"code\":400,\"message\":\"The input token count (1050000) exceeds the maximum number of tokens allowed (1048576).\",\"status\":\"INVALID_ARGUMENT\"}}"), { status: 400 })), true);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 Request exceeds the available context size"), { status: 400, code: "exceed_context_size_error" })), true);
+  assert.equal(isContextOverflow(Object.assign(new Error("413 Request Entity Too Large"), { status: 413, code: "request_too_large" })), true);
+
+  // Negative cases:
+  assert.equal(isContextOverflow(Object.assign(new Error("429 Rate limit reached for gpt-4o on tokens per min (TPM): Limit 30000, Requested 35000"), { status: 429 })), false);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 max_tokens: 16384 > 4096, which is the maximum allowed number of output tokens for this model"), { status: 400 })), false);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 max_tokens is too large: 65536. This model supports at most 16384 completion tokens."), { status: 400 })), false);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 thinking.budget_tokens must be less than max_tokens"), { status: 400 })), false);
+  assert.equal(isContextOverflow(Object.assign(new Error("400 Invalid signature in thinking block"), { status: 400 })), false);
+  assert.equal(isContextOverflow(Object.assign(new Error("401 Invalid API key: prompt is too long"), { status: 401 })), false);
+});
+
+test("reactive compaction recovers when a provider rejects an underestimated request with 400 context overflow", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "raw-reactive-compact-"));
+  const requests: ProviderRequest[] = [];
+  let mainCalls = 0;
+  let overflowThrown = false;
+  const provider: ProviderAdapter = {
+    modelConfig: { agentName: "p", provider: "anthropic", method: "anthropic-messages", model: "claude-test", contextWindow: 10000, maxOutputTokens: 200 },
+    async generate(request) {
+      const { signal: _signal, onUsage: _onUsage, onTextDelta: _onTextDelta, onReasoningDelta: _onReasoningDelta, onRetry: _onRetry, ...wire } = request;
+      requests.push(structuredClone(wire));
+      if (isCompactionRequest(request)) {
+        // Reactive compaction MUST skip sameContext (cannot reuse the overflowed main context with system === "tiny").
+        assert.equal(request.system, COMPACT_SYSTEM_PROMPT);
+        return result("Condensed checkpoint summary of turns 1 and 2.");
+      }
+      mainCalls++;
+      if (mainCalls <= 2) return result(`turn-${mainCalls}-response `.repeat(150));
+      if (!overflowThrown) {
+        overflowThrown = true;
+        throw Object.assign(new Error("400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long: 10500 tokens > 10000 maximum\"}}"), { status: 400 });
+      }
+      return result("recovered on turn 3");
+    },
+  };
+  const events: string[] = [];
+  const agent = createAgent({
+    provider,
+    cwd,
+    system: "tiny",
+    registry: new ToolRegistry(),
+    compact: { triggerTokens: 8000, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100 },
+  });
+  assert.equal((await agent.run("turn 1")).status, "completed");
+  assert.equal((await agent.run("turn 2")).status, "completed");
+  // Byte estimate before turn 3 is well under 8000, so proactive compaction does not run; the 400 overflow triggers reactive compaction.
+  const third = await agent.run("turn 3", (ev) => events.push(ev.type));
+  assert.equal(third.status, "completed");
+  assert.equal(third.text, "recovered on turn 3");
+  assert.equal(mainCalls, 4);
+  assert.ok(events.includes("compact_start") && events.includes("compact_end"));
+  assert.match(JSON.stringify(agent.transcript), /Raw compaction checkpoint #1/);
+  assert.match(JSON.stringify(agent.transcript), /Condensed checkpoint summary of turns 1 and 2\./);
+});
+
+test("reactive compaction falls back to a mechanical checkpoint when the summarizer also fails, and does not retry when nothing can be compacted", async () => {
+  // Subcase A: 2-turn history hits 400 context_length_exceeded, summarizer throws "summarizer down", mechanical fallback commits and retry succeeds.
+  const cwdA = await mkdtemp(join(tmpdir(), "raw-reactive-mech-"));
+  let mainCallsA = 0;
+  let overflowThrownA = false;
+  let summarizerCallsA = 0;
+  const providerA: ProviderAdapter = {
+    modelConfig: { agentName: "p", provider: "openai", method: "openai-chat-completions", model: "gpt-test", contextWindow: 10000, maxOutputTokens: 200 },
+    async generate(request) {
+      if (isCompactionRequest(request)) {
+        summarizerCallsA++;
+        assert.equal(request.system, COMPACT_SYSTEM_PROMPT);
+        throw new Error("summarizer down");
+      }
+      mainCallsA++;
+      if (mainCallsA <= 2) return result(`turn-${mainCallsA}-body `.repeat(150));
+      if (!overflowThrownA) {
+        overflowThrownA = true;
+        throw Object.assign(new Error("400 This model's maximum context length is 10000 tokens."), { status: 400, code: "context_length_exceeded" });
+      }
+      return result("recovered via mechanical checkpoint");
+    },
+  };
+  const agentA = createAgent({
+    provider: providerA,
+    cwd: cwdA,
+    system: "tiny",
+    registry: new ToolRegistry(),
+    compact: { triggerTokens: 8000, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100 },
+  });
+  await agentA.run("first");
+  await agentA.run("second");
+  const resA = await agentA.run("third");
+  assert.equal(resA.status, "completed");
+  assert.equal(resA.text, "recovered via mechanical checkpoint");
+  assert.equal(summarizerCallsA, 1);
+  assert.equal(mainCallsA, 4);
+  assert.match(JSON.stringify(agentA.transcript), /Checkpoint unavailable: the checkpoint request failed/);
+
+  // Subcase B: 1-turn history (nothing older to summarize or clear) hits 400 context_length_exceeded -> noop, main request is NOT retried.
+  const cwdB = await mkdtemp(join(tmpdir(), "raw-reactive-noop-"));
+  let mainCallsB = 0;
+  const providerB: ProviderAdapter = {
+    modelConfig: { agentName: "p", provider: "openai", method: "openai-chat-completions", model: "gpt-test", contextWindow: 10000, maxOutputTokens: 200 },
+    async generate(request) {
+      if (isCompactionRequest(request)) return result("unused");
+      mainCallsB++;
+      throw Object.assign(new Error("400 This model's maximum context length is 10000 tokens."), { status: 400, code: "context_length_exceeded" });
+    },
+  };
+  const agentB = createAgent({
+    provider: providerB,
+    cwd: cwdB,
+    system: "tiny",
+    registry: new ToolRegistry(),
+    compact: { triggerTokens: 8000, keepRecentTurns: 1, keepRecentTokens: 1, maxOutputTokens: 100 },
+  });
+  const resB = await agentB.run("single step overflow");
+  assert.equal(resB.status, "error");
+  assert.equal(mainCallsB, 1);
+  assert.match(resB.message ?? "", /maximum context length/);
+});
+

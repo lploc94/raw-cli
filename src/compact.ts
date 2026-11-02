@@ -778,6 +778,29 @@ export function isReasoningRejection(error: unknown): boolean {
   return /thinking|reasoning|signature|encrypted_content|redacted/i.test(error instanceof Error ? error.message : String(error));
 }
 
+const CONTEXT_OVERFLOW_CODES = new Set([
+  "context_length_exceeded", "string_above_max_length", "exceed_context_size_error", "request_too_large",
+]);
+const CONTEXT_OVERFLOW_PATTERN = /\b(?:context[_ ]length[_ ]exceeded|request[_ ]too[_ ]large|string[_ ]above[_ ]max[_ ]length|exceed[_ ]context[_ ]size[_ ]error)\b|prompt is too long|input is too long|maximum context length|exceeds? (?:the )?(?:model's )?(?:maximum |available )?context(?: window| limit| size)?|input_tokens.*exceed|input length and `max_tokens` exceed context limit|input token count.*exceeds|exceeds the maximum number of tokens|too many total text bytes/i;
+
+/** A provider HTTP 400/413 error indicating the request input exceeded the model's context window. */
+export function isContextOverflow(error: unknown): boolean {
+  const item = error as { status?: unknown; code?: unknown; type?: unknown; message?: unknown; cause?: { status?: unknown };
+    error?: { code?: unknown; type?: unknown; message?: unknown; error?: { code?: unknown; type?: unknown; message?: unknown } } } | undefined;
+  const status = typeof item?.status === "number" ? item.status : typeof item?.cause?.status === "number" ? item.cause.status : undefined;
+  if (status !== 400 && status !== 413) return false;
+  const message = [
+    error instanceof Error ? error.message : typeof item?.message === "string" ? item.message : String(error ?? ""),
+    typeof item?.error?.message === "string" ? item.error.message : "",
+    typeof item?.error?.error?.message === "string" ? item.error.error.message : "",
+  ].filter(Boolean).join(" ");
+  if (/thinking|reasoning|signature|encrypted_content|redacted/i.test(message)) return false;
+  const codes = [item?.code, item?.type, item?.error?.code, item?.error?.type, item?.error?.error?.code, item?.error?.error?.type]
+    .filter((v): v is string => typeof v === "string").map((v) => v.toLowerCase());
+  if (codes.some((code) => CONTEXT_OVERFLOW_CODES.has(code))) return true;
+  return CONTEXT_OVERFLOW_PATTERN.test(message);
+}
+
 export function compactSession(session: AgentSession, options: CompactOptions = {}): Promise<CompactResult> {
   return session.compact(options);
 }
