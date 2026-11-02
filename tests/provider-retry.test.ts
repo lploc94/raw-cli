@@ -153,6 +153,34 @@ test("429 terminal quota errors and x-should-retry headers control retryability"
     await assert.rejects(gemini(geminiDailyFixture.url).generate(request()));
     assert.equal(geminiDailyFixture.requests.length, 1);
   } finally { await geminiDailyFixture.close(); }
+
+  const geminiBillingWithRetryFixture = await startMockProvider([
+    {
+      status: 429,
+      body: {
+        error: {
+          code: 429,
+          message: "You exceeded your current quota",
+          status: "RESOURCE_EXHAUSTED",
+          details: [
+            {
+              "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+              violations: [
+                { subject: "billing" },
+                { quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" },
+              ],
+            },
+            { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "0.05s" },
+          ],
+        },
+      },
+    },
+    { frames: [geminiText("should-not-retry", "STOP")] },
+  ]);
+  try {
+    await assert.rejects(gemini(geminiBillingWithRetryFixture.url).generate(request()));
+    assert.equal(geminiBillingWithRetryFixture.requests.length, 1);
+  } finally { await geminiBillingWithRetryFixture.close(); }
 });
 
 test("pre-output SSE errors and premature stream closes retry across adapters without duplicate usage, while post-delta errors do not retry", async () => {
