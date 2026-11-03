@@ -1,9 +1,11 @@
 /**
  * The provider-reported size of the conversation at its last response: `tokens` is that request's input plus the reply's output
  * tokens, `base` the byte estimate of the same request plus reply, `messageCount` how many model messages it covered and
- * `signature` identifies the system prompt, tool schemas and model it was measured with.
+ * `signature` identifies the system prompt, tool schemas and model it was measured with. `estimated` marks an anchor carried over a
+ * context replacement that only removed content (tool-result clearing): `tokens` is then the measured size before the removal, an
+ * upper bound until the next response measures the smaller context.
  */
-export interface ContextAnchor { tokens: number; base: number; messageCount: number; signature: string }
+export interface ContextAnchor { tokens: number; base: number; messageCount: number; signature: string; estimated?: true }
 
 /** A stored anchor that is malformed, or covers more messages than exist, is ignored: the estimate takes over. */
 export function parseAnchor(value: unknown, messageCount: number): ContextAnchor | undefined {
@@ -13,7 +15,7 @@ export function parseAnchor(value: unknown, messageCount: number): ContextAnchor
   if (typeof base !== "number" || !Number.isFinite(base) || base <= 0) return undefined;
   if (typeof covered !== "number" || !Number.isSafeInteger(covered) || covered < 0 || covered > messageCount) return undefined;
   if (typeof signature !== "string" || !signature) return undefined;
-  return { tokens, base, messageCount: covered, signature };
+  return { tokens, base, messageCount: covered, signature, ...((value as { estimated?: unknown }).estimated === true ? { estimated: true as const } : {}) };
 }
 
 /**
@@ -25,5 +27,5 @@ export function parseAnchor(value: unknown, messageCount: number): ContextAnchor
 export function anchoredEstimate(anchor: ContextAnchor | undefined, signature: string, messageCount: number, rawEstimate: number, scale = 1):
   { tokens: number; exact: boolean } | undefined {
   if (!anchor || anchor.signature !== signature || anchor.messageCount > messageCount || rawEstimate < anchor.base) return undefined;
-  return { tokens: anchor.tokens + Math.ceil((rawEstimate - anchor.base) * scale), exact: rawEstimate === anchor.base };
+  return { tokens: anchor.tokens + Math.ceil((rawEstimate - anchor.base) * scale), exact: anchor.estimated !== true && rawEstimate === anchor.base };
 }

@@ -195,4 +195,10 @@ test("anchor parsing and arithmetic reject unusable or stale anchors", () => {
   assert.equal(anchoredEstimate(good, "sig", 1, 4000), undefined, "fewer messages than the anchor covers");
   assert.equal(anchoredEstimate(good, "sig", 2, 3999), undefined, "a smaller request than the anchored one means the context changed");
   assert.equal(anchoredEstimate(undefined, "sig", 2, 4000), undefined);
+  // An anchor carried over clearing is an upper bound, never the provider's own count of this context.
+  const carried = { ...good, estimated: true as const };
+  assert.deepEqual(parseAnchor(structuredClone(carried), 2), carried);
+  assert.deepEqual(parseAnchor({ ...good, estimated: "yes" }, 2), good, "only `true` marks a carried anchor");
+  assert.deepEqual(anchoredEstimate(carried, "sig", 2, 4000), { tokens: 1020, exact: false });
+  assert.deepEqual(anchoredEstimate(carried, "sig", 3, 4600), { tokens: 1620, exact: false });
 });

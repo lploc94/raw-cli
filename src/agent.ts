@@ -375,7 +375,9 @@ export class AgentSession {
   private nextRequestSize(messages: readonly ModelMessage[] = this.sendMessages(), anchored = true): { tokens: number; exact: boolean; base: number; measured: boolean } {
     const base = estimateRequestTokens(this.options.system, messages, this.schemaView);
     const known = anchored ? anchoredEstimate(this.anchor, this.anchorSignature(), this.messages.length, base, this.tokenCalibration) : undefined;
-    return known ? { ...known, base, measured: true } : { tokens: Math.ceil(base * this.tokenCalibration), exact: false, base, measured: false };
+    // An anchor carried over clearing is an upper bound, not a measurement: it guides the gates but never stops the run.
+    return known ? { ...known, base, measured: this.anchor?.estimated !== true }
+      : { tokens: Math.ceil(base * this.tokenCalibration), exact: false, base, measured: false };
   }
   /** The anchor for a reply about to be added: the reported size of the request it answers plus the byte estimate of request and reply. */
   private anchorFor(reply: ModelMessage): ContextAnchor | undefined {
@@ -898,8 +900,8 @@ export class AgentSession {
    * `minFreedTokens`; true when it committed.
    */
   private clearWork(inputBudget: number, minFreedTokens: number, cause: "threshold" | "fallback"): boolean {
-    // One basis for the current size, the savings and the size after: the calibrated byte estimate of what is sent. A size
-    // anchored to provider usage is dropped by the replacement, so the target is checked the way the next request is.
+    // One basis for the current size, the savings and the size after: the calibrated byte estimate of what is sent, so the target
+    // is never reached on a provider count the byte estimate of the remainder would not confirm.
     const measure = (messages: readonly ModelMessage[]) => this.nextRequestSize(this.sendMessages(projectReplayMessages(messages, this.replayBefore)), false).tokens;
     const currentTokens = measure(this.messages);
     const messageTokens = (message: ModelMessage, index: number) => {
@@ -937,12 +939,20 @@ export class AgentSession {
     for (const { path } of outcome.cleared) if (!facts.outputs.includes(path)) facts.outputs.push(path);
     const ledger: CompactionLedgerState = { ...(this.ledgerState ?? { entries: [], compactions: 0 }), facts, factsThrough: through, retryArmed: true };
     const afterTokens = currentTokens - outcome.freedTokens;
-    this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, outcome.messages, { ledger, anchor: null }, false,
+    // Clearing only removes content, so a provider-measured size still bounds the cleared context from above, as the calibrated
+    // estimate of the remainder does; the smaller of the two is kept as an estimated anchor. Without it the next gate judges the
+    // whole context on the byte estimate alone, which can overstate it severalfold and start a compaction right after the clearing.
+    // The next response measures the cleared context.
+    const measured = this.nextRequestSize();
+    const anchor: ContextAnchor | null = measured.measured ? { tokens: Math.min(measured.tokens, afterTokens), messageCount: outcome.messages.length,
+      base: estimateRequestTokens(this.options.system, this.sendMessages(projectReplayMessages(outcome.messages, this.replayBefore)), this.schemaView),
+      signature: this.anchorSignature(), estimated: true } : null;
+    this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, outcome.messages, { ledger, anchor }, false,
       [{ kind: "context_clearing", payload: this.visiblePayload({ id: randomUUID(), cause, beforeTokens: currentTokens, afterTokens,
         freedTokens: outcome.freedTokens, results: outcome.cleared }) }]));
     if (this.persistenceError) throw this.persistenceError;
     this.messages = outcome.messages;
-    this.anchor = undefined;
+    this.anchor = anchor ?? undefined;
     this.ledgerState = ledger;
     // The request after clearing replays reasoning around stubs; a provider that rejects it gets the projected retry.
     this.replayRetryArmed = true;
@@ -1633,11 +1643,12 @@ export class AgentSession {
                 const inputBudget = modelConfig.contextWindow !== undefined
                   ? effectiveInputBudget(modelConfig.contextWindow, effectiveOutputTokens(modelConfig))
                   : undefined;
-                if (inputBudget !== undefined && currentBase > 0) {
-                  this.tokenCalibration = Math.max(this.tokenCalibration, inputBudget / currentBase * 1.1);
-                  this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
-                    { tokenCalibration: this.tokenCalibration }));
-                }
+                if (inputBudget !== undefined && currentBase > 0) this.tokenCalibration = Math.max(this.tokenCalibration, inputBudget / currentBase * 1.1);
+                // The provider has just refused a size the anchor called smaller: it no longer bounds this context, so neither it
+                // nor one carried over the clearing below may judge whether recovery is done.
+                this.anchor = undefined;
+                this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner,
+                  { tokenCalibration: this.tokenCalibration, anchor: null }));
                 const reactiveSettings: CompactWorkSettings = {
                   keepRecentTurns: 0,
                   keepRecentTokens: compact?.keepRecentTokens,

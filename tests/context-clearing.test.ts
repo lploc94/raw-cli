@@ -138,7 +138,8 @@ test("1: clearing starts at clear_tokens, clears the oldest eligible results unt
     } finally { await run.agent.close(); run.store.close(); }
   }
   // Scenario C: the provider reports fewer tokens than the byte estimate, so the threshold is crossed on a size anchored to
-  // that report. The replacement drops the anchor, so the target is reached on the estimate the next request uses.
+  // that report. Clearing's target is reached on the calibrated byte estimate (its measure ignores the anchor); the anchor kept
+  // after it is only an estimate for the gates.
   {
     const run = await clearingRun({ probes: 26, pad: 16000, keepRecentTokens: 12000, usageRatio: 0.6 });
     try {
@@ -149,6 +150,62 @@ test("1: clearing starts at clear_tokens, clears the oldest eligible results unt
       assert.ok(payload.afterTokens <= 0.45 * run.budget, `down to ${payload.afterTokens}`);
     } finally { await run.agent.close(); run.store.close(); }
   }
+});
+
+test("1b: clearing keeps the provider-measured size, so a byte estimate far above the real count does not compact right after", async () => {
+  // The provider counts a quarter of the byte estimate. The size crosses clear_tokens on that count while the byte estimate of
+  // the cleared context, held up by a long tail, is still above the trigger: compacting there would act on the byte estimate alone.
+  const run = await clearingRun({ probes: 40, pad: 32000, keepRecentTokens: 400000, usageRatio: 0.25 });
+  try {
+    assert.equal(run.result.status, "completed");
+    const history: Array<{ kind: string; payload: unknown }> = [];
+    for (let before: string | undefined; ;) {
+      const page = run.store.getSessionHistory({ sessionId: run.id, limit: 100, ...(before ? { before } : {}) });
+      history.unshift(...page.items);
+      if (!page.nextCursor) break;
+      before = page.nextCursor;
+    }
+    const kinds = history.filter((item) => item.kind === "context_clearing" || item.kind === "compaction");
+    const clearing = kinds.find((item) => item.kind === "context_clearing");
+    assert.ok(clearing, "clearing ran");
+    const payload = clearing.payload as { afterTokens: number };
+    assert.ok(payload.afterTokens >= Math.floor(0.95 * run.budget), `the byte estimate after clearing is ${payload.afterTokens}`);
+    assert.deepEqual(kinds.filter((item) => item.kind === "compaction"), [], "no compaction on a context the provider measures under the trigger");
+  } finally { await run.agent.close(); run.store.close(); }
+});
+
+test("1c: after a provider overflow, a size carried over clearing does not skip the mechanical checkpoint", async () => {
+  // The provider counts a quarter of the byte estimate but holds only 6200 tokens. The overflow it reports refutes the anchored
+  // size, so recovery is judged on the byte estimate, as before the clearing kept an anchor: the summarizer fails, clearing frees
+  // too little, and the mechanical checkpoint must still run.
+  const { root, store, id } = sessionStore();
+  const registry = createTestToolRegistry();
+  registry.register({ name: "probe", description: "probe", inputSchema: { type: "object", properties: { out: { type: "string" }, pad: { type: "integer" } } },
+    handler: async (args) => ({ isError: false, content: [{ type: "text", text: `${String(args.out ?? "")}${"r".repeat(Number(args.pad ?? 0))}` }] }) });
+  let calls = 0;
+  let overflows = 0;
+  const provider: ProviderAdapter = { modelConfig: { agentName: "fixture", provider: "ollama", method: "openai-chat-completions", model: "fixture",
+    contextWindow: 200000, maxOutputTokens: 1000 },
+  async generate(request) {
+    if (request.system === COMPACT_SYSTEM_PROMPT) throw new Error("summarizer down");
+    const real = Math.ceil(0.25 * estimateRequestTokens(request.system, request.messages, request.tools ?? []));
+    if (real > 6200) {
+      overflows++;
+      throw Object.assign(new Error("400 This model's maximum context length is 6200 tokens."), { status: 400, code: "context_length_exceeded" });
+    }
+    calls++;
+    const turn = calls <= 6 ? probe(`p${calls}`, 12000) : stop("done");
+    return { ...turn, usage: { completion_tokens: 10, prompt_tokens: real } };
+  } };
+  const agent = createAgent({ cwd: root, provider, system: "tiny", registry, autoApprove: true, maxSteps: 30, whitelist: ["probe"],
+    compact: { keepRecentTurns: 1, keepRecentTokens: 200000, maxOutputTokens: 1000, triggerTokens: 150000 },
+    persistence: { store, sessionId: id, surface: "cli" } });
+  try {
+    const result = await agent.run("go");
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.equal(overflows, 1, "one rejected request, recovered by the mechanical checkpoint");
+    assert.match(JSON.stringify(agent.transcript), /Checkpoint unavailable/);
+  } finally { await agent.close(); store.close(); }
 });
 
 test("2: clearing that would free less than the minimum changes nothing", async () => {
