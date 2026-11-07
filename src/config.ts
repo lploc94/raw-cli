@@ -48,11 +48,14 @@ export interface RawFlags {
   allSessions?: boolean;
   json?: boolean;
   before?: string;
+  olderThanDays?: number;
+  missingCwd?: boolean;
+  dryRun?: boolean;
 }
 
 export type CliCommand = "help" | "version" | "config-init" | "config-list" | "config-check" | "task" | "interactive" | "acp"
   | "vars-list" | "vars-get"
-  | "sessions-list" | "sessions-show" | "sessions-delete" | "sessions-stats" | "sessions-panels";
+  | "sessions-list" | "sessions-show" | "sessions-delete" | "sessions-stats" | "sessions-panels" | "sessions-prune";
 
 export interface CliArgs {
   variableName?: string;
@@ -1073,7 +1076,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     "--agent": "agent", "--config": "configPath", "--try-config": "tryConfig", "--system-prompt": "systemPrompt",
     "--max-steps": "maxSteps", "--max-output-bytes": "maxOutputBytes",
     "--request-timeout-ms": "requestTimeoutMs", "--host": "host", "--port": "port",
-    "--resume": "resumeId", "--before": "before",
+    "--resume": "resumeId", "--before": "before", "--older-than": "olderThanDays",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -1090,9 +1093,12 @@ export function parseCliArgs(argv: string[]): CliArgs {
       else flags.allSessions = true;
       continue;
     }
-    if (arg === "--json") {
+    if (arg === "--json" || arg === "--missing-cwd" || arg === "--dry-run") {
       if (seen.has(arg)) throw new Error(`duplicate option ${arg}`);
-      seen.add(arg); flags.json = true;
+      seen.add(arg);
+      if (arg === "--json") flags.json = true;
+      else if (arg === "--missing-cwd") flags.missingCwd = true;
+      else flags.dryRun = true;
       continue;
     }
     if (arg === "--acp") { acp = true; continue; }
@@ -1108,9 +1114,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
       seen.add(arg);
       const next = argv[++i];
       if (next === undefined || (next.startsWith("--") && arg !== "--system-prompt")) throw new Error(`${arg} requires a value`);
-      if (key === "maxSteps" || key === "maxOutputBytes" || key === "requestTimeoutMs" || key === "port") {
+      if (key === "maxSteps" || key === "maxOutputBytes" || key === "requestTimeoutMs" || key === "port" || key === "olderThanDays") {
         if (!/^[0-9]+$/.test(next)) throw new Error(`${arg} requires a positive integer`);
         const numeric = positive(Number(next), arg);
+        if (key === "olderThanDays") flags.olderThanDays = numeric;
         if (key === "maxSteps") flags.maxSteps = numeric;
         if (key === "maxOutputBytes") flags.maxOutputBytes = numeric;
         if (key === "requestTimeoutMs") flags.requestTimeoutMs = numeric;
@@ -1153,6 +1160,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
       || flags.agent || flags.configPath || flags.tryConfig || flags.systemPrompt || flags.maxSteps || flags.maxOutputBytes
       || flags.requestTimeoutMs || flags.autoApprove) throw new Error("sessions cannot be combined with run options");
     if (flags.json && positional[1] !== "panels") throw new Error("--json is only available with sessions panels");
+    if ((flags.olderThanDays || flags.missingCwd || flags.dryRun) && positional[1] !== "prune") {
+      throw new Error("--older-than, --missing-cwd and --dry-run require sessions prune");
+    }
     if (positional.length === 1) return { command: "sessions-list", flags };
     if (positional[1] === "show" && positional.length === 3 && !flags.allSessions) {
       return { command: "sessions-show", flags, sessionId: positional[2]! };
@@ -1167,8 +1177,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
     if (positional[1] === "stats" && positional.length === 2 && !flags.allSessions && !flags.before) {
       return { command: "sessions-stats", flags };
     }
-    throw new Error("sessions requires list, show ID, panels ID [PANEL], delete ID, or stats");
+    if (positional[1] === "prune" && positional.length === 2 && !flags.allSessions && !flags.before) {
+      // Pruning every session needs an explicit selector; there is no "delete all" default.
+      if (!flags.olderThanDays && !flags.missingCwd) throw new Error("sessions prune requires --older-than DAYS and/or --missing-cwd");
+      return { command: "sessions-prune", flags };
+    }
+    throw new Error("sessions requires list, show ID, panels ID [PANEL], delete ID, stats, or prune");
   }
+  if (flags.olderThanDays || flags.missingCwd || flags.dryRun) throw new Error("--older-than, --missing-cwd and --dry-run require sessions prune");
   if (flags.allSessions || flags.before) throw new Error("--all and --before require sessions");
   if (flags.json) throw new Error("--json requires sessions panels");
   if (positional[0] === "config") {

@@ -37,6 +37,7 @@ Usage: raw [options] [task]
        raw sessions show ID [--before CURSOR]
        raw sessions panels ID [PANEL] [--all] [--json]
        raw sessions delete ID|stats
+       raw sessions prune [--older-than DAYS] [--missing-cwd] [--dry-run]
        raw --acp --stdio
        raw --acp --ws --host 127.0.0.1 --port 8765
 
@@ -227,6 +228,21 @@ async function run(): Promise<void> {
         if (!store.getSession(parsed.sessionId!)) throw new InputError(store.missingSessionMessage());
         input(() => store.deleteSession(parsed.sessionId!));
         process.stdout.write(`Deleted ${parsed.sessionId}\n`);
+      } else if (parsed.command === "sessions-prune") {
+        const result = input(() => store.pruneSessions({ missingCwd: Boolean(parsed.flags.missingCwd), dryRun: Boolean(parsed.flags.dryRun),
+          ...(parsed.flags.olderThanDays ? { olderThanMs: parsed.flags.olderThanDays * 86_400_000 } : {}) }));
+        const kept = [result.busy && `${result.busy} busy`, result.changed && `${result.changed} active again`]
+          .filter(Boolean).join(", ");
+        if (parsed.flags.dryRun) process.stdout.write(`Would delete ${result.matched} sessions\n`);
+        else process.stdout.write(`Deleted ${result.deleted} of ${result.matched} sessions${kept ? ` (kept: ${kept})` : ""}\n`);
+        if (result.unreadable) process.stdout.write(`Kept ${result.unreadable} sessions whose working directory could not be checked\n`);
+        if (!parsed.flags.dryRun && result.deleted) {
+          const mib = (bytes: number): string => `${(bytes / 1_048_576).toFixed(1)} MiB`;
+          const vacuum = input(() => store.vacuumStorage());
+          if (!vacuum) process.stdout.write("Database compaction skipped: another raw process is using a session; idle maintenance reclaims the space gradually, or run prune again later\n");
+          else if (!vacuum.checkpointed) process.stdout.write("Database compacted; the disk space is released when other raw processes close the store\n");
+          else process.stdout.write(`Database ${mib(vacuum.beforeBytes)} -> ${mib(vacuum.afterBytes)}\n`);
+        }
       } else process.stdout.write(`${JSON.stringify(store.storageStats())}\n`);
       return;
     }

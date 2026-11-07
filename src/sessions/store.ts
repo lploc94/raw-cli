@@ -70,6 +70,17 @@ export interface HistoryItem {
 }
 
 export interface Page<T> { items: T[]; nextCursor?: string }
+export interface PruneResult {
+  matched: number;
+  deleted: number;
+  /** Owned by a live process. */
+  busy: number;
+  /** Gained activity after selection, so no longer older than the cutoff. */
+  changed: number;
+  /** Working directory could not be checked (permission or I/O error); never selected. */
+  unreadable: number;
+}
+
 export interface SessionStorageStats {
   workspaces: number;
   sessions: number;
@@ -1697,9 +1708,21 @@ export class SessionStore {
   }
 
   deleteSession(id: string, processFenceOwner?: { token: string; generation: number }): void {
-    const deleted = this.transaction(() => {
-      const row = this.database.prepare("SELECT owner_token, lease_until FROM sessions WHERE id = ?").get(id);
-      if (!row) return false;
+    this.removeSession(id, { ...(processFenceOwner ? { processFenceOwner } : {}) });
+  }
+
+  /**
+   * Deletes one session in one transaction. `updatedAtOrBefore` re-checks the caller's age selector inside it, so
+   * a session that gained activity after selection is kept ("changed"). `reclaim: false` leaves payload files for
+   * a later reclamation pass.
+   */
+  private removeSession(id: string, options: { processFenceOwner?: { token: string; generation: number };
+    updatedAtOrBefore?: number; reclaim?: boolean }): "deleted" | "missing" | "changed" {
+    const { processFenceOwner } = options;
+    const outcome = this.transaction((): "deleted" | "missing" | "changed" => {
+      const row = this.database.prepare("SELECT owner_token, lease_until, updated_at FROM sessions WHERE id = ?").get(id);
+      if (!row) return "missing";
+      if (options.updatedAtOrBefore !== undefined && Number(row.updated_at) > options.updatedAtOrBefore) return "changed";
       if (row.owner_token !== null && (Number(row.lease_until) > this.now() || this.ownerAlive(String(row.owner_token)))) {
         throw new Error("session is busy in another process");
       }
@@ -1716,12 +1739,13 @@ export class SessionStore {
         this.dropPayloadReference(String(item.blocks_json));
       }
       this.database.prepare("DELETE FROM sessions WHERE id = ?").run(id);
-      return true;
+      return "deleted";
     });
-    if (deleted) {
+    if (outcome === "deleted" && options.reclaim !== false) {
       try { this.reclaimUnreferencedPayloads(); }
       catch { /* The deletion committed; idle maintenance will retry reclamation. */ }
     }
+    return outcome;
   }
 
   cleanupExpired(maxSessions = 20): number {
@@ -1781,27 +1805,8 @@ export class SessionStore {
       && !this.database.prepare("SELECT 1 FROM payloads WHERE ref_count <= 0 LIMIT 1").get()) {
       return { checkpointed: false, pagesReclaimed: 0 };
     }
-    const token = `${process.pid}-${randomUUID()}`;
-    const acquired = this.transaction(() => {
-      const current = this.database.prepare("SELECT value FROM store_meta WHERE key = 'maintenance_owner'").get()?.value;
-      if (current !== undefined) {
-        if (this.ownerAlive(String(current))) return false;
-        this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner'").run();
-      }
-      const claims = this.database.prepare(`SELECT id, owner_token, owner_generation FROM sessions
-        WHERE owner_token IS NOT NULL LIMIT 100`).all();
-      for (const row of claims) {
-        const ownerToken = String(row.owner_token);
-        if (this.ownerAlive(ownerToken)) return false;
-        this.database.prepare(`UPDATE sessions SET owner_token = NULL, lease_until = NULL
-          WHERE id = ? AND owner_token = ? AND owner_generation = ?`)
-          .run(String(row.id), ownerToken, Number(row.owner_generation));
-      }
-      if (this.database.prepare("SELECT 1 FROM sessions WHERE owner_token IS NOT NULL LIMIT 1").get()) return false;
-      this.database.prepare("INSERT INTO store_meta(key, value) VALUES ('maintenance_owner', ?)").run(token);
-      return true;
-    });
-    if (!acquired) return { checkpointed: false, pagesReclaimed: 0 };
+    const token = this.claimMaintenance();
+    if (!token) return { checkpointed: false, pagesReclaimed: 0 };
     try {
       this.reclaimUnreferencedPayloads();
       const before = Number(this.database.prepare("PRAGMA freelist_count").get()?.freelist_count);
@@ -1822,8 +1827,107 @@ export class SessionStore {
       const after = Number(this.database.prepare("PRAGMA freelist_count").get()?.freelist_count);
       return { checkpointed: Number(finalCheckpoint?.busy) === 0, pagesReclaimed: Math.max(0, before - after) };
     } finally {
-      this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner' AND value = ?").run(token);
+      this.releaseMaintenance(token);
     }
+  }
+
+  /**
+   * Deletes inactive sessions matching every given selector. Busy sessions, sessions that gained activity after
+   * selection, and sessions whose cwd cannot be checked (a stat error other than "not found") are kept and counted.
+   */
+  pruneSessions(options: { olderThanMs?: number; missingCwd?: boolean; dryRun?: boolean }): PruneResult {
+    if (options.olderThanMs === undefined && !options.missingCwd) throw new Error("prune requires an age or missing-cwd selector");
+    const cutoff = options.olderThanMs === undefined ? undefined : this.now() - options.olderThanMs;
+    const rows = cutoff === undefined
+      ? this.database.prepare("SELECT s.id, w.canonical_path FROM sessions s JOIN workspaces w ON w.id = s.workspace_id ORDER BY s.updated_at, s.id").all()
+      : this.database.prepare(`SELECT s.id, w.canonical_path FROM sessions s JOIN workspaces w ON w.id = s.workspace_id
+        WHERE s.updated_at <= ? ORDER BY s.updated_at, s.id`).all(cutoff);
+    const state = new Map<string, "present" | "missing" | "unreadable">();
+    const cwdState = (path: string): "present" | "missing" | "unreadable" => {
+      let found = state.get(path);
+      if (found === undefined) {
+        // Only a definite "not found" counts as missing: a permission or I/O error must never select a session.
+        try { found = statSync(path, { throwIfNoEntry: false }) ? "present" : "missing"; }
+        catch (error) { found = (error as NodeJS.ErrnoException).code === "ENOTDIR" ? "missing" : "unreadable"; }
+        state.set(path, found);
+      }
+      return found;
+    };
+    let unreadable = 0;
+    const matches = options.missingCwd ? rows.filter((row) => {
+      const found = cwdState(String(row.canonical_path));
+      if (found === "unreadable") unreadable++;
+      return found === "missing";
+    }) : rows;
+    const result: PruneResult = { matched: matches.length, deleted: 0, busy: 0, changed: 0, unreadable };
+    if (options.dryRun) return result;
+    for (const row of matches) {
+      try {
+        const outcome = this.removeSession(String(row.id), { reclaim: false, ...(cutoff === undefined ? {} : { updatedAtOrBefore: cutoff }) });
+        if (outcome === "deleted") result.deleted++;
+        else if (outcome === "changed") result.changed++;
+      } catch (error) {
+        if (!(error instanceof Error) || !/busy/.test(error.message)) throw error;
+        result.busy++;
+      }
+    }
+    if (result.deleted) {
+      try { this.reclaimUnreferencedPayloads(); }
+      catch { /* The deletions committed; idle maintenance will retry reclamation. */ }
+    }
+    return result;
+  }
+
+  /**
+   * Rewrites the whole database file so deleted rows return their space to the disk. Returns undefined when a live
+   * process owns a session. `checkpointed: false` means another connection still reads the old pages, so the space
+   * is released when it closes. Sizes include the WAL file.
+   */
+  vacuumStorage(): { beforeBytes: number; afterBytes: number; checkpointed: boolean } | undefined {
+    const size = (path: string): number => { try { return statSync(path).size; } catch { return 0; } };
+    const total = (): number => size(this.path) + size(`${this.path}-wal`);
+    const token = this.claimMaintenance();
+    if (!token) return undefined;
+    try {
+      this.reclaimUnreferencedPayloads();
+      this.database.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+      const beforeBytes = total();
+      if (Number(this.database.prepare("PRAGMA auto_vacuum").get()?.auto_vacuum) !== 2) this.database.exec("PRAGMA auto_vacuum = INCREMENTAL");
+      this.database.exec("VACUUM");
+      const checkpoint = this.database.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+      return { beforeBytes, afterBytes: total(), checkpointed: Number(checkpoint?.busy) === 0 };
+    } finally {
+      this.releaseMaintenance(token);
+    }
+  }
+
+  /** Claims store-wide maintenance when no live process owns a session; returns the token or undefined. */
+  private claimMaintenance(): string | undefined {
+    const token = `${process.pid}-${randomUUID()}`;
+    const acquired = this.transaction(() => {
+      const current = this.database.prepare("SELECT value FROM store_meta WHERE key = 'maintenance_owner'").get()?.value;
+      if (current !== undefined) {
+        if (this.ownerAlive(String(current))) return false;
+        this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner'").run();
+      }
+      const claims = this.database.prepare(`SELECT id, owner_token, owner_generation FROM sessions
+        WHERE owner_token IS NOT NULL LIMIT 100`).all();
+      for (const row of claims) {
+        const ownerToken = String(row.owner_token);
+        if (this.ownerAlive(ownerToken)) return false;
+        this.database.prepare(`UPDATE sessions SET owner_token = NULL, lease_until = NULL
+          WHERE id = ? AND owner_token = ? AND owner_generation = ?`)
+          .run(String(row.id), ownerToken, Number(row.owner_generation));
+      }
+      if (this.database.prepare("SELECT 1 FROM sessions WHERE owner_token IS NOT NULL LIMIT 1").get()) return false;
+      this.database.prepare("INSERT INTO store_meta(key, value) VALUES ('maintenance_owner', ?)").run(token);
+      return true;
+    });
+    return acquired ? token : undefined;
+  }
+
+  private releaseMaintenance(token: string): void {
+    this.database.prepare("DELETE FROM store_meta WHERE key = 'maintenance_owner' AND value = ?").run(token);
   }
 }
 

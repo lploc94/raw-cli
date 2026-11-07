@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { loadConfig, parseCliArgs } from "../src/config.js";
 import { createAgent } from "../src/agent.js";
 import { createProvider } from "../src/llm/client.js";
-import { openSessionStore } from "../src/sessions/store.js";
+import { openSessionStore, sessionStorePath } from "../src/sessions/store.js";
 import { createTestToolRegistry } from "./fixtures/registry.js";
 import { testConfig } from "./fixtures/config.js";
 import { openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
@@ -47,6 +47,129 @@ test("session syntax rejects conflicting modes and parses list/show/resume", () 
   assert.equal(parseCliArgs(["--resume", "abc"]).flags.resumeId, "abc");
   assert.throws(() => parseCliArgs(["--continue", "--resume", "abc"]), /exclusive|combine|conflict/i);
   assert.throws(() => parseCliArgs(["sessions", "show"]), /ID|session/i);
+});
+
+test("sessions prune requires a selector and keeps its flags to prune", () => {
+  const parsed = parseCliArgs(["sessions", "prune", "--older-than", "7", "--missing-cwd", "--dry-run"]);
+  assert.equal(parsed.command, "sessions-prune");
+  assert.deepEqual([parsed.flags.olderThanDays, parsed.flags.missingCwd, parsed.flags.dryRun], [7, true, true]);
+  assert.throws(() => parseCliArgs(["sessions", "prune"]), /--older-than DAYS and\/or --missing-cwd/);
+  assert.throws(() => parseCliArgs(["sessions", "prune", "--dry-run"]), /--older-than DAYS and\/or --missing-cwd/);
+  assert.throws(() => parseCliArgs(["sessions", "prune", "--older-than", "0"]), /positive/);
+  assert.throws(() => parseCliArgs(["sessions", "delete", "abc", "--dry-run"]), /require sessions prune/);
+  assert.throws(() => parseCliArgs(["--missing-cwd", "task"]), /require sessions prune/);
+});
+
+test("pruneSessions deletes sessions by age and missing cwd, and vacuum shrinks the file", () => {
+  const { root, a, b, env } = fixture();
+  const day = 86_400_000;
+  let now = 1_800_000_000_000;
+  const store = openSessionStore({ env, now: () => now });
+  try {
+    const oldA = store.createSession({ cwd: a, title: "old in a" }).id;
+    store.appendHistory({ sessionId: oldA, kind: "user", payload: { input: "x".repeat(2_000_000) } });
+    const oldB = store.createSession({ cwd: b, title: "old in b" }).id;
+    now += 10 * day;
+    const freshB = store.createSession({ cwd: b, title: "fresh in b" }).id;
+    const freshA = store.createSession({ cwd: a, title: "fresh in a" }).id;
+    rmSync(b, { recursive: true });
+    const none = { deleted: 0, busy: 0, changed: 0, unreadable: 0 };
+    assert.deepEqual(store.pruneSessions({ missingCwd: true, dryRun: true }), { ...none, matched: 2 });
+    assert.ok(store.getSession(oldB));
+    // Both selectors together match only old sessions in a removed directory.
+    assert.deepEqual(store.pruneSessions({ olderThanMs: 5 * day, missingCwd: true }), { ...none, matched: 1, deleted: 1 });
+    assert.equal(store.getSession(oldB), undefined);
+    assert.ok(store.getSession(freshB));
+    assert.deepEqual(store.pruneSessions({ olderThanMs: 5 * day }), { ...none, matched: 1, deleted: 1 });
+    assert.equal(store.getSession(oldA), undefined);
+    assert.ok(store.getSession(freshA));
+    const vacuum = store.vacuumStorage();
+    assert.ok(vacuum?.checkpointed);
+    assert.ok(vacuum.afterBytes < vacuum.beforeBytes, `${vacuum.afterBytes} < ${vacuum.beforeBytes}`);
+    assert.ok(store.getSession(freshA));
+    assert.throws(() => store.pruneSessions({}), /selector/);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("prune keeps a session whose cwd cannot be checked; only a definite not-found counts as missing", { skip: posixOnly("modes") || (process.getuid?.() === 0 && "root ignores permission bits") }, () => {
+  const { root, a, env } = fixture();
+  const locked = join(root, "locked"); const project = join(locked, "project");
+  mkdirSync(project, { recursive: true });
+  const store = openSessionStore({ env });
+  try {
+    const id = store.createSession({ cwd: project, title: "locked" }).id;
+    store.createSession({ cwd: a, title: "present" });
+    chmodSync(locked, 0o000);
+    try {
+      assert.deepEqual(store.pruneSessions({ missingCwd: true }), { matched: 0, deleted: 0, busy: 0, changed: 0, unreadable: 1 });
+    } finally { chmodSync(locked, 0o755); }
+    assert.ok(store.getSession(id));
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("prune re-checks age when deleting, so a session that became active after selection is kept", () => {
+  const { root, a, env } = fixture();
+  const day = 86_400_000;
+  let now = 1_800_000_000_000;
+  const store = openSessionStore({ env, now: () => now });
+  try {
+    const ids = [store.createSession({ cwd: a, title: "one" }).id, store.createSession({ cwd: a, title: "two" }).id];
+    now += 10 * day;
+    // Simulate another process committing a turn on the other session right after the selection.
+    const internal = store as unknown as { removeSession: (id: string, options: object) => string };
+    const remove = internal.removeSession.bind(store);
+    let active: string | undefined;
+    internal.removeSession = (id, options) => {
+      if (!active) {
+        active = ids.find((other) => other !== id)!;
+        store.appendHistory({ sessionId: active, kind: "user", payload: { input: "new turn" } });
+      }
+      return remove(id, options);
+    };
+    assert.deepEqual(store.pruneSessions({ olderThanMs: 7 * day }), { matched: 2, deleted: 1, busy: 0, changed: 1, unreadable: 0 });
+    assert.ok(store.getSession(active!));
+    assert.equal(store.getSession(ids.find((id) => id !== active)!), undefined);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("vacuum yields to a live session owner and reports a checkpoint blocked by another reader", () => {
+  const { root, a, env } = fixture();
+  const owner = openSessionStore({ env });
+  const store = openSessionStore({ env });
+  try {
+    const live = owner.createSession({ cwd: a, title: "live" }).id;
+    const claim = owner.claimSession(live);
+    assert.equal(store.vacuumStorage(), undefined);
+    owner.releaseSession(live, claim);
+    const reader = new DatabaseSync(sessionStorePath({ env }));
+    try {
+      reader.exec("BEGIN");
+      reader.prepare("SELECT count(*) FROM sessions").get();
+      assert.equal(store.vacuumStorage()?.checkpointed, false);
+      reader.exec("COMMIT");
+    } finally { reader.close(); }
+    assert.equal(store.vacuumStorage()?.checkpointed, true);
+  } finally { store.close(); owner.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("raw sessions prune deletes sessions whose cwd was removed and reports the counts", async () => {
+  const { root, a, b, env } = fixture();
+  const store = openSessionStore({ env });
+  store.createSession({ cwd: a, title: "kept" });
+  store.createSession({ cwd: b, title: "gone" });
+  store.close();
+  rmSync(b, { recursive: true });
+  try {
+    const dry = await raw(["sessions", "prune", "--missing-cwd", "--dry-run"], a, env);
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.equal(dry.stdout, "Would delete 1 sessions\n");
+    const pruned = await raw(["sessions", "prune", "--missing-cwd"], a, env);
+    assert.equal(pruned.code, 0, pruned.stderr);
+    assert.match(pruned.stdout, /^Deleted 1 of 1 sessions\nDatabase [\d.]+ MiB -> [\d.]+ MiB\n$/);
+    const listed = await raw(["sessions", "--all"], a, env);
+    assert.match(listed.stdout, /kept/);
+    assert.doesNotMatch(listed.stdout, /gone/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("one-shot session lists, resumes in another process, pages history, and deletes", async () => {
