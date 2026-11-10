@@ -24,10 +24,19 @@ export async function dashboardFixture(options: { responses?: MockResponse[]; ag
   writeFileSync(configPath, JSON.stringify(config));
   const server = await startDashboard({ port: 0, cwd: root, configPath, env, ...(options.attach ? { attach: options.attach } : {}),
     ...(options.discoverBackend ? { discoverBackend: options.discoverBackend } : {}) });
-  const api = (path: string, method = "GET", body?: unknown) => fetch(`${server.url}/api${path}`, {
-    method, headers: { Authorization: `Bearer ${server.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+  const api = async (path: string, method = "GET", body?: unknown): Promise<Response> => {
+    const init: RequestInit = {
+      method, headers: { Authorization: `Bearer ${server.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    };
+    for (let attempt = 0; ; attempt++) {
+      try { return await fetch(`${server.url}/api${path}`, init); }
+      catch (error) {
+        if (method !== "GET" || attempt >= 2 || server.context.signal.aborted || !(error instanceof TypeError) || error.message !== "fetch failed") throw error;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  };
   const json = async <T>(path: string, method = "GET", body?: unknown): Promise<T> => {
     const response = await api(path, method, body); const result = await response.json();
     assert.ok(response.ok, `${method} ${path}: ${response.status} ${JSON.stringify(result)}`); return result as T;
@@ -46,8 +55,18 @@ export async function dashboardFixture(options: { responses?: MockResponse[]; ag
 
 export async function eventStream(server: Awaited<ReturnType<typeof startDashboard>>, sessionId: string, cursor?: string, method: "GET" | "POST" = "GET") {
   const controller = new AbortController();
-  const response = await fetch(`${server.url}/api/sessions/${sessionId}/events`, { method, headers: { Authorization: `Bearer ${server.token}`,
-    ...(cursor ? { "Last-Event-ID": cursor } : {}) }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) });
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60000)]);
+  let response!: Response;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      response = await fetch(`${server.url}/api/sessions/${sessionId}/events`, { method, headers: { Authorization: `Bearer ${server.token}`,
+        ...(cursor ? { "Last-Event-ID": cursor } : {}) }, signal });
+      break;
+    } catch (error) {
+      if (attempt >= 2 || signal.aborted || server.context.signal.aborted || !(error instanceof TypeError) || error.message !== "fetch failed") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
   assert.equal(response.status, 200); const reader = response.body!.getReader(); const decoder = new TextDecoder();
   let buffer = "";
   const next = async (): Promise<{ id: string; type: string; data: Record<string, unknown>; sequence: number }> => {

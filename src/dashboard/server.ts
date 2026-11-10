@@ -138,7 +138,7 @@ export async function startDashboard(options: DashboardOptions = {}): Promise<Da
     response.on("error", () => {});
     void handle(request, response).catch((error) => sendError(response, error));
   });
-  http.headersTimeout = 15_000; http.requestTimeout = 30_000;
+  http.keepAliveTimeout = 60_000; http.headersTimeout = 65_000; http.requestTimeout = 65_000;
   const close = (): Promise<void> => closing ??= (async () => {
     controller.abort();
     const listenerClosed = new Promise<void>((resolve) => {

@@ -359,6 +359,7 @@ test("CLI turn: Stop on its operation stops the turn task, and the adapter close
     assert.equal(f.service.cancel(f.cliOperations()[0]!.id), true);
     await until(() => settled(f.cliOperations()[0]), "the CLI turn to end");
     assert.equal(f.cliOperations()[0]!.state, "cancelled");
+    await until(() => f.stops().length === 1, "the turn task stop");
     assert.deepEqual(f.stops(), ["task-2"]);
     await until(() => !alive(pid!), "the adapter to close");
   } finally { await f.close(); }
