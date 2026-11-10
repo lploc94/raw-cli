@@ -1,6 +1,6 @@
 {
   "name": "@tlelabs/raw",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "The agent harness you can fork: editable tools, skills, hooks and policies on a working agent loop, with a terminal REPL, browser dashboard and ACP.",
   "keywords": [
     "ai",
