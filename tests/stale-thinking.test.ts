@@ -31,8 +31,8 @@ function reply(signature: string, body: { text?: string; call?: string }, transf
       anthropicFrame("content_block_start", { index: 1, content_block: { type: "tool_use", id: body.call, name: "probe", input: {} } }),
       anthropicFrame("content_block_delta", { index: 1, delta: { type: "input_json_delta", partial_json: JSON.stringify({ out: body.call }) } }),
       anthropicFrame("content_block_stop", { index: 1 }),
-    ] : [
-      anthropicFrame("content_block_start", { index: 1, content_block: { type: "text", text: body.text ?? "" } }),
+    ] : body.text === undefined ? [] : [
+      anthropicFrame("content_block_start", { index: 1, content_block: { type: "text", text: body.text } }),
       anthropicFrame("content_block_stop", { index: 1 }),
     ],
   ];
@@ -54,14 +54,14 @@ const summarizer: ProviderAdapter = { modelConfig: { agentName: "summarizer", pr
  * [checkpoint, "first", sig-1 call, result, sig-2 answer, "second", sig-3 answer]; the checkpoint and "first" share one wire
  * user message, so wire index i of an assistant message is not its stored index.
  */
-async function compacted(after: MockResponse[], model: Partial<ResolvedModelConfig> = {}) {
+async function compacted(after: MockResponse[], model: Partial<ResolvedModelConfig> = {}, second = reply("sig-3", { text: "two" })) {
   const root = mkdtempSync(join(tmpdir(), "raw-stale-thinking-"));
   const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
   const sessionId = store.createSession({ cwd: root, title: "stale thinking" }).id;
   const fixture = await startMockProvider([
     reply("sig-0", { text: `zero ${noise(4000)}` }),
     reply("sig-1", { call: "t1" }), reply("sig-2", { text: "one" }),
-    reply("sig-3", { text: "two" }),
+    second,
     ...after,
   ]);
   const config: ResolvedModelConfig = { agentName: "claude", provider: "anthropic", method: "anthropic-messages", model: "fixture",
@@ -200,3 +200,22 @@ test("a restart between the compaction and the next request keeps the boundary",
     } finally { await resumed.close(); }
   } finally { await run.close(); }
 });
+
+for (const [name, model, transformations] of [
+  ["the API drops it", {}, [{ type: "thinking_dropped", path: "messages.5.content.0", reason: "prefix_binding_mismatch" }]],
+  ["Raw removes it", { provider: "gateway" }, undefined],
+] as const) {
+  test(`an answer that was only thinking keeps a text block when ${name}, so no assistant message is sent empty`, async () => {
+    // "second" is answered with signed thinking and no text: removing the thinking must not leave `content: []`.
+    const run = await compacted([reply("sig-4", { text: "three" }, transformations), reply("sig-5", { text: "four" })], model, reply("sig-3", {}));
+    try {
+      await run.agent.run("third");
+      await run.agent.run("fourth");
+      const sent = run.body(run.first + 1);
+      assert.doesNotMatch(JSON.stringify(sent.messages), /sig-3/, "the stale thinking is gone");
+      for (const [index, message] of sent.messages.entries()) {
+        assert.ok(!Array.isArray(message.content) || message.content.length > 0, `message ${index} (${message.role}) has content`);
+      }
+    } finally { await run.close(); }
+  });
+}

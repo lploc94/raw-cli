@@ -927,7 +927,9 @@ export class AgentSession {
       const kept = message.opaque.filter((block, position) => !drop(index, position, block));
       if (kept.length === message.opaque.length) return message;
       const { opaque: _stale, ...rest } = message;
-      return kept.length ? { ...rest, opaque: kept } : rest;
+      if (kept.length) return { ...rest, opaque: kept };
+      // A response that was only thinking would become an empty assistant message, which the API refuses in every later request.
+      return rest.text || rest.toolCalls.length ? rest : { ...rest, opaque: [{ type: "text", text: EMPTY_ASSISTANT_TEXT }] };
     });
     const { staleThinkingBefore: _settled, ...ledger } = ledgerState;
     const changed = messages.some((message, index) => message !== this.messages[index]);
@@ -1841,6 +1843,8 @@ export class AgentSession {
 
 /** Why provider-native compaction is off for a model for the rest of this process, after a permanent request error (design §6.9.1). */
 const nativeDisabled = new Map<string, string>();
+/** What a stored assistant message says once its only content, stale thinking, is removed (as `projectReplayMessages` does). */
+const EMPTY_ASSISTANT_TEXT = "[Historical assistant response contained no portable text]";
 /** Models whose API refused `thinking.block_binding` in this process, with the error; they get the local removal instead. */
 const bindingDisabled = new Map<string, string>();
 
