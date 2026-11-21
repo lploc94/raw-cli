@@ -843,6 +843,10 @@ export class SessionStore {
           : runtimeChanged && (row.model_id !== identity.modelConfig.model
             || row.provider !== identity.modelConfig.provider || row.method !== identity.modelConfig.method
             || row.endpoint !== endpointHash || row.runtime_digest !== runtimeDigest));
+        // The generated key routes a provider to its prefix cache (OpenAI `prompt_cache_key`), so it changes only with what the model
+        // receives: the system prompt, the tool schemas and selection, or how the history is rendered (the replay signature).
+        // Tool source bytes with an unchanged schema, context or output limits and cache settings leave the prefix as it was.
+        const promptChanged = row.system_prompt !== identity.system || toolCatalogChanged || replayChanged;
         if (runtimeChanged || toolChanged || skillChanged) {
           const visibility = JSON.parse(String(row.skill_visibility_json)) as SkillVisibility;
           const previousSkills = JSON.parse(String(row.skill_snapshot_json)) as SkillSnapshotItem[];
@@ -854,7 +858,7 @@ export class SessionStore {
             .run(identity.modelConfig.agentName, identity.modelConfig.model, identity.modelConfig.provider,
               identity.modelConfig.method, endpointHash, identity.system, runtimeDigest,
               JSON.stringify(identity.selectedTools), toolDigest, sourceDigest, skillSnapshotJson,
-              runtimeChanged || toolChanged ? randomUUID() : String(row.cache_key),
+              promptChanged ? randomUUID() : String(row.cache_key),
               replayChanged ? 1 : Number(row.token_calibration), identity.selectionExplicit ? 1 : 0,
               identity.configPath ?? null, sessionId);
           this.writeRuntimeMetadata(sessionId, { replayBefore: replayChanged ? previousState.messages.length : previousMeta?.replayBefore ?? 0,

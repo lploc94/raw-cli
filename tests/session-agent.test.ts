@@ -108,7 +108,7 @@ test("changed selected tool definition rotates generated cache key and preserves
   } finally { await first.close(); store.close(); }
 });
 
-test("code-only selected tool source change rotates key but an unchanged source does not", async () => {
+test("code-only selected tool source change advances the revision but keeps the key, since the model receives the same tools", async () => {
   const { root, store, id } = setup();
   const registry = createTestToolRegistry();
   const keys: string[] = [];
@@ -130,7 +130,7 @@ test("code-only selected tool source change rotates key but an unchanged source 
     assert.equal((await changed.run("three")).status, "completed");
     await changed.close();
     assert.equal(keys[0], keys[1]);
-    assert.notEqual(keys[1], keys[2]);
+    assert.equal(keys[1], keys[2], "source-two has the same schema as source-one");
   } finally { store.close(); }
 });
 

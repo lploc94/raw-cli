@@ -29,7 +29,7 @@ function packageSource(root: string, version: string, value: string): string {
   return source;
 }
 
-test("package update resumes one session, rotates once for helper bytes and ignores release labels", async () => {
+test("package update resumes one session, advances the revision once for helper bytes, keeps the key and ignores release labels", async () => {
   const root = mkdtempSync(join(tmpdir(), "raw-package-resume-"));
   const configPath = join(root, "config.json"), dataHome = join(root, "data"), stateHome = join(root, "state");
   writeFileSync(configPath, JSON.stringify({ default_agent: "writer", models: { local: { provider: "ollama",
@@ -77,7 +77,8 @@ test("package update resumes one session, rotates once for helper bytes and igno
     assert.equal((await stable.agent.run("four")).status, "completed");
     await stable.agent.close(); await stable.runtime.mcp.close();
     assert.equal(captured[0]?.key, captured[2]?.key);
-    assert.notEqual(captured[2]?.key, captured[4]?.key);
+    // The helper bytes changed, not the prompt or the echo schema, so the generated key stays.
+    assert.equal(captured[2]?.key, captured[4]?.key);
     assert.equal(captured[4]?.key, captured[6]?.key);
     assert.equal(captured[4]?.system, captured[6]?.system);
   } finally {

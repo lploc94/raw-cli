@@ -106,7 +106,7 @@ test("conditional policy paths incompatible with a selected schema fail before i
   await assert.rejects(createRuntimeTools({ runtime, cwd }), /when\.any path.*schema/);
 });
 
-test("CLI resume rotates generated cache hint after a code-only selected plugin edit", async () => {
+test("CLI resume keeps the generated cache hint after a code-only selected plugin edit, since the tools sent are identical", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "raw-agent-code-generation-"));
   const provider = await startMockProvider([answer, answer, answer]);
   try {
@@ -134,7 +134,7 @@ test("CLI resume rotates generated cache hint after a code-only selected plugin 
     assert.deepEqual(before?.tools, same?.tools);
     assert.deepEqual(same?.tools, after?.tools);
     assert.equal(before?.prompt_cache_key, same?.prompt_cache_key);
-    assert.notEqual(same?.prompt_cache_key, after?.prompt_cache_key);
+    assert.equal(same?.prompt_cache_key, after?.prompt_cache_key, "the edit changed the handler, not the schema the model receives");
     assert.deepEqual(same?.messages.slice(0, before?.messages.length), before?.messages);
     assert.deepEqual(after?.messages.slice(0, same?.messages.length), same?.messages);
   } finally { await provider.close(); }
