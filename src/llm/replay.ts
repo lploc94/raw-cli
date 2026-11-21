@@ -56,9 +56,18 @@ const MiB = 1024 * 1024;
  * when a request has more than 20 images) and a request over 32 MB, OpenAI a request over 50 MB, Google one over 20 MB.
  */
 export function requestImageLimits(method: ApiMethod): RequestImageLimits {
+  const override = limitOverrides.get(method);
+  if (override) return override;
   if (method === "anthropic-messages") return { perImage: 5 * MiB, request: 30 * MiB, count: 100, maxDimension: 8000, manyImages: { above: 20, maxDimension: 2000 } };
   if (method === "google-generate-content") return { request: 18 * MiB, count: 3000 };
   return { request: 45 * MiB, count: 500 };
+}
+
+const limitOverrides = new Map<ApiMethod, RequestImageLimits>();
+/** Replaces a method's limits (tests use small ones); `undefined` restores the documented values. */
+export function setRequestImageLimitsForTests(method: ApiMethod, limits: RequestImageLimits | undefined): void {
+  if (limits) limitOverrides.set(method, limits);
+  else limitOverrides.delete(method);
 }
 
 type ImageBlock = Extract<ToolContent, { type: "image" }> | { type: "image"; mimeType: string; data: string; name?: string };
@@ -101,8 +110,47 @@ const imageBlocks = (message: ModelMessage): readonly { type: string }[] => mess
  * `reservedBytes` measures the part of the request outside `messages` (system prompt, tool schemas); it runs only when images are present.
  */
 export function projectImageLimits(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number = () => 0): ModelMessage[] {
-  if (!messages.some((message) => imageBlocks(message).some((block) => block.type === "image"))) return [...messages];
+  const omitted = imageOmissions(messages, limits, reservedBytes, true);
+  if (!omitted.size) return [...messages];
+  return replaceImages(messages, (block) => omitted.get(block));
+}
+
+/**
+ * Whether the request allowance (image count, request bytes, the many-images pixel bound) would leave out an image that
+ * the per-image limits admit. Per-image omissions are deterministic; allowance omissions change as the conversation grows.
+ */
+export function imageAllowanceExceeded(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number = () => 0): boolean {
+  return imageOmissions(messages, limits, reservedBytes, true).size > imageOmissions(messages, limits, reservedBytes, false).size;
+}
+
+/** Image blocks of `messages[0..before)` become text naming them, as compaction leaves them (docs/context.md). */
+export function removeImagesBefore(messages: readonly ModelMessage[], before: number): ModelMessage[] {
+  return replaceImages(messages, (block, index) => {
+    if (index >= before) return undefined;
+    const image = block as ImageBlock;
+    const name = "path" in image && image.path ? `, ${JSON.stringify(image.path)}` : "name" in image && image.name ? `, ${JSON.stringify(image.name)}` : "";
+    const bytes = "byteSize" in image && image.byteSize !== undefined ? image.byteSize : Buffer.from(image.data, "base64").length;
+    return `[Image removed at compaction: ${image.mimeType}, ${bytes} bytes${name}; view it again if you need it]`;
+  });
+}
+
+function replaceImages(messages: readonly ModelMessage[], note: (block: object, index: number) => string | undefined): ModelMessage[] {
+  return messages.map((message, index): ModelMessage => {
+    const text = (block: { type: string }) => block.type === "image" ? note(block, index) : undefined;
+    if (message.role === "user" && typeof message.content !== "string" && message.content.some((block) => text(block) !== undefined)) {
+      return { role: "user", content: message.content.map((block) => { const value = text(block); return value !== undefined ? { type: "text" as const, text: value } : block; }) };
+    }
+    if (message.role === "tool" && message.result.content.some((block) => text(block) !== undefined)) {
+      return { ...message, result: { ...message.result, content: message.result.content.map((block): ToolContent => {
+        const value = text(block); return value !== undefined ? { type: "text", text: value } : block; }) } };
+    }
+    return message;
+  });
+}
+
+function imageOmissions(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number, allowance: boolean): Map<object, string> {
   const omitted = new Map<object, string>();
+  if (!messages.some((message) => imageBlocks(message).some((block) => block.type === "image"))) return omitted;
   // Everything but image payloads, as JSON escapes it; a tool argument that happens to be named `data` still counts.
   const textBytes = Buffer.byteLength(JSON.stringify(messages, function (this: unknown, key, value) {
     return key === "data" && typeof value === "string" && (this as { type?: unknown } | null)?.type === "image" ? "" : value;
@@ -132,6 +180,7 @@ export function projectImageLimits(messages: readonly ModelMessage[], limits: Re
         omitted.set(block, `[Image omitted from this request: ${label(image)}, ${pixels.width}x${pixels.height} px, over the provider's ${limits.maxDimension} px limit. ${smaller}]`);
       } else {
         // Past the many-images threshold every image must meet the stricter bound; newer images are never given up for older ones.
+        if (!allowance) continue;
         const strict = limits.manyImages ? tooLarge(image, limits.manyImages.maxDimension) : undefined;
         const crowded = limits.manyImages !== undefined && admitted.length + 1 > limits.manyImages.above;
         if (crowded && strict && overStrict === 0) {
@@ -142,15 +191,5 @@ export function projectImageLimits(messages: readonly ModelMessage[], limits: Re
       }
     }
   }
-  if (!omitted.size) return [...messages];
-  return messages.map((message): ModelMessage => {
-    if (message.role === "user" && typeof message.content !== "string" && message.content.some((block) => omitted.has(block))) {
-      return { role: "user", content: message.content.map((block) => omitted.has(block) ? { type: "text" as const, text: omitted.get(block)! } : block) };
-    }
-    if (message.role === "tool" && message.result.content.some((block) => omitted.has(block))) {
-      return { ...message, result: { ...message.result, content: message.result.content.map((block): ToolContent =>
-        omitted.has(block) ? { type: "text", text: omitted.get(block)! } : block) } };
-    }
-    return message;
-  });
+  return omitted;
 }

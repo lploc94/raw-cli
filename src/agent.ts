@@ -16,7 +16,7 @@ import { existsSync } from "node:fs";
 import { CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
 import { normalizeUsage, summarizeUsage, toolChoiceKeepsCache, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
-import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
+import { imageAllowanceExceeded, projectImageLimits, projectReplayMessages, projectVisionMessages, removeImagesBefore, requestImageLimits } from "./llm/replay.js";
 import { nativeUserContent } from "./llm/content.js";
 import { ProviderError } from "./llm/client.js";
 import type { CompactSettings } from "./config.js";
@@ -386,7 +386,24 @@ export class AgentSession {
   private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
     const modelConfig = this.options.provider.modelConfig;
     return projectImageLimits(projectVisionMessages(withoutHostData(messages), modelConfig.vision === true), requestImageLimits(modelConfig.method),
-      () => Buffer.byteLength(JSON.stringify(this.options.system), "utf8") + Buffer.byteLength(JSON.stringify(this.schemaView), "utf8"));
+      () => this.reservedRequestBytes());
+  }
+  private reservedRequestBytes(): number {
+    return Buffer.byteLength(JSON.stringify(this.options.system), "utf8") + Buffer.byteLength(JSON.stringify(this.schemaView), "utf8");
+  }
+  /**
+   * Whether the next request's images pass the provider's request allowance and a compaction would bring them under it,
+   * because the last step's images alone fit. Without this, images would be left out per request, newest first, and the
+   * omissions would move with every new image, rewriting the prefix each time.
+   */
+  private imageOverflow(): boolean {
+    const modelConfig = this.options.provider.modelConfig;
+    const sent = projectVisionMessages(withoutHostData(this.requestMessages()), modelConfig.vision === true);
+    const limits = requestImageLimits(modelConfig.method);
+    const reserved = () => this.reservedRequestBytes();
+    if (!imageAllowanceExceeded(sent, limits, reserved)) return false;
+    const lastStep = transcriptSteps(sent).at(-1)?.length ?? 0;
+    return !imageAllowanceExceeded(removeImagesBefore(sent, sent.length - lastStep), limits, reserved);
   }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
@@ -707,7 +724,12 @@ export class AgentSession {
     }
     // The summarizer reads what the provider would have been sent; the tail keeps the stored steps and their replay boundary.
     const head = units.slice(0, tailStart).flatMap((_unit, unit) => sent(unit));
-    const tail = [...units.slice(tailStart, last).flat().map((message) => structuredClone(message)), ...lastUnit];
+    // Images leave the context at a compaction, except the last step's: below the provider's image allowance every image is
+    // sent, and the allowance is crossed again only after new ones accumulate (docs/context.md).
+    const earlier = units.slice(tailStart, last).flat().map((message) => structuredClone(message));
+    const earlierKept = removeImagesBefore(earlier, earlier.length);
+    const imagesRemoved = earlierKept.some((message, index) => message !== earlier[index]);
+    const tail = [...earlierKept, ...lastUnit];
     const tailReplayed = units.slice(tailStart).reduce((count, unit, offset) => count + (replayed(tailStart + offset) ? unit.length : 0), 0);
     const replayBefore = tailReplayed ? 1 + tailReplayed : 0;
     // Whatever the checkpoint, the rest of the new context stays within the input budget.
@@ -771,6 +793,7 @@ export class AgentSession {
         const wire = (message: ModelMessage | undefined) => message?.role === "assistant" ? "assistant" : "user";
         if (wire(this.sendMessages()[cut - 1]) === wire(tail[0])) return { reason: "the recent steps would merge into the summarized messages" };
         if ([...reminderAt].some((index) => index >= cut)) return { reason: "a host note inside the recent steps would be replaced" };
+        if (imagesRemoved) return { reason: "images in the recent steps are replaced by notes" };
       }
       return undefined;
     };
@@ -1556,12 +1579,15 @@ export class AgentSession {
           };
           requestEstimate = estimate();
           const trigger = compact.triggerTokens;
-          if (trigger !== undefined && requestEstimate >= trigger) {
+          // Over the token trigger, or over the image allowance where a compaction would fix it.
+          const over = () => requestEstimate >= trigger || this.imageOverflow();
+          if (trigger !== undefined && over()) {
             if (controller.signal.aborted) return finish(interrupted());
             const settings: CompactWorkSettings = { keepRecentTurns: compact.keepRecentTurns, keepRecentTokens: compact.keepRecentTokens,
               maxOutputTokens: compact.maxOutputTokens, maxOutputTokensDefaulted: compact.maxOutputTokensDefaulted === true, instructions: compact.instructions,
               strategy: compact.strategy };
-            const classOf = (tokens: number) => tokens < 0.7 * trigger ? "effective" as const : tokens < trigger ? "weak" as const : "stuck" as const;
+            const classOf = (tokens: number) => this.imageOverflow() ? "stuck" as const
+              : tokens < 0.7 * trigger ? "effective" as const : tokens < trigger ? "weak" as const : "stuck" as const;
             // An automatic attempt never ends the turn: a failure is a compact_error warning, and the fallback takes over.
             const attempt = async (work: CompactWorkSettings): Promise<CompactResult | "failed" | "stop"> => {
               try {
@@ -1575,7 +1601,7 @@ export class AgentSession {
             // tail keeps only the steps that fit, down to the last one.
             const fallback = async (reason: string): Promise<boolean> => {
               if (this.clearWork(inputBudget)) requestEstimate = estimate();
-              if (requestEstimate >= trigger) {
+              if (over()) {
                 if (await attempt({ ...settings, keepRecentTurns: 0, mechanical: reason }) === "stop") return false;
                 requestEstimate = estimate();
               }
@@ -1592,7 +1618,7 @@ export class AgentSession {
             } else if (!summarize && !await fallback("compaction earlier in this turn did not bring the context under the threshold")) {
               return finish(interrupted());
             }
-            if (summarize && requestEstimate >= trigger) {
+            if (summarize && over()) {
               summarizedAt = steps;
               const outcome = await attempt(settings);
               if (outcome === "stop") return finish(interrupted());
