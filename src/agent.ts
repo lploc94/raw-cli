@@ -13,7 +13,7 @@ import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFact
   type CompactStrategy, type LedgerEntry, type RenderOptions, withoutHostData } from "./compact.js";
 import { ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT } from "./llm/anthropic.js";
 import { existsSync } from "node:fs";
-import { CLEAR_MIN_FREED_TOKENS, CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
+import { CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
 import { normalizeUsage, summarizeUsage, toolChoiceKeepsCache, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
 import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
@@ -231,10 +231,6 @@ export class AgentSession {
         || options.compact.triggerTokens < 1 || options.compact.triggerTokens >= context! - output - Math.max(64, Math.ceil(context! * 0.05))) {
         throw new Error("auto compact trigger requires a valid context window and output reserve");
       }
-    }
-    if (options.compact?.clearTokens !== undefined && (!Number.isSafeInteger(options.provider.modelConfig.contextWindow)
-      || !Number.isSafeInteger(options.compact.clearTokens) || options.compact.clearTokens < 1)) {
-      throw new Error("tool result clearing requires a valid context window and threshold");
     }
     this.options = {
       provider: options.provider,
@@ -895,11 +891,12 @@ export class AgentSession {
   }
 
   /**
-   * Tier-0 clearing (docs/compaction-v2-design.md §6.8): old, large tool results before the protected tail become stubs
-   * naming a secured copy, until the next request is at most 45% of the input budget. Commits only when it frees at least
-   * `minFreedTokens`; true when it committed.
+   * The first step of the compaction fallback chain (docs/compaction-v2-design.md §6.7, §6.8): old, large tool results before
+   * the protected tail become stubs naming a secured copy, until the next request is at most 45% of the input budget. It runs
+   * only where the context is rewritten anyway, never on a threshold of its own, so it never breaks the cached prefix by
+   * itself; true when it committed.
    */
-  private clearWork(inputBudget: number, minFreedTokens: number, cause: "threshold" | "fallback"): boolean {
+  private clearWork(inputBudget: number): boolean {
     // One basis for the current size, the savings and the size after: the calibrated byte estimate of what is sent, so the target
     // is never reached on a provider count the byte estimate of the remainder would not confirm.
     const measure = (messages: readonly ModelMessage[]) => this.nextRequestSize(this.sendMessages(projectReplayMessages(messages, this.replayBefore)), false).tokens;
@@ -929,7 +926,7 @@ export class AgentSession {
         || namedByReminder(message, reminders);
     };
     const outcome = clearToolResults(this.messages, { protectedFrom, currentTokens, targetTokens: Math.floor(CLEAR_TARGET_RATIO * inputBudget),
-      minFreedTokens, messageTokens, exempt, measure });
+      minFreedTokens: 0, messageTokens, exempt, measure });
     if (!outcome) return false;
     // Facts of the steps whose results become stubs are folded first, so the working state keeps them (§6.2).
     const covered = Math.min(this.ledgerState?.factsThrough ?? 0, this.messages.length);
@@ -948,7 +945,7 @@ export class AgentSession {
       base: estimateRequestTokens(this.options.system, this.sendMessages(projectReplayMessages(outcome.messages, this.replayBefore)), this.schemaView),
       signature: this.anchorSignature(), estimated: true } : null;
     this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, outcome.messages, { ledger, anchor }, false,
-      [{ kind: "context_clearing", payload: this.visiblePayload({ id: randomUUID(), cause, beforeTokens: currentTokens, afterTokens,
+      [{ kind: "context_clearing", payload: this.visiblePayload({ id: randomUUID(), cause: "fallback", beforeTokens: currentTokens, afterTokens,
         freedTokens: outcome.freedTokens, results: outcome.cleared }) }]));
     if (this.persistenceError) throw this.persistenceError;
     this.messages = outcome.messages;
@@ -1495,7 +1492,7 @@ export class AgentSession {
         let baseEstimate = 0;
         let measured = false;
         const compact = this.options.compact;
-        if (compact && (compact.triggerTokens !== undefined || compact.clearTokens !== undefined)) {
+        if (compact && compact.triggerTokens !== undefined) {
           const modelConfig = this.options.provider.modelConfig;
           const context = modelConfig.contextWindow!;
           const outputReserve = effectiveOutputTokens(modelConfig);
@@ -1507,10 +1504,6 @@ export class AgentSession {
             return size.tokens;
           };
           requestEstimate = estimate();
-          // Tier 0 (§6.8): below the compaction trigger, old tool results are cleared to saved copies first.
-          if (compact.clearTokens !== undefined && requestEstimate >= compact.clearTokens
-            && (compact.triggerTokens === undefined || requestEstimate < compact.triggerTokens)
-            && this.clearWork(inputBudget, CLEAR_MIN_FREED_TOKENS, "threshold")) requestEstimate = estimate();
           const trigger = compact.triggerTokens;
           if (trigger !== undefined && requestEstimate >= trigger) {
             if (controller.signal.aborted) return finish(interrupted());
@@ -1530,7 +1523,7 @@ export class AgentSession {
             // The fallback chain (§6.7, steps 1–3) makes no model call: forced clearing, then a mechanical checkpoint whose
             // tail keeps only the steps that fit, down to the last one.
             const fallback = async (reason: string): Promise<boolean> => {
-              if (this.clearWork(inputBudget, 0, "fallback")) requestEstimate = estimate();
+              if (this.clearWork(inputBudget)) requestEstimate = estimate();
               if (requestEstimate >= trigger) {
                 if (await attempt({ ...settings, keepRecentTurns: 0, mechanical: reason }) === "stop") return false;
                 requestEstimate = estimate();
@@ -1677,7 +1670,7 @@ export class AgentSession {
                 if (first !== "failed" && first.status === "compacted") shrunk = true;
                 const threshold = compact?.triggerTokens ?? inputBudget;
                 if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
-                  if (inputBudget !== undefined && this.clearWork(inputBudget, 0, "fallback")) shrunk = true;
+                  if (inputBudget !== undefined && this.clearWork(inputBudget)) shrunk = true;
                   if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
                     const reason = first === "failed" ? "the checkpoint request failed" : "the context exceeded the provider's context window";
                     const mech = await runCompact({ ...reactiveSettings, keepRecentTokens: 1, mechanical: reason });

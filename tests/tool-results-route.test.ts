@@ -21,9 +21,14 @@ const call = (id: string, name: string, args: Record<string, unknown>): Provider
   ({ text: "", toolCalls: [{ id, name, arguments: args }], finishReason: "tool_calls" });
 const stop = (text: string): ProviderTurn => ({ text, toolCalls: [], finishReason: "stop" });
 
-function scripted(script: ProviderTurn[]): ProviderAdapter {
+/** `failCompaction`: every compaction request fails, so crossing the trigger runs the fallback chain, which clears old tool results. */
+function scripted(script: ProviderTurn[], failCompaction = false): ProviderAdapter {
   return { modelConfig: { agentName: "fixture", provider: "ollama", method: "openai-chat-completions", model: "fixture", ...wide },
-    async generate(request) { return request.system === COMPACT_SYSTEM_PROMPT ? stop("## Goal\nsummary") : script.shift() ?? stop("done"); } };
+    async generate(request) {
+      const compaction = request.system === COMPACT_SYSTEM_PROMPT || request.maxOutputTokens !== undefined;
+      if (compaction && failCompaction) throw new Error("summarizer down");
+      return request.system === COMPACT_SYSTEM_PROMPT ? stop("## Goal\nsummary") : script.shift() ?? stop("done");
+    } };
 }
 
 const SEQ = Array.from({ length: 30000 }, (_, index) => `${index + 1}\n`).join("");
@@ -73,8 +78,8 @@ async function produce(): Promise<Fixture> {
 
     const clearing = store.createSession({ cwd: root, title: "clearing" }).id;
     const options: Partial<AgentOptions> = { registry, maxSteps: 40, whitelist: ["probe"],
-      compact: { keepRecentTurns: 2, keepRecentTokens: 1000, maxOutputTokens: 1000, triggerTokens: Math.floor(0.95 * budget), clearTokens: 100000 } };
-    const second = createAgent({ cwd: root, provider: scripted(Array.from({ length: 24 }, (_, index) => call(`p${index}`, "probe", { out: `p${index}` }))),
+      compact: { keepRecentTurns: 2, keepRecentTokens: 1000, maxOutputTokens: 1000, triggerTokens: 100000 } };
+    const second = createAgent({ cwd: root, provider: scripted(Array.from({ length: 24 }, (_, index) => call(`p${index}`, "probe", { out: `p${index}` })), true),
       system: "tiny", autoApprove: true, ...options, persistence: { store, sessionId: clearing, surface: "web" } });
     try { assert.equal((await second.run("go")).status, "completed"); } finally { await second.close(); }
     const records = store.getSessionHistory({ sessionId: clearing, limit: 100 }).items.filter((item) => item.kind === "context_clearing")

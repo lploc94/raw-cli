@@ -6,7 +6,6 @@ import { dirname, join, resolve } from "node:path";
 import { getNodeValue, parseTree, type Node as JsonNode, type ParseError } from "jsonc-parser";
 import { resolveSystemPrompt } from "./llm/prompt.js";
 import { defaultCompactOutputTokens, type CompactStrategy } from "./compact.js";
-import { CLEAR_DEFAULT_RATIO } from "./context-clearing.js";
 import { effectiveOutputTokens } from "./llm/output.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS } from "./llm/types.js";
 import { DEFAULT_MAX_OUTPUT_BYTES } from "./tools/results.js";
@@ -75,8 +74,6 @@ export interface CompactSettings {
   /** maxOutputTokens is Raw's default rather than configured, so a provider may lower it to a model's stated maximum. */
   maxOutputTokensDefaulted?: boolean;
   triggerTokens?: number;
-  /** Next-request estimate at which old tool results are cleared to saved copies (tier 0); unset means never. */
-  clearTokens?: number;
   /** Extra text appended to the checkpoint prompt. */
   instructions?: string;
   /** `"native"` tries the provider's own compaction first; unset means `"checkpoint"`. */
@@ -616,6 +613,8 @@ const MAX_COMPACT_INSTRUCTIONS = 16384;
 
 function compactSpec(raw: unknown, where: string, model: Parameters<typeof defaultCompactOutputTokens>[0] = {}): CompactSettings {
   const value = raw === undefined ? {} : object(raw, where);
+  // `clear_tokens` named the removed threshold clearing of old tool results, which rewrote the cached prompt prefix before
+  // compaction rewrote it again. A config that still sets it loads, and the key is ignored.
   keys(value, ["keep_recent_turns", "keep_recent_tokens", "max_output_tokens", "trigger_tokens", "clear_tokens", "instructions", "strategy"], where);
   if (value.strategy !== undefined && value.strategy !== "checkpoint" && value.strategy !== "native") {
     throw new Error(`${where}.strategy must be "checkpoint" or "native"`);
@@ -633,10 +632,6 @@ function compactSpec(raw: unknown, where: string, model: Parameters<typeof defau
     ...(value.trigger_tokens === false ? {}
       : value.trigger_tokens !== undefined ? { triggerTokens: positive(value.trigger_tokens, where + ".trigger_tokens") }
       : model.contextWindow !== undefined && defaultThreshold(model, 0.8) > 0 ? { triggerTokens: defaultThreshold(model, 0.8) } : {}),
-    // A declared context clears old tool results at 60% of the input budget; `false` turns clearing off.
-    ...(value.clear_tokens === false ? {}
-      : value.clear_tokens !== undefined ? { clearTokens: positive(value.clear_tokens, where + ".clear_tokens") }
-      : model.contextWindow !== undefined && defaultThreshold(model, CLEAR_DEFAULT_RATIO) > 0 ? { clearTokens: defaultThreshold(model, CLEAR_DEFAULT_RATIO) } : {}),
     ...(typeof value.instructions === "string" && value.instructions.trim() ? { instructions: value.instructions } : {}),
     ...(value.strategy === "native" ? { strategy: "native" as const } : {}),
   };
@@ -669,9 +664,6 @@ function agentSpec(name: string, raw: unknown, models: ReadonlyMap<string, Model
     ...(value.system_prompt !== undefined ? { systemPrompt: string(value.system_prompt, where + ".system_prompt", true) } : {}),
     ...(value.system_prompt_file !== undefined ? { systemPromptFile: string(value.system_prompt_file, where + ".system_prompt_file") } : {}) };
   const requestedCap = result.request?.maxOutputTokens ?? model.maxOutputTokens;
-  if (result.compact.clearTokens !== undefined && model.contextWindow === undefined) {
-    throw new Error(where + ".compact.clear_tokens requires model.context_window_tokens");
-  }
   if (result.compact.triggerTokens !== undefined) {
     if (model.contextWindow === undefined) throw new Error(where + ".compact.trigger_tokens requires model.context_window_tokens");
     const reserve = effectiveOutputTokens({ ...model, ...(result.request ? { request: result.request } : {}) });

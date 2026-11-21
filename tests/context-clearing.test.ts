@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { createAgent, type AgentOptions } from "../src/agent.js";
 import { COMPACT_SYSTEM_PROMPT, estimateRequestTokens, resultText, textTokens } from "../src/compact.js";
 import { loadConfig } from "../src/config.js";
-import { clearToolResults, CLEAR_MIN_FREED_TOKENS, namedByReminder } from "../src/context-clearing.js";
+import { clearToolResults, namedByReminder } from "../src/context-clearing.js";
 import type { InteractionAdapter } from "../src/interactions/contract.js";
 import { createProvider } from "../src/llm/client.js";
 import { effectiveInputBudget } from "../src/llm/context.js";
@@ -50,12 +50,19 @@ async function tools(answers: string[] = []) {
   return { registry, interactionAdapter };
 }
 
-/** `usageRatio`: each reply reports that share of the request's byte estimate as its input tokens. */
+/** A compaction request: the chunked checkpoint prompt, or the same-context one, the only request that sets an output cap. */
+const isCompaction = (request: { system: string; maxOutputTokens?: number | undefined }) =>
+  request.system === COMPACT_SYSTEM_PROMPT || request.maxOutputTokens !== undefined;
+
+/**
+ * `usageRatio`: each reply reports that share of the request's byte estimate as its input tokens. Every compaction request
+ * fails, so crossing the trigger runs the fallback chain, whose first step clears old tool results.
+ */
 function scripted(model: Partial<ResolvedModelConfig>, script: ProviderTurn[], usageRatio?: number) {
   const main: ModelMessage[][] = [];
   const provider: ProviderAdapter = { modelConfig: { agentName: "fixture", provider: "ollama", method: "openai-chat-completions", model: "fixture", ...model },
     async generate(request) {
-      if (request.system === COMPACT_SYSTEM_PROMPT) return stop("## Goal\nunused");
+      if (isCompaction(request)) throw new Error("summarizer down");
       main.push(structuredClone(request.messages) as ModelMessage[]);
       const turn = script.shift() ?? stop("done");
       return usageRatio === undefined ? turn : { ...turn, usage: { completion_tokens: 10,
@@ -69,7 +76,7 @@ const budgetOf = (model: Partial<ResolvedModelConfig>) =>
   effectiveInputBudget(model.contextWindow!, effectiveOutputTokens(model as ResolvedModelConfig));
 
 /** One turn: an ask_user answer, a load_skill result, a small probe, then `probes` probe results of `pad` bytes. */
-async function clearingRun(options: { model?: Partial<ResolvedModelConfig>; probes: number; pad: number; keepRecentTokens: number; clearTokens?: number | null;
+async function clearingRun(options: { model?: Partial<ResolvedModelConfig>; probes: number; pad: number; keepRecentTokens: number; triggerTokens?: number;
   usageRatio?: number }) {
   const model = options.model ?? wide;
   const budget = budgetOf(model);
@@ -83,16 +90,15 @@ async function clearingRun(options: { model?: Partial<ResolvedModelConfig>; prob
     ...Array.from({ length: options.probes }, (_, index) => probe(`p${index}`, options.pad)),
   ];
   const { provider, main } = scripted(model, script, options.usageRatio);
-  const clearTokens = options.clearTokens === undefined ? Math.floor(0.6 * budget) : options.clearTokens;
+  const triggerTokens = options.triggerTokens ?? Math.floor(0.6 * budget);
   const agentOptions: Partial<AgentOptions> = { registry, interactionAdapter, maxSteps: 100, whitelist: ["probe", "ask_user", "load_skill"],
-    compact: { keepRecentTurns: 2, keepRecentTokens: options.keepRecentTokens, maxOutputTokens: 1000, triggerTokens: Math.floor(0.95 * budget),
-      ...(clearTokens === null ? {} : { clearTokens }) } };
+    compact: { keepRecentTurns: 2, keepRecentTokens: options.keepRecentTokens, maxOutputTokens: 1000, triggerTokens } };
   const agent = createAgent({ cwd: root, provider, system: "tiny", autoApprove: true, ...agentOptions, persistence: { store, sessionId: id, surface: "cli" } });
   const result = await agent.run("go");
-  return { root, store, id, agent, main, answer, budget, clearTokens, result, agentOptions, provider };
+  return { root, store, id, agent, main, answer, budget, triggerTokens, result, agentOptions, provider };
 }
 
-test("1: clearing starts at clear_tokens, clears the oldest eligible results until 45%, and spares the tail and exempt results", async () => {
+test("1: the compaction fallback clears the oldest eligible results until 45%, and spares the tail and exempt results", async () => {
   // Scenario A: a short tail, so the target is reached part way through the eligible results.
   {
     const run = await clearingRun({ probes: 15, pad: 16000, keepRecentTokens: 12000 });
@@ -101,9 +107,8 @@ test("1: clearing starts at clear_tokens, clears the oldest eligible results unt
       const records = run.store.getSessionHistory({ sessionId: run.id, limit: 100 }).items.filter((item) => item.kind === "context_clearing");
       assert.equal(records.length, 1);
       const payload = records[0]!.payload as { beforeTokens: number; afterTokens: number; freedTokens: number; results: Array<{ callId: string }> };
-      assert.ok(payload.beforeTokens >= run.clearTokens!, `cleared at ${payload.beforeTokens}`);
+      assert.ok(payload.beforeTokens >= run.triggerTokens, `cleared at ${payload.beforeTokens}`);
       assert.ok(payload.afterTokens <= 0.45 * run.budget, `down to ${payload.afterTokens}`);
-      assert.ok(payload.freedTokens >= CLEAR_MIN_FREED_TOKENS);
       const transcript = run.agent.transcript;
       const tool = (callId: string) => transcript.find((message) => message.role === "tool" && message.callId === callId);
       // Oldest first: a prefix of the large probe results is cleared, no more than the target needs.
@@ -152,28 +157,6 @@ test("1: clearing starts at clear_tokens, clears the oldest eligible results unt
   }
 });
 
-test("1b: clearing keeps the provider-measured size, so a byte estimate far above the real count does not compact right after", async () => {
-  // The provider counts a quarter of the byte estimate. The size crosses clear_tokens on that count while the byte estimate of
-  // the cleared context, held up by a long tail, is still above the trigger: compacting there would act on the byte estimate alone.
-  const run = await clearingRun({ probes: 40, pad: 32000, keepRecentTokens: 400000, usageRatio: 0.25 });
-  try {
-    assert.equal(run.result.status, "completed");
-    const history: Array<{ kind: string; payload: unknown }> = [];
-    for (let before: string | undefined; ;) {
-      const page = run.store.getSessionHistory({ sessionId: run.id, limit: 100, ...(before ? { before } : {}) });
-      history.unshift(...page.items);
-      if (!page.nextCursor) break;
-      before = page.nextCursor;
-    }
-    const kinds = history.filter((item) => item.kind === "context_clearing" || item.kind === "compaction");
-    const clearing = kinds.find((item) => item.kind === "context_clearing");
-    assert.ok(clearing, "clearing ran");
-    const payload = clearing.payload as { afterTokens: number };
-    assert.ok(payload.afterTokens >= Math.floor(0.95 * run.budget), `the byte estimate after clearing is ${payload.afterTokens}`);
-    assert.deepEqual(kinds.filter((item) => item.kind === "compaction"), [], "no compaction on a context the provider measures under the trigger");
-  } finally { await run.agent.close(); run.store.close(); }
-});
-
 test("1c: after a provider overflow, a size carried over clearing does not skip the mechanical checkpoint", async () => {
   // The provider counts a quarter of the byte estimate but holds only 6200 tokens. The overflow it reports refutes the anchored
   // size, so recovery is judged on the byte estimate, as before the clearing kept an anchor: the summarizer fails, clearing frees
@@ -208,15 +191,17 @@ test("1c: after a provider overflow, a size carried over clearing does not skip 
   } finally { await agent.close(); store.close(); }
 });
 
-test("2: clearing that would free less than the minimum changes nothing", async () => {
-  // A 100k window: clearing from 60% to 45% frees about 14k tokens, under the 20k minimum.
-  const run = await clearingRun({ model: { contextWindow: 100000, maxOutputTokens: 1000 }, probes: 24, pad: 4000, keepRecentTokens: 1000 });
+test("2: below the compaction trigger nothing is cleared, so every request extends the cached prefix of the one before", async () => {
+  const run = await clearingRun({ probes: 15, pad: 16000, keepRecentTokens: 12000, triggerTokens: Math.floor(0.95 * budgetOf(wide)) });
   try {
     assert.equal(run.result.status, "completed");
-    const transcript = run.agent.transcript;
-    assert.ok(run.agent.estimatedContextTokens() >= run.clearTokens!, "the estimate crossed clear_tokens");
-    assert.ok(!transcript.some((message) => isStub(message)));
+    assert.ok(run.agent.estimatedContextTokens() >= 0.6 * run.budget, "the run passed 60% of the input budget");
+    assert.ok(!run.agent.transcript.some((message) => isStub(message)));
     assert.equal(run.store.getSessionHistory({ sessionId: run.id, limit: 100 }).items.filter((item) => item.kind === "context_clearing").length, 0);
+    for (let index = 1; index < run.main.length; index++) {
+      const previous = run.main[index - 1]!;
+      assert.deepEqual(run.main[index]!.slice(0, previous.length), previous, `request ${index} keeps the prefix`);
+    }
   } finally { await run.agent.close(); run.store.close(); }
 });
 
@@ -336,9 +321,17 @@ function anthropicMessage(index: number, signature: string, body: { text?: strin
   ] };
 }
 
+/** The real provider for `model`, except that compaction requests fail without reaching the mock server. */
+function failingCompaction(model: ResolvedModelConfig): ProviderAdapter {
+  const real = createProvider(model);
+  return { modelConfig: real.modelConfig,
+    async generate(request) { if (isCompaction(request)) throw new Error("summarizer down"); return real.generate(request); } };
+}
+
 /**
  * Four thinking steps: a parallel batch of two 41 KB results, then three single 41 KB results. Before the fifth request the
- * estimate passes clear_tokens, and clearing the first result of the batch alone reaches the 45% target.
+ * estimate passes the compaction trigger; the checkpoint request fails, and the fallback's clearing of the first result of the
+ * batch alone reaches the 45% target.
  */
 async function anthropicClearing(rejectAfterClearing: boolean) {
   const { root, store, id } = sessionStore();
@@ -356,10 +349,9 @@ async function anthropicClearing(rejectAfterClearing: boolean) {
   const fixture = await startMockProvider(steps);
   const model: ResolvedModelConfig = { agentName: "claude", provider: "anthropic", method: "anthropic-messages", model: "fixture", baseUrl: fixture.url,
     apiKey: "fixture", maxOutputTokens: 1000, contextWindow: 200000 };
-  const budget = budgetOf(model);
   const options: Partial<AgentOptions> = { registry, maxSteps: 20, whitelist: ["probe"],
-    compact: { keepRecentTurns: 2, keepRecentTokens: 1000, maxOutputTokens: 1000, triggerTokens: Math.floor(0.95 * budget), clearTokens: 100000 } };
-  const agent = createAgent({ cwd: root, provider: createProvider(model), system: "tiny", autoApprove: true, ...options, persistence: { store, sessionId: id, surface: "cli" } });
+    compact: { keepRecentTurns: 2, keepRecentTokens: 1000, maxOutputTokens: 1000, triggerTokens: 100000 } };
+  const agent = createAgent({ cwd: root, provider: failingCompaction(model), system: "tiny", autoApprove: true, ...options, persistence: { store, sessionId: id, surface: "cli" } });
   return { root, store, id, agent, fixture, model, options };
 }
 
@@ -384,7 +376,7 @@ test("4: a reasoning rejection after clearing retries with history projected, an
     const saved = run.store.readAgentState(run.id, owner);
     run.store.releaseSession(run.id, owner);
     assert.equal(saved.replayBefore, transcript.length - 1, "the boundary covers the messages the rejected request was built from");
-    const resumed = createAgent({ cwd: run.root, provider: createProvider(run.model), system: "tiny", autoApprove: true, ...run.options,
+    const resumed = createAgent({ cwd: run.root, provider: failingCompaction(run.model), system: "tiny", autoApprove: true, ...run.options,
       persistence: { store: run.store, sessionId: run.id, surface: "cli" } });
     try {
       assert.equal((await resumed.run("again")).text, "later");
@@ -409,7 +401,7 @@ test("5: reasoning around cleared results is kept unchanged, sent natively, and 
       for (const signature of ["sig-1", "sig-2", "sig-3", "sig-4"]) assert.match(sent, new RegExp(signature), signature);
       const reasoning = assistants(transcript).slice(0, 4);
       await run.agent.close();
-      const resumed = createAgent({ cwd: run.root, provider: createProvider(run.model), system: "tiny", autoApprove: true, ...run.options,
+      const resumed = createAgent({ cwd: run.root, provider: failingCompaction(run.model), system: "tiny", autoApprove: true, ...run.options,
         persistence: { store: run.store, sessionId: run.id, surface: "cli" } });
       try {
         assert.deepEqual(assistants(resumed.transcript).slice(0, 4), reasoning, "a restart keeps the assistant messages");
@@ -423,14 +415,13 @@ test("5: reasoning around cleared results is kept unchanged, sent natively, and 
     const { root, store, id } = sessionStore();
     const { registry } = await tools();
     const model = { method: "openai-responses" as const, provider: "openai", ...wide };
-    const budget = budgetOf(model);
     const opaque = (callId: string) => [{ type: "reasoning", id: `rs_${callId}`, summary: [], encrypted_content: `enc-${callId}-${noise(16)}` },
       { type: "function_call", id: `fc_${callId}`, call_id: callId, name: "probe", arguments: JSON.stringify({ out: callId, pad: 41000 }) }];
     const step = (callId: string): ProviderTurn => ({ text: "", finishReason: "tool_calls", opaque: opaque(callId),
       toolCalls: [{ id: callId, name: "probe", arguments: { out: callId, pad: 41000 } }] });
     const { provider, main } = scripted(model, ["r1", "r2", "r3", "r4", "r5"].map(step));
     const options: Partial<AgentOptions> = { registry, maxSteps: 20, whitelist: ["probe"],
-      compact: { keepRecentTurns: 2, keepRecentTokens: 1000, maxOutputTokens: 1000, triggerTokens: Math.floor(0.95 * budget), clearTokens: 100000 } };
+      compact: { keepRecentTurns: 2, keepRecentTokens: 1000, maxOutputTokens: 1000, triggerTokens: 100000 } };
     const agent = createAgent({ cwd: root, provider, system: "tiny", autoApprove: true, ...options, persistence: { store, sessionId: id, surface: "cli" } });
     try {
       await agent.run("go");
@@ -480,7 +471,7 @@ test("6: clearing is durable and leaves visible history unchanged", async () => 
   } finally { await resumed.close(); run.store.close(); }
 });
 
-test("7: compact.clear_tokens defaults to 60% of the input budget, false disables it, and invalid values are rejected", async () => {
+test("7: compact.clear_tokens is ignored, so a config that still sets it loads without threshold clearing", async () => {
   const directory = mkdtempSync(join(tmpdir(), "raw-clear-config-"));
   const path = join(directory, "config.json");
   const load = async (context: number | undefined, compact: Record<string, unknown>) => {
@@ -488,17 +479,10 @@ test("7: compact.clear_tokens defaults to 60% of the input budget, false disable
       models: { m: { provider: "ollama", method: "openai-chat-completions", model_id: "fixture", max_output_tokens: 1000,
         ...(context === undefined ? {} : { context_window_tokens: context }) } },
       agents: { p: { model: "m", tools: { use: ["builtin/read_file"] }, compact } } }));
-    return (await loadConfig({ configPath: path, env: {}, requireModel: true })).compact.clearTokens;
+    return (await loadConfig({ configPath: path, env: {}, requireModel: true })).compact;
   };
-  // 200k context, 1000 output reserve, 10k margin: 60% of 189000.
-  assert.equal(await load(200000, {}), 113400);
-  assert.equal(await load(undefined, {}), undefined);
-  assert.equal(await load(200000, { clear_tokens: false }), undefined);
-  assert.equal(await load(200000, { clear_tokens: 90000 }), 90000);
-  for (const value of [0, -1, 1.5, "x", true, null]) await assert.rejects(load(200000, { clear_tokens: value }), /clear_tokens/, String(value));
-  await assert.rejects(load(undefined, { clear_tokens: 90000 }), /clear_tokens|context_window_tokens/);
-  // With clearing off, a run past 60% leaves every result in place.
-  const run = await clearingRun({ probes: 15, pad: 16000, keepRecentTokens: 12000, clearTokens: null });
-  try { assert.ok(!run.agent.transcript.some((message) => isStub(message))); }
-  finally { await run.agent.close(); run.store.close(); }
+  for (const [context, value] of [[200000, undefined], [200000, false], [200000, 90000], [undefined, 90000], [200000, "x"]] as const) {
+    const compact = await load(context, value === undefined ? {} : { clear_tokens: value });
+    assert.ok(!("clearTokens" in compact), JSON.stringify(value));
+  }
 });

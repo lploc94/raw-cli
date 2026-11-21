@@ -168,7 +168,7 @@ Everything the v2 design keeps maps to one of these.
 
 | Tier | What | Cost | Trigger |
 |---|---|---|---|
-| 0 | **Tool-result clearing**: old tool results become stubs that name a saved copy | No model call; changes the prefix once per batch | `clear_tokens` (default 60% of input budget) |
+| 0 | **Tool-result clearing**: old tool results become stubs that name a saved copy | No model call; changes the prefix once per batch | Compaction fallback only (since 2026-11-21; `clear_tokens` removed) |
 | 1 | **Checkpoint compaction**: the LLM checkpoint plus host-kept verbatim parts | One model call (cache-friendly, §6.6) | `trigger_tokens` (default 80%, unchanged) |
 | 2 | **Provider-native compaction** (Anthropic compaction, OpenAI `/responses/compact`) | Provider-side | Opt-in `compact.strategy: "native"` |
 
@@ -292,7 +292,7 @@ Cache reuse is reported from provider usage (cache-read tokens), never assumed. 
 
 Order on a failed or stuck tier 1:
 
-1. Tier-0 clearing of everything outside the tail, regardless of `clear_tokens`.
+1. Tier-0 clearing of everything outside the tail.
 2. A mechanical checkpoint. The ledger, working state, previous LLM checkpoint (if any) and tail are kept. A one-line note replaces the new LLM checkpoint: `[Checkpoint unavailable: <reason>; older steps were removed. Re-check the working tree before continuing.]`
 3. Shrink the tail step by step, keeping at least the last step.
 4. Check the result with the existing rule, unchanged. If the size is anchored to provider-reported usage and still exceeds the input budget, the turn ends with `context_budget_exceeded`. Only the truncated minimum of §6.2.1 can be left at that point, so the context genuinely cannot hold the request. If the size is only a byte estimate, the request is sent, and a provider rejection surfaces as that provider error, not as a compaction failure.
@@ -309,7 +309,7 @@ Order on a failed or stuck tier 1:
   - if saving fails, the file would be capped (over 64 MiB), or the spill aggregate is full, the result is **not** cleared and stays in context.
 
   The stub names the path and says retention is best effort: `full output: <path> (saved copy, normally kept 7 days; may be removed earlier when saved outputs exceed their disk limit)`. The spill store's 1 GiB aggregate eviction can delete a copy before 7 days. When the copy is gone, `read_file` reports the file missing, which the stub already warned about. Guaranteed retention would be a separate decision.
-- **Hysteresis.** Clearing starts at `clear_tokens` and continues until the estimate is at most 45% of the input budget. It runs only if it frees at least 20k tokens, so the cached prefix changes rarely; opencode uses `PRUNE_MINIMUM` the same way.
+- **Target.** Clearing continues until the estimate is at most 45% of the input budget. Since 2026-11-21 it runs only in the compaction fallback chain; the earlier `clear_tokens` threshold (60%, 20k minimum) was removed because it broke the prompt cache before compaction broke it again.
 - **Never cleared:** the user ledger, `load_skill` results (they have their own reload notice), and results named in panel reminders.
 - **Durability.** Clearing is a context replacement with the same commit boundary as compaction. Visible history is untouched.
 
@@ -433,7 +433,7 @@ New keys under `compact` (all optional):
 | Key | Default | Meaning |
 |---|---|---|
 | `keep_recent_tokens` | min(20000, 25% of input budget) | Verbatim tail budget, by steps |
-| `clear_tokens` | 60% of input budget; `false` disables | Tier-0 trigger |
+| `clear_tokens` | removed 2026-11-21 and ignored: threshold clearing invalidated the cached prefix, then compaction did again | — |
 | `instructions` | none | Extra text appended to the checkpoint prompt (like Claude Code's "Compact Instructions") |
 | `strategy` | `"checkpoint"` | `"native"` opts into tier 2 where available |
 
@@ -659,5 +659,5 @@ Decided by the user on 2026-10-10:
 
 1. **Ledger cap:** 20k tokens, newest first, as in Codex. The overflowing message is head/tail-cut with a pointer to its full text.
 2. **Checkpoint language:** English. The user's words are quoted verbatim in their original language.
-3. **Tier-0 defaults:** start at 60% of the input budget, clear down to 45%, and free at least 20k per batch. Retune once the harness exists.
+3. **Tier-0 defaults:** threshold clearing removed on 2026-11-21 (each clearing invalidated the cached prefix, then compaction did again); the fallback clears down to 45% with no minimum.
 4. **Native strategy (phase 6):** kept in the plan as the last phase and opt-in through `compact.strategy: "native"`.

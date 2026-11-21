@@ -11,10 +11,6 @@ type ToolMessage = Extract<ModelMessage, { role: "tool" }>;
 export const CLEAR_MIN_RESULT_BYTES = 2048;
 /** Clearing continues until the next request is at most this share of the input budget. */
 export const CLEAR_TARGET_RATIO = 0.45;
-/** A clearing that frees less than this changes nothing, so the cached prefix changes rarely. */
-export const CLEAR_MIN_FREED_TOKENS = 20000;
-/** Default `compact.clear_tokens`, as a share of the input budget. */
-export const CLEAR_DEFAULT_RATIO = 0.6;
 const STUB_PREFIX = "[Old tool result cleared: ";
 const SHORT_ARGS_BYTES = 120;
 
