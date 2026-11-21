@@ -104,7 +104,8 @@ test("export downloads relocate and package updates resume one ID with unchanged
     const next = packageFixture(f.root, "2.0.0", "new package"); stage = await f.json<any>("/packages/inspect", "POST", { path: next });
     await f.json("/packages/install", "POST", { stageId: stage.id, alias: "kit", action: "update" }); await f.json(`/packages/stages/${stage.id}`, "DELETE");
     assert.equal((await run("two")).state, "completed"); assert.equal((await run("three")).state, "completed");
-    const requests = f.provider.requests.map(r => r.body as any); assert.notEqual(requests[0].prompt_cache_key, requests[1].prompt_cache_key); assert.equal(requests[1].prompt_cache_key, requests[2].prompt_cache_key);
+    const requests = f.provider.requests.map(r => r.body as any); // The update changes only the tool's code, not what the model receives, so the session keeps its cache key.
+    assert.equal(requests[0].prompt_cache_key, requests[1].prompt_cache_key); assert.equal(requests[1].prompt_cache_key, requests[2].prompt_cache_key);
     const exported = await f.json<any>("/packages/export", "POST", { revision: (await f.json<any>("/config")).revision, agent: "writer", name: "@test/relocated", version: "1.0.0", includeLiterals: true, includeFiles: [] });
     const archive = join(f.root, "export.rawpkg"); writeFileSync(archive, Buffer.from(await (await f.api(`/packages/stages/${exported.id}/download`)).arrayBuffer()));
     rmSync(source, { recursive: true }); rmSync(next, { recursive: true });
