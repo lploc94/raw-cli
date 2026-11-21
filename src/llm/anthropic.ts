@@ -51,14 +51,20 @@ function inputMessages(request: { messages: readonly ModelMessage[] }): MessageP
 }
 
 /** Request settings shared by ordinary and compaction requests, so a compaction sees what the main request sees. */
-function sharedSettings(modelConfig: Readonly<ResolvedModelConfig>, request: { tools: ProviderRequest["tools"]; cacheKey?: string | undefined }) {
+function sharedSettings(modelConfig: Readonly<ResolvedModelConfig>, request: { system: string; tools: ProviderRequest["tools"]; cacheKey?: string | undefined }) {
   const configured = modelConfig.request?.kind === "anthropic" ? modelConfig.request : undefined;
   const tools: Tool[] = request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: structuredClone(tool.inputSchema) as unknown as Tool["input_schema"] }));
+  const cache = cacheSettings(modelConfig, request.cacheKey).anthropic;
   return {
     configured,
     tools,
     params: {
-      ...cacheSettings(modelConfig, request.cacheKey).anthropic,
+      // An explicit breakpoint after the system prompt keeps tools + system cached when the messages are rewritten
+      // (compaction), next to the automatic marker that follows the conversation; both use the same TTL.
+      system: cache && request.system
+        ? [{ type: "text" as const, text: request.system, cache_control: structuredClone(cache.cache_control) }]
+        : request.system,
+      ...cache,
       ...(configured?.thinking ? { thinking: configured.thinking.type === "enabled"
         ? { type: "enabled" as const, budget_tokens: configured.thinking.budgetTokens }
         : { type: configured.thinking.type } } : {}),
@@ -89,7 +95,6 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         const response = await client.beta.messages.create({
           model: modelConfig.model,
           max_tokens: maxTokens,
-          system: request.system,
           messages: inputMessages(request) as never,
           betas: [ANTHROPIC_COMPACTION_BETA],
           compaction: { type: "summarize", ...(request.instructions ? { instructions: request.instructions } : {}) },
@@ -128,7 +133,6 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         const create = () => client.messages.create({
           model: modelConfig.model,
           max_tokens: outputLimit,
-          system: request.system,
           messages: inputMessages(request),
           stream: true,
           ...params,

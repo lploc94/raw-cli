@@ -158,3 +158,35 @@ test("tool generation change rotates generated OpenAI hint while explicit agent 
     } finally { store.close(); await fixture.close(); }
   }
 });
+
+test("Anthropic marks the end of the system prompt with the same TTL as the automatic marker, in main and native compaction requests", async () => {
+  const compacted = { body: { id: "c", type: "message", role: "assistant", model: "fixture", stop_reason: "compaction", stop_sequence: null,
+    content: [{ type: "compaction", content: "summary" }], usage: { input_tokens: 1, output_tokens: 1 } } };
+  for (const retention of [undefined, "1h"] as const) {
+    const fixture = await startMockProvider([{ frames: finalFrames("anthropic") }, compacted]);
+    try {
+      const adapter = createProvider(makeProfile("anthropic", fixture.url, retention ? { retention } : undefined));
+      const messages = [{ role: "user" as const, content: "hello" }];
+      await adapter.generate({ system: "stable system", messages, tools: [], timeoutMs: 1000 });
+      await adapter.compact!({ system: "stable system", messages, tools: [], timeoutMs: 1000 });
+      const marker = { type: "ephemeral", ...(retention ? { ttl: retention } : {}) };
+      for (const [index, kind] of [[0, "main"], [1, "compaction"]] as const) {
+        const body = fixture.requests[index]?.body as { system: unknown; cache_control: unknown };
+        assert.deepEqual(body.cache_control, marker, `${kind} request, retention ${retention}: automatic marker`);
+        assert.deepEqual(body.system, [{ type: "text", text: "stable system", cache_control: marker }],
+          `${kind} request, retention ${retention}: the system block carries the same marker`);
+      }
+    } finally { await fixture.close(); }
+  }
+});
+
+test("Anthropic no-hints sends the system prompt as plain text with no cache marker", async () => {
+  const fixture = await startMockProvider([{ frames: finalFrames("anthropic") }]);
+  try {
+    await createProvider(makeProfile("anthropic", fixture.url, { mode: "no-hints" }))
+      .generate({ system: "stable system", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000 });
+    const body = fixture.requests[0]?.body as { system: unknown; cache_control: unknown };
+    assert.equal(body.system, "stable system");
+    assert.equal(body.cache_control, undefined);
+  } finally { await fixture.close(); }
+});

@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format follows
 - Tool definitions are sent to the model sorted by name instead of in `tools.use` order, so reordering `tools.use` or loading plugins in another order no longer changes the cached prompt prefix. An existing session sees this once as a tool change on its next run: its earlier history is replayed as text and its prompt cache is written again.
 - Raw's generated prompt cache key (OpenAI `prompt_cache_key`) now changes only when what the model receives changes: the system prompt, tool definitions or selection, or the model, provider, method, endpoint or request settings. Editing a tool's code with the same schema, or changing `context_window_tokens`, `max_output_tokens` or cache settings, keeps the key, so OpenAI keeps routing the session to its cached prefix.
 - Chat Completions and Responses now send tool-call arguments back exactly as the model wrote them instead of re-serializing the parsed object, so a prefix cache that compares tokens (llama.cpp, for example) keeps matching after a tool call. See [docs/providers.md](docs/providers.md).
+- Anthropic requests in the default cache mode also mark the end of the system prompt with `cache_control` (same TTL as the automatic marker), so tools and the system prompt stay cached after a compaction rewrites the conversation. Native compaction requests carry the same marker. See [docs/context.md](docs/context.md).
 
 ## [0.1.7] - 2026-11-10
 

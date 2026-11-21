@@ -138,7 +138,7 @@ The checkpoint is labeled as the agent's own notes, not a system instruction. Wi
 |---|---|---|---|
 | OpenAI Chat Completions | Stable `prompt_cache_key` for related session requests; OpenAI also caches eligible prefixes implicitly | No harness cache fields | Validate SDK-supported `prompt_cache_retention` values for older models or `prompt_cache_options.ttl` where supported; unsupported values fail before inference |
 | OpenAI Responses | Stable `prompt_cache_key`, stateless output-item replay including encrypted reasoning | No harness cache fields | Same verified OpenAI retention rules |
-| Anthropic Messages | Request-level `cache_control: {type:"ephemeral"}`; optional TTL | No `cache_control` | `5m` or `1h` only |
+| Anthropic Messages | Request-level `cache_control: {type:"ephemeral"}` (automatic caching, follows the conversation) plus the same marker on the system prompt block, so tools and system stay cached when compaction rewrites the messages; both carry the optional TTL | No `cache_control`; the system prompt is sent as plain text | `5m` or `1h` only |
 | Google generateContentStream | Stable contents for supported implicit caching; no explicit cache resource | Same wire request; server behavior remains its own | Unsupported |
 | Generic compatible, OpenRouter, Ollama | Stable messages only; no guessed proprietary field | Same wire request | Unsupported |
 | Explicit compatible `llama.cpp` backend | `cache_prompt: true` | No harness cache field | Unsupported |
