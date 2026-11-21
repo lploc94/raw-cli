@@ -145,6 +145,16 @@ The checkpoint is labeled as the agent's own notes, not a system instruction. Wi
 | Generic compatible, OpenRouter, Ollama | Stable messages only; no guessed proprietary field | Same wire request | Unsupported |
 | Explicit compatible `llama.cpp` backend | `cache_prompt: true` | No harness cache field | Unsupported |
 
+A provider keeps a cached prefix only for a while after its last use, so chat with a person, who often pauses between messages, can lose it between two turns. Choose `cache.retention` by the usual pause:
+
+| Pause between requests | Anthropic Messages | OpenAI before GPT-5.6 | OpenAI GPT-5.6 and later |
+|---|---|---|---|
+| Under 5 minutes | Default is enough | Default is enough | Default is enough |
+| 5 to 60 minutes | `"1h"`: a cache write costs 2× the input price instead of 1.25×, reads cost the same | `"24h"` on the models that support it (gpt-5.5, gpt-5.5-pro, gpt-5.4, gpt-5.2, gpt-5.1 with its -codex, -codex-max, -codex-mini and -chat-latest variants, gpt-5, gpt-5-codex, gpt-4.1, and their dated snapshots); other models only have `in_memory` | Nothing: the default keeps the prefix at least 30 minutes, refreshed on each read; `24h` and `in_memory` are rejected |
+| Over an hour | Expect one cache miss when the person returns | Same | Same |
+
+Raw does not change the default: an agent loop that sends its requests seconds apart gains nothing from a longer lifetime, and on Anthropic every cache write would cost more. Agents that run unattended keep the default.
+
 `cache.key` is a user-supplied OpenAI routing key. Without one, a session creates one opaque stable key for its related requests. Compact does not rotate the main key, but its separate request may use a stable `:compact` suffix. Cache availability depends on model support, prefix length, server routing, time and eviction. The harness does not add padding, warm-up requests, or hidden summarization to chase hits. OpenAI [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching), Anthropic [prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), Google [implicit caching](https://ai.google.dev/gemini-api/docs/generate-content/caching), and llama.cpp [server cache behavior](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) are the source references; the pinned SDK and local HTTP fixture determine what this build sends.
 
 ## Usage and unknowns
