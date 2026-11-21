@@ -61,11 +61,11 @@ test("vision is opt-in, adds only view_image, and needs no image CLI flag", asyn
   const plain = await loadConfig({ configPath: await config(), env: {}, requireModel: true });
   assert.equal(plain.modelConfig?.vision, false);
   assert.deepEqual(createTestToolRegistry([], plain.modelConfig?.vision).definitions().map((tool) => tool.name),
-    ["read_file", "write_file", "bash"]);
+    ["bash", "read_file", "write_file"]);
   const enabled = await loadConfig({ configPath: await config(true), env: {}, requireModel: true });
   assert.equal(enabled.modelConfig?.vision, true);
   assert.deepEqual(createTestToolRegistry([], enabled.modelConfig?.vision).definitions().map((tool) => tool.name),
-    ["read_file", "write_file", "bash", "view_image"]);
+    ["bash", "read_file", "view_image", "write_file"]);
   await assert.rejects(loadConfig({ configPath: await config("yes"), env: {}, requireModel: true }), /vision/);
   assert.throws(() => parseCliArgs(["--image", "photo.png", "explain"]), /unknown option/);
 });

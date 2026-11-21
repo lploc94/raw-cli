@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 - Old tool results are no longer cleared when the context reaches 60% of the input budget. That clearing rewrote messages in the middle of the conversation, so the provider's prompt cache was lost from the first cleared result on, and the compaction that followed lost it again. Below the compaction trigger the conversation is now only appended to; old tool results are cleared only by the compaction fallback, where the context is rewritten anyway. `compact.clear_tokens` is removed; a config that still sets it loads and the key is ignored. See [docs/context.md](docs/context.md).
+- Tool definitions are sent to the model sorted by name instead of in `tools.use` order, so reordering `tools.use` or loading plugins in another order no longer changes the cached prompt prefix. An existing session sees this once as a tool change on its next run: its earlier history is replayed as text and its prompt cache is written again.
 
 ## [0.1.7] - 2026-11-10
 

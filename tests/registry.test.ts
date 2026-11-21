@@ -36,9 +36,10 @@ test("packaged bundled plugins preserve exact definitions and semantic batch pre
   for (const plugin of plugins) registry.register(plugin);
   assert.deepEqual(registry.definitions(), createTestToolRegistry([], true).definitions());
   // Intentional revisions: bash, read_file and write_file take one action in the trained shape (docs/tool-ux-design.md §4.2);
-  // bash names Git Bash on Windows.
+  // bash names Git Bash on Windows. Definitions are sent sorted by name (bash, read_file, view_image, write_file); the same
+  // definitions in the earlier read_file, write_file, bash, view_image order hashed to 63159c22….
   assert.equal(createHash("sha256").update(JSON.stringify(registry.definitions())).digest("hex"),
-    "63159c221aa12186ef7af43f3204b9779965c6728699a29c732a28bf19cf69fa");
+    "4e3d3886ccc06289f004d61492f1a1d7e3d7d4e82790f551128e6fbf9f797d2c");
 
   const cwd = await mkdtemp(join(tmpdir(), "raw-bundled-"));
   const marker = join(cwd, "side-effect");
@@ -83,7 +84,7 @@ test("registry has only three built-ins and rejects invalid/hidden calls before 
   const cwd = await mkdtemp(join(tmpdir(), "raw-reg-"));
   const marker = join(cwd, "marker");
   const registry = createTestToolRegistry();
-  assert.deepEqual(registry.definitions().map((d) => d.name), ["read_file", "write_file", "bash"]);
+  assert.deepEqual(registry.definitions().map((d) => d.name), ["bash", "read_file", "write_file"]);
   let approvals = 0;
   const ctx = { cwd, maxOutputBytes: 8192, autoApprove: false, approve: async () => { approvals++; return true; } };
   for (const [name, args] of [
@@ -140,4 +141,17 @@ test("abort settles an unresolved approval and late approval cannot execute", as
   allow(true);
   await new Promise((resolve) => setTimeout(resolve, 10));
   await assert.rejects(access(marker));
+});
+
+test("tool definitions are sent sorted by name, whatever the registration or whitelist order", () => {
+  // Names chosen so registration, whitelist and code-unit order all differ; uppercase sorts before lowercase in code-unit order.
+  const tool = (name: string) => ({ name, description: name, inputSchema: { type: "object" as const }, handler: async () => ({ isError: false, content: [] }) });
+  const first = new ToolRegistry();
+  for (const name of ["zeta", "alpha", "Beta", "_x"]) first.register(tool(name));
+  const second = new ToolRegistry();
+  for (const name of ["_x", "Beta", "zeta", "alpha"]) second.register(tool(name));
+  const expected = ["Beta", "_x", "alpha", "zeta"];
+  assert.deepEqual(first.definitions().map((d) => d.name), expected, "registration order zeta, alpha, Beta, _x");
+  assert.deepEqual(second.definitions(["zeta", "_x", "alpha", "Beta"]).map((d) => d.name), expected, "whitelist order zeta, _x, alpha, Beta");
+  assert.deepEqual(first.definitions(["alpha", "zeta"]).map((d) => d.name), ["alpha", "zeta"], "a whitelist still filters");
 });

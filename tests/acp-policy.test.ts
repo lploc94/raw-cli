@@ -75,7 +75,7 @@ test("ACP session MCP server is explicit but agent deny hides its tools", async 
     assert.ok(info.mcpCatalog.length > 0);
     assert.ok(info.mcpCatalog.every((item) => item.exposed === false));
     await connection.agent.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "inspect" }] });
-    assert.deepEqual(tools, ["read_file", "write_file", "bash"]);
+    assert.deepEqual(tools, ["bash", "read_file", "write_file"]);
   } finally { connection.close(); await server.close(); }
 });
 
