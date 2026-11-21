@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createAgent, type AgentOptions } from "../src/agent.js";
-import { CHECKPOINT_NO_TOOLS_GUARD, COMPACT_SYSTEM_PROMPT } from "../src/compact.js";
+import { CHECKPOINT_NO_TOOLS_GUARD, COMPACT_SYSTEM_PROMPT, imageKeepStart } from "../src/compact.js";
 import { createProvider } from "../src/llm/client.js";
 import { setRequestImageLimitsForTests } from "../src/llm/replay.js";
 import type { ResolvedModelConfig, UserBlock } from "../src/llm/types.js";
@@ -44,10 +44,12 @@ async function run(responses: MockResponse[], compact: AgentOptions["compact"], 
   }
 }
 
-test("crossing the image allowance compacts once per crossing, below the token trigger, and only the last step's images stay", async () => {
+// A tail of only the last step (everything else summarized), and the default tail, which keeps every earlier step here.
+for (const [label, keep] of [["a one-step tail", { keepRecentTurns: 0, keepRecentTokens: 1 }], ["the default tail", { keepRecentTurns: 2 }]] as const) {
+test(`crossing the image allowance compacts once per crossing, below the token trigger, and only the last step's images stay (${label})`, async () => {
   // Steps 3 and 6 each start with a summary request: steps 0-2 fill the allowance, the compaction at 3 leaves one image.
   const responses = Array.from({ length: STEPS }, (_, step) => [...step === 3 || step === 6 ? [summary] : [], answer(`answer ${step}`)]).flat();
-  const { bodies, transcript } = await run(responses, { keepRecentTurns: 0, keepRecentTokens: 1, maxOutputTokens: 1000, triggerTokens: 100000 });
+  const { bodies, transcript } = await run(responses, { ...keep, maxOutputTokens: 1000, triggerTokens: 100000 });
   assert.equal(bodies.length, responses.length, "every scripted response was used");
   for (const [index, body] of bodies.entries()) assert.ok(images(body) <= COUNT, `request ${index} carries ${images(body)} images, at most ${COUNT}`);
   const main = bodies.filter((body) => !isSummary(body));
@@ -58,7 +60,13 @@ test("crossing the image allowance compacts once per crossing, below the token t
   assert.deepEqual(breaks, [3, 6], "only the two requests after a compaction fail to extend the one before");
   assert.match(JSON.stringify(transcript), /Image removed at compaction|Raw compaction checkpoint/);
   assert.equal((JSON.stringify(transcript).match(/"type":"image"/g) ?? []).length, 3, "the stored context holds only images added since the last compaction");
+  if (keep.keepRecentTurns > 0) {
+    // The default tail keeps the earlier steps; their images become notes in the first request after the compaction.
+    assert.match(JSON.stringify(main[3]!.messages), /Image removed at compaction: image\/png, \d+ bytes, \\"s1\.png\\"/);
+    assert.match(JSON.stringify(main[3]!.messages), /step 2 t/, "step 2 is kept verbatim in the tail");
+  }
 });
+}
 
 test("without automatic compaction, images past the allowance are left out per request as before", async () => {
   const { bodies } = await run(Array.from({ length: 5 }, (_, step) => answer(`answer ${step}`)), undefined, 5);
@@ -73,4 +81,16 @@ test("a last step over the allowance on its own sends its newest images and comp
   assert.equal(bodies.length, 1, "no compaction request");
   assert.equal(images(bodies[0]!), COUNT);
   assert.match(JSON.stringify(bodies[0]!.messages), /Image omitted from this request/);
+});
+
+test("the images a compaction keeps start at a tool step the model has not answered when user messages arrived after it", () => {
+  const user = (text: string) => ({ role: "user" as const, content: text });
+  const call = { role: "assistant" as const, text: "", toolCalls: [{ id: "c1", name: "view_image", arguments: {} }] };
+  const result = { role: "tool" as const, callId: "c1", name: "view_image", result: { content: [{ type: "text" as const, text: "image" }], isError: false } };
+  const answered = { role: "assistant" as const, text: "done", toolCalls: [] };
+  assert.equal(imageKeepStart([[user("a")], [call, result], [user("queued")]]), 1, "the unanswered tool step and the queued message");
+  assert.equal(imageKeepStart([[user("a")], [call, result], [user("q1")], [user("q2")]]), 1, "with two queued messages");
+  assert.equal(imageKeepStart([[user("a")], [call, result]]), 1, "the tool step itself is the last step");
+  assert.equal(imageKeepStart([[user("a")], [call, result], [answered], [user("next")]]), 3, "an answered tool step is not kept");
+  assert.equal(imageKeepStart([[user("a")], [user("b")]]), 1, "user messages only: the last one");
 });

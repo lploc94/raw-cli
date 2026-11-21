@@ -9,7 +9,7 @@ import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anc
 import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFacts, cutNames, cutText, cutToolResult, cutUserInput, defaultCompactOutputTokens, emptyFacts,
   estimateRequestTokens, isCheckpointMessage, isContextOverflow, isReasoningRejection, LEDGER_CAP_TOKENS, ledgerPointer, ledgerText, LEGACY_LEDGER_NOTE,
   LEGACY_NOTE_SOURCE, mechanicalCheckpoint, MIN_CHECKPOINT_OUTPUT_TOKENS, NATIVE_CHECKPOINT_BODY, nativeInstructions, nativePortableText, renderLedger, renderWorkingState, resultText, SUMMARY_CUT_NOTICE, SUMMARY_MESSAGE_PREFIX,
-  summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, writtenCheckpoint, type CompactionLedgerState, type CompactOptions, type CompactResult,
+  imageKeepStart, summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, writtenCheckpoint, type CompactionLedgerState, type CompactOptions, type CompactResult,
   type CompactStrategy, type LedgerEntry, type RenderOptions, withoutHostData } from "./compact.js";
 import { ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT } from "./llm/anthropic.js";
 import { existsSync } from "node:fs";
@@ -402,8 +402,9 @@ export class AgentSession {
     const limits = requestImageLimits(modelConfig.method);
     const reserved = () => this.reservedRequestBytes();
     if (!imageAllowanceExceeded(sent, limits, reserved)) return false;
-    const lastStep = transcriptSteps(sent).at(-1)?.length ?? 0;
-    return !imageAllowanceExceeded(removeImagesBefore(sent, sent.length - lastStep), limits, reserved);
+    const steps = transcriptSteps(sent);
+    const kept = steps.slice(imageKeepStart(steps)).reduce((count, step) => count + step.length, 0);
+    return !imageAllowanceExceeded(removeImagesBefore(sent, sent.length - kept), limits, reserved);
   }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
@@ -717,18 +718,28 @@ export class AgentSession {
       for (let unit = turnStart; unit < tailStart; unit++) cost += stepTokens(sent(unit));
       if (cost <= left) { tailStart = turnStart; left -= cost; }
     }
+    // Images leave the context at a compaction, except the last step's (with a tool step the model has not answered yet
+    // and the messages delivered after it): below the provider's image allowance every image is sent, and the allowance is
+    // crossed again only after new ones accumulate (docs/context.md). The tail reaches back to that step when it fits.
+    const keepImagesFrom = imageKeepStart(units);
+    if (keepImagesFrom < tailStart) {
+      let cost = 0;
+      for (let unit = keepImagesFrom; unit < tailStart; unit++) cost += stepTokens(sent(unit));
+      if (cost <= left) { tailStart = keepImagesFrom; left -= cost; }
+    }
     const headSteps = units.slice(0, tailStart).flat();
-    // A head of typed inputs alone has nothing the ledger does not already keep verbatim, unless the last step had to be cut.
-    if (!headSteps.some((message) => message.role !== "user") && JSON.stringify(lastUnit) === JSON.stringify(units[last])) {
+    const earlier = units.slice(tailStart, last).flat().map((message) => structuredClone(message));
+    const earlierKept = removeImagesBefore(earlier, units.slice(tailStart, Math.max(tailStart, keepImagesFrom)).flat().length);
+    const imagesRemoved = earlierKept.some((message, index) => message !== earlier[index]);
+    const headImages = removeImagesBefore(headSteps, headSteps.length).some((message, index) => message !== headSteps[index]);
+    // A head of typed inputs alone has nothing the ledger does not already keep verbatim, unless the last step had to be cut
+    // or images outside the last step remain to be removed.
+    if (!headSteps.some((message) => message.role !== "user") && JSON.stringify(lastUnit) === JSON.stringify(units[last])
+      && !imagesRemoved && !headImages) {
       return { status: "noop", beforeBytes, afterBytes: beforeBytes };
     }
     // The summarizer reads what the provider would have been sent; the tail keeps the stored steps and their replay boundary.
     const head = units.slice(0, tailStart).flatMap((_unit, unit) => sent(unit));
-    // Images leave the context at a compaction, except the last step's: below the provider's image allowance every image is
-    // sent, and the allowance is crossed again only after new ones accumulate (docs/context.md).
-    const earlier = units.slice(tailStart, last).flat().map((message) => structuredClone(message));
-    const earlierKept = removeImagesBefore(earlier, earlier.length);
-    const imagesRemoved = earlierKept.some((message, index) => message !== earlier[index]);
     const tail = [...earlierKept, ...lastUnit];
     const tailReplayed = units.slice(tailStart).reduce((count, unit, offset) => count + (replayed(tailStart + offset) ? unit.length : 0), 0);
     const replayBefore = tailReplayed ? 1 + tailReplayed : 0;

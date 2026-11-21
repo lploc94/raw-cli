@@ -347,6 +347,17 @@ export function transcriptSteps(messages: readonly ModelMessage[]): ModelMessage
   return steps;
 }
 
+/**
+ * First of the last steps whose images a compaction keeps: the last step, or, when user messages were delivered after a
+ * tool step the model has not answered yet, that tool step (its images were requested and not yet seen).
+ */
+export function imageKeepStart(steps: readonly (readonly ModelMessage[])[]): number {
+  let start = steps.length - 1;
+  while (start > 0 && steps[start]![0]!.role === "user") start--;
+  const unanswered = steps[start]?.[0]?.role === "assistant" && steps[start]!.some((message) => message.role === "tool");
+  return unanswered ? start : steps.length - 1;
+}
+
 /** JSON-escaped byte length of `text`, which is additive across concatenation. */
 function jsonBytes(text: string): number {
   return Buffer.byteLength(JSON.stringify(text), "utf8") - 2;
