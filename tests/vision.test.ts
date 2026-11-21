@@ -173,6 +173,11 @@ test("real view_image result reaches each adapter as native image content", asyn
       const body = JSON.stringify(fixture.requests[0]?.body);
       assert.match(body, new RegExp(scenario.wire));
       assert.ok(body.includes(png.toString("base64").slice(0, 100)));
+      if (scenario.method.startsWith("openai-")) {
+        // Explicit `high`: `auto` means `original` on newer models (full size, more tokens, rejected past 30,000 patches).
+        const details = [...body.matchAll(/"detail":"(\w+)"/g)].map((found) => found[1]);
+        assert.deepEqual(details, ["high"], `${scenario.method}: the tool-result image is sent with detail high`);
+      }
       if (scenario.method === "openai-chat-completions") {
         const messages = (fixture.requests[0]?.body as { messages: Array<{ role: string }> }).messages;
         const toolAt = messages.findIndex((item) => item.role === "tool");

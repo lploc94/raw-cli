@@ -42,10 +42,10 @@ const wireContent = (method: string, body: any): any[] =>
 
 const b64 = { png: png.toString("base64"), jpeg: jpeg.toString("base64") };
 const expectedParts: Record<string, unknown[]> = {
-  "openai-chat-completions": [{ type: "text", text: "before" }, { type: "image_url", image_url: { url: `data:image/png;base64,${b64.png}` } },
-    { type: "text", text: "between" }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64.jpeg}` } }, { type: "text", text: "after" }],
-  "openai-responses": [{ type: "input_text", text: "before" }, { type: "input_image", detail: "auto", image_url: `data:image/png;base64,${b64.png}` },
-    { type: "input_text", text: "between" }, { type: "input_image", detail: "auto", image_url: `data:image/jpeg;base64,${b64.jpeg}` }, { type: "input_text", text: "after" }],
+  "openai-chat-completions": [{ type: "text", text: "before" }, { type: "image_url", image_url: { url: `data:image/png;base64,${b64.png}`, detail: "high" } },
+    { type: "text", text: "between" }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${b64.jpeg}`, detail: "high" } }, { type: "text", text: "after" }],
+  "openai-responses": [{ type: "input_text", text: "before" }, { type: "input_image", detail: "high", image_url: `data:image/png;base64,${b64.png}` },
+    { type: "input_text", text: "between" }, { type: "input_image", detail: "high", image_url: `data:image/jpeg;base64,${b64.jpeg}` }, { type: "input_text", text: "after" }],
   "anthropic-messages": [{ type: "text", text: "before" }, { type: "image", source: { type: "base64", media_type: "image/png", data: b64.png } },
     { type: "text", text: "between" }, { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64.jpeg } }, { type: "text", text: "after" }],
   "google-generate-content": [{ text: "before" }, { inlineData: { mimeType: "image/png", data: b64.png } },
@@ -274,4 +274,51 @@ test("image blocks never leak base64 into rendered text, history views, terminal
   assert.equal(work.status, "summarized");
   assert.match(requests[0]!, /\[Image: image\/png/);
   assert.ok(!requests[0]!.includes(png.toString("base64").slice(0, 60)));
+});
+
+test("the provider's own API gets its documented image limits; another endpoint speaking it keeps the stricter ones", () => {
+  const MB = 1000 * 1000;
+  const saved = ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "GOOGLE_GEMINI_BASE_URL"].map((name) => [name, process.env[name]] as const);
+  for (const [name] of saved) delete process.env[name];
+  try {
+  // Documented first-party limits (checked 2026-11-21): the bound Raw uses never passes them, and is not far below.
+  const anthropic = requestImageLimits("anthropic-messages", { contextWindow: 1_000_000 });
+  assert.equal(anthropic.count, 600, "600 images on a model with a window over 200k");
+  assert.ok(anthropic.request <= 128 * MB && anthropic.request > 32 * MB, `request bound ${anthropic.request} within 128 MB`);
+  assert.equal(anthropic.perImage, 10 * 1024 * 1024, "10 MB per image (base64)");
+  assert.equal(anthropic.manyImages?.maxDimension, 3000);
+  assert.equal(requestImageLimits("anthropic-messages", { contextWindow: 200_000 }).count, 100, "100 images on a 200k model");
+  assert.equal(requestImageLimits("anthropic-messages").count, 100, "an unknown window counts as 200k");
+  assert.equal(requestImageLimits("anthropic-messages", { baseUrl: "https://api.anthropic.com/v1", contextWindow: 1_000_000 }).count, 600);
+  for (const method of ["openai-chat-completions", "openai-responses"] as const) {
+    const own = requestImageLimits(method, { baseUrl: "https://api.openai.com/v1" });
+    assert.equal(own.count, 1500, `${method}: 1500 images`);
+    assert.ok(own.request <= 512 * MB && own.request > 50 * MB, `${method}: request bound ${own.request} within 512 MB`);
+    assert.deepEqual(requestImageLimits(method), own, `${method}: no base_url is the provider's own API`);
+  }
+  assert.equal(requestImageLimits("google-generate-content").count, 3600);
+  // A proxy or local server: its limits are unknown, so the stricter ones stay.
+  const proxy = requestImageLimits("anthropic-messages", { baseUrl: "http://127.0.0.1:8080", contextWindow: 1_000_000 });
+  assert.deepEqual([proxy.count, proxy.perImage, proxy.manyImages?.maxDimension], [100, 5 * 1024 * 1024, 2000]);
+  assert.ok(proxy.request <= 32 * MB);
+  const local = requestImageLimits("openai-chat-completions", { baseUrl: "http://localhost:8000/v1" });
+  assert.equal(local.count, 500);
+  assert.ok(local.request <= 50 * MB);
+  assert.equal(requestImageLimits("google-generate-content", { baseUrl: "https://proxy.example.com" }).count, 3000);
+  } finally { for (const [name, value] of saved) if (value !== undefined) process.env[name] = value; }
+});
+
+test("a model without base_url follows the SDK's base URL variable: another host keeps the stricter image limits", () => {
+  const saved = { ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL, OPENAI_BASE_URL: process.env.OPENAI_BASE_URL };
+  try {
+    process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:4000";
+    process.env.OPENAI_BASE_URL = "http://127.0.0.1:8000/v1";
+    assert.equal(requestImageLimits("anthropic-messages", { contextWindow: 1_000_000 }).count, 100, "ANTHROPIC_BASE_URL on a proxy");
+    assert.equal(requestImageLimits("openai-responses").count, 500, "OPENAI_BASE_URL on a local server");
+    assert.equal(requestImageLimits("openai-responses", { baseUrl: "https://api.openai.com/v1" }).count, 1500, "base_url wins over the variable");
+    process.env.OPENAI_BASE_URL = "https://api.openai.com/v1";
+    assert.equal(requestImageLimits("openai-chat-completions").count, 1500, "the variable naming the provider's own host");
+  } finally {
+    for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+  }
 });

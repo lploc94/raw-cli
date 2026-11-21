@@ -3,6 +3,14 @@ import { ProviderError } from "./client.js";
 import { detectImageMime } from "../tools/image.js";
 import { base64ByteLength, imageSourceText, type UserInput } from "./types.js";
 
+/**
+ * The OpenAI image `detail` Raw sends, explicitly: `auto` means `original` on GPT-5.5 and later (gpt-6-astra included),
+ * which keeps a large image's full size, costs far more tokens, and rejects an image over 30,000 patches instead of
+ * shrinking it. `high` fits the image in 2,500 patches (2048 px on older models), the documented choice for
+ * high-fidelity understanding (developers.openai.com/api/docs/guides/images-vision, checked 2026-11-21).
+ */
+export const OPENAI_IMAGE_DETAIL = "high";
+
 export const MAX_USER_IMAGES_BYTES = 16 * 1024 * 1024;
 export type NativeUserPart =
   | { type: "text"; text: string }

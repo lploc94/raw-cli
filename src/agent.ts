@@ -389,7 +389,7 @@ export class AgentSession {
   /** What the provider actually receives: replay projection plus text placeholders for images the model cannot read or the API would reject. */
   private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
     const modelConfig = this.options.provider.modelConfig;
-    return projectImageLimits(projectVisionMessages(withoutHostData(messages), modelConfig.vision === true), requestImageLimits(modelConfig.method),
+    return projectImageLimits(projectVisionMessages(withoutHostData(messages), modelConfig.vision === true), requestImageLimits(modelConfig.method, modelConfig),
       () => this.reservedRequestBytes());
   }
   private reservedRequestBytes(): number {
@@ -403,7 +403,7 @@ export class AgentSession {
   private imageOverflow(): boolean {
     const modelConfig = this.options.provider.modelConfig;
     const sent = projectVisionMessages(withoutHostData(this.requestMessages()), modelConfig.vision === true);
-    const limits = requestImageLimits(modelConfig.method);
+    const limits = requestImageLimits(modelConfig.method, modelConfig);
     const reserved = () => this.reservedRequestBytes();
     if (!imageAllowanceExceeded(sent, limits, reserved)) return false;
     const steps = transcriptSteps(sent);
