@@ -139,7 +139,8 @@ test("packed dashboard configures, reconnects, updates a package, then installed
     const resumed = await command(bin, ["--resume", id, "Continue in CLI"], workspace, env); assert.equal(resumed.stdout, "CLI continued\n"); assert.match(resumed.stderr, new RegExp(id));
     assert.equal(await readFile(join(workspace, "hook-effects.txt"), "utf8"), "notice\nnotice\nnotice\nnotice\n"); // three dashboard turns (the third is the image turn) and the CLI turn
     const requests = provider.requests.map(item => item.body as { prompt_cache_key: string; messages: unknown[]; tools: unknown[] });
-    assert.equal(requests.length, 6); assert.notEqual(requests[0]!.prompt_cache_key, requests[2]!.prompt_cache_key); assert.equal(requests[2]!.prompt_cache_key, requests[5]!.prompt_cache_key);
+    assert.equal(requests.length, 6); // The package update changes only tool code, not the prompt, so the generated cache key is kept.
+    assert.equal(requests[0]!.prompt_cache_key, requests[2]!.prompt_cache_key); assert.equal(requests[2]!.prompt_cache_key, requests[5]!.prompt_cache_key);
     const imageRequest = JSON.stringify(requests[4]); assert.match(imageRequest, /Image omitted/); assert.doesNotMatch(imageRequest, /image_url/); assert.ok(!imageRequest.includes(png.toString("base64")));
     assert.deepEqual(requests[5]!.messages.slice(0, requests[4]!.messages.length), requests[4]!.messages); assert.deepEqual(requests[5]!.tools, requests[4]!.tools);
     assert.equal(await readFile(join(workspace, "effects.txt"), "utf8"), "v1\nv2\n");

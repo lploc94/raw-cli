@@ -70,6 +70,8 @@ export async function upload<T>(
   sessionId: string,
   file: Blob & { name?: string },
   signal: AbortSignal,
+  /** The link the browser gave for the file (`file:`, `http:` or `https:`), sent so the model knows where it came from. */
+  source?: string,
 ): Promise<T> {
   const response = await fetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/attachments`,
@@ -80,6 +82,7 @@ export async function upload<T>(
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": file.type || "application/octet-stream",
         ...(file.name ? { "X-Raw-Filename": encodeURIComponent(file.name) } : {}),
+        ...(source ? { "X-Raw-Source": encodeURIComponent(source) } : {}),
       },
       body: file,
     },

@@ -171,7 +171,7 @@ test.describe("attachments", () => {
     await openChat(page, raw);
     const chooser = page.waitForEvent("filechooser");
     await page.getByRole("button", { name: "Add attachment" }).click();
-    await page.getByRole("menuitem", { name: /Upload image/ }).click();
+    await page.getByRole("menuitem", { name: /Upload file/ }).click();
     await (await chooser).setFiles({ name: "shot.png", mimeType: "image/png", buffer: png });
     await expect(ready(page, "shot.png")).toBeVisible();
     await message(page).pressSequentially("read @not");

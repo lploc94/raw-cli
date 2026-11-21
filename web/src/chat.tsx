@@ -42,6 +42,7 @@ import { useRouter } from "./router.js";
 import { Composer } from "./composer/Composer.js";
 import { createDraftStore, type DraftStore } from "./composer/draft-store.js";
 import { AttachmentChips } from "./composer/AttachmentChips.js";
+import { acceptAttribute } from "./composer/attachment-kinds.js";
 import { QueuedInputs, type QueuedNotice } from "./composer/QueuedInputs.js";
 import { useAttachments, type Chip } from "./composer/useAttachments.js";
 import { fileProvider } from "./composer/files.js";
@@ -414,7 +415,10 @@ export function Chat({
     for (const chip of sent.files) if (chip.path) att.addFileRef(chip.path);
     if (sameChips) att.restore(sent.images);
     // Each image once, however often Edit is pressed: one already back in the box keeps its chip.
-    else att.addFiles(sent.images.flatMap((chip) => (chip.file && !att.chips.some((entry) => entry.file === chip.file) ? [chip.file] : [])));
+    else {
+      const again = sent.images.filter((chip) => chip.file && !att.chips.some((entry) => entry.file === chip.file));
+      att.addFiles(again.map((chip) => chip.file!), again.map((chip) => chip.source));
+    }
     input.current?.focus();
   };
   /**
@@ -441,7 +445,7 @@ export function Chat({
       try {
         const signal = new AbortController().signal;
         attachments = await Promise.all(
-          sent.images.flatMap((chip) => (chip.file ? [upload<{ id: string }>(id, chip.file, signal).then((item) => item.id)] : [])),
+          sent.images.flatMap((chip) => (chip.file ? [upload<{ id: string }>(id, chip.file, signal, chip.source).then((item) => item.id)] : [])),
         );
       } catch (cause) {
         mark("not_sent", errorText(cause));
@@ -510,11 +514,14 @@ export function Chat({
         const images = att.images;
         const files = att.files;
         // An attachment-only turn still needs text; the model input is never empty.
+        const uploadedImages = images.filter((chip) => chip.kindId === "image").length;
         const text = draft.trim()
           ? draft
-          : images.length
+          : images.length && uploadedImages === images.length
             ? `Please look at the attached image${images.length > 1 ? "s" : ""}.`
-            : "Please look at the referenced file" + (files.length > 1 ? "s." : ".");
+            : images.length
+              ? `Please look at the attached file${images.length > 1 ? "s" : ""}.`
+              : "Please look at the referenced file" + (files.length > 1 ? "s." : ".");
         // The message leaves the box at once; its bubble holds it from here (docs/chat-design.md §5).
         store.set("");
         att.consume([...images, ...files].map((chip) => chip.key));
@@ -1092,16 +1099,36 @@ export function Chat({
                   />
                 }
                 onFiles={att.addFiles}
-                accept={
-                  meta.attachmentKinds.flatMap((kind) => kind.accept).join(",") ||
-                  "image/png,image/jpeg"
-                }
+                onPaths={(paths) => {
+                  // A workspace file becomes a file chip once the workspace search lists it (a directory or an
+                  // ignored file is not listed, and a chip for it would fail the send); any other path goes into the
+                  // message as text.
+                  const root = state?.session.cwd;
+                  const sessionId = id;
+                  void Promise.all(paths.map(async (path) => {
+                    const inside = root && path.startsWith(root.endsWith("/") ? root : `${root}/`) ? path.slice(root.length).replace(/^\/+/, "") : "";
+                    if (!inside || !sessionId) return path;
+                    const listed = await api<{ items: Array<{ path: string }> }>(
+                      `/sessions/${encodeURIComponent(sessionId)}/files?q=${encodeURIComponent(inside)}&limit=50`, "GET").catch(() => undefined);
+                    if (!listed?.items.some((item) => item.path === inside)) return path;
+                    att.addFileRef(inside);
+                    return undefined;
+                  })).then((left) => {
+                    const outside = left.filter((path): path is string => path !== undefined);
+                    if (!outside.length) return;
+                    const draft = store.get();
+                    store.set(`${draft}${draft && !/\s$/.test(draft) ? " " : ""}${outside.join(" ")} `);
+                  });
+                }}
+                accept={acceptAttribute(meta.attachmentKinds)}
                 {...(!meta.vision &&
-                state?.history.items.some((item) =>
-                  item.attachments?.some((entry) => entry.kind === "image"),
-                )
+                (att.chips.some((chip) => chip.kindId === "image") ||
+                  state?.history.items.some((item) =>
+                    item.attachments?.some((entry) => entry.kind === "image"),
+                  ))
                   ? {
-                      note: "Images in this chat are sent to this agent as text placeholders.",
+                      note: "This agent's model is not set to read images, so they reach it as text placeholders. If the model reads images, set \"vision\": true on it in Settings → Models.",
+                      noteTone: "warning" as const,
                     }
                   : backend && !sessionOptions && discovered.data?.warning
                     ? { note: `${backend.label} could not be asked for its models: ${discovered.data.warning}. Turns use the agent's settings.` }

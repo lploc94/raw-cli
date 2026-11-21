@@ -28,7 +28,7 @@ test("agent deny removes selected MCP tool from exposed set and direct dispatch"
   try {
     assert.equal(connection.exposed.length, 0);
     assert.equal(connection.catalog.length, 2);
-    assert.deepEqual(registry.definitions().map((item) => item.name), ["read_file", "write_file", "bash"]);
+    assert.deepEqual(registry.definitions().map((item) => item.name), ["bash", "read_file", "write_file"]);
     const alias = connection.catalog.find((item) => item.originalName === "selected")?.alias;
     assert.ok(alias);
     const denied = await registry.dispatch(alias, { value: "attempt" }, { cwd: process.cwd(), maxOutputBytes: 8192, autoApprove: true });

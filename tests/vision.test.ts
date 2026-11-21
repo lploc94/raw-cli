@@ -61,11 +61,11 @@ test("vision is opt-in, adds only view_image, and needs no image CLI flag", asyn
   const plain = await loadConfig({ configPath: await config(), env: {}, requireModel: true });
   assert.equal(plain.modelConfig?.vision, false);
   assert.deepEqual(createTestToolRegistry([], plain.modelConfig?.vision).definitions().map((tool) => tool.name),
-    ["read_file", "write_file", "bash"]);
+    ["bash", "read_file", "write_file"]);
   const enabled = await loadConfig({ configPath: await config(true), env: {}, requireModel: true });
   assert.equal(enabled.modelConfig?.vision, true);
   assert.deepEqual(createTestToolRegistry([], enabled.modelConfig?.vision).definitions().map((tool) => tool.name),
-    ["read_file", "write_file", "bash", "view_image"]);
+    ["bash", "read_file", "view_image", "write_file"]);
   await assert.rejects(loadConfig({ configPath: await config("yes"), env: {}, requireModel: true }), /vision/);
   assert.throws(() => parseCliArgs(["--image", "photo.png", "explain"]), /unknown option/);
 });
@@ -173,6 +173,11 @@ test("real view_image result reaches each adapter as native image content", asyn
       const body = JSON.stringify(fixture.requests[0]?.body);
       assert.match(body, new RegExp(scenario.wire));
       assert.ok(body.includes(png.toString("base64").slice(0, 100)));
+      if (scenario.method.startsWith("openai-")) {
+        // Explicit `high`: `auto` means `original` on newer models (full size, more tokens, rejected past 30,000 patches).
+        const details = [...body.matchAll(/"detail":"(\w+)"/g)].map((found) => found[1]);
+        assert.deepEqual(details, ["high"], `${scenario.method}: the tool-result image is sent with detail high`);
+      }
       if (scenario.method === "openai-chat-completions") {
         const messages = (fixture.requests[0]?.body as { messages: Array<{ role: string }> }).messages;
         const toolAt = messages.findIndex((item) => item.role === "tool");

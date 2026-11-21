@@ -28,7 +28,7 @@ import type { Page, SessionSummary } from "../sessions/store.js";
 import type { SessionMetrics } from "../sessions/metrics.js";
 import { Approvals, type Approval } from "./approvals.js";
 import { DashboardError, readBody, textField } from "./errors.js";
-import { AttachmentStaging, type AttachmentInfo } from "./attachments.js";
+import { AttachmentKinds, AttachmentStaging, createFileKind, imageKind, type AttachmentInfo } from "./attachments.js";
 import { sendFullOutput, storedFullOutput } from "./full-results.js";
 import { listWorkspaceFiles, readWorkspaceFileText, readWorkspaceImage, searchWorkspaceFiles, workspaceFileLink, workspaceLinkPath } from "./files.js";
 import { browseDirectory, listWorkspaces } from "./workspaces.js";
@@ -92,7 +92,7 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     }
     return counts;
   };
-  const staging = new AttachmentStaging(); context.attachments = staging;
+  const staging = new AttachmentStaging(new AttachmentKinds([imageKind, createFileKind(store.uploadsRoot)])); context.attachments = staging;
   context.onClose(() => staging.clear());
   const composer = async (name: string) => {
     const options = { cwd: context.cwd, configPath: context.configPath, env: context.env };
@@ -289,7 +289,9 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
     if (attachmentRoute) {
       const id = decodeURIComponent(attachmentRoute[1]!); requireSession(id);
       if (!attachmentRoute[2] && method === "POST") {
-        const mimeType = (request.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
+        // A browser sends an empty type for a file it does not recognize; any malformed type is treated the same way.
+        const declared = (request.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
+        const mimeType = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(declared) ? declared : "application/octet-stream";
         const kind = staging.kinds.byMime(mimeType);
         if (!kind) { request.resume(); throw new DashboardError(415, "unsupported_media_type", "Unsupported attachment type"); }
         const bytes = await readBody(request, kind.maxBytes).catch((error) => {
@@ -297,7 +299,9 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
             ? new DashboardError(413, "attachment_too_large", `Attachment exceeds ${kind.maxBytes} bytes`) : error; });
         let name = "attachment"; const header = request.headers["x-raw-filename"];
         if (typeof header === "string") { try { name = decodeURIComponent(header); } catch { name = header; } }
-        return reply(staging.stage(id, { mimeType, name: name.replace(/[\\/\0]/g, "_"), bytes }), 201);
+        let source: string | undefined; const sourceHeader = request.headers["x-raw-source"];
+        if (typeof sourceHeader === "string") { try { source = decodeURIComponent(sourceHeader); } catch { source = undefined; } }
+        return reply(staging.stage(id, { mimeType, name: name.replace(/[\\/\0]/g, "_"), bytes, ...(source ? { source } : {}) }), 201);
       }
       if (attachmentRoute[2] && method === "DELETE") return reply({ removed: staging.remove(id, decodeURIComponent(attachmentRoute[2])) });
       if (attachmentRoute[2] && method === "GET") {
@@ -497,9 +501,10 @@ export function createSessionRoutes(context: DashboardContext, attach?: AttachSe
           const back = store.takeBackQueuedInput(id, decodeURIComponent(inputRoute[2]), (input, blocks) => {
             const files: string[] = [];
             for (const block of typeof blocks === "string" ? [] : blocks) {
-              if (block.type === "resource_link") { const file = root && workspaceLinkPath(root, block.uri); if (file) files.push(file); continue; }
+              if (block.type === "resource_link") { const file = root && workspaceLinkPath(root, block.uri); if (file) { files.push(file); continue; } }
+              // An uploaded file comes back from its saved copy; a link that is neither is left out, as before.
               const found = staging.kinds.content(block);
-              if (found) staged.push(staging.stage(id, { ...found.content, name: (block.type === "image" ? block.name : undefined) ?? "attachment" }));
+              if (found) staged.push(staging.stage(id, { ...found.content, name: found.content.name ?? (block.type === "image" ? block.name : undefined) ?? "attachment" }));
             }
             return { input, files, attachments: staged };
           });

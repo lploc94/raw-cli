@@ -142,7 +142,7 @@ test("the CLI sees the bridged selection minus deny, through the real proxy, and
     const { results, store, session, warnings, stderr } = await backendTurn(root, { tools: { use: ["builtin/todo", "builtin/ask_user", "builtin/list_skills", "builtin/bash"],
       rules: [{ match: "builtin/ask_user", effect: "deny" }] } }, ["bridge-list"]);
     assert.equal(results[0]!.status, "completed", JSON.stringify(results[0]));
-    assert.equal(results[0]!.text, "tools:todo,list_skills");
+    assert.equal(results[0]!.text, "tools:list_skills,todo");
     assert.deepEqual(warnings, ['claude agent "c" skips builtin/bash: Claude Code uses its own shell tool']);
     const spawned = calls(root).find((call) => call.method === "mcp/spawn")!;
     assert.equal(spawned.name, "raw");

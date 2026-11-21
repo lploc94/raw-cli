@@ -146,6 +146,11 @@ export function estimateRequestTokens(system: string, messages: readonly ModelMe
   const light = withoutHostData(messages).map((message): ModelMessage => {
     // A native compaction item travels as its opaque items; its portable text is sent only once projected (design §6.9.1).
     if (message.role === "assistant" && isNativeCompaction(message)) return { ...message, text: "" };
+    // A parsed call also keeps the model's argument string for replay; count its arguments once.
+    // A call whose arguments did not parse has only the string (its `arguments` is empty), so it keeps it.
+    if (message.role === "assistant" && message.toolCalls.some((call) => call.rawArguments !== undefined && !call.argumentError))
+      return { ...message, toolCalls: message.toolCalls.map(({ rawArguments, ...call }) =>
+        call.argumentError && rawArguments !== undefined ? { ...call, rawArguments } : call) };
     if (message.role !== "user" || typeof message.content === "string" || !message.content.some((block) => block.type === "image")) return message;
     return { role: "user", content: message.content.map((block) => {
       if (block.type !== "image") return block;
@@ -342,6 +347,17 @@ export function transcriptSteps(messages: readonly ModelMessage[]): ModelMessage
   return steps;
 }
 
+/**
+ * First of the last steps whose images a compaction keeps: the last step, or, when user messages were delivered after a
+ * tool step the model has not answered yet, that tool step (its images were requested and not yet seen).
+ */
+export function imageKeepStart(steps: readonly (readonly ModelMessage[])[]): number {
+  let start = steps.length - 1;
+  while (start > 0 && steps[start]![0]!.role === "user") start--;
+  const unanswered = steps[start]?.[0]?.role === "assistant" && steps[start]!.some((message) => message.role === "tool");
+  return unanswered ? start : steps.length - 1;
+}
+
 /** JSON-escaped byte length of `text`, which is additive across concatenation. */
 function jsonBytes(text: string): number {
   return Buffer.byteLength(JSON.stringify(text), "utf8") - 2;
@@ -536,6 +552,11 @@ export interface CompactionLedgerState {
   factsThrough?: number;
   /** The first request after this compaction may still retry a reasoning rejection (§6.2). */
   retryArmed?: boolean;
+  /**
+   * Set by a rewrite (compaction, clearing) that kept replayed Anthropic thinking: the context length then. Thinking in the
+   * messages before it was generated on the old prefix; the next main request drops it, then this is cleared.
+   */
+  staleThinkingBefore?: number;
 }
 
 export const CHECKPOINT_MARKER = "[Raw compaction checkpoint #";

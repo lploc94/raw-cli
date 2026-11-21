@@ -106,7 +106,8 @@ test("a helper-only edit is executed on the next same-process attachment and the
     assert.equal(third.contextRevision, revision);
     assert.equal((await third.run("three")).status, "completed");
     await third.close();
-    assert.notEqual(seen[0]!.key, seen[2]!.key);
+    // The helper's bytes changed but its schema did not, so what the model receives and the generated key stay the same.
+    assert.equal(seen[0]!.key, seen[2]!.key);
     assert.equal(seen[2]!.key, seen[4]!.key);
     assert.deepEqual(seen[4]!.messages.slice(0, seen[2]!.messages.length), seen[2]!.messages);
   } finally { store.close(); }
@@ -140,3 +141,40 @@ test("failed runtime transition rolls back the baseline and a retry changes it o
     await third.close();
   } finally { store.close(); }
 });
+
+// The generated key routes a provider to its prefix cache, so it follows what the model receives (system prompt, tool schemas
+// and selection, provider/method/model/endpoint/request settings), not settings that leave the request prefix unchanged.
+for (const change of [
+  { name: "contextWindow only", before: { contextWindow: 100000 }, after: { contextWindow: 200000 }, rotates: false },
+  { name: "model maxOutputTokens only", before: { maxOutputTokens: 1000 }, after: { maxOutputTokens: 2000 }, rotates: false },
+  { name: "tool schema", before: { schema: "a" }, after: { schema: "b" }, rotates: true },
+  { name: "thinking request setting", before: { request: { kind: "generic" } }, after: { request: { kind: "generic", reasoningEffort: "high" } }, rotates: true },
+] as const) {
+  test(`a resume after a ${change.name} change ${change.rotates ? "rotates" : "keeps"} the generated cache key`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "raw-cache-key-"));
+    const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
+    const id = store.createSession({ cwd: root, title: "key" }).id;
+    const keys: Array<string | undefined> = [];
+    const make = (settings: Record<string, unknown>) => {
+      const { schema, ...model } = settings;
+      const registry = new ToolRegistry();
+      registry.register({ name: "probe", description: `probe ${String(schema ?? "a")}`, inputSchema: { type: "object" },
+        handler: async () => ({ isError: false, content: [] }) });
+      const provider: ProviderAdapter = {
+        modelConfig: { agentName: "a", provider: "ollama", method: "openai-chat-completions", model: "fixture", ...model } as ResolvedModelConfig,
+        generate: async (request) => { keys.push(request.cacheKey); return done; },
+      };
+      return createAgent({ cwd: root, provider, registry, whitelist: ["probe"], system: "system", persistence: { store, sessionId: id, surface: "cli" } });
+    };
+    try {
+      const first = make(change.before);
+      assert.equal((await first.run("one")).status, "completed");
+      await first.close();
+      const second = make(change.after);
+      assert.equal((await second.run("two")).status, "completed");
+      await second.close();
+      if (change.rotates) assert.notEqual(keys[1], keys[0], `${change.name}: new key`);
+      else assert.equal(keys[1], keys[0], `${change.name}: same key`);
+    } finally { store.close(); }
+  });
+}

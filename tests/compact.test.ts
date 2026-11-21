@@ -511,3 +511,16 @@ test("a one-line record whose saved paths are longer than sized is never sent ov
     }
   }
 });
+
+test("the request estimate counts a tool call's arguments once when the model's argument string is kept", () => {
+  const content = Array.from({ length: 400 }, (_, line) => `line ${line}: ${"x".repeat(60)}`).join("\n");
+  const call = { id: "w", name: "write_file", arguments: { path: "big.txt", content } };
+  const messages = (rawArguments?: string): ModelMessage[] => [{ role: "user", content: "write it" },
+    { role: "assistant", text: "", toolCalls: [{ ...call, ...(rawArguments !== undefined ? { rawArguments } : {}) }] }];
+  const without = estimateRequestTokens("tiny", messages(), []);
+  for (const rawArguments of [JSON.stringify(call.arguments), JSON.stringify(call.arguments, null, 2)]) {
+    const kept = estimateRequestTokens("tiny", messages(rawArguments), []);
+    // Within 16 bytes of JSON at 2 bytes per token.
+    assert.ok(Math.abs(kept - without) <= 8, `estimate ${kept} with a ${rawArguments.length}-byte argument string, ${without} without`);
+  }
+});

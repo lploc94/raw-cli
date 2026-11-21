@@ -90,7 +90,7 @@ export async function handler() { return { content: [] }; }`);
     assert.ok(sessionId);
     assert.match(JSON.stringify(provider.requests[0]?.body), /EDITED_WRITE_DESCRIPTION|fork_write edited schema sentinel/);
     assert.deepEqual((provider.requests[0]?.body as { tools: Array<{ function: { name: string } }> }).tools.map((item) => item.function.name),
-      ["fork_write", "fork_bash"]);
+      ["fork_bash", "fork_write"]);
     await assert.rejects(access(join(consumer, "must-not-write.txt")));
     assert.match(JSON.stringify(provider.requests[1]?.body), /write_file writes one whole file: .*use edit_file to change part of a file/);
     assert.equal((await run(bin, [...args, "bad bash"], consumer, env)).code, 0);

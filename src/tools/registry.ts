@@ -168,8 +168,11 @@ export class ToolRegistry {
   definitions(whitelist?: readonly string[]): readonly ToolDefinition[] {
     const ordered = whitelist === undefined ? [...this.tools.values()]
       : [...new Set(whitelist)].map((name) => this.tools.get(name)).filter((item): item is ToolRegistration => item !== undefined);
+    // Sorted by name in code-unit order: the tools are the first part of every request's cached prefix, so their order must not
+    // follow `tools.use` or plugin load order.
     return ordered
       .filter((tool) => this.effect(tool) !== "deny" && (whitelist === undefined || whitelist.includes(tool.name)))
+      .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
       .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: structuredClone(tool.inputSchema) }));
   }
 

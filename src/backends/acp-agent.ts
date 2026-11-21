@@ -4,7 +4,7 @@ import { client, PROTOCOL_VERSION, type AnyMessage, type ClientCapabilities, typ
 import type { AgentSession, AgentState, RunEvent, RunResult } from "../agent.js";
 import type { CompactOptions, CompactResult } from "../compact.js";
 import type { UsageSummary } from "../llm/cache.js";
-import { imagePlaceholderText, type ExternalTurnEvent, type ModelMessage, type ProviderAdapter, type ProviderRequest, type ProviderTurn,
+import { imagePlaceholderText, imageSourceText, type ExternalTurnEvent, type ModelMessage, type ProviderAdapter, type ProviderRequest, type ProviderTurn,
   type ResolvedModelConfig, type UserInput } from "../llm/types.js";
 import { MAX_FRAME_BYTES } from "../acp/transport.js";
 import { spawnAcpPeer, type AcpPeer } from "../acp/peer.js";
@@ -138,11 +138,13 @@ function selectValues(option: SessionConfigOption): string[] {
 
 function promptBlocks(input: UserInput, images: boolean): ContentBlock[] {
   if (typeof input === "string") return [{ type: "text", text: input }];
-  return input.map((block): ContentBlock => block.type === "text" ? { type: "text", text: block.text }
-    : block.type === "image" ? images ? { type: "image", data: block.data, mimeType: block.mimeType } : { type: "text", text: imagePlaceholderText(block) }
-    : { type: "resource_link", uri: block.uri, name: block.name,
+  return input.flatMap((block): ContentBlock[] => block.type === "text" ? [{ type: "text", text: block.text }]
+    : block.type === "image" ? images
+      ? [{ type: "image", data: block.data, mimeType: block.mimeType }, ...block.source ? [{ type: "text" as const, text: imageSourceText(block.source) }] : []]
+      : [{ type: "text", text: imagePlaceholderText(block) }]
+    : [{ type: "resource_link", uri: block.uri, name: block.name,
       ...(block.title != null ? { title: block.title } : {}), ...(block.description != null ? { description: block.description } : {}),
-      ...(block.mimeType != null ? { mimeType: block.mimeType } : {}), ...(block.size != null ? { size: block.size } : {}) });
+      ...(block.mimeType != null ? { mimeType: block.mimeType } : {}), ...(block.size != null ? { size: block.size } : {}) }]);
 }
 
 interface Binding { store: SessionStore; sessionId: string; owner: SessionOwner }

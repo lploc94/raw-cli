@@ -52,13 +52,53 @@ export interface RequestImageLimits {
 
 const MiB = 1024 * 1024;
 /**
- * Documented API limits with headroom for request framing: Anthropic rejects an image over 5 MB or 8000 px (2000 px
- * when a request has more than 20 images) and a request over 32 MB, OpenAI a request over 50 MB, Google one over 20 MB.
+ * The provider's own API hosts. A model without `base_url` uses them unless the SDK's environment variable names another
+ * endpoint (the SDKs read it when no base URL is passed).
  */
-export function requestImageLimits(method: ApiMethod): RequestImageLimits {
-  if (method === "anthropic-messages") return { perImage: 5 * MiB, request: 30 * MiB, count: 100, maxDimension: 8000, manyImages: { above: 20, maxDimension: 2000 } };
-  if (method === "google-generate-content") return { request: 18 * MiB, count: 3000 };
-  return { request: 45 * MiB, count: 500 };
+const FIRST_PARTY_HOSTS: Partial<Record<ApiMethod, string>> = {
+  "anthropic-messages": "api.anthropic.com", "openai-chat-completions": "api.openai.com", "openai-responses": "api.openai.com",
+  "google-generate-content": "generativelanguage.googleapis.com",
+};
+const SDK_BASE_URL_ENV: Partial<Record<ApiMethod, string>> = {
+  "anthropic-messages": "ANTHROPIC_BASE_URL", "openai-chat-completions": "OPENAI_BASE_URL", "openai-responses": "OPENAI_BASE_URL",
+  "google-generate-content": "GOOGLE_GEMINI_BASE_URL",
+};
+function firstParty(method: ApiMethod, baseUrl: string | undefined): boolean {
+  const env = SDK_BASE_URL_ENV[method];
+  const endpoint = baseUrl || (env ? process.env[env] : undefined);
+  if (!endpoint) return true;
+  try { return new URL(endpoint).hostname === FIRST_PARTY_HOSTS[method]; } catch { return false; }
+}
+
+/**
+ * Image limits of one request to this endpoint, with headroom for request framing. The provider's own API uses its
+ * documented limits (checked 2026-11-21): Anthropic 10 MB and 8000 px per image (3000 px once a request has more than
+ * 20 images), 600 images when the configured window is over 200k tokens, else 100 (the limit for 200k-token models) and 128 MB per request
+ * (platform.claude.com/docs/en/build-with-claude/vision, /api/overview); OpenAI 1500 images and 512 MB per request
+ * (developers.openai.com/api/docs/guides/images-vision); Google 3600 images and 20 MB inline. Another endpoint speaking
+ * the same API (a proxy, Bedrock, a local server) keeps the stricter limits Raw used before, since its own are unknown:
+ * 5 MB per image, 2000 px for many images, 100 images and 32 MB for Anthropic, 500 images and 50 MB for OpenAI,
+ * 3000 images and 20 MB for Google.
+ */
+export function requestImageLimits(method: ApiMethod, model: { baseUrl?: string; contextWindow?: number } = {}): RequestImageLimits {
+  const override = limitOverrides.get(method);
+  if (override) return override;
+  const own = firstParty(method, model.baseUrl);
+  if (method === "anthropic-messages") {
+    return own
+      ? { perImage: 10 * MiB, request: 120 * MiB, count: (model.contextWindow ?? 0) > 200_000 ? 600 : 100,
+        maxDimension: 8000, manyImages: { above: 20, maxDimension: 3000 } }
+      : { perImage: 5 * MiB, request: 30 * MiB, count: 100, maxDimension: 8000, manyImages: { above: 20, maxDimension: 2000 } };
+  }
+  if (method === "google-generate-content") return { request: 18 * MiB, count: own ? 3600 : 3000 };
+  return own ? { request: 480 * MiB, count: 1500 } : { request: 45 * MiB, count: 500 };
+}
+
+const limitOverrides = new Map<ApiMethod, RequestImageLimits>();
+/** Replaces a method's limits (tests use small ones); `undefined` restores the documented values. */
+export function setRequestImageLimitsForTests(method: ApiMethod, limits: RequestImageLimits | undefined): void {
+  if (limits) limitOverrides.set(method, limits);
+  else limitOverrides.delete(method);
 }
 
 type ImageBlock = Extract<ToolContent, { type: "image" }> | { type: "image"; mimeType: string; data: string; name?: string };
@@ -101,8 +141,47 @@ const imageBlocks = (message: ModelMessage): readonly { type: string }[] => mess
  * `reservedBytes` measures the part of the request outside `messages` (system prompt, tool schemas); it runs only when images are present.
  */
 export function projectImageLimits(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number = () => 0): ModelMessage[] {
-  if (!messages.some((message) => imageBlocks(message).some((block) => block.type === "image"))) return [...messages];
+  const omitted = imageOmissions(messages, limits, reservedBytes, true);
+  if (!omitted.size) return [...messages];
+  return replaceImages(messages, (block) => omitted.get(block));
+}
+
+/**
+ * Whether the request allowance (image count, request bytes, the many-images pixel bound) would leave out an image that
+ * the per-image limits admit. Per-image omissions are deterministic; allowance omissions change as the conversation grows.
+ */
+export function imageAllowanceExceeded(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number = () => 0): boolean {
+  return imageOmissions(messages, limits, reservedBytes, true).size > imageOmissions(messages, limits, reservedBytes, false).size;
+}
+
+/** Image blocks of `messages[0..before)` become text naming them, as compaction leaves them (docs/context.md). */
+export function removeImagesBefore(messages: readonly ModelMessage[], before: number): ModelMessage[] {
+  return replaceImages(messages, (block, index) => {
+    if (index >= before) return undefined;
+    const image = block as ImageBlock;
+    const name = "path" in image && image.path ? `, ${JSON.stringify(image.path)}` : "name" in image && image.name ? `, ${JSON.stringify(image.name)}` : "";
+    const bytes = "byteSize" in image && image.byteSize !== undefined ? image.byteSize : Buffer.from(image.data, "base64").length;
+    return `[Image removed at compaction: ${image.mimeType}, ${bytes} bytes${name}; view it again if you need it]`;
+  });
+}
+
+function replaceImages(messages: readonly ModelMessage[], note: (block: object, index: number) => string | undefined): ModelMessage[] {
+  return messages.map((message, index): ModelMessage => {
+    const text = (block: { type: string }) => block.type === "image" ? note(block, index) : undefined;
+    if (message.role === "user" && typeof message.content !== "string" && message.content.some((block) => text(block) !== undefined)) {
+      return { role: "user", content: message.content.map((block) => { const value = text(block); return value !== undefined ? { type: "text" as const, text: value } : block; }) };
+    }
+    if (message.role === "tool" && message.result.content.some((block) => text(block) !== undefined)) {
+      return { ...message, result: { ...message.result, content: message.result.content.map((block): ToolContent => {
+        const value = text(block); return value !== undefined ? { type: "text", text: value } : block; }) } };
+    }
+    return message;
+  });
+}
+
+function imageOmissions(messages: readonly ModelMessage[], limits: RequestImageLimits, reservedBytes: () => number, allowance: boolean): Map<object, string> {
   const omitted = new Map<object, string>();
+  if (!messages.some((message) => imageBlocks(message).some((block) => block.type === "image"))) return omitted;
   // Everything but image payloads, as JSON escapes it; a tool argument that happens to be named `data` still counts.
   const textBytes = Buffer.byteLength(JSON.stringify(messages, function (this: unknown, key, value) {
     return key === "data" && typeof value === "string" && (this as { type?: unknown } | null)?.type === "image" ? "" : value;
@@ -132,6 +211,7 @@ export function projectImageLimits(messages: readonly ModelMessage[], limits: Re
         omitted.set(block, `[Image omitted from this request: ${label(image)}, ${pixels.width}x${pixels.height} px, over the provider's ${limits.maxDimension} px limit. ${smaller}]`);
       } else {
         // Past the many-images threshold every image must meet the stricter bound; newer images are never given up for older ones.
+        if (!allowance) continue;
         const strict = limits.manyImages ? tooLarge(image, limits.manyImages.maxDimension) : undefined;
         const crowded = limits.manyImages !== undefined && admitted.length + 1 > limits.manyImages.above;
         if (crowded && strict && overStrict === 0) {
@@ -142,15 +222,5 @@ export function projectImageLimits(messages: readonly ModelMessage[], limits: Re
       }
     }
   }
-  if (!omitted.size) return [...messages];
-  return messages.map((message): ModelMessage => {
-    if (message.role === "user" && typeof message.content !== "string" && message.content.some((block) => omitted.has(block))) {
-      return { role: "user", content: message.content.map((block) => omitted.has(block) ? { type: "text" as const, text: omitted.get(block)! } : block) };
-    }
-    if (message.role === "tool" && message.result.content.some((block) => omitted.has(block))) {
-      return { ...message, result: { ...message.result, content: message.result.content.map((block): ToolContent =>
-        omitted.has(block) ? { type: "text", text: omitted.get(block)! } : block) } };
-    }
-    return message;
-  });
+  return omitted;
 }

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { ResponseInput, ResponseOutputItem } from "openai/resources/responses/responses";
 import { renderUserInput, truncatedArgumentsError, type ModelMessage, type ModelToolCall, type NativeCompactRequest, type ProviderAdapter,
   type ResolvedModelConfig, type ProviderTurn } from "./types.js";
-import { nativeToolContent, nativeUserContent } from "./content.js";
+import { nativeToolContent, nativeUserContent, OPENAI_IMAGE_DETAIL } from "./content.js";
 import { MAX_TIMER_MS, ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
@@ -14,7 +14,7 @@ function inputItems(request: { messages: readonly ModelMessage[] }): ResponseInp
       const parts = nativeUserContent(message.content);
       input.push({ role: "user", content: parts.some((part) => part.type === "image")
         ? parts.flatMap((part): Array<Record<string, unknown>> => part.type === "image"
-          ? [{ type: "input_image", detail: "auto", image_url: `data:${part.mimeType};base64,${part.data}` }]
+          ? [{ type: "input_image", detail: OPENAI_IMAGE_DETAIL, image_url: `data:${part.mimeType};base64,${part.data}` }]
           : part.text ? [{ type: "input_text", text: part.text }] : [])
         : renderUserInput(message.content) });
     }
@@ -29,7 +29,7 @@ function inputItems(request: { messages: readonly ModelMessage[] }): ResponseInp
       const result = nativeToolContent(message.result);
       const output = result.images.length ? [
         ...(result.text ? [{ type: "input_text", text: result.text }] : []),
-        ...result.images.map((image) => ({ type: "input_image", detail: "auto", image_url: `data:${image.mimeType};base64,${image.data}` })),
+        ...result.images.map((image) => ({ type: "input_image", detail: OPENAI_IMAGE_DETAIL, image_url: `data:${image.mimeType};base64,${image.data}` })),
       ] : result.text;
       input.push({ type: "function_call_output", call_id: message.callId, output });
     }
@@ -56,7 +56,7 @@ function completedTurn(output: readonly ResponseOutputItem[], usage: unknown, tr
       catch { argumentError = truncated ? truncatedArgumentsError(item.name) : `tool ${item.name} arguments are invalid JSON`; }
       if (!argumentError && (!args || typeof args !== "object" || Array.isArray(args))) argumentError = `tool ${item.name} arguments must be an object`;
       calls.push({ id: item.call_id, name: item.name, arguments: argumentError ? {} : args as Record<string, unknown>,
-        ...(argumentError ? { argumentError, rawArguments: item.arguments } : {}) });
+        ...(argumentError ? { argumentError } : {}), rawArguments: item.arguments });
     } else if (item.type !== "reasoning") {
       throw new ProviderError("unsupported_output", `unsupported Responses output item: ${item.type}`);
     }

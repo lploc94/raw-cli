@@ -43,7 +43,7 @@ async function startWork(page: Page, raw: Raw) {
 async function chooseImage(page: Page) {
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Add attachment" }).click();
-  await page.getByRole("menuitem", { name: /Upload image/ }).click();
+  await page.getByRole("menuitem", { name: /Upload file/ }).click();
   await (await chooser).setFiles({ name: "shot.png", mimeType: "image/png", buffer: png });
 }
 

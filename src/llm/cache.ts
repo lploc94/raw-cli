@@ -17,7 +17,15 @@ export interface NormalizedUsage {
   cacheReadRatio?: number;
 }
 
-export interface UsageRecord { method: ApiMethod; provider: string; raw: unknown }
+export interface UsageRecord {
+  method: ApiMethod; provider: string; raw: unknown;
+  /**
+   * Debug only: the request did not extend the previous one of this runtime although no deliberate rewrite (compaction,
+   * clearing, replay boundary, stale-thinking removal, tool view change) happened in between. `message` is the first sent
+   * message that differs, or this request's length when it sent fewer messages than the previous one.
+   */
+  prefixBreak?: { message: number };
+}
 
 export interface UsageSummary {
   requests: number;

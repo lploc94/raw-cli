@@ -9,14 +9,14 @@ import { anchoredEstimate, parseAnchor, type ContextAnchor } from "./context-anc
 import { buildCheckpointMessage, CHECKPOINT_MARKER, checkpointWords, collectFacts, cutNames, cutText, cutToolResult, cutUserInput, defaultCompactOutputTokens, emptyFacts,
   estimateRequestTokens, isCheckpointMessage, isContextOverflow, isReasoningRejection, LEDGER_CAP_TOKENS, ledgerPointer, ledgerText, LEGACY_LEDGER_NOTE,
   LEGACY_NOTE_SOURCE, mechanicalCheckpoint, MIN_CHECKPOINT_OUTPUT_TOKENS, NATIVE_CHECKPOINT_BODY, nativeInstructions, nativePortableText, renderLedger, renderWorkingState, resultText, SUMMARY_CUT_NOTICE, SUMMARY_MESSAGE_PREFIX,
-  summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, writtenCheckpoint, type CompactionLedgerState, type CompactOptions, type CompactResult,
+  imageKeepStart, summarizeTranscript, textTokens, transcriptSteps, userTextBytes, WORKING_STATE_BYTES, writtenCheckpoint, type CompactionLedgerState, type CompactOptions, type CompactResult,
   type CompactStrategy, type LedgerEntry, type RenderOptions, withoutHostData } from "./compact.js";
 import { ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT } from "./llm/anthropic.js";
 import { existsSync } from "node:fs";
-import { CLEAR_MIN_FREED_TOKENS, CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
+import { CLEAR_TARGET_RATIO, clearToolResults, namedByReminder } from "./context-clearing.js";
 import { normalizeUsage, summarizeUsage, toolChoiceKeepsCache, type UsageRecord, type UsageSummary } from "./llm/cache.js";
 import { effectiveInputBudget } from "./llm/context.js";
-import { projectImageLimits, projectReplayMessages, projectVisionMessages, requestImageLimits } from "./llm/replay.js";
+import { imageAllowanceExceeded, projectImageLimits, projectReplayMessages, projectVisionMessages, removeImagesBefore, requestImageLimits } from "./llm/replay.js";
 import { nativeUserContent } from "./llm/content.js";
 import { ProviderError } from "./llm/client.js";
 import type { CompactSettings } from "./config.js";
@@ -41,7 +41,7 @@ import type { HookDispatcher, HookReceipt } from "./hooks/dispatcher.js";
 import type { HookEventName } from "./hooks/contract.js";
 import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./sessions/visible.js";
 import type { ToolDisplay } from "./tools/display.js";
-import type { ExternalTurnEvent } from "./llm/types.js";
+import type { ExternalTurnEvent, ReplayedBlock } from "./llm/types.js";
 
 export type AgentState = "idle" | "running" | "cancelling" | "compacting" | "closing" | "closed";
 
@@ -191,6 +191,10 @@ export class AgentSession {
   private schemaView: readonly ToolDefinition[];
   private contextGenerationRevision = 1;
   private replayBefore = 0;
+  /** Counts the deliberate rewrites of the sent messages (invariant I1); a request compares with the last only across none. */
+  private rewrites = 0;
+  /** Stable hashes of the messages the last main request sent, and the rewrite count then; in memory only. */
+  private lastSent: { rewrites: number; hashes: string[] } | undefined;
   private readonly selectedSkills: readonly SelectedSkill[];
   private skillVisibility: SkillVisibility = { listed: false, loaded: [] };
   private tokenCalibration = 1;
@@ -231,10 +235,6 @@ export class AgentSession {
         || options.compact.triggerTokens < 1 || options.compact.triggerTokens >= context! - output - Math.max(64, Math.ceil(context! * 0.05))) {
         throw new Error("auto compact trigger requires a valid context window and output reserve");
       }
-    }
-    if (options.compact?.clearTokens !== undefined && (!Number.isSafeInteger(options.provider.modelConfig.contextWindow)
-      || !Number.isSafeInteger(options.compact.clearTokens) || options.compact.clearTokens < 1)) {
-      throw new Error("tool result clearing requires a valid context window and threshold");
     }
     this.options = {
       provider: options.provider,
@@ -389,8 +389,26 @@ export class AgentSession {
   /** What the provider actually receives: replay projection plus text placeholders for images the model cannot read or the API would reject. */
   private sendMessages(messages: readonly ModelMessage[] = this.requestMessages()): ModelMessage[] {
     const modelConfig = this.options.provider.modelConfig;
-    return projectImageLimits(projectVisionMessages(withoutHostData(messages), modelConfig.vision === true), requestImageLimits(modelConfig.method),
-      () => Buffer.byteLength(JSON.stringify(this.options.system), "utf8") + Buffer.byteLength(JSON.stringify(this.schemaView), "utf8"));
+    return projectImageLimits(projectVisionMessages(withoutHostData(messages), modelConfig.vision === true), requestImageLimits(modelConfig.method, modelConfig),
+      () => this.reservedRequestBytes());
+  }
+  private reservedRequestBytes(): number {
+    return Buffer.byteLength(JSON.stringify(this.options.system), "utf8") + Buffer.byteLength(JSON.stringify(this.schemaView), "utf8");
+  }
+  /**
+   * Whether the next request's images pass the provider's request allowance and a compaction would bring them under it,
+   * because the last step's images alone fit. Without this, images would be left out per request, newest first, and the
+   * omissions would move with every new image, rewriting the prefix each time.
+   */
+  private imageOverflow(): boolean {
+    const modelConfig = this.options.provider.modelConfig;
+    const sent = projectVisionMessages(withoutHostData(this.requestMessages()), modelConfig.vision === true);
+    const limits = requestImageLimits(modelConfig.method, modelConfig);
+    const reserved = () => this.reservedRequestBytes();
+    if (!imageAllowanceExceeded(sent, limits, reserved)) return false;
+    const steps = transcriptSteps(sent);
+    const kept = steps.slice(imageKeepStart(steps)).reduce((count, step) => count + step.length, 0);
+    return !imageAllowanceExceeded(removeImagesBefore(sent, sent.length - kept), limits, reserved);
   }
 
   private durable<T>(operation: (store: SessionStore, sessionId: string, owner: SessionOwner) => T): T | undefined {
@@ -457,6 +475,7 @@ export class AgentSession {
     this.schemaView = Object.freeze(next);
     this.cacheKey = nextKey;
     this.replayBefore = replayBefore;
+    this.rewrites++;
     return ++this.contextGenerationRevision;
   }
 
@@ -467,6 +486,7 @@ export class AgentSession {
     this.anchor = undefined;
     this.reported = undefined;
     this.replayBefore = 0;
+    this.rewrites++;
     this.originalTask = undefined;
     this.summaryText = undefined;
     this.ledgerState = undefined;
@@ -704,14 +724,29 @@ export class AgentSession {
       for (let unit = turnStart; unit < tailStart; unit++) cost += stepTokens(sent(unit));
       if (cost <= left) { tailStart = turnStart; left -= cost; }
     }
+    // Images leave the context at a compaction, except the last step's (with a tool step the model has not answered yet
+    // and the messages delivered after it): below the provider's image allowance every image is sent, and the allowance is
+    // crossed again only after new ones accumulate (docs/context.md). The tail reaches back to that step when it fits.
+    const keepImagesFrom = imageKeepStart(units);
+    if (keepImagesFrom < tailStart) {
+      let cost = 0;
+      for (let unit = keepImagesFrom; unit < tailStart; unit++) cost += stepTokens(sent(unit));
+      if (cost <= left) { tailStart = keepImagesFrom; left -= cost; }
+    }
     const headSteps = units.slice(0, tailStart).flat();
-    // A head of typed inputs alone has nothing the ledger does not already keep verbatim, unless the last step had to be cut.
-    if (!headSteps.some((message) => message.role !== "user") && JSON.stringify(lastUnit) === JSON.stringify(units[last])) {
+    const earlier = units.slice(tailStart, last).flat().map((message) => structuredClone(message));
+    const earlierKept = removeImagesBefore(earlier, units.slice(tailStart, Math.max(tailStart, keepImagesFrom)).flat().length);
+    const imagesRemoved = earlierKept.some((message, index) => message !== earlier[index]);
+    const headImages = removeImagesBefore(headSteps, headSteps.length).some((message, index) => message !== headSteps[index]);
+    // A head of typed inputs alone has nothing the ledger does not already keep verbatim, unless the last step had to be cut
+    // or images outside the last step remain to be removed.
+    if (!headSteps.some((message) => message.role !== "user") && JSON.stringify(lastUnit) === JSON.stringify(units[last])
+      && !imagesRemoved && !headImages) {
       return { status: "noop", beforeBytes, afterBytes: beforeBytes };
     }
     // The summarizer reads what the provider would have been sent; the tail keeps the stored steps and their replay boundary.
     const head = units.slice(0, tailStart).flatMap((_unit, unit) => sent(unit));
-    const tail = [...units.slice(tailStart, last).flat().map((message) => structuredClone(message)), ...lastUnit];
+    const tail = [...earlierKept, ...lastUnit];
     const tailReplayed = units.slice(tailStart).reduce((count, unit, offset) => count + (replayed(tailStart + offset) ? unit.length : 0), 0);
     const replayBefore = tailReplayed ? 1 + tailReplayed : 0;
     // Whatever the checkpoint, the rest of the new context stays within the input budget.
@@ -775,6 +810,7 @@ export class AgentSession {
         const wire = (message: ModelMessage | undefined) => message?.role === "assistant" ? "assistant" : "user";
         if (wire(this.sendMessages()[cut - 1]) === wire(tail[0])) return { reason: "the recent steps would merge into the summarized messages" };
         if ([...reminderAt].some((index) => index >= cut)) return { reason: "a host note inside the recent steps would be replaced" };
+        if (imagesRemoved) return { reason: "images in the recent steps are replaced by notes" };
       }
       return undefined;
     };
@@ -870,8 +906,10 @@ export class AgentSession {
         && JSON.stringify(message) !== JSON.stringify(units[last]![index]) ? [`answer:${message.callId}`] : []));
       const kept = active.filter((item) => unitOf(item.index) >= tailStart && !item.typed
         && (cutAnswers.has(item.entry.source) || retainedText.has(item.entry.source))).map((item) => item.entry);
+      // A provider-native summary was checked to keep the tail's thinking valid; a checkpoint placed before it is not.
+      const staleThinking = native === undefined && replaysThinking(replacement, replayBefore);
       const ledgerState: CompactionLedgerState = { entries: [...base, ...leaving], facts: allFacts, factsThrough: replacement.length, compactions: n,
-        ...(kept.length ? { retained: kept } : {}), retryArmed: true };
+        ...(kept.length ? { retained: kept } : {}), retryArmed: true, ...(staleThinking ? { staleThinkingBefore: replacement.length } : {}) };
       const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: checkpoint!, beforeBytes, afterBytes: finalBytes,
         ...(native ? { strategy: "native" as const } : {}),
         afterTokens: this.nextRequestSize(this.sendMessages(projectReplayMessages(replacement, replayBefore)), false).tokens };
@@ -883,6 +921,7 @@ export class AgentSession {
       this.messages = structuredClone(replacement);
       this.anchor = undefined;
       this.replayBefore = replayBefore;
+      this.rewrites++;
       this.summaryText = checkpoint;
       this.ledgerState = ledgerState;
       this.replayRetryArmed = true;
@@ -895,11 +934,76 @@ export class AgentSession {
   }
 
   /**
-   * Tier-0 clearing (docs/compaction-v2-design.md §6.8): old, large tool results before the protected tail become stubs
-   * naming a secured copy, until the next request is at most 45% of the input budget. Commits only when it frees at least
-   * `minFreedTokens`; true when it committed.
+   * Debug record of an unexpected cache break (docs/context.md "Diagnosing cache misses"): when this request did not extend
+   * the previous one and no deliberate rewrite came between them, its usage record names the first message that differs.
    */
-  private clearWork(inputBudget: number, minFreedTokens: number, cause: "threshold" | "fallback"): boolean {
+  private notePrefix(sent: { messages: readonly ModelMessage[]; rewrites: number }, entry: UsageRecord): void {
+    const hashes = sent.messages.map((message) => createHash("sha256").update(JSON.stringify(message)).digest("base64"));
+    const previous = this.lastSent;
+    this.lastSent = { rewrites: sent.rewrites, hashes };
+    if (!previous || previous.rewrites !== sent.rewrites) return;
+    const message = previous.hashes.findIndex((hash, index) => hashes[index] !== hash);
+    if (message < 0) return;
+    entry.prefixBreak = { message };
+    this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { usageEntries: this.usageEntries }));
+  }
+
+  /**
+   * Before a main request: true when thinking left stale by a rewrite should be dropped by the provider (Anthropic
+   * `drop_block`, docs/context.md). A model that cannot be asked has the stale thinking removed here instead.
+   */
+  private prepareStaleThinking(): boolean {
+    if (this.ledgerState?.staleThinkingBefore === undefined) return false;
+    if (bindsThinking(this.options.provider.modelConfig)) return true;
+    this.settleStaleThinking("unreported");
+    return false;
+  }
+
+  /**
+   * Removes thinking left stale by the last rewrite and clears its boundary: the blocks the provider reports it dropped, or,
+   * when it did not report, every thinking block before the boundary except those of a still-open tool call, which the API
+   * needs back. Dropped blocks are never sent again, so the requests after this one only append.
+   */
+  private settleStaleThinking(dropped: ReplayedBlock[] | "unreported"): void {
+    const ledgerState = this.ledgerState;
+    if (ledgerState?.staleThinkingBefore === undefined) return;
+    const boundary = ledgerState.staleThinkingBefore;
+    let open = -1;
+    for (let index = this.messages.length - 1; index >= 0; index--) {
+      const message = this.messages[index]!;
+      if (message.role !== "assistant") continue;
+      if (message.toolCalls.length) open = index;
+      break;
+    }
+    const reported = dropped === "unreported" ? undefined : new Set(dropped.map(({ message, block }) => `${message}:${block}`));
+    const drop = (message: number, block: number, value: unknown) => reported ? reported.has(`${message}:${block}`)
+      : message < boundary && message !== open && isThinkingBlock(value);
+    const messages = this.messages.map((message, index): ModelMessage => {
+      if (message.role !== "assistant" || !Array.isArray(message.opaque)) return message;
+      const kept = message.opaque.filter((block, position) => !drop(index, position, block));
+      if (kept.length === message.opaque.length) return message;
+      const { opaque: _stale, ...rest } = message;
+      if (kept.length) return { ...rest, opaque: kept };
+      // A response that was only thinking would become an empty assistant message, which the API refuses in every later request.
+      return rest.text || rest.toolCalls.length ? rest : { ...rest, opaque: [{ type: "text", text: EMPTY_ASSISTANT_TEXT }] };
+    });
+    const { staleThinkingBefore: _settled, ...ledger } = ledgerState;
+    const changed = messages.some((message, index) => message !== this.messages[index]);
+    this.durable((store, sessionId, owner) => changed ? store.replaceAgentContext(sessionId, owner, messages, { ledger })
+      : store.updateAgentMetadata(sessionId, owner, { ledger }));
+    if (this.persistenceError) throw this.persistenceError;
+    this.messages = messages;
+    this.ledgerState = ledger;
+    if (changed) this.rewrites++;
+  }
+
+  /**
+   * The first step of the compaction fallback chain (docs/compaction-v2-design.md §6.7, §6.8): old, large tool results before
+   * the protected tail become stubs naming a secured copy, until the next request is at most 45% of the input budget. It runs
+   * only where the context is rewritten anyway, never on a threshold of its own, so it never breaks the cached prefix by
+   * itself; true when it committed.
+   */
+  private clearWork(inputBudget: number): boolean {
     // One basis for the current size, the savings and the size after: the calibrated byte estimate of what is sent, so the target
     // is never reached on a provider count the byte estimate of the remainder would not confirm.
     const measure = (messages: readonly ModelMessage[]) => this.nextRequestSize(this.sendMessages(projectReplayMessages(messages, this.replayBefore)), false).tokens;
@@ -929,7 +1033,7 @@ export class AgentSession {
         || namedByReminder(message, reminders);
     };
     const outcome = clearToolResults(this.messages, { protectedFrom, currentTokens, targetTokens: Math.floor(CLEAR_TARGET_RATIO * inputBudget),
-      minFreedTokens, messageTokens, exempt, measure });
+      minFreedTokens: 0, messageTokens, exempt, measure });
     if (!outcome) return false;
     // Facts of the steps whose results become stubs are folded first, so the working state keeps them (§6.2).
     const covered = Math.min(this.ledgerState?.factsThrough ?? 0, this.messages.length);
@@ -937,7 +1041,8 @@ export class AgentSession {
     const facts = collectFacts(this.messages.slice(covered, through), this.ledgerState?.facts ?? emptyFacts(), (name) => this.toolIdentity(name));
     // The copies clearing wrote are saved outputs too; the stubs naming them may later be summarized away.
     for (const { path } of outcome.cleared) if (!facts.outputs.includes(path)) facts.outputs.push(path);
-    const ledger: CompactionLedgerState = { ...(this.ledgerState ?? { entries: [], compactions: 0 }), facts, factsThrough: through, retryArmed: true };
+    const ledger: CompactionLedgerState = { ...(this.ledgerState ?? { entries: [], compactions: 0 }), facts, factsThrough: through, retryArmed: true,
+      ...(replaysThinking(outcome.messages, this.replayBefore) ? { staleThinkingBefore: outcome.messages.length } : {}) };
     const afterTokens = currentTokens - outcome.freedTokens;
     // Clearing only removes content, so a provider-measured size still bounds the cleared context from above, as the calibrated
     // estimate of the remainder does; the smaller of the two is kept as an estimated anchor. Without it the next gate judges the
@@ -948,10 +1053,11 @@ export class AgentSession {
       base: estimateRequestTokens(this.options.system, this.sendMessages(projectReplayMessages(outcome.messages, this.replayBefore)), this.schemaView),
       signature: this.anchorSignature(), estimated: true } : null;
     this.durable((store, sessionId, owner) => store.replaceAgentContext(sessionId, owner, outcome.messages, { ledger, anchor }, false,
-      [{ kind: "context_clearing", payload: this.visiblePayload({ id: randomUUID(), cause, beforeTokens: currentTokens, afterTokens,
+      [{ kind: "context_clearing", payload: this.visiblePayload({ id: randomUUID(), cause: "fallback", beforeTokens: currentTokens, afterTokens,
         freedTokens: outcome.freedTokens, results: outcome.cleared }) }]));
     if (this.persistenceError) throw this.persistenceError;
     this.messages = outcome.messages;
+    this.rewrites++;
     this.anchor = anchor ?? undefined;
     this.ledgerState = ledger;
     // The request after clearing replays reasoning around stubs; a provider that rejects it gets the projected retry.
@@ -1495,7 +1601,7 @@ export class AgentSession {
         let baseEstimate = 0;
         let measured = false;
         const compact = this.options.compact;
-        if (compact && (compact.triggerTokens !== undefined || compact.clearTokens !== undefined)) {
+        if (compact && compact.triggerTokens !== undefined) {
           const modelConfig = this.options.provider.modelConfig;
           const context = modelConfig.contextWindow!;
           const outputReserve = effectiveOutputTokens(modelConfig);
@@ -1507,17 +1613,16 @@ export class AgentSession {
             return size.tokens;
           };
           requestEstimate = estimate();
-          // Tier 0 (§6.8): below the compaction trigger, old tool results are cleared to saved copies first.
-          if (compact.clearTokens !== undefined && requestEstimate >= compact.clearTokens
-            && (compact.triggerTokens === undefined || requestEstimate < compact.triggerTokens)
-            && this.clearWork(inputBudget, CLEAR_MIN_FREED_TOKENS, "threshold")) requestEstimate = estimate();
           const trigger = compact.triggerTokens;
-          if (trigger !== undefined && requestEstimate >= trigger) {
+          // Over the token trigger, or over the image allowance where a compaction would fix it.
+          const over = () => requestEstimate >= trigger || this.imageOverflow();
+          if (trigger !== undefined && over()) {
             if (controller.signal.aborted) return finish(interrupted());
             const settings: CompactWorkSettings = { keepRecentTurns: compact.keepRecentTurns, keepRecentTokens: compact.keepRecentTokens,
               maxOutputTokens: compact.maxOutputTokens, maxOutputTokensDefaulted: compact.maxOutputTokensDefaulted === true, instructions: compact.instructions,
               strategy: compact.strategy };
-            const classOf = (tokens: number) => tokens < 0.7 * trigger ? "effective" as const : tokens < trigger ? "weak" as const : "stuck" as const;
+            const classOf = (tokens: number) => this.imageOverflow() ? "stuck" as const
+              : tokens < 0.7 * trigger ? "effective" as const : tokens < trigger ? "weak" as const : "stuck" as const;
             // An automatic attempt never ends the turn: a failure is a compact_error warning, and the fallback takes over.
             const attempt = async (work: CompactWorkSettings): Promise<CompactResult | "failed" | "stop"> => {
               try {
@@ -1530,8 +1635,8 @@ export class AgentSession {
             // The fallback chain (§6.7, steps 1–3) makes no model call: forced clearing, then a mechanical checkpoint whose
             // tail keeps only the steps that fit, down to the last one.
             const fallback = async (reason: string): Promise<boolean> => {
-              if (this.clearWork(inputBudget, 0, "fallback")) requestEstimate = estimate();
-              if (requestEstimate >= trigger) {
+              if (this.clearWork(inputBudget)) requestEstimate = estimate();
+              if (over()) {
                 if (await attempt({ ...settings, keepRecentTurns: 0, mechanical: reason }) === "stop") return false;
                 requestEstimate = estimate();
               }
@@ -1548,7 +1653,7 @@ export class AgentSession {
             } else if (!summarize && !await fallback("compaction earlier in this turn did not bring the context under the threshold")) {
               return finish(interrupted());
             }
-            if (summarize && requestEstimate >= trigger) {
+            if (summarize && over()) {
               summarizedAt = steps;
               const outcome = await attempt(settings);
               if (outcome === "stop") return finish(interrupted());
@@ -1596,10 +1701,17 @@ export class AgentSession {
           if (controller.signal.aborted) onAbort();
         });
         let turn;
+        // Whether the request in flight asks the provider to drop thinking left stale by a rewrite (see `prepareStaleThinking`).
+        let dropStale = false;
+        let sent: { messages: readonly ModelMessage[]; rewrites: number } | undefined;
         try {
-          const request = () => Promise.race([this.options.provider.generate({
+          const request = () => {
+            dropStale = this.prepareStaleThinking();
+            sent = { messages: this.sendMessages(), rewrites: this.rewrites };
+            return Promise.race([this.options.provider.generate({
             system: this.options.system,
-            messages: this.sendMessages(),
+            messages: sent.messages,
+            ...(dropStale ? { dropStaleThinking: true } : {}),
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
             cacheKey: this.cacheKey,
@@ -1611,6 +1723,7 @@ export class AgentSession {
             // Only an external CLI runs tools of its own; other providers' requests stay as they were.
             ...(this.options.provider.modelConfig.method === "acp" ? { onExternal: external, runTool } : {}),
           }), aborted]);
+          };
           let reasoningRetry = this.replayRetryArmed;
           if (reasoningRetry) {
             // The first request after a compaction consumes the retry, in this runtime or a later one.
@@ -1628,12 +1741,21 @@ export class AgentSession {
               break;
             } catch (error) {
               if (controller.signal.aborted) throw error;
+              // A provider that refuses the binding field is not asked again in this process; the stale thinking is removed here.
+              if (dropStale && isBindingRejection(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                bindingDisabled.set(modelIdentity(this.options.provider.modelConfig), message);
+                emit({ type: "compact_warning", message: `Anthropic thinking binding not used: the provider refused it (${message}); thinking from before the rewrite was removed instead.` });
+                this.settleStaleThinking("unreported");
+                continue;
+              }
               // Replayed reasoning the provider rejects after compaction is projected to text, as a model switch does (§6.2).
               if (reasoningRetry && isReasoningRejection(error) && this.replayBefore < this.messages.length) {
                 reasoningRetry = false;
                 const replayBefore = this.messages.length;
                 this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { replayBefore }));
                 this.replayBefore = replayBefore;
+                this.rewrites++;
                 continue;
               }
               if (!overflowRetried && isContextOverflow(error)) {
@@ -1677,7 +1799,7 @@ export class AgentSession {
                 if (first !== "failed" && first.status === "compacted") shrunk = true;
                 const threshold = compact?.triggerTokens ?? inputBudget;
                 if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
-                  if (inputBudget !== undefined && this.clearWork(inputBudget, 0, "fallback")) shrunk = true;
+                  if (inputBudget !== undefined && this.clearWork(inputBudget)) shrunk = true;
                   if (!shrunk || (threshold !== undefined && this.nextRequestSize().tokens >= threshold)) {
                     const reason = first === "failed" ? "the checkpoint request failed" : "the context exceeded the provider's context window";
                     const mech = await runCompact({ ...reactiveSettings, keepRecentTokens: 1, mechanical: reason });
@@ -1702,6 +1824,8 @@ export class AgentSession {
               throw error;
             }
           }
+          if (sent) this.notePrefix(sent, usageEntry);
+          if (dropStale) this.settleStaleThinking(turn.droppedThinking ?? "unreported");
         } finally { controller.signal.removeEventListener("abort", onAbort); }
         if (controller.signal.aborted) return finish(interrupted());
         if (turn.usage !== undefined && usageIndex === undefined) recordUsage(turn.usage);
@@ -1784,6 +1908,41 @@ export class AgentSession {
 
 /** Why provider-native compaction is off for a model for the rest of this process, after a permanent request error (design §6.9.1). */
 const nativeDisabled = new Map<string, string>();
+/** What a stored assistant message says once its only content, stale thinking, is removed (as `projectReplayMessages` does). */
+const EMPTY_ASSISTANT_TEXT = "[Historical assistant response contained no portable text]";
+/** Models whose API refused `thinking.block_binding` in this process, with the error; they get the local removal instead. */
+const bindingDisabled = new Map<string, string>();
+
+function modelIdentity({ provider, method, model, baseUrl }: ProviderAdapter["modelConfig"]): string {
+  return JSON.stringify([provider, method, model, baseUrl ?? null]);
+}
+
+function isThinkingBlock(block: unknown): boolean {
+  const type = (block as { type?: unknown } | null)?.type;
+  return type === "thinking" || type === "redacted_thinking";
+}
+
+/** Whether a context replays Anthropic thinking natively: an assistant message at or after the replay boundary that holds some. */
+function replaysThinking(messages: readonly ModelMessage[], replayBefore: number): boolean {
+  return messages.some((message, index) => index >= replayBefore && message.role === "assistant"
+    && Array.isArray(message.opaque) && message.opaque.some(isThinkingBlock));
+}
+
+/**
+ * Whether a request can carry `thinking.block_binding`: Anthropic's own API (the beta is not assumed on gateways) with a
+ * configured `thinking` object of type `enabled` or `adaptive`, the only ones that take it (SDK `BetaThinkingConfig*`).
+ */
+function bindsThinking(modelConfig: ProviderAdapter["modelConfig"]): boolean {
+  const thinking = modelConfig.request?.kind === "anthropic" ? modelConfig.request.thinking?.type : undefined;
+  return modelConfig.provider === "anthropic" && modelConfig.method === "anthropic-messages"
+    && (thinking === "enabled" || thinking === "adaptive") && !bindingDisabled.has(modelIdentity(modelConfig));
+}
+
+/** A request with the binding field that the API refused (HTTP 400), other than for its size. */
+function isBindingRejection(error: unknown): boolean {
+  const status = (error as { status?: unknown } | undefined)?.status;
+  return (status === 400 || (error instanceof ProviderError && error.code === "invalid_request")) && !isContextOverflow(error);
+}
 /** Native-compaction warnings that cannot change within a session, already emitted once, keyed by session and message; hosts create an agent per operation. */
 const nativeWarned = new Set<string>();
 

@@ -4276,6 +4276,9 @@ button.review-file-row:hover {
 .composer-note {
   margin: 0;
 }
+.composer-note-warning {
+  color: var(--warning);
+}
 .composer-box.dragging {
   outline: 2px dashed var(--accent);
   outline-offset: 6px;

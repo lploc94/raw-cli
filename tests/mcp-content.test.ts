@@ -64,7 +64,7 @@ test("T-06d: real MCP PNG/JPEG tools become native OpenAI image payloads after l
       const tool = messages.findIndex((message) => message.role === "tool" && message.tool_call_id === "image-call");
       const image = messages.findIndex((message) => message.role === "user" && Array.isArray(message.content));
       assert.ok(tool >= 0 && image > tool);
-      assert.deepEqual(messages[image]?.content, [{ type: "image_url", image_url: { url: `data:${mimeType};base64,${data}` } }]);
+      assert.deepEqual(messages[image]?.content, [{ type: "image_url", image_url: { url: `data:${mimeType};base64,${data}`, detail: "high" } }]);
     } finally { await agent.close(); await fixture.close(); await connection.close(); }
   }
 });

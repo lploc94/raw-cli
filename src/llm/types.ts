@@ -53,13 +53,15 @@ export interface ModelToolCall {
   name: string;
   arguments: Record<string, unknown>;
   argumentError?: string;
+  /** The argument string exactly as the model wrote it; replayed verbatim so the provider's prefix cache matches. */
   rawArguments?: string;
   syntheticId?: boolean;
 }
 
 export type UserBlock =
   | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: "image/png" | "image/jpeg"; name?: string }
+  /** `source`: where the user's browser said the image came from (a link), told to the model after the image. */
+  | { type: "image"; data: string; mimeType: "image/png" | "image/jpeg"; name?: string; source?: string }
   | { type: "resource_link"; uri: string; name: string; title?: string | null; description?: string | null;
       mimeType?: string | null; size?: number | null; annotations?: unknown };
 
@@ -83,9 +85,14 @@ export function userInputHasImage(input: UserInput): boolean {
   return typeof input !== "string" && input.some((block) => block.type === "image");
 }
 
+/** The line sent after an image that has a source, so the model knows where it came from. */
+export function imageSourceText(source: string): string {
+  return `[Image source: ${source}]`;
+}
+
 /** Text that stands in for an image when the model cannot read images. */
 export function imagePlaceholderText(block: UserImageBlock): string {
-  const label = block.name ? `, ${JSON.stringify(block.name)}` : "";
+  const label = (block.name ? `, ${JSON.stringify(block.name)}` : "") + (block.source ? `, from ${block.source}` : "");
   return `[Image omitted: ${block.mimeType}, ${base64ByteLength(block.data)} bytes${label}. The current model cannot read images, so this image was replaced by this text placeholder. Its content may be described in earlier assistant messages of this conversation; ask the user to describe it or to switch to a vision-capable agent if you need to see it.]`;
 }
 
@@ -123,7 +130,15 @@ export interface ProviderRequest {
   /** Runs one of `tools` for an external backend (the Raw bridge) inside this turn, recorded as Raw's own calls are. */
   runTool?: (call: { id: string; name: string; arguments: Record<string, unknown> }, signal: AbortSignal) => Promise<ToolResult>;
   cacheKey?: string;
+  /**
+   * Thinking replayed from before a rewrite (compaction, clearing) may no longer match its prefix: an adapter that can
+   * asks the provider to drop such blocks instead of reading them, and reports which it dropped (`droppedThinking`).
+   */
+  dropStaleThinking?: boolean;
 }
+
+/** A block of `ProviderRequest.messages[message]`'s replayed content (`opaque[block]`). */
+export interface ReplayedBlock { message: number; block: number }
 
 export interface ProviderTurn {
   text: string;
@@ -133,6 +148,11 @@ export interface ProviderTurn {
   truncated?: boolean;
   opaque?: unknown;
   usage?: unknown;
+  /**
+   * For a `dropStaleThinking` request: the replayed blocks the provider dropped (empty when it dropped none), or
+   * `"unreported"` when the request did not ask or the response did not say.
+   */
+  droppedThinking?: ReplayedBlock[] | "unreported";
 }
 
 /** Longest a provider stream may stay silent (including before its first event) before the request fails. */

@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { ChatCompletionContentPart, ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 import { renderUserInput, truncatedArgumentsError, type ProviderAdapter, type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
-import { nativeToolContent, nativeUserContent } from "./content.js";
+import { nativeToolContent, nativeUserContent, OPENAI_IMAGE_DETAIL } from "./content.js";
 import { MAX_TIMER_MS, ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
 
@@ -13,7 +13,7 @@ function inputMessages(request: ProviderRequest, provider: ResolvedModelConfig["
     if (!pendingImages.length) return;
     messages.push({ role: "user", content: pendingImages.splice(0).map((image) => ({
       type: "image_url" as const,
-      image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+      image_url: { url: `data:${image.mimeType};base64,${image.data}`, detail: OPENAI_IMAGE_DETAIL },
     })) });
   };
   for (const message of request.messages) {
@@ -22,7 +22,7 @@ function inputMessages(request: ProviderRequest, provider: ResolvedModelConfig["
       const parts = nativeUserContent(message.content);
       messages.push({ role: "user", content: parts.some((part) => part.type === "image")
         ? parts.flatMap((part): ChatCompletionContentPart[] => part.type === "image"
-          ? [{ type: "image_url", image_url: { url: `data:${part.mimeType};base64,${part.data}` } }]
+          ? [{ type: "image_url", image_url: { url: `data:${part.mimeType};base64,${part.data}`, detail: OPENAI_IMAGE_DETAIL } }]
           : part.text ? [{ type: "text", text: part.text }] : [])
         : renderUserInput(message.content) });
     }
@@ -163,7 +163,7 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
           catch { argumentError = truncated ? truncatedArgumentsError(call.name) : `tool ${call.name} arguments are invalid JSON`; }
           if (!argumentError && (!args || typeof args !== "object" || Array.isArray(args))) argumentError = `tool ${call.name} arguments must be an object`;
           toolCalls.push({ id, name: call.name, arguments: argumentError ? {} : args as Record<string, unknown>,
-            ...(argumentError ? { argumentError, rawArguments: call.arguments } : {}), ...(syntheticId ? { syntheticId } : {}) });
+            ...(argumentError ? { argumentError } : {}), rawArguments: call.arguments, ...(syntheticId ? { syntheticId } : {}) });
         }
         if (finishReason === "tool_calls" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool finish without calls");
         if (finishReason === "stop" && toolCalls.length) throw new ProviderError("invalid_stream", "calls without tool finish");

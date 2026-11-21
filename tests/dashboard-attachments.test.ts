@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createFileKind } from "../src/dashboard/attachments.js";
 import { test } from "node:test";
 import type { SessionSummary } from "../src/sessions/store.js";
 import type { SessionOperation } from "../src/sessions/operations.js";
@@ -35,7 +38,12 @@ test("uploads validate type, structure, size and staging caps without touching e
     const a = await stageOk(f, id);
     assert.deepEqual([a.kind, a.mimeType, a.name, a.byteSize], ["image", "image/png", "shot.png", png.length]);
     await stageOk(f, id, jpegFixture(), "image/jpeg", "photo.jpg");
-    assert.equal((await upload(f, id, Buffer.from("GIF89a...."), "image/gif")).status, 415);
+    // An image type the image kind does not take is a file: staged, sent as a saved copy (requirement change: was 415).
+    const gif = await upload(f, id, Buffer.from("GIF89a...."), "image/gif");
+    assert.equal(gif.status, 201);
+    const gifItem = await gif.json() as { id: string; kind: string };
+    assert.equal(gifItem.kind, "file");
+    await f.json(`/sessions/${id}/attachments/${gifItem.id}`, "DELETE");
     assert.equal((await upload(f, id, Buffer.from("not really a png"), "image/png")).status, 400);
     assert.equal((await upload(f, id, jpegFixture(), "image/png")).status, 400);
     assert.equal((await upload(f, id, Buffer.alloc(0), "image/png")).status, 400);
@@ -117,11 +125,14 @@ test("concurrent duplicate submits consume only the accepted request's attachmen
   } finally { await f.close(); }
 });
 
-test("unsupported oversize uploads get 415 and oversize supported uploads get a specific 413 code", async () => {
+test("oversize uploads of either kind get a specific 413 code", async () => {
   const f = await dashboardFixture();
   try {
     const { id } = await session(f);
-    assert.equal((await upload(f, id, Buffer.alloc(9 * 1024 * 1024, 1), "application/pdf")).status, 415);
+    // Requirement change: a PDF was 415 (unsupported); it is now a file, limited to 16 MiB.
+    const pdf = await upload(f, id, Buffer.alloc(16 * 1024 * 1024 + 1, 1), "application/pdf");
+    assert.equal(pdf.status, 413);
+    assert.equal(((await pdf.json()) as { error: { code: string } }).error.code, "attachment_too_large");
     const big = await upload(f, id, Buffer.alloc(9 * 1024 * 1024, 1), "image/png");
     assert.equal(big.status, 413);
     assert.equal(((await big.json()) as { error: { code: string } }).error.code, "attachment_too_large");
@@ -219,7 +230,8 @@ test("composer metadata reports vision, warnings and attachment kinds without cr
   try {
     const eyes = await seeing.json<any>("/agents/raw/composer");
     assert.equal(eyes.vision, true);
-    assert.deepEqual(eyes.attachmentKinds, [{ id: "image", accept: ["image/png", "image/jpeg"], maxBytes: 8 * 1024 * 1024, enabled: true }]);
+    assert.deepEqual(eyes.attachmentKinds, [{ id: "image", accept: ["image/png", "image/jpeg"], maxBytes: 8 * 1024 * 1024, enabled: true },
+      { id: "file", accept: ["*/*"], maxBytes: 16 * 1024 * 1024, enabled: true }], "the built-in kinds, images and any other file (requirement change)");
     const plain = await blind.json<any>("/agents/raw/composer");
     assert.equal(plain.vision, false);
     assert.equal(plain.attachmentKinds[0].enabled, true);
@@ -368,4 +380,88 @@ test("attachment bytes survive a dashboard restart, and SSE never carries base64
       assert.equal((await fetch(`${again.url}/api/sessions/${id}/history/${user.sequence}/attachments/0`)).status, 401);
     } finally { await again.close(); }
   } finally { await f.close(); }
+});
+
+const uploadFrom = (f: Fixture, sessionId: string, bytes: Buffer, headers: Record<string, string>) =>
+  fetch(`${f.server.url}/api/sessions/${sessionId}/attachments`, { method: "POST",
+    headers: { Authorization: `Bearer ${f.server.token}`, ...headers }, body: new Uint8Array(bytes) });
+
+test("a file that is not an image is saved for the chat and the model gets its path and source, gone with the chat", async () => {
+  const f = await dashboardFixture();
+  try {
+    const { id } = await session(f);
+    const csv = Buffer.from("name,qty\napple,3\n");
+    const source = "file:///Users/someone/Downloads/stock%20list.csv";
+    const staged = await uploadFrom(f, id, csv, { "Content-Type": "text/csv", "X-Raw-Filename": encodeURIComponent("stock list.csv"),
+      "X-Raw-Source": encodeURIComponent(source) });
+    assert.equal(staged.status, 201);
+    const item = await staged.json() as { id: string; kind: string; name: string; source?: string };
+    assert.deepEqual([item.kind, item.name, item.source], ["file", "stock list.csv", source]);
+    const sent = await turn(f, id, { clientRequestId: "csv", input: "count the apples", attachments: [item.id] });
+    assert.equal(sent.status, 202);
+    assert.equal((await f.wait(sent.body.id)).state, "completed");
+    const link = /\[Resource link\] (\{.*?\})\\n/.exec(lastBody(f))?.[1];
+    assert.ok(link, "the request carries a resource link");
+    const block = JSON.parse(JSON.parse(`"${link}"`)) as { uri: string; name: string; mimeType: string; size: number; description: string };
+    const saved = fileURLToPath(block.uri);
+    const root = f.server.context.store!.uploadsRoot;
+    assert.ok(saved.startsWith(join(root, id) + sep), `${saved} is in the chat's uploads folder`);
+    assert.deepEqual(readFileSync(saved), csv, "the saved copy holds the uploaded bytes");
+    assert.deepEqual([block.name, block.mimeType, block.size], ["stock list.csv", "text/csv", csv.length]);
+    assert.match(block.description, new RegExp(`from ${source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "the model is told where the file came from");
+    assert.equal((await f.api(`/sessions/${id}`, "DELETE")).status, 200);
+    assert.equal(existsSync(join(root, id)), false, "deleting the chat removes its saved files");
+  } finally { await f.close(); }
+});
+
+test("an upload with no or a malformed type is a generic file, a bad source link and a dot-only name are dropped", async () => {
+  const f = await dashboardFixture();
+  try {
+    const { id } = await session(f);
+    for (const [index, type] of ["", "not a type", "application/octet-stream"].entries()) {
+      const response = await uploadFrom(f, id, Buffer.from([0, 1, 2, index]), { ...(type ? { "Content-Type": type } : {}), "X-Raw-Filename": "..",
+        "X-Raw-Source": encodeURIComponent("javascript:alert(1)") });
+      assert.equal(response.status, 201, `type ${JSON.stringify(type)}`);
+      const item = await response.json() as { kind: string; mimeType: string; source?: string };
+      assert.deepEqual([item.kind, item.mimeType, item.source], ["file", "application/octet-stream", undefined], `type ${JSON.stringify(type)}`);
+    }
+    const [first] = await Promise.all([uploadFrom(f, id, Buffer.from("x"), { "Content-Type": "text/plain", "X-Raw-Filename": ".." })]);
+    const item = await first!.json() as { id: string };
+    const sent = await turn(f, id, { clientRequestId: "dots", input: "read", attachments: [item.id] });
+    assert.equal((await f.wait(sent.body.id)).state, "completed");
+    const uri = /file:\/\/[^"\\]+/.exec(lastBody(f))?.[0];
+    assert.ok(uri && fileURLToPath(uri).startsWith(join(f.server.context.store!.uploadsRoot, id) + sep), `${uri} stays in the chat's folder`);
+    assert.equal(basename(fileURLToPath(uri!)), "attachment", "a name of dots is replaced");
+  } finally { await f.close(); }
+});
+
+test("an image's source link reaches the model after the image", async () => {
+  const f = await dashboardFixture({ model: { vision: true } });
+  try {
+    const { id } = await session(f);
+    const source = "https://example.com/charts/q3.png";
+    const response = await uploadFrom(f, id, png, { "Content-Type": "image/png", "X-Raw-Filename": "q3.png", "X-Raw-Source": encodeURIComponent(source) });
+    const item = await response.json() as { id: string; kind: string; source?: string };
+    assert.deepEqual([item.kind, item.source], ["image", source]);
+    const sent = await turn(f, id, { clientRequestId: "img", input: "describe", attachments: [item.id] });
+    assert.equal((await f.wait(sent.body.id)).state, "completed");
+    const body = lastBody(f);
+    assert.ok(body.indexOf("image_url") >= 0 && body.indexOf(`[Image source: ${source}]`) > body.indexOf("image_url"),
+      "the source line follows the image");
+  } finally { await f.close(); }
+});
+
+test("an uploaded file's saved copy reads back as the same file and source; other links do not", () => {
+  const root = mkdtempSync(join(tmpdir(), "raw-uploads-"));
+  try {
+    const kind = createFileKind(root);
+    const bytes = Buffer.from("%PDF-1.7 fake");
+    const block = kind.toBlock({ id: "a1", sessionId: "s1", kind: "file", name: "report.pdf", mimeType: "application/pdf", byteSize: bytes.length,
+      bytes, createdAt: 0, source: "https://example.com/report.pdf" });
+    assert.deepEqual(kind.fromBlock(block), { mimeType: "application/pdf", bytes, name: "report.pdf", source: "https://example.com/report.pdf" });
+    const plain = kind.toBlock({ id: "a2", sessionId: "s1", kind: "file", name: "notes.txt", mimeType: "text/plain", byteSize: 1, bytes: Buffer.from("n"), createdAt: 0 });
+    assert.equal(kind.fromBlock(plain)?.source, undefined, "no source when none was given");
+    assert.equal(kind.fromBlock({ type: "resource_link", uri: pathToFileURL(join(tmpdir(), "elsewhere.txt")).href, name: "elsewhere.txt" }), undefined,
+      "a workspace or other link is not an upload");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

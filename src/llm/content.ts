@@ -1,7 +1,15 @@
 import type { ToolResult } from "../tools/types.js";
 import { ProviderError } from "./client.js";
 import { detectImageMime } from "../tools/image.js";
-import { base64ByteLength, type UserInput } from "./types.js";
+import { base64ByteLength, imageSourceText, type UserInput } from "./types.js";
+
+/**
+ * The OpenAI image `detail` Raw sends, explicitly: `auto` means `original` on GPT-5.5 and later (gpt-6-astra included),
+ * which keeps a large image's full size, costs far more tokens, and rejects an image over 30,000 patches instead of
+ * shrinking it. `high` fits the image in 2,500 patches (2048 px on older models), the documented choice for
+ * high-fidelity understanding (developers.openai.com/api/docs/guides/images-vision, checked 2026-11-21).
+ */
+export const OPENAI_IMAGE_DETAIL = "high";
 
 export const MAX_USER_IMAGES_BYTES = 16 * 1024 * 1024;
 export type NativeUserPart =
@@ -30,6 +38,7 @@ export function nativeUserContent(input: UserInput): NativeUserPart[] {
       if (decoded.toString("base64") !== block.data) throw new ProviderError("unsupported_content", "invalid image base64");
       if (detectImageMime(decoded) !== block.mimeType) throw new ProviderError("unsupported_content", "image bytes are not a valid image of the declared type");
       parts.push({ type: "image", mimeType: block.mimeType, data: block.data });
+      if (block.source) parts.push({ type: "text", text: imageSourceText(block.source) });
     } else parts.push({ type: "text", text: `\n[Resource link] ${JSON.stringify(block)}\n` });
   }
   return parts;

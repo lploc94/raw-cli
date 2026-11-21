@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createProvider } from "../src/llm/client.js";
 import { createAgent } from "../src/agent.js";
-import type { ProviderName, ResolvedModelConfig } from "../src/llm/types.js";
+import type { ProviderName, ResolvedModelConfig, UserBlock } from "../src/llm/types.js";
+import { setRequestImageLimitsForTests } from "../src/llm/replay.js";
+import { imageBlock, makePng } from "./fixtures/images.js";
 import { anthropicFrame, googleFrame, openAiDone, openAiFrame, startMockProvider } from "./fixtures/mock-provider.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -157,4 +159,94 @@ test("tool generation change rotates generated OpenAI hint while explicit agent 
       else assert.notEqual(before?.prompt_cache_key, after?.prompt_cache_key);
     } finally { store.close(); await fixture.close(); }
   }
+});
+
+test("Anthropic marks the end of the system prompt with the same TTL as the automatic marker, in main and native compaction requests", async () => {
+  const compacted = { body: { id: "c", type: "message", role: "assistant", model: "fixture", stop_reason: "compaction", stop_sequence: null,
+    content: [{ type: "compaction", content: "summary" }], usage: { input_tokens: 1, output_tokens: 1 } } };
+  for (const retention of [undefined, "1h"] as const) {
+    const fixture = await startMockProvider([{ frames: finalFrames("anthropic") }, compacted]);
+    try {
+      const adapter = createProvider(makeProfile("anthropic", fixture.url, retention ? { retention } : undefined));
+      const messages = [{ role: "user" as const, content: "hello" }];
+      await adapter.generate({ system: "stable system", messages, tools: [], timeoutMs: 1000 });
+      await adapter.compact!({ system: "stable system", messages, tools: [], timeoutMs: 1000 });
+      const marker = { type: "ephemeral", ...(retention ? { ttl: retention } : {}) };
+      for (const [index, kind] of [[0, "main"], [1, "compaction"]] as const) {
+        const body = fixture.requests[index]?.body as { system: unknown; cache_control: unknown };
+        assert.deepEqual(body.cache_control, marker, `${kind} request, retention ${retention}: automatic marker`);
+        assert.deepEqual(body.system, [{ type: "text", text: "stable system", cache_control: marker }],
+          `${kind} request, retention ${retention}: the system block carries the same marker`);
+      }
+    } finally { await fixture.close(); }
+  }
+});
+
+test("Anthropic no-hints sends the system prompt as plain text with no cache marker", async () => {
+  const fixture = await startMockProvider([{ frames: finalFrames("anthropic") }]);
+  try {
+    await createProvider(makeProfile("anthropic", fixture.url, { mode: "no-hints" }))
+      .generate({ system: "stable system", messages: [{ role: "user", content: "hello" }], tools: [], timeoutMs: 1000 });
+    const body = fixture.requests[0]?.body as { system: unknown; cache_control: unknown };
+    assert.equal(body.system, "stable system");
+    assert.equal(body.cache_control, undefined);
+  } finally { await fixture.close(); }
+});
+
+/** Usage records of a persisted session, as stored. */
+function storedUsage(store: ReturnType<typeof openSessionStore>, id: string) {
+  const owner = store.claimSession(id);
+  try { return store.readAgentState(id, owner).usageEntries; } finally { store.releaseSession(id, owner); }
+}
+
+function persistedSession() {
+  const root = mkdtempSync(join(tmpdir(), "raw-prefix-break-"));
+  const store = openSessionStore({ env: { XDG_STATE_HOME: root, XDG_CONFIG_HOME: root } });
+  return { root, store, id: store.createSession({ cwd: root, title: "prefix" }).id };
+}
+
+for (const provider of ["openai", "anthropic"] as const) {
+  test(`${provider}: two turns send append-only requests and record no prefix break`, async () => {
+    const fixture = await startMockProvider([{ frames: finalFrames(provider) }, { frames: finalFrames(provider) }, { frames: finalFrames(provider) }]);
+    const { root, store, id } = persistedSession();
+    const agent = createAgent({ provider: createProvider(makeProfile(provider, fixture.url)), cwd: root, system: "stable", autoApprove: true,
+      persistence: { store, sessionId: id, surface: "cli" } });
+    try {
+      await agent.run("one");
+      await agent.run("two");
+      await agent.run("three");
+      const [a, b, c] = fixture.requests.map((item) => (item.body as { messages: unknown[] }).messages);
+      assert.deepEqual(b!.slice(0, a!.length - 1), a!.slice(0, -1), "the second request extends the first");
+      assert.deepEqual(c!.slice(0, b!.length - 1), b!.slice(0, -1), "the third extends the second");
+    } finally { await agent.close(); await fixture.close(); }
+    const usage = storedUsage(store, id);
+    store.close();
+    assert.equal(usage.length, 3);
+    assert.deepEqual(usage.map((entry) => entry.prefixBreak), [undefined, undefined, undefined]);
+  });
+}
+
+test("a request that changes an earlier message records where, and a compaction in between records nothing", async () => {
+  // Without compaction, a third image past an allowance of two replaces the oldest image of message 0 with a note.
+  setRequestImageLimitsForTests("openai-chat-completions", { request: 45 * 1024 * 1024, count: 2 });
+  const fixture = await startMockProvider(Array.from({ length: 5 }, () => ({ frames: finalFrames("openai") })));
+  const { root, store, id } = persistedSession();
+  const profile = { ...makeProfile("openai", fixture.url), vision: true };
+  const agent = createAgent({ provider: createProvider(profile), cwd: root, system: "stable", autoApprove: true,
+    persistence: { store, sessionId: id, surface: "cli" } });
+  const image = (step: number): UserBlock[] => [{ type: "text", text: `step ${step}` }, imageBlock(makePng(), "image/png", `${step}.png`)];
+  try {
+    for (let step = 0; step < 3; step++) await agent.run(image(step));
+    // A manual compaction rewrites the context; the request after it is not compared with the one before.
+    assert.equal((await agent.compact({ provider: { modelConfig: { agentName: "s", provider: "ollama", method: "openai-chat-completions", model: "s" },
+      async generate() { return { text: "## Goal\nKeep going.", toolCalls: [], finishReason: "stop" }; } }, keepRecentTurns: 0, keepRecentTokens: 1 })).status, "compacted");
+    await agent.run("after compaction");
+    await agent.run("again");
+  } finally { await agent.close(); await fixture.close(); setRequestImageLimitsForTests("openai-chat-completions", undefined); }
+  const usage = storedUsage(store, id);
+  store.close();
+  // The compaction records its own usage entry; only the third request, which left out the first image, breaks the prefix.
+  assert.deepEqual(usage[2]?.prefixBreak, { message: 0 }, "the third request changed message 0");
+  assert.deepEqual(usage.flatMap((entry) => entry.prefixBreak ? [entry.prefixBreak] : []), [{ message: 0 }],
+    "no other request, including the two after the compaction, records a prefix break");
 });
