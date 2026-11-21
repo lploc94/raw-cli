@@ -1,7 +1,7 @@
 import type { ToolResult } from "../tools/types.js";
 import { ProviderError } from "./client.js";
 import { detectImageMime } from "../tools/image.js";
-import { base64ByteLength, type UserInput } from "./types.js";
+import { base64ByteLength, imageSourceText, type UserInput } from "./types.js";
 
 export const MAX_USER_IMAGES_BYTES = 16 * 1024 * 1024;
 export type NativeUserPart =
@@ -30,6 +30,7 @@ export function nativeUserContent(input: UserInput): NativeUserPart[] {
       if (decoded.toString("base64") !== block.data) throw new ProviderError("unsupported_content", "invalid image base64");
       if (detectImageMime(decoded) !== block.mimeType) throw new ProviderError("unsupported_content", "image bytes are not a valid image of the declared type");
       parts.push({ type: "image", mimeType: block.mimeType, data: block.data });
+      if (block.source) parts.push({ type: "text", text: imageSourceText(block.source) });
     } else parts.push({ type: "text", text: `\n[Resource link] ${JSON.stringify(block)}\n` });
   }
   return parts;

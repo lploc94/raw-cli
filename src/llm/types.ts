@@ -60,7 +60,8 @@ export interface ModelToolCall {
 
 export type UserBlock =
   | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: "image/png" | "image/jpeg"; name?: string }
+  /** `source`: where the user's browser said the image came from (a link), told to the model after the image. */
+  | { type: "image"; data: string; mimeType: "image/png" | "image/jpeg"; name?: string; source?: string }
   | { type: "resource_link"; uri: string; name: string; title?: string | null; description?: string | null;
       mimeType?: string | null; size?: number | null; annotations?: unknown };
 
@@ -84,9 +85,14 @@ export function userInputHasImage(input: UserInput): boolean {
   return typeof input !== "string" && input.some((block) => block.type === "image");
 }
 
+/** The line sent after an image that has a source, so the model knows where it came from. */
+export function imageSourceText(source: string): string {
+  return `[Image source: ${source}]`;
+}
+
 /** Text that stands in for an image when the model cannot read images. */
 export function imagePlaceholderText(block: UserImageBlock): string {
-  const label = block.name ? `, ${JSON.stringify(block.name)}` : "";
+  const label = (block.name ? `, ${JSON.stringify(block.name)}` : "") + (block.source ? `, from ${block.source}` : "");
   return `[Image omitted: ${block.mimeType}, ${base64ByteLength(block.data)} bytes${label}. The current model cannot read images, so this image was replaced by this text placeholder. Its content may be described in earlier assistant messages of this conversation; ask the user to describe it or to switch to a vision-capable agent if you need to see it.]`;
 }
 

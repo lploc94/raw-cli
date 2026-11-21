@@ -618,6 +618,21 @@ test("an image reaches a CLI that accepts images, and becomes a description with
   }
 });
 
+test("an image's source reaches a CLI as a line after the image, whether or not the CLI accepts images", async () => {
+  const source = "https://example.com/pictures/cat.jpg";
+  const image: UserImageBlock = { type: "image", mimeType: "image/jpeg", source,
+    data: readFileSync(join(import.meta.dirname, "fixtures", "vision.jpg")).toString("base64") };
+  for (const accepts of [true, false]) {
+    const h = await harness({ kind: "claude" }, {}, accepts ? {} : { FAKE_ACP_IMAGES: "0" });
+    const agent = h.agent();
+    try {
+      assert.equal((await agent.run([{ type: "text", text: "look" }, image])).status, "completed");
+      const prompt = h.calls().find((call) => call.method === "session/prompt")!;
+      assert.ok(String(prompt.input).includes(source), `accepts=${accepts}: the prompt text names ${source}: ${String(prompt.input)}`);
+    } finally { await agent.close(); h.cleanup(); }
+  }
+});
+
 test("a cancelled turn's input is not sent again after the backend model changes", async () => {
   const h = await harness();
   let agent = h.agent();

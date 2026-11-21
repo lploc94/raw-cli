@@ -1,5 +1,6 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { AxeBuilder } from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { test, expect, openChat } from "./fixtures.js";
@@ -14,7 +15,7 @@ const b64 = png.toString("base64");
 async function chooseImage(page: Page, payload = file()) {
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Add attachment" }).click();
-  await page.getByRole("menuitem", { name: /Upload image/ }).click();
+  await page.getByRole("menuitem", { name: /Upload file/ }).click();
   await (await chooser).setFiles(payload);
 }
 async function dispatchFiles(page: Page, kind: "paste" | "drop", name = "dropped.png", text = "") {
@@ -74,20 +75,67 @@ test.describe("vision agent", () => {
     expect(requestBody(raw)).toContain("Please look at the attached image.");
   });
 
-  test("invalid type and oversize are chip-level errors that never block the text turn", async ({ page, raw }) => {
+  // Requirement change: a file that is not an image used to be an "Unsupported type" chip; it is now uploaded as a file.
+  test("a file that is not an image uploads as a file; an oversize image is a chip-level error that never blocks the turn", async ({ page, raw }) => {
     await openChat(page, raw);
     const chooser = page.waitForEvent("filechooser");
     await page.getByRole("button", { name: "Add attachment" }).click();
-    await page.getByRole("menuitem", { name: /Upload image/ }).click();
+    await page.getByRole("menuitem", { name: /Upload file/ }).click();
     await (await chooser).setFiles([file("notes.txt", Buffer.from("hi"), "text/plain"), file("huge.png", Buffer.alloc(9 * 1048576), "image/png")]);
-    await expect(page.locator(".attachment-chip.error")).toHaveCount(2);
-    await expect(page.getByText(/Unsupported type/)).toBeVisible();
+    await expect(ready(page, "notes.txt")).toBeVisible();
+    await expect(page.locator(".attachment-chip.error")).toHaveCount(1);
     await expect(page.getByText(/Too large/)).toBeVisible();
     await message(page).fill("still works");
     await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
     await message(page).press("Enter");
     await expect(page.getByTestId("assistant-message")).toBeVisible();
-    expect(requestBody(raw)).not.toContain("image_url");
+    const body = requestBody(raw);
+    expect(body).not.toContain("image_url");
+    expect(body).toMatch(/Resource link.*notes\.txt/);
+  });
+
+  test("a dropped file that is not an image reaches the model as a saved copy's path with the link it was dragged from", async ({ page, raw }) => {
+    await openChat(page, raw);
+    await page.evaluate(() => {
+      const transfer = new DataTransfer();
+      transfer.setData("text/uri-list", "file:///Users/someone/Desktop/budget.xlsx");
+      transfer.items.add(new File([new Uint8Array([80, 75, 3, 4])], "budget.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      document.querySelector(".composer-box")!.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    });
+    await expect(ready(page, "budget.xlsx")).toBeVisible();
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByTestId("assistant-message")).toBeVisible();
+    const body = requestBody(raw);
+    expect(body).toContain("Please look at the attached file.");
+    expect(body).toMatch(/Resource link.*budget\.xlsx/);
+    expect(body).toContain("from file:///Users/someone/Desktop/budget.xlsx");
+    const uri = /file:\/\/[^"\\]*uploads[^"\\]*budget\.xlsx/.exec(body)?.[0];
+    expect(uri, "the link points at the saved copy").toBeTruthy();
+    await expect(page.getByTestId("user-message").getByText("budget.xlsx")).toBeVisible();
+  });
+
+  test("a file link dropped without its bytes becomes a file chip inside the workspace and text outside it or for a folder", async ({ page, raw }) => {
+    writeFileSync(join(raw.root, "inside.md"), "# inside");
+    mkdirSync(join(raw.root, "notes"));
+    writeFileSync(join(raw.root, "notes", "a.md"), "a");
+    await openChat(page, raw);
+    const root = realpathSync(raw.root);
+    await page.evaluate((links) => {
+      const transfer = new DataTransfer();
+      transfer.setData("text/uri-list", links.join("\r\n"));
+      document.querySelector(".composer-box")!.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
+    }, [pathToFileURL(join(root, "inside.md")).href, "file:///tmp/outside%20file.log", pathToFileURL(join(root, "notes")).href]);
+    await expect(page.locator(".attachment-chip", { hasText: "inside.md" })).toBeVisible();
+    // A folder cannot be referenced as a file (the send would fail), so its path goes into the text like an outside one.
+    await expect(message(page)).toHaveValue(`/tmp/outside file.log ${join(root, "notes")} `);
+    await expect(page.locator(".attachment-chip", { hasText: "notes" })).toHaveCount(0);
+    await message(page).press("End");
+    await message(page).pressSequentially("check both");
+    await message(page).press("Enter");
+    await expect(page.getByTestId("assistant-message")).toBeVisible();
+    const body = requestBody(raw);
+    expect(body).toMatch(/Resource link.*inside\.md/);
+    expect(body).toContain(`/tmp/outside file.log ${join(root, "notes")} check both`);
   });
 
   test("Send waits for an in-flight upload; a failed upload can be retried", async ({ page, raw }) => {
@@ -137,7 +185,7 @@ test.describe("vision agent", () => {
     // Radix hides the rest of the page while a modal menu is open, so audit the menu itself.
     const axe = await new AxeBuilder({ page }).include("[role=menu]").analyze();
     expect(axe.violations).toEqual([]);
-    await expect(page.getByRole("menuitem", { name: /Upload image/ })).toBeFocused(); // keyboard open focuses the first item
+    await expect(page.getByRole("menuitem", { name: /Upload file/ })).toBeFocused(); // keyboard open focuses the first item
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter"); // Reference workspace file…
     await expect(message(page)).toBeFocused();
@@ -167,7 +215,7 @@ test.describe("vision agent", () => {
     await message(page).fill("draft stays");
     const chooser = page.waitForEvent("filechooser");
     await page.getByRole("button", { name: "Add attachment" }).click();
-    await page.getByRole("menuitem", { name: /Upload image/ }).click();
+    await page.getByRole("menuitem", { name: /Upload file/ }).click();
     await (await chooser).setFiles(Array.from({ length: 9 }, (_, i) => file(`img${i}.png`)));
     await expect(page.locator(".attachment-chip.ready")).toHaveCount(8);
     await expect(page.locator(".attachment-chip.error")).toHaveCount(1);
@@ -207,6 +255,8 @@ test.describe("agent without vision", () => {
     await chooseImage(page);
     await expect(ready(page, "shot.png")).toBeVisible();
     await expect(page.getByText(/cannot see images/)).toBeVisible();
+    // The warning shows as soon as an image is attached, before the first image is sent (requirement change: wording, timing).
+    await expect(page.getByRole("status").filter({ hasText: /not set to read images.*"vision": true/ })).toBeVisible();
     await message(page).fill("describe");
     await message(page).press("Enter");
     await expect(page.getByTestId("assistant-message")).toBeVisible();
@@ -214,7 +264,7 @@ test.describe("agent without vision", () => {
     expect(body).not.toContain("image_url");
     expect(body).not.toContain(b64);
     expect(body).toContain("Image omitted");
-    await expect(page.getByText("Images in this chat are sent to this agent as text placeholders.")).toBeVisible();
+    await expect(page.getByText(/not set to read images, so they reach it as text placeholders/)).toBeVisible();
     // A later text-only turn is never blocked.
     await message(page).fill("and now?");
     await message(page).press("Enter");

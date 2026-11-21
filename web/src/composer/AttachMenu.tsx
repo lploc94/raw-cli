@@ -1,5 +1,5 @@
 import { DropdownMenu } from "radix-ui";
-import { AtSign, ImagePlus, Plus, Slash } from "lucide-react";
+import { AtSign, Paperclip, Plus, Slash } from "lucide-react";
 
 export function AttachMenu({
   onUpload,
@@ -34,7 +34,7 @@ export function AttachMenu({
           onCloseAutoFocus={onClosed}
         >
           <DropdownMenu.Item className="menu-item" onSelect={onUpload}>
-            <ImagePlus size={15} aria-hidden="true" /> Upload image…
+            <Paperclip size={15} aria-hidden="true" /> Upload file…
           </DropdownMenu.Item>
           <DropdownMenu.Item className="menu-item" onSelect={onReference}>
             <AtSign size={15} aria-hidden="true" /> Reference workspace file…

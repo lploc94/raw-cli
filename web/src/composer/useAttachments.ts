@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, upload } from "../api.js";
-import { clientKinds, kindForMime, type KindMeta } from "./attachment-kinds.js";
+import { ANY_MIME, clientKinds, kindForMime, type KindMeta } from "./attachment-kinds.js";
 
 export interface Chip {
   key: string;
@@ -13,6 +13,8 @@ export interface Chip {
   error?: string;
   thumbnail?: string;
   path?: string;
+  /** Where the browser said an uploaded file came from; sent with every upload of it. */
+  source?: string;
   /** Kept in memory so a failed or expired upload can be retried. */
   file?: File;
 }
@@ -55,10 +57,10 @@ export function useAttachments(sessionId: string, metas: KindMeta[]) {
   }, []);
 
   const start = useCallback(
-    (key: string, file: File) => {
+    (key: string, file: File, source?: string) => {
       const controller = new AbortController();
       controllers.current.set(key, controller);
-      upload<Staged>(sessionId, file, controller.signal)
+      upload<Staged>(sessionId, file, controller.signal, source)
         .then((staged) => patch(key, { status: "ready", serverId: staged.id }))
         .catch((cause) => {
           if (!controller.signal.aborted)
@@ -70,8 +72,9 @@ export function useAttachments(sessionId: string, metas: KindMeta[]) {
   );
 
   const addFiles = useCallback(
-    (files: File[]) => {
-      for (const file of files) {
+    (files: File[], sources: readonly (string | undefined)[] = []) => {
+      for (const [index, file] of files.entries()) {
+        const source = sources[index];
         const key = nextKey();
         const known = metasRef.current;
         const meta = known.length ? kindForMime(known, file.type) : undefined;
@@ -79,10 +82,11 @@ export function useAttachments(sessionId: string, metas: KindMeta[]) {
           key,
           type: "upload",
           kindId: meta?.id ?? "image",
-          name: file.name || "pasted-image",
+          name: file.name || (file.type.startsWith("image/") ? "pasted-image" : "pasted-file"),
           size: file.size,
           status: "uploading",
           file,
+          ...(source ? { source } : {}),
         };
         if (known.length && !meta) {
           const accepted = known.flatMap((entry) => entry.accept).join(", ");
@@ -98,13 +102,14 @@ export function useAttachments(sessionId: string, metas: KindMeta[]) {
             {
               ...base,
               status: "error",
-              error: `Too large (limit ${Math.round(meta.maxBytes / 1048576)} MiB)`,
+              error: `Too large (limit ${Math.round(meta.maxBytes / 1048576)} MiB)${meta.accept.includes(ANY_MIME)
+                ? ". Put it in the workspace and reference it with @, or drop it from your editor to send its path" : ""}`,
             },
           ]);
           continue;
         }
         setChips((old) => [...old, base]);
-        start(key, file);
+        start(key, file, source);
         void clientKinds
           .get(base.kindId)
           ?.thumbnail?.(file)
@@ -160,7 +165,7 @@ export function useAttachments(sessionId: string, metas: KindMeta[]) {
           return rest;
         }),
       );
-      start(key, chip.file);
+      start(key, chip.file, chip.source);
     },
     [patch, start],
   );
@@ -186,9 +191,9 @@ export function useAttachments(sessionId: string, metas: KindMeta[]) {
    * this page: a request consumes its staged items, so Retry uploads that copy again.
    */
   const addStaged = useCallback(
-    (items: Array<{ id: string; kind: string; name: string; byteSize: number; file?: File | undefined }>) => {
+    (items: Array<{ id: string; kind: string; name: string; byteSize: number; source?: string | undefined; file?: File | undefined }>) => {
       const added = items.map((item): Chip => ({ key: nextKey(), type: "upload", kindId: item.kind, name: item.name, size: item.byteSize,
-        status: "ready", serverId: item.id, ...(item.file ? { file: item.file } : {}) }));
+        status: "ready", serverId: item.id, ...(item.source ? { source: item.source } : {}), ...(item.file ? { file: item.file } : {}) }));
       setChips((old) => [...old, ...added]);
       for (const chip of added)
         if (chip.file)

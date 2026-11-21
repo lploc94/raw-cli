@@ -5,7 +5,7 @@ import { canonicalInteractionResult, validateFormAnswers } from "../panels/forms
 import type { InteractionState } from "../panels/contract.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { ContextAnchor } from "../context-anchor.js";
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { readSessionRetentionDays } from "../config.js";
@@ -1713,6 +1713,9 @@ export class SessionStore {
     }
   }
 
+  /** Folder of the files users attached to chats, one subfolder per session id; a session's folder goes with the session. */
+  get uploadsRoot(): string { return join(dirname(this.path), "uploads"); }
+
   deleteSession(id: string, processFenceOwner?: { token: string; generation: number }): void {
     this.removeSession(id, { ...(processFenceOwner ? { processFenceOwner } : {}) });
   }
@@ -1747,6 +1750,11 @@ export class SessionStore {
       this.database.prepare("DELETE FROM sessions WHERE id = ?").run(id);
       return "deleted";
     });
+    if (outcome === "deleted") {
+      // Session ids are UUIDs, so the folder is always a direct child of the uploads root.
+      try { if (/^[\w-]+$/.test(id)) rmSync(join(this.uploadsRoot, id), { recursive: true, force: true }); }
+      catch { /* The deletion committed; a leftover folder holds only that chat's copies. */ }
+    }
     if (outcome === "deleted" && options.reclaim !== false) {
       try { this.reclaimUnreferencedPayloads(); }
       catch { /* The deletion committed; idle maintenance will retry reclamation. */ }

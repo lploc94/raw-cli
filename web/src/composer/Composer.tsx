@@ -11,6 +11,7 @@ import {
 import { ArrowUp, ChevronDown, Square, Zap } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
 import { AttachMenu } from "./AttachMenu.js";
+import { transferLinks } from "./attachment-kinds.js";
 import { SuggestionPopover, optionId } from "./SuggestionPopover.js";
 import { useAutoGrow } from "./useAutoGrow.js";
 import type {
@@ -32,10 +33,12 @@ export function Composer({
   providers,
   chips,
   onFiles,
+  onPaths,
   controls,
   context,
   accept,
   note,
+  noteTone,
 }: {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   draft: string;
@@ -55,7 +58,10 @@ export function Composer({
   providers: SuggestionProvider[];
   /** Attachment chips, rendered above the message box. */
   chips: ReactNode;
-  onFiles: (files: File[]) => void;
+  /** Files dropped, pasted or picked, with the link the browser gave for each (its source) when it gave one. */
+  onFiles: (files: File[], sources?: (string | undefined)[]) => void;
+  /** Local paths dropped without their bytes (a `file:` link from an editor such as VS Code). */
+  onPaths?: (paths: string[]) => void;
   /** Request-controls pill, rendered in the toolbar after Add attachment. */
   controls?: ReactNode;
   /** The context button, rendered before Send/Stop. */
@@ -63,6 +69,8 @@ export function Composer({
   /** `accept` attribute for the file picker, from composer metadata. */
   accept: string;
   note?: string;
+  /** `warning`: the note says something the user should act on, shown in the warning color. */
+  noteTone?: "warning";
 }) {
   const listId = useId();
   const hintId = useId();
@@ -165,8 +173,10 @@ export function Composer({
     item.onSelect({ replace: replace(found.match) });
   };
 
+  // A drop with files, or with `file:` links only (an editor drags its files as links): both attach.
   const hasFiles = (event: React.DragEvent) =>
-    Array.from(event.dataTransfer.types).includes("Files");
+    Array.from(event.dataTransfer.types).includes("Files") || (!!onPaths && Array.from(event.dataTransfer.types).includes("text/uri-list")
+      && !Array.from(event.dataTransfer.types).includes("text/html"));
   return (
     <>
     <div
@@ -184,9 +194,21 @@ export function Composer({
       }}
       onDrop={(event) => {
         if (!hasFiles(event)) return;
+        const files = Array.from(event.dataTransfer.files);
+        const { links, sources } = transferLinks(event.dataTransfer, files);
+        const paths = files.length ? [] : links.flatMap((link) => {
+          try {
+            const url = new URL(link);
+            // A Windows path arrives as `/C:/…`.
+            return url.protocol === "file:" ? [decodeURIComponent(url.pathname).replace(/^\/([A-Za-z]:)/, "$1")] : [];
+          } catch { return []; }
+        });
+        // Links that are not local files (a web link, say) drop into the text as the browser would.
+        if (!files.length && !paths.length) { setDragging(false); return; }
         event.preventDefault();
         setDragging(false);
-        onFiles(Array.from(event.dataTransfer.files));
+        if (files.length) onFiles(files, sources);
+        else onPaths?.(paths);
       }}
     >
       {dragging && (
@@ -236,7 +258,7 @@ export function Composer({
           // Text that travels with the files (a copied spreadsheet range, say) still pastes normally.
           if (!event.clipboardData.getData("text/plain"))
             event.preventDefault();
-          onFiles(files);
+          onFiles(files, transferLinks(event.clipboardData, files).sources);
         }}
         onCompositionStart={() => {
           composing.current = true;
@@ -293,7 +315,7 @@ export function Composer({
           onSend();
         }}
       />
-      {note && <p className="composer-note muted small">{note}</p>}
+      {note && <p className={`composer-note small ${noteTone === "warning" ? "composer-note-warning" : "muted"}`} {...(noteTone === "warning" ? { role: "status" } : {})}>{note}</p>}
       <div className="composer-toolbar">
         <AttachMenu
           onUpload={() => fileInput.current?.click()}
@@ -310,7 +332,7 @@ export function Composer({
           multiple
           hidden
           accept={accept}
-          aria-label="Upload image"
+          aria-label="Upload file"
           onChange={(event) => {
             onFiles(Array.from(event.target.files ?? []));
             event.target.value = "";

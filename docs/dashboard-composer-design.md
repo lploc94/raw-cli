@@ -12,7 +12,6 @@ Status: design accepted 2026-09-29 and implemented across the six phases of the 
 
 ## Non-goals (this iteration)
 
-- Uploading non-image files. "Attach file" is a workspace file reference (`resource_link`).
 - Image formats other than PNG/JPEG.
 - Image blocks over ACP `session/prompt` (ACP replay of stored images must still work).
 - Server-side skill invocation. `/skill` only inserts an instruction; the agent uses `list_skills`/`load_skill`.
@@ -114,13 +113,17 @@ The composer never refuses a message because the agent is busy. Every send goes 
 - **Cards.** Waiting messages are cards above the composer ([chat-design.md](chat-design.md) §8) from the session's `inputs`. Edit takes the message back (`POST /inputs/:id/edit`): the server deletes it and stages its images again, so the chips come back as uploads ready to send, also after a reload. The page reads the staged bytes back (`GET /attachments/:id`) and keeps them as the chip's file, as for an upload: a send consumes its staged items, and Retry uploads that copy again. An image without a copy is never dropped silently; the message is then not sent and asks for the image again. An action on a message the agent took first answers 409 `already_sent`; the card says **Already sent** and then leaves.
 - **Why the queue lives on the server.** A client-only queue would lose messages on reload, show nothing in other tabs, and need its own timing for "after the current step", which only the agent loop knows.
 
+### D16. Non-image uploads are saved and sent as a path
+A browser never exposes the real path of a dropped or picked file, and most models cannot take arbitrary bytes. So an upload that is not a PNG or JPEG goes to the `file` kind (`createFileKind`, accepting `*/*`): when the turn is accepted the server writes it to `uploads/<session>/<attachment id>/<name>` in the state directory (outside the workspace, removed with the session) and sends a `resource_link` to that path, which the model reads with `read_file` or `bash`. When the browser gives the file's origin (`text/uri-list` on drop or paste, a `file:` or `http(s):` link paired with each file only when the counts match), it travels as `X-Raw-Source` and the model sees it in the link's description, or as `[Image source: …]` after an image. A `file:` link dropped without bytes is not uploaded: a file the workspace search lists becomes a file reference, any other path (a folder, an ignored file, outside the workspace) is added to the text. A link the server would drop (another scheme, over 2048 characters, such as a `data:` URL) is not sent as a source, since a header over Node's 16 KiB limit would fail the upload. Claude Code and Codex get the source line after the image too. A model without `vision` still gets images as placeholders (D4); the composer warns in amber when the message or chat has images.
+
 ## Limits
 
 | Item | Value |
 | --- | --- |
 | Image types | PNG, JPEG (structure validated) |
 | Image size | 8 MiB each (upload); 16 MiB aggregate decoded per turn, enforced at staging (chip-level rejection) and re-validated in `agent.run` before commit |
-| Images per message | 8 |
+| Other uploaded files | any type, 16 MiB each (the per-chat staging budget, since staged bytes stay in memory until the turn is sent), saved under the state directory's `uploads/<session>/` |
+| Attachments per message | 8 |
 | File references per message | 20 |
 | Staging TTL | 30 minutes, dropped on server close |
 | File search limit | default 20, maximum 50 |
