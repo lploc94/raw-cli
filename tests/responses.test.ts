@@ -129,3 +129,29 @@ test("Responses abort cancels the stream and makes no retry", async () => {
     assert.equal(fixture.requests.length, 1);
   } finally { await fixture.close(); }
 });
+
+test("Responses replays a truncated turn's function-call arguments exactly as the model wrote them", async () => {
+  // Non-canonical whitespace and key order: re-serializing the parsed object would change the string.
+  const written = '{"b": 2,  "a":1}';
+  const fixture = await startMockProvider([
+    { frames: [event("response.incomplete", { response: { id: "r", object: "response", status: "incomplete", usage: { input_tokens: 4, output_tokens: 2 },
+      output: [{ type: "function_call", id: "fc_1", call_id: "call_1", name: "read_file", arguments: written, status: "completed" }],
+      incomplete_details: { reason: "max_output_tokens" } } }), "data: [DONE]\n\n"] },
+    { frames: [event("response.completed", { response: response([{ id: "msg_1", type: "message", role: "assistant", status: "completed",
+      content: [{ type: "output_text", text: "done", annotations: [] }] }]) }), "data: [DONE]\n\n"] },
+  ]);
+  try {
+    const adapter = createProvider({ agentName: "fixture", provider: "openai", method: "openai-responses", model: "gpt-6-astra",
+      baseUrl: fixture.url, apiKey: "fixture" });
+    const first = await adapter.generate({ system: "tiny", messages: [{ role: "user", content: "go" }], tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 1000 });
+    assert.equal(first.truncated, true);
+    assert.equal(first.opaque, undefined, "a truncated turn replays from its calls, not opaque items");
+    assert.deepEqual(first.toolCalls[0]?.arguments, { b: 2, a: 1 });
+    await adapter.generate({ system: "tiny", messages: [{ role: "user", content: "go" },
+      { role: "assistant", text: first.text, toolCalls: first.toolCalls },
+      { role: "tool", callId: "call_1", name: "read_file", result: { isError: false, content: [{ type: "text", text: "ok" }] } },
+    ], tools: BUILTIN_TOOL_DEFINITIONS, timeoutMs: 1000 });
+    const input = (fixture.requests[1]?.body as { input: Array<{ type?: string; arguments?: string }> }).input;
+    assert.equal(input.find((item) => item.type === "function_call")?.arguments, written, `the replayed arguments are ${written}`);
+  } finally { await fixture.close(); }
+});

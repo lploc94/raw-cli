@@ -163,7 +163,7 @@ export function createOpenAiProvider(modelConfig: Readonly<ResolvedModelConfig>)
           catch { argumentError = truncated ? truncatedArgumentsError(call.name) : `tool ${call.name} arguments are invalid JSON`; }
           if (!argumentError && (!args || typeof args !== "object" || Array.isArray(args))) argumentError = `tool ${call.name} arguments must be an object`;
           toolCalls.push({ id, name: call.name, arguments: argumentError ? {} : args as Record<string, unknown>,
-            ...(argumentError ? { argumentError, rawArguments: call.arguments } : {}), ...(syntheticId ? { syntheticId } : {}) });
+            ...(argumentError ? { argumentError } : {}), rawArguments: call.arguments, ...(syntheticId ? { syntheticId } : {}) });
         }
         if (finishReason === "tool_calls" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool finish without calls");
         if (finishReason === "stop" && toolCalls.length) throw new ProviderError("invalid_stream", "calls without tool finish");

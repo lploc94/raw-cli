@@ -53,6 +53,7 @@ export interface ModelToolCall {
   name: string;
   arguments: Record<string, unknown>;
   argumentError?: string;
+  /** The argument string exactly as the model wrote it; replayed verbatim so the provider's prefix cache matches. */
   rawArguments?: string;
   syntheticId?: boolean;
 }

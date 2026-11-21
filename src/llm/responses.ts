@@ -56,7 +56,7 @@ function completedTurn(output: readonly ResponseOutputItem[], usage: unknown, tr
       catch { argumentError = truncated ? truncatedArgumentsError(item.name) : `tool ${item.name} arguments are invalid JSON`; }
       if (!argumentError && (!args || typeof args !== "object" || Array.isArray(args))) argumentError = `tool ${item.name} arguments must be an object`;
       calls.push({ id: item.call_id, name: item.name, arguments: argumentError ? {} : args as Record<string, unknown>,
-        ...(argumentError ? { argumentError, rawArguments: item.arguments } : {}) });
+        ...(argumentError ? { argumentError } : {}), rawArguments: item.arguments });
     } else if (item.type !== "reasoning") {
       throw new ProviderError("unsupported_output", `unsupported Responses output item: ${item.type}`);
     }

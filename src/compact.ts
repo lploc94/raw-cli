@@ -146,6 +146,11 @@ export function estimateRequestTokens(system: string, messages: readonly ModelMe
   const light = withoutHostData(messages).map((message): ModelMessage => {
     // A native compaction item travels as its opaque items; its portable text is sent only once projected (design §6.9.1).
     if (message.role === "assistant" && isNativeCompaction(message)) return { ...message, text: "" };
+    // A parsed call also keeps the model's argument string for replay; count its arguments once.
+    // A call whose arguments did not parse has only the string (its `arguments` is empty), so it keeps it.
+    if (message.role === "assistant" && message.toolCalls.some((call) => call.rawArguments !== undefined && !call.argumentError))
+      return { ...message, toolCalls: message.toolCalls.map(({ rawArguments, ...call }) =>
+        call.argumentError && rawArguments !== undefined ? { ...call, rawArguments } : call) };
     if (message.role !== "user" || typeof message.content === "string" || !message.content.some((block) => block.type === "image")) return message;
     return { role: "user", content: message.content.map((block) => {
       if (block.type !== "image") return block;
