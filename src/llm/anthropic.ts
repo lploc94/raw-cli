@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam, Tool } from "@anthropic-ai/sdk/resources/messages";
 import { effectiveOutputTokens } from "./output.js";
 import { isNativeCompaction, renderUserInput, truncatedArgumentsError, type ModelMessage, type NativeCompactRequest, type ProviderAdapter,
-  type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall } from "./types.js";
+  type ResolvedModelConfig, type ProviderRequest, type ProviderTurn, type ModelToolCall, type ReplayedBlock } from "./types.js";
 import { nativeToolContent, nativeUserContent } from "./content.js";
 import { MAX_TIMER_MS, ProviderError, withProviderAbort } from "./client.js";
 import { cacheSettings } from "./cache.js";
@@ -14,8 +14,14 @@ import { cacheSettings } from "./cache.js";
 export const ANTHROPIC_COMPACTION_BETA = "compact-2026-09-04";
 /** The documented maximum length of compaction `instructions`, in characters. */
 export const ANTHROPIC_COMPACTION_INSTRUCTIONS_LIMIT = 16384;
+/**
+ * Beta of `thinking.block_binding` and `input_transformations` (SDK 0.128 `BetaThinkingBlockBinding`); with
+ * `prefix_mismatch_behavior: "drop_block"` the API drops thinking whose prefix changed instead of reading it.
+ */
+export const ANTHROPIC_THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01";
 
-function inputMessages(request: { messages: readonly ModelMessage[] }): MessageParam[] {
+/** `owners[i]` is the index in `request.messages` of the assistant message that became wire message `i`. */
+function inputMessages(request: { messages: readonly ModelMessage[] }, owners: Array<number | undefined> = []): MessageParam[] {
   const messages: MessageParam[] = [];
   /** Consecutive user entries are one user message: the tool results first, then your text and images (docs/providers.md). */
   const pushUser = (content: MessageParam["content"]) => {
@@ -24,7 +30,7 @@ function inputMessages(request: { messages: readonly ModelMessage[] }): MessageP
     const blocks = (value: MessageParam["content"]) => (typeof value === "string" ? value ? [{ type: "text" as const, text: value }] : [] : value);
     last.content = [...blocks(last.content), ...blocks(content)];
   };
-  for (const message of request.messages) {
+  for (const [index, message] of request.messages.entries()) {
     if (message.role === "user") {
       const parts = nativeUserContent(message.content);
       pushUser((parts.some((part) => part.type === "image")
@@ -38,6 +44,7 @@ function inputMessages(request: { messages: readonly ModelMessage[] }): MessageP
         ...(message.text ? [{ type: "text", text: message.text }] : []),
         ...message.toolCalls.map((call) => ({ type: "tool_use", id: call.id, name: call.name, input: call.arguments })),
       ];
+      owners[messages.length] = index;
       messages.push({ role: "assistant", content: blocks as MessageParam["content"] });
     } else {
       const result = nativeToolContent(message.result);
@@ -73,6 +80,20 @@ function sharedSettings(modelConfig: Readonly<ResolvedModelConfig>, request: { s
       ...(tools.length ? { tools } : {}),
     },
   };
+}
+
+/**
+ * The `thinking_dropped` entries of `input_transformations`, from wire `messages.{i}.content.{j}` paths to request message
+ * indices; other entry types are ignored, as the SDK asks. Without the array (the beta was ignored) nothing was reported.
+ */
+function droppedBlocks(transformations: unknown, owners: ReadonlyArray<number | undefined>): ReplayedBlock[] | "unreported" {
+  if (!Array.isArray(transformations)) return "unreported";
+  return transformations.flatMap((entry: unknown): ReplayedBlock[] => {
+    const { type, path } = (entry ?? {}) as { type?: unknown; path?: unknown };
+    const match = type === "thinking_dropped" && typeof path === "string" ? /^messages\.(\d+)\.content\.(\d+)$/.exec(path) : null;
+    const message = match ? owners[Number(match[1])] : undefined;
+    return message === undefined ? [] : [{ message, block: Number(match![2]) }];
+  });
 }
 
 export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfig>): ProviderAdapter {
@@ -128,14 +149,21 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
           }
         };
         checkThinking();
+        // Only a request that configures thinking has a `thinking` object to carry the binding (SDK `BetaThinkingConfigEnabled`/`Adaptive`).
+        const bind = request.dropStaleThinking === true && (configured?.thinking?.type === "enabled" || configured?.thinking?.type === "adaptive");
         // The API accepts a compaction block only with the compaction beta.
-        const beta = request.messages.some((message) => isNativeCompaction(message)) ? { headers: { "anthropic-beta": ANTHROPIC_COMPACTION_BETA } } : {};
+        const betas = [...request.messages.some((message) => isNativeCompaction(message)) ? [ANTHROPIC_COMPACTION_BETA] : [],
+          ...bind ? [ANTHROPIC_THINKING_BINDING_BETA] : []];
+        const beta = betas.length ? { headers: { "anthropic-beta": betas.join(",") } } : {};
+        const owners: Array<number | undefined> = [];
+        const wireMessages = inputMessages(request, owners);
         const create = () => client.messages.create({
           model: modelConfig.model,
           max_tokens: outputLimit,
-          messages: inputMessages(request),
+          messages: wireMessages,
           stream: true,
           ...params,
+          ...(bind ? { thinking: { ...params.thinking, block_binding: { prefix_mismatch_behavior: "drop_block" } } as unknown as typeof params.thinking } : {}),
           ...(tools.length && request.toolChoice ? { tool_choice: { type: request.toolChoice } } : {}),
         }, { signal, maxRetries: 0, ...beta });
         let stream: Awaited<ReturnType<typeof create>>;
@@ -159,6 +187,8 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         let committed = false;
         const markCommitted = () => { committed = true; commit(); };
         let usage: Record<string, unknown> = {};
+        // Final in `message_start`; a `message_delta` carries it only after a server-side model fallback, and then replaces it.
+        let transformations: unknown;
         try {
         for await (const event of stream) {
           touch();
@@ -168,6 +198,7 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
             if (started) throw new ProviderError("invalid_stream", "duplicate Anthropic message start");
             started = true;
             usage = { ...event.message.usage };
+            transformations = (event.message as { input_transformations?: unknown }).input_transformations;
           }
           else if (event.type === "content_block_start") {
             if (!started || blocks.has(event.index)) throw new ProviderError("invalid_stream", "invalid Anthropic block start");
@@ -205,6 +236,8 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
             if (!started || activeBlocks.size) throw new ProviderError("invalid_stream", "Anthropic message delta before blocks complete");
             if (event.delta.stop_reason) stopReason = event.delta.stop_reason;
             usage = { ...usage, ...event.usage };
+            const replaced = (event as { input_transformations?: unknown }).input_transformations;
+            if (replaced !== undefined && replaced !== null) transformations = replaced;
           } else if (event.type === "message_stop") {
             if (!started || activeBlocks.size) throw new ProviderError("invalid_stream", "Anthropic message stopped with incomplete blocks");
             stopped = true;
@@ -240,7 +273,8 @@ export function createAnthropicProvider(modelConfig: Readonly<ResolvedModelConfi
         if (stopReason === "tool_use" && !toolCalls.length) throw new ProviderError("invalid_stream", "tool stop without calls");
         if (stopReason === "end_turn" && toolCalls.length) throw new ProviderError("invalid_stream", "tool calls with end_turn stop");
         completed = true;
-        return { text, toolCalls, finishReason: stopReason, ...(truncated ? { truncated } : {}), opaque, usage };
+        return { text, toolCalls, finishReason: stopReason, ...(truncated ? { truncated } : {}), opaque, usage,
+          ...(request.dropStaleThinking ? { droppedThinking: bind ? droppedBlocks(transformations, owners) : "unreported" as const } : {}) };
         } finally {
           if (!signal.aborted && (completed || committed) && Object.keys(usage).length) request.onUsage?.(usage);
         }

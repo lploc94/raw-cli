@@ -124,7 +124,15 @@ export interface ProviderRequest {
   /** Runs one of `tools` for an external backend (the Raw bridge) inside this turn, recorded as Raw's own calls are. */
   runTool?: (call: { id: string; name: string; arguments: Record<string, unknown> }, signal: AbortSignal) => Promise<ToolResult>;
   cacheKey?: string;
+  /**
+   * Thinking replayed from before a rewrite (compaction, clearing) may no longer match its prefix: an adapter that can
+   * asks the provider to drop such blocks instead of reading them, and reports which it dropped (`droppedThinking`).
+   */
+  dropStaleThinking?: boolean;
 }
+
+/** A block of `ProviderRequest.messages[message]`'s replayed content (`opaque[block]`). */
+export interface ReplayedBlock { message: number; block: number }
 
 export interface ProviderTurn {
   text: string;
@@ -134,6 +142,11 @@ export interface ProviderTurn {
   truncated?: boolean;
   opaque?: unknown;
   usage?: unknown;
+  /**
+   * For a `dropStaleThinking` request: the replayed blocks the provider dropped (empty when it dropped none), or
+   * `"unreported"` when the request did not ask or the response did not say.
+   */
+  droppedThinking?: ReplayedBlock[] | "unreported";
 }
 
 /** Longest a provider stream may stay silent (including before its first event) before the request fails. */

@@ -367,7 +367,9 @@ test("4: a reasoning rejection after clearing retries with history projected, an
     assert.ok(isStub(transcript.find((message) => message.role === "tool" && message.callId === "b1")), "the first result of the batch is cleared");
     assert.ok(!isStub(transcript.find((message) => message.role === "tool" && message.callId === "b2")), "its sibling is not");
     const rejected = JSON.stringify(run.fixture.requests[4]!.body);
-    assert.match(rejected, /sig-1/, "the request after clearing replayed reasoning natively");
+    // Without configured thinking the stale blocks are removed locally; the open tool call's thinking must still be sent.
+    assert.match(rejected, /sig-4/, "the request after clearing replayed the open tool call's reasoning natively");
+    assert.doesNotMatch(rejected, /sig-1|sig-2|sig-3/, "and no thinking from before the clearing that the open call does not need");
     assert.match(rejected, /Old tool result cleared: probe/);
     const retry = JSON.stringify(run.fixture.requests[5]!.body);
     assert.doesNotMatch(retry, /"signature"|sig-1|sig-4/, "the retry projects every earlier message");
@@ -388,8 +390,8 @@ test("4: a reasoning rejection after clearing retries with history projected, an
   } finally { await run.agent.close(); run.store.close(); await run.fixture.close(); }
 });
 
-test("5: reasoning around cleared results is kept unchanged, sent natively, and survives a restart", async () => {
-  // Anthropic, end to end: the provider accepts the request after clearing.
+test("5: thinking left stale by clearing is removed except the open call's, and what stays is sent natively after a restart", async () => {
+  // Anthropic without configured thinking (no binding field): the provider accepts the request after clearing.
   {
     const run = await anthropicClearing(false);
     try {
@@ -398,7 +400,9 @@ test("5: reasoning around cleared results is kept unchanged, sent natively, and 
       const transcript = run.agent.transcript;
       assert.ok(isStub(transcript.find((message) => message.role === "tool" && message.callId === "b1")));
       const sent = JSON.stringify(run.fixture.requests[4]!.body);
-      for (const signature of ["sig-1", "sig-2", "sig-3", "sig-4"]) assert.match(sent, new RegExp(signature), signature);
+      assert.match(sent, /sig-4/, "the open tool call keeps its thinking");
+      for (const signature of ["sig-1", "sig-2", "sig-3"]) assert.doesNotMatch(sent, new RegExp(signature), `${signature} is stale and not sent`);
+      assert.doesNotMatch(JSON.stringify(transcript), /sig-1|sig-2|sig-3/, "nor kept to be sent later");
       const reasoning = assistants(transcript).slice(0, 4);
       await run.agent.close();
       const resumed = createAgent({ cwd: run.root, provider: failingCompaction(run.model), system: "tiny", autoApprove: true, ...run.options,
@@ -406,7 +410,9 @@ test("5: reasoning around cleared results is kept unchanged, sent natively, and 
       try {
         assert.deepEqual(assistants(resumed.transcript).slice(0, 4), reasoning, "a restart keeps the assistant messages");
         await resumed.run("again");
-        assert.match(JSON.stringify(run.fixture.requests[5]!.body), /sig-1/, "and they are still sent natively");
+        const next = JSON.stringify(run.fixture.requests[5]!.body);
+        assert.match(next, /sig-4/, "and what stayed is still sent natively");
+        assert.match(next, /sig-5/);
       } finally { await resumed.close(); }
     } finally { await run.agent.close(); run.store.close(); await run.fixture.close(); }
   }

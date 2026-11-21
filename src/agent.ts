@@ -41,7 +41,7 @@ import type { HookDispatcher, HookReceipt } from "./hooks/dispatcher.js";
 import type { HookEventName } from "./hooks/contract.js";
 import { projectToolCall, projectToolResult, type VisibleToolCall, type VisibleToolResult } from "./sessions/visible.js";
 import type { ToolDisplay } from "./tools/display.js";
-import type { ExternalTurnEvent } from "./llm/types.js";
+import type { ExternalTurnEvent, ReplayedBlock } from "./llm/types.js";
 
 export type AgentState = "idle" | "running" | "cancelling" | "compacting" | "closing" | "closed";
 
@@ -866,8 +866,10 @@ export class AgentSession {
         && JSON.stringify(message) !== JSON.stringify(units[last]![index]) ? [`answer:${message.callId}`] : []));
       const kept = active.filter((item) => unitOf(item.index) >= tailStart && !item.typed
         && (cutAnswers.has(item.entry.source) || retainedText.has(item.entry.source))).map((item) => item.entry);
+      // A provider-native summary was checked to keep the tail's thinking valid; a checkpoint placed before it is not.
+      const staleThinking = native === undefined && replaysThinking(replacement, replayBefore);
       const ledgerState: CompactionLedgerState = { entries: [...base, ...leaving], facts: allFacts, factsThrough: replacement.length, compactions: n,
-        ...(kept.length ? { retained: kept } : {}), retryArmed: true };
+        ...(kept.length ? { retained: kept } : {}), retryArmed: true, ...(staleThinking ? { staleThinkingBefore: replacement.length } : {}) };
       const committedDetails: CompactionDetails = { ...details, status: "compacted", summary: checkpoint!, beforeBytes, afterBytes: finalBytes,
         ...(native ? { strategy: "native" as const } : {}),
         afterTokens: this.nextRequestSize(this.sendMessages(projectReplayMessages(replacement, replayBefore)), false).tokens };
@@ -888,6 +890,52 @@ export class AgentSession {
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       throw error;
     } finally { if (onAbort) controller.signal.removeEventListener("abort", onAbort); }
+  }
+
+  /**
+   * Before a main request: true when thinking left stale by a rewrite should be dropped by the provider (Anthropic
+   * `drop_block`, docs/context.md). A model that cannot be asked has the stale thinking removed here instead.
+   */
+  private prepareStaleThinking(): boolean {
+    if (this.ledgerState?.staleThinkingBefore === undefined) return false;
+    if (bindsThinking(this.options.provider.modelConfig)) return true;
+    this.settleStaleThinking("unreported");
+    return false;
+  }
+
+  /**
+   * Removes thinking left stale by the last rewrite and clears its boundary: the blocks the provider reports it dropped, or,
+   * when it did not report, every thinking block before the boundary except those of a still-open tool call, which the API
+   * needs back. Dropped blocks are never sent again, so the requests after this one only append.
+   */
+  private settleStaleThinking(dropped: ReplayedBlock[] | "unreported"): void {
+    const ledgerState = this.ledgerState;
+    if (ledgerState?.staleThinkingBefore === undefined) return;
+    const boundary = ledgerState.staleThinkingBefore;
+    let open = -1;
+    for (let index = this.messages.length - 1; index >= 0; index--) {
+      const message = this.messages[index]!;
+      if (message.role !== "assistant") continue;
+      if (message.toolCalls.length) open = index;
+      break;
+    }
+    const reported = dropped === "unreported" ? undefined : new Set(dropped.map(({ message, block }) => `${message}:${block}`));
+    const drop = (message: number, block: number, value: unknown) => reported ? reported.has(`${message}:${block}`)
+      : message < boundary && message !== open && isThinkingBlock(value);
+    const messages = this.messages.map((message, index): ModelMessage => {
+      if (message.role !== "assistant" || !Array.isArray(message.opaque)) return message;
+      const kept = message.opaque.filter((block, position) => !drop(index, position, block));
+      if (kept.length === message.opaque.length) return message;
+      const { opaque: _stale, ...rest } = message;
+      return kept.length ? { ...rest, opaque: kept } : rest;
+    });
+    const { staleThinkingBefore: _settled, ...ledger } = ledgerState;
+    const changed = messages.some((message, index) => message !== this.messages[index]);
+    this.durable((store, sessionId, owner) => changed ? store.replaceAgentContext(sessionId, owner, messages, { ledger })
+      : store.updateAgentMetadata(sessionId, owner, { ledger }));
+    if (this.persistenceError) throw this.persistenceError;
+    this.messages = messages;
+    this.ledgerState = ledger;
   }
 
   /**
@@ -934,7 +982,8 @@ export class AgentSession {
     const facts = collectFacts(this.messages.slice(covered, through), this.ledgerState?.facts ?? emptyFacts(), (name) => this.toolIdentity(name));
     // The copies clearing wrote are saved outputs too; the stubs naming them may later be summarized away.
     for (const { path } of outcome.cleared) if (!facts.outputs.includes(path)) facts.outputs.push(path);
-    const ledger: CompactionLedgerState = { ...(this.ledgerState ?? { entries: [], compactions: 0 }), facts, factsThrough: through, retryArmed: true };
+    const ledger: CompactionLedgerState = { ...(this.ledgerState ?? { entries: [], compactions: 0 }), facts, factsThrough: through, retryArmed: true,
+      ...(replaysThinking(outcome.messages, this.replayBefore) ? { staleThinkingBefore: outcome.messages.length } : {}) };
     const afterTokens = currentTokens - outcome.freedTokens;
     // Clearing only removes content, so a provider-measured size still bounds the cleared context from above, as the calibrated
     // estimate of the remainder does; the smaller of the two is kept as an estimated anchor. Without it the next gate judges the
@@ -1589,10 +1638,15 @@ export class AgentSession {
           if (controller.signal.aborted) onAbort();
         });
         let turn;
+        // Whether the request in flight asks the provider to drop thinking left stale by a rewrite (see `prepareStaleThinking`).
+        let dropStale = false;
         try {
-          const request = () => Promise.race([this.options.provider.generate({
+          const request = () => {
+            dropStale = this.prepareStaleThinking();
+            return Promise.race([this.options.provider.generate({
             system: this.options.system,
             messages: this.sendMessages(),
+            ...(dropStale ? { dropStaleThinking: true } : {}),
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
             cacheKey: this.cacheKey,
@@ -1604,6 +1658,7 @@ export class AgentSession {
             // Only an external CLI runs tools of its own; other providers' requests stay as they were.
             ...(this.options.provider.modelConfig.method === "acp" ? { onExternal: external, runTool } : {}),
           }), aborted]);
+          };
           let reasoningRetry = this.replayRetryArmed;
           if (reasoningRetry) {
             // The first request after a compaction consumes the retry, in this runtime or a later one.
@@ -1621,6 +1676,14 @@ export class AgentSession {
               break;
             } catch (error) {
               if (controller.signal.aborted) throw error;
+              // A provider that refuses the binding field is not asked again in this process; the stale thinking is removed here.
+              if (dropStale && isBindingRejection(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                bindingDisabled.set(modelIdentity(this.options.provider.modelConfig), message);
+                emit({ type: "compact_warning", message: `Anthropic thinking binding not used: the provider refused it (${message}); thinking from before the rewrite was removed instead.` });
+                this.settleStaleThinking("unreported");
+                continue;
+              }
               // Replayed reasoning the provider rejects after compaction is projected to text, as a model switch does (§6.2).
               if (reasoningRetry && isReasoningRejection(error) && this.replayBefore < this.messages.length) {
                 reasoningRetry = false;
@@ -1695,6 +1758,7 @@ export class AgentSession {
               throw error;
             }
           }
+          if (dropStale) this.settleStaleThinking(turn.droppedThinking ?? "unreported");
         } finally { controller.signal.removeEventListener("abort", onAbort); }
         if (controller.signal.aborted) return finish(interrupted());
         if (turn.usage !== undefined && usageIndex === undefined) recordUsage(turn.usage);
@@ -1777,6 +1841,39 @@ export class AgentSession {
 
 /** Why provider-native compaction is off for a model for the rest of this process, after a permanent request error (design §6.9.1). */
 const nativeDisabled = new Map<string, string>();
+/** Models whose API refused `thinking.block_binding` in this process, with the error; they get the local removal instead. */
+const bindingDisabled = new Map<string, string>();
+
+function modelIdentity({ provider, method, model, baseUrl }: ProviderAdapter["modelConfig"]): string {
+  return JSON.stringify([provider, method, model, baseUrl ?? null]);
+}
+
+function isThinkingBlock(block: unknown): boolean {
+  const type = (block as { type?: unknown } | null)?.type;
+  return type === "thinking" || type === "redacted_thinking";
+}
+
+/** Whether a context replays Anthropic thinking natively: an assistant message at or after the replay boundary that holds some. */
+function replaysThinking(messages: readonly ModelMessage[], replayBefore: number): boolean {
+  return messages.some((message, index) => index >= replayBefore && message.role === "assistant"
+    && Array.isArray(message.opaque) && message.opaque.some(isThinkingBlock));
+}
+
+/**
+ * Whether a request can carry `thinking.block_binding`: Anthropic's own API (the beta is not assumed on gateways) with a
+ * configured `thinking` object of type `enabled` or `adaptive`, the only ones that take it (SDK `BetaThinkingConfig*`).
+ */
+function bindsThinking(modelConfig: ProviderAdapter["modelConfig"]): boolean {
+  const thinking = modelConfig.request?.kind === "anthropic" ? modelConfig.request.thinking?.type : undefined;
+  return modelConfig.provider === "anthropic" && modelConfig.method === "anthropic-messages"
+    && (thinking === "enabled" || thinking === "adaptive") && !bindingDisabled.has(modelIdentity(modelConfig));
+}
+
+/** A request with the binding field that the API refused (HTTP 400), other than for its size. */
+function isBindingRejection(error: unknown): boolean {
+  const status = (error as { status?: unknown } | undefined)?.status;
+  return (status === 400 || (error instanceof ProviderError && error.code === "invalid_request")) && !isContextOverflow(error);
+}
 /** Native-compaction warnings that cannot change within a session, already emitted once, keyed by session and message; hosts create an agent per operation. */
 const nativeWarned = new Set<string>();
 

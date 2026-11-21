@@ -450,7 +450,8 @@ test("7: a reasoning rejection after compaction retries once with history projec
     assert.equal(result.status, "completed");
     assert.equal(result.text, "recovered");
     assert.equal(fixture.requests.length, 4);
-    assert.match(JSON.stringify(fixture.requests[2]!.body), /sig-2/, "the rejected request replayed the reasoning natively");
+    // Without configured thinking the step's stale thinking is removed before the request; a rejection still gets the retry.
+    assert.doesNotMatch(JSON.stringify(fixture.requests[2]!.body), /sig-2/, "the request after compaction does not replay stale thinking");
     const retry = fixture.requests[3]!.body as { messages: Array<{ role: string; content: unknown }> };
     assert.doesNotMatch(JSON.stringify(retry), /"thinking"|sig-2|signature/, "the retry projects every earlier message to text");
     assert.equal(retry.messages.at(-1)?.role, "user");
@@ -565,7 +566,7 @@ test("9: working-state facts survive later compactions and a restart, even while
   } finally { await roomy.close(); store.close(); }
 });
 
-test("10: retained native reasoning is replayed unchanged through compaction and restart", async () => {
+test("10: retained native reasoning survives compaction and restart; Anthropic thinking it made stale is not sent again", async () => {
   const anthropicOpaque = [{ type: "thinking", thinking: "private chain", signature: `sig-${noise(16)}` }, { type: "redacted_thinking", data: `redacted-${noise(16)}` },
     { type: "tool_use", id: "a-call", name: "probe", input: { out: "x" } }];
   const responsesOpaque = [{ type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "plan" }], encrypted_content: `enc-${noise(24)}` },
@@ -591,7 +592,11 @@ test("10: retained native reasoning is replayed unchanged through compaction and
       assert.deepEqual(resumed.transcript.find((message) => message.role === "assistant" && message.toolCalls[0]?.id === callId), before, "a restart keeps it");
       await resumed.run("three");
       const sent = second.main[0]!.messages.find((message) => message.role === "assistant" && message.toolCalls[0]?.id === callId);
-      assert.deepEqual(sent, before, "the next request sends it unchanged");
+      // Responses reasoning is not bound to the prefix; Anthropic thinking from before the checkpoint is (no binding field here,
+      // so it is removed locally). The step is not the last one, so no open tool call needs it.
+      const expected = method === "anthropic-messages" && before?.role === "assistant"
+        ? { ...before, opaque: (before.opaque as Array<{ type: string }>).filter((block) => block.type === "tool_use") } : before;
+      assert.deepEqual(sent, expected, "the next request sends it, without stale thinking");
     } finally { await resumed.close(); store.close(); }
   }
 });

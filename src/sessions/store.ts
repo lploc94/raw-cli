@@ -933,12 +933,13 @@ export class SessionStore {
     const rows = this.database.prepare("SELECT source, payload_json FROM compaction_ledger WHERE session_id = ? ORDER BY ordinal").all(sessionId);
     const state = rows.find((row) => row.source === LEDGER_STATE_SOURCE);
     if (!state) return {};
-    const { facts, compactions, retained, retryArmed, factsThrough } = JSON.parse(String(state.payload_json)) as
-      { facts: WorkingFacts; compactions: number; retained?: LedgerEntry[]; retryArmed?: boolean; factsThrough?: number };
+    const { facts, compactions, retained, retryArmed, factsThrough, staleThinkingBefore } = JSON.parse(String(state.payload_json)) as
+      { facts: WorkingFacts; compactions: number; retained?: LedgerEntry[]; retryArmed?: boolean; factsThrough?: number; staleThinkingBefore?: unknown };
     const entries = rows.filter((row) => row.source !== LEDGER_STATE_SOURCE)
       .map((row): LedgerEntry => ({ source: String(row.source), content: (JSON.parse(String(row.payload_json)) as { content: string }).content }));
     return { ledger: { entries, facts, compactions, ...(retained?.length ? { retained } : {}), ...(retryArmed ? { retryArmed } : {}),
-      ...(factsThrough !== undefined ? { factsThrough } : {}) } };
+      ...(factsThrough !== undefined ? { factsThrough } : {}),
+      ...(Number.isSafeInteger(staleThinkingBefore) && Number(staleThinkingBefore) > 0 ? { staleThinkingBefore: Number(staleThinkingBefore) } : {}) } };
   }
 
   private writeLedger(sessionId: string, ledger: CompactionLedgerState | null): void {
@@ -948,7 +949,8 @@ export class SessionStore {
     for (const [ordinal, entry] of ledger.entries.entries()) insert.run(sessionId, ordinal, entry.source, JSON.stringify({ content: entry.content }));
     insert.run(sessionId, ledger.entries.length, LEDGER_STATE_SOURCE, JSON.stringify({ facts: ledger.facts, compactions: ledger.compactions,
       ...(ledger.retained?.length ? { retained: ledger.retained } : {}), ...(ledger.retryArmed ? { retryArmed: true } : {}),
-      ...(ledger.factsThrough !== undefined ? { factsThrough: ledger.factsThrough } : {}) }));
+      ...(ledger.factsThrough !== undefined ? { factsThrough: ledger.factsThrough } : {}),
+      ...(ledger.staleThinkingBefore !== undefined ? { staleThinkingBefore: ledger.staleThinkingBefore } : {}) }));
   }
 
   /** The newest typed user inputs in visible history, newest first, rendered as text. */

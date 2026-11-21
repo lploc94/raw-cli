@@ -541,6 +541,11 @@ export interface CompactionLedgerState {
   factsThrough?: number;
   /** The first request after this compaction may still retry a reasoning rejection (§6.2). */
   retryArmed?: boolean;
+  /**
+   * Set by a rewrite (compaction, clearing) that kept replayed Anthropic thinking: the context length then. Thinking in the
+   * messages before it was generated on the old prefix; the next main request drops it, then this is cleared.
+   */
+  staleThinkingBefore?: number;
 }
 
 export const CHECKPOINT_MARKER = "[Raw compaction checkpoint #";
