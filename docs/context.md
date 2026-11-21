@@ -155,6 +155,10 @@ The one-shot CLI footer reports the current context size after the completed tur
 
 Per-request cache-read ratio is `cacheReadTokens / inputTokensTotal` only when both are known and input is positive. A zero-input request has no ratio. Cumulative ratio sums reads and inputs only over requests with both fields known, and reports the count of such requests alongside all issued requests, including failures and requests without usage. A rejected summary still consumed inference and retains any reported usage while transcript rollback remains exact. No ratio or prefix comparison alone is proof that a backend served a cached prefix. Time to first visible text and elapsed time are separate host timing observations, not cache evidence.
 
+### Diagnosing cache misses
+
+Each usage record in the session's stored agent state (`usageEntries`) may carry `prefixBreak: { message: N }`. Raw sets it when a request's messages do not extend the previous request's although nothing Raw rewrites on purpose happened in between (a compaction, a fallback clearing, `/clear`, a tool view change, a reasoning replay change, or the removal of thinking made stale by one of these). `N` is the index of the first message that differs from the one sent before, so a provider cache can only have served the prefix before it. Typical causes are a per-request projection that changed an older message (images left out past the allowance with compaction off, above) or a tool that edited a message already sent. The field is diagnostic only: it is never shown in the chat and changes nothing Raw sends.
+
 ## Runtime variables
 
 Variable metadata and values arrive only through tool results at the conversation tail. They are not inserted into system/tool prefixes. Value or variable-definition changes do not rotate generated model cache keys. Old read results remain historical, including observed_at; read again when freshness matters. Resume creates an empty runtime-local variable cache. `/clear` resets conversation, but the existing runtime TTL cache remains. Tool/schema/source changes retain existing revision behavior.

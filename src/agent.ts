@@ -191,6 +191,10 @@ export class AgentSession {
   private schemaView: readonly ToolDefinition[];
   private contextGenerationRevision = 1;
   private replayBefore = 0;
+  /** Counts the deliberate rewrites of the sent messages (invariant I1); a request compares with the last only across none. */
+  private rewrites = 0;
+  /** Stable hashes of the messages the last main request sent, and the rewrite count then; in memory only. */
+  private lastSent: { rewrites: number; hashes: string[] } | undefined;
   private readonly selectedSkills: readonly SelectedSkill[];
   private skillVisibility: SkillVisibility = { listed: false, loaded: [] };
   private tokenCalibration = 1;
@@ -471,6 +475,7 @@ export class AgentSession {
     this.schemaView = Object.freeze(next);
     this.cacheKey = nextKey;
     this.replayBefore = replayBefore;
+    this.rewrites++;
     return ++this.contextGenerationRevision;
   }
 
@@ -481,6 +486,7 @@ export class AgentSession {
     this.anchor = undefined;
     this.reported = undefined;
     this.replayBefore = 0;
+    this.rewrites++;
     this.originalTask = undefined;
     this.summaryText = undefined;
     this.ledgerState = undefined;
@@ -915,6 +921,7 @@ export class AgentSession {
       this.messages = structuredClone(replacement);
       this.anchor = undefined;
       this.replayBefore = replayBefore;
+      this.rewrites++;
       this.summaryText = checkpoint;
       this.ledgerState = ledgerState;
       this.replayRetryArmed = true;
@@ -924,6 +931,21 @@ export class AgentSession {
       if (controller.signal.aborted) return { status: "cancelled", beforeBytes, afterBytes: beforeBytes };
       throw error;
     } finally { if (onAbort) controller.signal.removeEventListener("abort", onAbort); }
+  }
+
+  /**
+   * Debug record of an unexpected cache break (docs/context.md "Diagnosing cache misses"): when this request did not extend
+   * the previous one and no deliberate rewrite came between them, its usage record names the first message that differs.
+   */
+  private notePrefix(sent: { messages: readonly ModelMessage[]; rewrites: number }, entry: UsageRecord): void {
+    const hashes = sent.messages.map((message) => createHash("sha256").update(JSON.stringify(message)).digest("base64"));
+    const previous = this.lastSent;
+    this.lastSent = { rewrites: sent.rewrites, hashes };
+    if (!previous || previous.rewrites !== sent.rewrites) return;
+    const message = previous.hashes.findIndex((hash, index) => hashes[index] !== hash);
+    if (message < 0) return;
+    entry.prefixBreak = { message };
+    this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { usageEntries: this.usageEntries }));
   }
 
   /**
@@ -972,6 +994,7 @@ export class AgentSession {
     if (this.persistenceError) throw this.persistenceError;
     this.messages = messages;
     this.ledgerState = ledger;
+    if (changed) this.rewrites++;
   }
 
   /**
@@ -1034,6 +1057,7 @@ export class AgentSession {
         freedTokens: outcome.freedTokens, results: outcome.cleared }) }]));
     if (this.persistenceError) throw this.persistenceError;
     this.messages = outcome.messages;
+    this.rewrites++;
     this.anchor = anchor ?? undefined;
     this.ledgerState = ledger;
     // The request after clearing replays reasoning around stubs; a provider that rejects it gets the projected retry.
@@ -1679,12 +1703,14 @@ export class AgentSession {
         let turn;
         // Whether the request in flight asks the provider to drop thinking left stale by a rewrite (see `prepareStaleThinking`).
         let dropStale = false;
+        let sent: { messages: readonly ModelMessage[]; rewrites: number } | undefined;
         try {
           const request = () => {
             dropStale = this.prepareStaleThinking();
+            sent = { messages: this.sendMessages(), rewrites: this.rewrites };
             return Promise.race([this.options.provider.generate({
             system: this.options.system,
-            messages: this.sendMessages(),
+            messages: sent.messages,
             ...(dropStale ? { dropStaleThinking: true } : {}),
             tools: this.schemaView,
             timeoutMs: this.options.requestTimeoutMs,
@@ -1729,6 +1755,7 @@ export class AgentSession {
                 const replayBefore = this.messages.length;
                 this.durable((store, sessionId, owner) => store.updateAgentMetadata(sessionId, owner, { replayBefore }));
                 this.replayBefore = replayBefore;
+                this.rewrites++;
                 continue;
               }
               if (!overflowRetried && isContextOverflow(error)) {
@@ -1797,6 +1824,7 @@ export class AgentSession {
               throw error;
             }
           }
+          if (sent) this.notePrefix(sent, usageEntry);
           if (dropStale) this.settleStaleThinking(turn.droppedThinking ?? "unreported");
         } finally { controller.signal.removeEventListener("abort", onAbort); }
         if (controller.signal.aborted) return finish(interrupted());
